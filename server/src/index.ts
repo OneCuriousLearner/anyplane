@@ -286,6 +286,9 @@ import { spawn } from 'bun'
 
 function runBtw(hub: Hub, cwd: string, sessionId: string, question: string): void {
   const { cmd, prefix } = resolveClaudeCommand()
+  // Claude Code -p 支持 -n/--name：写入 custom-title，列表里可区分 fork 出来的侧问会话
+  const oneLine = question.replace(/\s+/g, ' ').trim()
+  const sessionName = `BTW: ${oneLine.length > 60 ? `${oneLine.slice(0, 57)}…` : oneLine}`
   let proc: ReturnType<typeof spawn>
   try {
     proc = spawn(
@@ -297,6 +300,8 @@ function runBtw(hub: Hub, cwd: string, sessionId: string, question: string): voi
         '--fork-session',
         '--resume',
         sessionId,
+        '-n',
+        sessionName,
         '--output-format',
         'stream-json',
         '--verbose',
@@ -402,13 +407,13 @@ let server: ReturnType<typeof Bun.serve<WSData>>
 try {
   server = Bun.serve<WSData>({
     port: config.port,
-    async fetch(req, server) {
+    async fetch(req, srv) {
       const url = new URL(req.url)
 
       const wsMatch = url.pathname.match(/^\/ws\/sessions\/(.+)$/)
       if (wsMatch) {
         const key = decodeURIComponent(wsMatch[1])
-        if (server.upgrade(req, { data: { key } })) return undefined
+        if (srv.upgrade(req, { data: { key } })) return undefined
         return new Response('WebSocket upgrade failed', { status: 400 })
       }
 
@@ -462,7 +467,9 @@ try {
 } catch (e) {
   const msg = e instanceof Error ? e.message : String(e)
   console.error(`[cc-remote] 无法监听 :${config.port}: ${msg}`)
-  console.error(`[cc-remote] 端口可能被僵尸进程占用。可：1) 重启电脑  2) 换端口启动：CC_REMOTE_PORT=7481 bun run start`)
+  if (process.platform === 'win32') {
+    console.error(`[cc-remote] 若 netstat 显示 LISTENING 但 PID 进程已不存在，属于 Windows 僵尸端口，只能重启电脑释放 :${config.port}`)
+  }
   process.exit(1)
 }
 
@@ -470,18 +477,33 @@ console.log(`[cc-remote] listening on http://localhost:${server.port}`)
 console.log(`[cc-remote] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
 
 let shuttingDown = false
-async function shutdown(reason: string): Promise<void> {
-  if (shuttingDown) return
+function shutdown(reason: string): void {
+  if (shuttingDown) {
+    // 二次 Ctrl+C：不再等待，硬退
+    process.exit(1)
+  }
   shuttingDown = true
   console.log(`[cc-remote] ${reason}, 正在关闭…`)
-  processManager.disposeAll()
   try {
-    await server.stop(true)
+    processManager.disposeAll()
   } catch (e) {
-    console.error('[cc-remote] server.stop 失败:', e)
+    console.error('[cc-remote] disposeAll 失败:', e)
   }
-  process.exit(0)
+  // Windows：长时间 await stop 容易被控制台直接杀进程，留下僵尸 LISTENING。
+  // 限时强制 stop，超时也 exit，尽量先关掉 listen fd。
+  const forceExit = setTimeout(() => {
+    console.warn('[cc-remote] 关闭超时，强制退出')
+    process.exit(0)
+  }, 800)
+  forceExit.unref?.()
+  void Promise.resolve()
+    .then(() => server.stop(true))
+    .catch((e) => console.error('[cc-remote] server.stop 失败:', e))
+    .finally(() => {
+      clearTimeout(forceExit)
+      process.exit(0)
+    })
 }
 
-process.on('SIGINT', () => void shutdown('SIGINT'))
-process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => shutdown('SIGTERM'))
