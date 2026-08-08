@@ -11,7 +11,14 @@ export interface SessionInfo {
   status: 'busy' | 'idle' | 'waiting' | 'offline'
   live?: { pid: number; startedAt?: string | number; kind?: string }
   key: string
-  managed: { spawned: boolean; busy: boolean; sessionId?: string; clients: number }
+  managed: {
+    spawned: boolean
+    busy: boolean
+    waiting?: boolean
+    sessionState?: 'idle' | 'running' | 'requires_action'
+    sessionId?: string
+    clients: number
+  }
 }
 
 export interface HistoryBlock {

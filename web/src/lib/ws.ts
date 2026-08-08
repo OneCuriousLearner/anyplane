@@ -6,6 +6,7 @@ export type ServerEvent =
   | { kind: 'approval_request'; requestId: string; toolName: string; input: unknown }
   | { kind: 'approval_resolved'; requestId: string }
   | { kind: 'btw_pending'; question: string }
+  | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
   | { kind: 'rewound'; userMessageId: string }
   | { kind: 'error'; message: string }
@@ -22,6 +23,10 @@ export interface CliMsg {
 export interface SessionState {
   spawned: boolean
   busy: boolean
+  /** 等待用户审批（can_use_tool / requires_action） */
+  waiting?: boolean
+  /** Claude Code 权威状态：idle | running | requires_action */
+  sessionState?: 'idle' | 'running' | 'requires_action'
   sessionId?: string
   clients?: number
   exited?: boolean
@@ -29,7 +34,7 @@ export interface SessionState {
 }
 
 export type ClientCommand =
-  | { kind: 'attach' }
+  | { kind: 'attach'; warm?: boolean; opts?: Record<string, unknown> }
   | { kind: 'user'; text: string }
   | { kind: 'control'; subtype: string; extra?: Record<string, unknown> }
   | { kind: 'update_env'; variables: Record<string, string> }

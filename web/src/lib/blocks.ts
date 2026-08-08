@@ -21,6 +21,10 @@ export interface ChatMsg {
   systemKind?: 'info' | 'error' | 'divider'
   /** compact_boundary 元数据 */
   compactMeta?: { preTokens?: number; postTokens?: number }
+  /** 侧问卡片：问题文本；存在即按侧问样式渲染 */
+  btw?: string
+  /** 侧问回答进行中（未收到 btw_result） */
+  btwPending?: boolean
   rewindable?: boolean
 }
 

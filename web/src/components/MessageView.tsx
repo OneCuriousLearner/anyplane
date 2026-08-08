@@ -65,6 +65,29 @@ function UserText(props: { text: string }) {
 export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   const { msg, compact } = props
 
+  // 侧问卡片：独立样式，正文 Markdown，思考折叠，回答中有呼吸态
+  if (msg.btw != null) {
+    return (
+      <div className="my-3 rounded-lg border border-accent/30 bg-accent/5">
+        <div className="flex items-center gap-2 border-b border-accent/20 px-3 py-2">
+          <span className="font-mono text-[10px] tracking-widest text-accent-soft uppercase">侧问</span>
+          <span className="truncate text-xs text-muted">{msg.btw}</span>
+          {msg.btwPending && <span className="ml-auto animate-pulse font-mono text-[10px] text-busy">回答中…</span>}
+        </div>
+        <div className="px-3 py-2">
+          {msg.blocks.length === 0 && msg.btwPending && (
+            <span className="cc-cursor inline-block h-3.5 w-[7px] bg-accent-soft" />
+          )}
+          {msg.blocks.map((b, i) => {
+            if (b.kind === 'text') return <Markdown key={i} text={b.text} />
+            if (b.kind === 'thinking') return <Thinking key={i} text={b.text} streaming={msg.btwPending} />
+            return <ToolCard key={b.id} tool={b} />
+          })}
+        </div>
+      </div>
+    )
+  }
+
   if (msg.role === 'system') {
     if (msg.systemKind === 'divider') {
       return (
@@ -93,13 +116,17 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   return (
     <div className={`${compact ? 'my-1' : 'my-3'} flex gap-2.5`}>
       <span
-        className={`mt-0.5 flex w-5 shrink-0 justify-center font-mono text-sm select-none ${
+        className={`flex w-5 shrink-0 items-center justify-center font-mono text-sm select-none ${
           isUser ? 'text-accent-soft' : 'text-faint'
         }`}
       >
-        {compact ? '' : isUser ? '›' : <ClaudeMark className="mt-0.5 h-3.5 w-3.5 opacity-70" />}
+        {compact ? '' : isUser ? '›' : <ClaudeMark className="h-3.5 w-3.5 opacity-70" />}
       </span>
-      <div className="min-w-0 flex-1">
+      <div
+        className={`min-w-0 flex-1 ${
+          isUser ? 'rounded-md border border-accent/30 bg-accent/15 px-3 py-2' : ''
+        }`}
+      >
         {msg.blocks.map((b, i) => {
           if (b.kind === 'text') return isUser ? <UserText key={i} text={b.text} /> : <Markdown key={i} text={b.text} />
           if (b.kind === 'thinking') return <Thinking key={i} text={b.text} />

@@ -11,8 +11,15 @@ export interface ServerConfig {
   permissionPolicy: 'ask' | 'bypass'
   /** claude CLI 路径，默认从 PATH 解析 */
   claudePath?: string
-  /** 所有 WebSocket 客户端断开后，子进程空闲多久退出（毫秒），默认 30 分钟 */
+  /**
+   * 无 session_state_changed 事件时的回退：客户端全断且启发式空闲后多久回收（默认 30 分钟）。
+   * busy / requires_action 期间永不回收。
+   */
   idleTimeoutMs: number
+  /**
+   * 已启用权威 session_state 时：客户端全断且 state=idle 后多久回收（默认 15 秒）。
+   */
+  detachRecycleMs: number
   /** claude 配置目录，默认 ~/.claude */
   claudeConfigDir: string
 }
@@ -21,6 +28,7 @@ const DEFAULTS: ServerConfig = {
   port: 7480,
   permissionPolicy: 'ask',
   idleTimeoutMs: 30 * 60 * 1000,
+  detachRecycleMs: 15 * 1000,
   claudeConfigDir: join(homedir(), '.claude'),
 }
 

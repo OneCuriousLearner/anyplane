@@ -52,7 +52,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [cfg, setCfg] = useState<ServerConfigInfo>()
   const [showRewind, setShowRewind] = useState(false)
-  const [btwPending, setBtwPending] = useState<string | undefined>()
   const [draft, setDraft] = useState<Draft | null>(null)
   const [phase, setPhase] = useState<string>()
   const [initInfo, setInitInfo] = useState<{ model?: string; slashCommands?: string[] }>({})
@@ -79,49 +78,57 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
 
   const isExisting = session.key.startsWith('s|')
 
-  // ---------- 历史加载 ----------
+  // ---------- 历史加载（切换会话时取消过期请求，避免「卡住不出对话」） ----------
   useEffect(() => {
+    let cancelled = false
     setMsgs(() => [])
+    setDraftBoth(null)
+    pendingResultsRef.current.clear()
     if (!isExisting) return
-    fetchHistory(session.slug, session.sessionId).then((hist) => {
-      const out: ChatMsg[] = []
-      // tool_use → tool_result 配对（历史里分处两条消息）
-      const pair = (toolUseId: string | undefined, text: string, isError: boolean) => {
-        if (!toolUseId) return false
-        for (let mi = out.length - 1; mi >= 0; mi--) {
-          const blocks = out[mi].blocks
-          for (let bi = blocks.length - 1; bi >= 0; bi--) {
-            const b = blocks[bi]
-            if (b.kind === 'tool' && b.id === toolUseId) {
-              blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-              return true
+    fetchHistory(session.slug, session.sessionId)
+      .then((hist) => {
+        if (cancelled) return
+        const out: ChatMsg[] = []
+        // tool_use → tool_result 配对（历史里分处两条消息）
+        const pair = (toolUseId: string | undefined, text: string, isError: boolean) => {
+          if (!toolUseId) return false
+          for (let mi = out.length - 1; mi >= 0; mi--) {
+            const blocks = out[mi].blocks
+            for (let bi = blocks.length - 1; bi >= 0; bi--) {
+              const b = blocks[bi]
+              if (b.kind === 'tool' && b.id === toolUseId) {
+                blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
+                return true
+              }
             }
           }
+          return false
         }
-        return false
-      }
-      for (const h of hist) {
-        if (h.isMeta) continue
-        if (h.role === 'system' && h.subtype === 'compact_boundary') {
-          out.push({ id: h.uuid ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: h.compactMeta, blocks: [] })
-          continue
-        }
-        const blocks: Block[] = []
-        const stray: { text: string; isError: boolean }[] = []
-        for (const hb of h.blocks) {
-          if (hb.kind === 'tool_use') {
-            blocks.push({ kind: 'tool', id: hb.id ?? nextId(), name: hb.name ?? '?', input: hb.input })
-          } else if (hb.kind === 'tool_result') {
-            if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
-          } else {
-            blocks.push({ kind: hb.kind, text: hb.text ?? '' })
+        for (const h of hist) {
+          if (h.isMeta) continue
+          if (h.role === 'system' && h.subtype === 'compact_boundary') {
+            out.push({ id: h.uuid ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: h.compactMeta, blocks: [] })
+            continue
           }
+          const blocks: Block[] = []
+          const stray: { text: string; isError: boolean }[] = []
+          for (const hb of h.blocks) {
+            if (hb.kind === 'tool_use') {
+              blocks.push({ kind: 'tool', id: hb.id ?? nextId(), name: hb.name ?? '?', input: hb.input })
+            } else if (hb.kind === 'tool_result') {
+              if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
+            } else {
+              blocks.push({ kind: hb.kind, text: hb.text ?? '' })
+            }
+          }
+          if (blocks.length > 0) out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, rewindable: h.rewindable })
+          for (const r of stray) pushInto(out, r)
         }
-        if (blocks.length > 0) out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, rewindable: h.rewindable })
-        for (const r of stray) pushInto(out, r)
-      }
-      setMsgs(() => out)
-    })
+        setMsgs(() => out)
+      })
+      .catch((e) => {
+        if (!cancelled) pushSystem(`⚠ 加载历史失败: ${e}`, 'error')
+      })
     function pushInto(out: ChatMsg[], r: { text: string; isError: boolean }) {
       out.push({
         id: nextId(),
@@ -129,6 +136,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
         systemKind: r.isError ? 'error' : 'info',
         blocks: [{ kind: 'text', text: r.text.slice(0, 500) }],
       })
+    }
+    return () => {
+      cancelled = true
     }
   }, [session.key])
 
@@ -369,6 +379,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
         switch (ev.kind) {
           case 'status':
             setState(ev.state)
+            // 进程已退出时固化/清理未完成的流式草稿，避免半截内容悬挂
+            if (ev.state.exited) {
+              commitDraft()
+              setPhase(undefined)
+            }
             break
           case 'approval_request':
             setApprovals((prev) =>
@@ -384,11 +399,50 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
             pushSystem(`⚠ ${ev.message}`, 'error')
             break
           case 'btw_pending':
-            setBtwPending(ev.question)
+            // 创建侧问卡片（发送方与其他客户端都以此为准）
+            if (!messagesRef.current.some((m) => m.btw === ev.question && m.btwPending)) {
+              pushMsg({ id: nextId(), role: 'assistant', btw: ev.question, btwPending: true, blocks: [] })
+            }
             break
+          case 'btw_delta': {
+            const target = messagesRef.current.find((m) => m.btw === ev.question && m.btwPending)
+            if (!target) break
+            setMsgs((prev) =>
+              prev.map((m) => {
+                if (m.id !== target.id) return m
+                const blocks = [...m.blocks]
+                const kind = ev.thinking ? 'thinking' : 'text'
+                const i = blocks.findIndex((b) => b.kind === kind)
+                if (i >= 0) {
+                  const b = blocks[i]
+                  if (b.kind === 'text' || b.kind === 'thinking') {
+                    blocks[i] = { ...b, text: b.text + ev.delta }
+                  }
+                } else {
+                  blocks.push({ kind, text: ev.delta })
+                }
+                // thinking 在 text 之前
+                blocks.sort((a, b) => (a.kind === 'thinking' ? -1 : 0) - (b.kind === 'thinking' ? -1 : 0))
+                return { ...m, blocks }
+              }),
+            )
+            break
+          }
           case 'btw_result':
-            setBtwPending(undefined)
-            pushSystem(`💬 侧问：${ev.question}\n${ev.ok ? ev.text : `⚠ ${ev.text}`}`, ev.ok ? 'info' : 'error')
+            setMsgs((prev) =>
+              prev.map((m) => {
+                if (m.btw !== ev.question || !m.btwPending) return m
+                if (ev.ok) {
+                  // 用完整结果替换正文（增量可能因快照归并而不全）
+                  const thinking = m.blocks.find((b) => b.kind === 'thinking')
+                  const blocks: Block[] = []
+                  if (thinking) blocks.push(thinking)
+                  if (ev.text.trim()) blocks.push({ kind: 'text', text: ev.text })
+                  return { ...m, blocks, btwPending: false }
+                }
+                return { ...m, blocks: [...m.blocks, { kind: 'text', text: `⚠ ${ev.text}` }], btwPending: false }
+              }),
+            )
             break
           case 'rewound':
             setMsgs((prev) => {
@@ -443,15 +497,22 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     input.startsWith('/') && !input.includes(' ') ? cmdList.filter((c) => `/${c}`.startsWith(input.trim())).slice(0, 6) : []
 
   const busy = state.busy
+  const waiting = state.waiting || approvals.length > 0
   const statusLine = !connected
     ? '连接中…'
     : phase
       ? `${PHASE_LABEL[phase] ?? phase}…`
-      : busy
-        ? '工作中'
-        : state.exited
-          ? '进程已退出'
-          : '已连接'
+      : waiting
+        ? '等待审批'
+        : busy
+          ? '工作中'
+          : state.spawned
+            ? state.sessionState === 'idle'
+              ? 'CLI 空闲'
+              : 'CLI 运行中'
+            : state.exited
+              ? '进程已退出'
+              : '浏览中（发送消息时启动 CLI）'
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">
@@ -492,8 +553,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
           {/* 流式草稿 */}
           {draft && draft.blocks.length > 0 && (
             <div className="my-3 flex gap-2.5">
-              <span className="mt-0.5 flex w-5 shrink-0 justify-center select-none">
-                <ClaudeMark className="mt-0.5 h-3.5 w-3.5 opacity-70" />
+              <span className="flex w-5 shrink-0 items-center justify-center select-none">
+                <ClaudeMark className="h-3.5 w-3.5 opacity-70" />
               </span>
               <div className="min-w-0 flex-1">
                 {draft.blocks.map((b) => {
@@ -513,6 +574,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
                       <div key={b.idx} className="my-1.5 rounded-md border border-line/60 bg-surface2/30 px-2.5 py-1.5">
                         <span className="font-mono text-[11px] tracking-wide text-faint">思考</span>
                         <span className="ml-1 animate-pulse font-mono text-[11px] text-busy">进行中…</span>
+                        {b.text && (
+                          <div className="mt-1 max-h-48 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
+                            {b.text}
+                          </div>
+                        )}
                       </div>
                     )
                   }
@@ -531,9 +597,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
           )}
 
           {busy && !draft && <div className="my-2 animate-pulse pl-7 font-mono text-[11px] text-faint">✳ 生成中…</div>}
-          {btwPending && (
-            <div className="my-2 animate-pulse pl-7 font-mono text-[11px] text-accent-soft">💬 侧问中：{btwPending}</div>
-          )}
 
           {approvals.map((a) => (
             <ApprovalCard

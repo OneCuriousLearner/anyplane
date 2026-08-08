@@ -113,3 +113,7 @@ export function isInitMessage(m: CliMessage): boolean {
 export function isResultMessage(m: CliMessage): boolean {
   return m.type === 'result'
 }
+
+export function isSessionStateChanged(m: CliMessage): boolean {
+  return m.type === 'system' && m.subtype === 'session_state_changed'
+}

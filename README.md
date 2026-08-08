@@ -53,13 +53,17 @@ bun run dev:web      # vite dev :5173，代理 /api 与 /ws 到 7480
   "port": 7480,
   "permissionPolicy": "ask",
   "claudePath": "/usr/local/bin/claude",
+  "detachRecycleMs": 15000,
   "idleTimeoutMs": 1800000,
   "claudeConfigDir": "~/.claude"
 }
 ```
 
 - `permissionPolicy`: `"ask"`（默认，转发 UI 审批）| `"bypass"`（spawn 即 bypassPermissions）
+- `detachRecycleMs`: 已收到 Claude `session_state_changed` 时，客户端全断且 `idle` 后多久回收子进程（默认 15s）；`running` / `requires_action` 绝不回收
+- `idleTimeoutMs`: 无权威状态事件时的回退回收延迟（默认 30 分钟）
 - `CC_REMOTE_PORT` 环境变量可覆盖端口
+- spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号
 
 ## 部署到远程容器
 
