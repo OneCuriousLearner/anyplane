@@ -14,11 +14,21 @@ export interface SessionInfo {
   managed: { spawned: boolean; busy: boolean; sessionId?: string; clients: number }
 }
 
+export interface HistoryBlock {
+  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'
+  text?: string
+  name?: string
+  id?: string
+  input?: unknown
+  isError?: boolean
+}
+
 export interface HistoryMessage {
   uuid?: string
   role: 'user' | 'assistant' | 'system'
-  text: string
-  toolUses?: { name: string; id?: string }[]
+  subtype?: string
+  blocks: HistoryBlock[]
+  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number }
   timestamp?: string
   isMeta?: boolean
   rewindable?: boolean

@@ -1,19 +1,20 @@
 import { useEffect, useState } from 'react'
 import { createSession, fetchSessions, type SessionInfo } from '../lib/api'
+import { ClaudeMark } from '../components/ClaudeMark'
 
-const STATUS_STYLE: Record<SessionInfo['status'], { dot: string; label: string }> = {
-  busy: { dot: 'bg-green-500 animate-pulse', label: '工作中' },
-  idle: { dot: 'bg-yellow-500', label: '空闲' },
-  waiting: { dot: 'bg-blue-500', label: '等待输入' },
-  offline: { dot: 'bg-zinc-500', label: '离线' },
+const STATUS_META: Record<SessionInfo['status'], { cls: string; label: string }> = {
+  busy: { cls: 'bg-busy animate-pulse', label: '工作中' },
+  idle: { cls: 'bg-ok', label: '空闲' },
+  waiting: { cls: 'bg-wait', label: '等待输入' },
+  offline: { cls: 'bg-faint', label: '离线' },
 }
 
 function timeAgo(ms: number): string {
   const s = Math.floor((Date.now() - ms) / 1000)
-  if (s < 60) return `${s}s 前`
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
-  return `${Math.floor(s / 86400)} 天前`
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
 }
 
 export function SessionList(props: {
@@ -63,21 +64,28 @@ export function SessionList(props: {
   }
 
   return (
-    <div className="flex h-full flex-col bg-zinc-900 text-zinc-100">
-      <div className="flex items-center justify-between border-b border-zinc-700 px-4 py-3">
-        <h1 className="text-lg font-semibold">会话</h1>
-        <button
-          className="rounded bg-sky-600 px-3 py-1 text-sm hover:bg-sky-500"
-          onClick={() => setShowNew(!showNew)}
-        >
-          + 新会话
-        </button>
+    <div className="flex h-full flex-col bg-surface text-ink">
+      {/* 报头 */}
+      <div className="border-b border-line px-4 pb-3 pt-4">
+        <div className="flex items-baseline justify-between">
+          <h1 className="flex items-center gap-2 font-mono text-sm tracking-widest text-muted uppercase">
+            <ClaudeMark className="h-4 w-4" />
+            cc-remote
+          </h1>
+          <button
+            className="rounded border border-accent/60 px-2.5 py-1 font-mono text-xs text-accent-soft hover:bg-accent/10"
+            onClick={() => setShowNew(!showNew)}
+          >
+            + 新会话
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-faint">远端 Claude Code 会话抄本</p>
       </div>
 
       {showNew && (
-        <div className="border-b border-zinc-700 p-3">
+        <div className="border-b border-line bg-surface2/50 p-3">
           <input
-            className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none placeholder:text-zinc-500"
+            className="w-full rounded border border-line bg-bg px-3 py-2 font-mono text-xs outline-none placeholder:text-faint focus:border-accent/60"
             placeholder="项目目录，如 /home/you/proj 或 D:\proj"
             value={newCwd}
             onChange={(e) => setNewCwd(e.target.value)}
@@ -90,8 +98,9 @@ export function SessionList(props: {
             ))}
           </datalist>
           <button
-            className="mt-2 w-full rounded bg-sky-600 py-2 text-sm hover:bg-sky-500"
+            className="mt-2 w-full rounded bg-accent py-2 text-sm font-medium text-bg hover:bg-accent-soft disabled:opacity-40"
             onClick={startNew}
+            disabled={!newCwd.trim()}
           >
             开始
           </button>
@@ -99,36 +108,41 @@ export function SessionList(props: {
       )}
 
       <div className="flex-1 overflow-y-auto">
-        {loading && <p className="p-4 text-sm text-zinc-500">加载中…</p>}
+        {loading && <p className="p-4 font-mono text-xs text-faint">加载中…</p>}
         {!loading && sessions.length === 0 && (
-          <p className="p-4 text-sm text-zinc-500">没有发现会话</p>
+          <div className="p-4 text-sm text-muted">
+            <p>还没有会话。</p>
+            <p className="mt-1 text-xs text-faint">点「+ 新会话」，输入远端项目目录即可开始。</p>
+          </div>
         )}
         {[...groups.entries()].map(([cwd, list]) => (
           <div key={cwd}>
-            <div className="sticky top-0 bg-zinc-800/95 px-4 py-1.5 text-xs text-zinc-400 backdrop-blur">
+            <div className="sticky top-0 border-y border-line/60 bg-surface/95 px-4 py-1.5 font-mono text-[11px] tracking-wide text-muted backdrop-blur">
               {cwd}
             </div>
             {list.map((s) => {
-              const st = STATUS_STYLE[s.managed.busy ? 'busy' : s.status]
+              const st = STATUS_META[s.managed.busy ? 'busy' : s.status]
+              const active = props.selectedKey === s.key
               return (
                 <button
                   key={s.key}
                   onClick={() => props.onSelect(s)}
-                  className={`block w-full px-4 py-3 text-left hover:bg-zinc-800 ${
-                    props.selectedKey === s.key ? 'bg-zinc-800' : ''
+                  className={`block w-full border-b border-line/40 px-4 py-3 text-left transition-colors hover:bg-surface2/60 ${
+                    active ? 'bg-surface2/80 shadow-[inset_2px_0_0_var(--color-accent)]' : ''
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot}`} />
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.cls}`} />
                     <span className="truncate text-sm">{s.title ?? s.sessionId.slice(0, 8)}</span>
+                    <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
+                      {timeAgo(s.mtime)}
+                    </span>
                   </div>
-                  <div className="mt-1 flex items-center gap-2 pl-4 text-xs text-zinc-500">
-                    <span>{st.label}</span>
-                    <span>·</span>
-                    <span>{timeAgo(s.mtime)}</span>
+                  <div className="mt-1 flex items-center gap-1.5 pl-3.5 font-mono text-[11px] text-faint">
+                    <span className="shrink-0">{st.label}</span>
                     {s.lastPrompt && (
                       <>
-                        <span>·</span>
+                        <span className="text-line">│</span>
                         <span className="truncate">{s.lastPrompt}</span>
                       </>
                     )}

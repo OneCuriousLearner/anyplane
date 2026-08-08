@@ -6,8 +6,9 @@
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["bun-types"],
+    "types": ["bun"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noEmit": true
-  }
+  },
+  "exclude": ["node_modules", "web/dist", "server/scripts", ".tmp"]
 }

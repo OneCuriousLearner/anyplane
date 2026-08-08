@@ -1,4 +1,16 @@
+## Dependencies
 node_modules/
 dist/
+
+## Environment
 .env
+
+## Logs
 *.log
+
+## Temporary files
+.tmp/
+
+## Agent
+.claude/
+.cursor/

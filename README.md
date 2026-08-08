@@ -18,7 +18,11 @@ stdin/stdout 走双向 NDJSON（user 消息 + control_request/response），与�
 
 - **会话列表**：扫描 `~/.claude/projects/**/*.jsonl`，按项目分组，展示标题/最近活动/状态徽标（busy/idle/waiting/offline，活跃状态来自 `~/.claude/sessions/*.json` PID 文件）
 - **接续对话**：按目录 + session id 精准 `--resume`
-- **流式输出**：`--include-partial-messages` 增量渲染
+- **流式输出**：`--include-partial-messages` 增量渲染，草稿气泡实时过 Markdown；assistant 块快照按 `message.id`+块序号归并定稿，不与增量重复
+- **Markdown 渲染**：react-markdown + GFM（表格/任务列表/删除线），代码块等宽底色
+- **工具卡片**：tool_use 与 tool_result 按 id 配对成一张卡（名称+摘要一行 trace，展开看参数与结果，失败染红）；思考块默认折叠
+- **消息标签**：斜杠命令回显（`<command-name>`）渲染为命令 chip，本地命令输出剥 ANSI 折叠，`<system-reminder>`/isMeta 不进主抄本，子代理 sidechain 消息不入主流
+- **状态利用**：`system/init` 提供模型/权限模式徽标与斜杠命令补全；`system/status` 驱动"请求中/压缩中"相位指示；`result` 生成"本轮 25s · 830 tok"回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
 - **运行时切换**：模型（set_model）、权限模式（set_permission_mode，等同 shift+tab）、effort（update_environment_variables，部分版本可能需重开会话生效）、中断（interrupt）
 - **权限审批**：`can_use_tool` 推到 UI 审批卡片；或配置 `permissionPolicy: "bypass"` 全自动
 - **斜杠命令**：`/compact`、`/context` 原生透传；`/rewind`（消息选择器，支持"仅回滚文件"与"回滚对话+文件"）；`/btw <问题>`（fork 侧问，不污染主会话）；其他命令原样发给 CLI 处理

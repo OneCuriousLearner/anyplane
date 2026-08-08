@@ -15,11 +15,12 @@ export function ControlsBar(props: {
 }) {
   const { cfg, sock } = props
 
-  const selectCls = 'rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-200 outline-none'
+  const selectCls =
+    'rounded border border-line bg-surface2 px-1.5 py-1 font-mono text-[11px] text-ink outline-none focus:border-accent/60'
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2">
-      <label className="flex items-center gap-1 text-xs text-zinc-400">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-3 py-1.5">
+      <label className="flex items-center gap-1.5 font-mono text-[11px] tracking-wide text-muted">
         模型
         <select
           className={selectCls}
@@ -39,7 +40,7 @@ export function ControlsBar(props: {
         </select>
       </label>
 
-      <label className="flex items-center gap-1 text-xs text-zinc-400">
+      <label className="flex items-center gap-1.5 font-mono text-[11px] tracking-wide text-muted">
         模式
         <select
           className={selectCls}
@@ -60,7 +61,7 @@ export function ControlsBar(props: {
         </select>
       </label>
 
-      <label className="flex items-center gap-1 text-xs text-zinc-400">
+      <label className="flex items-center gap-1.5 font-mono text-[11px] tracking-wide text-muted">
         effort
         <select
           className={selectCls}
@@ -82,7 +83,7 @@ export function ControlsBar(props: {
       </label>
 
       <button
-        className="ml-auto rounded bg-red-700 px-3 py-1 text-xs hover:bg-red-600 disabled:opacity-40"
+        className="ml-auto rounded border border-danger/60 px-3 py-1 font-mono text-[11px] text-danger hover:bg-danger/10 disabled:opacity-30"
         disabled={!props.busy}
         onClick={() => sock()?.send({ kind: 'control', subtype: 'interrupt' })}
       >

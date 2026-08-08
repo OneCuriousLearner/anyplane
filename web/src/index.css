@@ -1,1 +1,170 @@
 @import "tailwindcss";
+
+@theme {
+  /* cc-remote design tokens — “session transcript” identity
+     暖炭底 + 陶土橙（Claude 品牌色方向），日志抄本排版 */
+  --color-bg: #16130f;
+  --color-surface: #201b15;
+  --color-surface2: #2a241c;
+  --color-line: #393125;
+  --color-ink: #ede4d3;
+  --color-muted: #9c8f7a;
+  --color-faint: #6b6156;
+  --color-accent: #e07850;
+  --color-accent-soft: #f0977a;
+  --color-busy: #e0a050;
+  --color-ok: #7bae7f;
+  --color-wait: #7c9cbf;
+  --color-danger: #d95d4e;
+
+  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+  --font-body: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 细滚动条，融入底色 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 3px;
+}
+
+/* markdown 正文排版 */
+.prose-cc {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.prose-cc > * + * {
+  margin-top: 0.6em;
+}
+.prose-cc p {
+  margin: 0;
+}
+.prose-cc h1,
+.prose-cc h2,
+.prose-cc h3,
+.prose-cc h4 {
+  font-weight: 600;
+  color: var(--color-ink);
+  margin-top: 1em;
+}
+.prose-cc h1 {
+  font-size: 1.1rem;
+}
+.prose-cc h2 {
+  font-size: 1.02rem;
+}
+.prose-cc h3,
+.prose-cc h4 {
+  font-size: 0.92rem;
+}
+.prose-cc a {
+  color: var(--color-accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-cc ul,
+.prose-cc ol {
+  padding-left: 1.3em;
+}
+.prose-cc ul {
+  list-style: disc;
+}
+.prose-cc ol {
+  list-style: decimal;
+}
+.prose-cc li + li {
+  margin-top: 0.2em;
+}
+.prose-cc blockquote {
+  border-left: 2px solid var(--color-line);
+  padding-left: 0.8em;
+  color: var(--color-muted);
+}
+.prose-cc code:not(pre code) {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  background: var(--color-surface2);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.prose-cc pre {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  background: #12100c;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 0.7em 0.9em;
+  overflow-x: auto;
+}
+.prose-cc pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.prose-cc table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.prose-cc th,
+.prose-cc td {
+  border: 1px solid var(--color-line);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.prose-cc th {
+  background: var(--color-surface2);
+  font-weight: 600;
+}
+.prose-cc hr {
+  border: none;
+  border-top: 1px solid var(--color-line);
+}
+.prose-cc img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* 输入光标呼吸 */
+@keyframes cc-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+.cc-cursor {
+  animation: cc-blink 1.1s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-cursor {
+    animation: none;
+  }
+}

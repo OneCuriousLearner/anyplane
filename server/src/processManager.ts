@@ -128,7 +128,9 @@ export class ClaudeSession {
 
   write(msg: StdinMessage): void {
     if (!this.proc || this.exited) throw new Error('进程未运行')
-    this.proc.stdin.write(JSON.stringify(msg) + '\n')
+    const stdin = this.proc.stdin
+    if (typeof stdin === 'number' || !stdin) throw new Error('stdin 不可用')
+    stdin.write(JSON.stringify(msg) + '\n')
   }
 
   sendUserText(text: string): void {
