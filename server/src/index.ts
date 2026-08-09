@@ -288,7 +288,7 @@ function runBtw(hub: Hub, cwd: string, sessionId: string, question: string): voi
   const { cmd, prefix } = resolveClaudeCommand()
   // Claude Code -p 支持 -n/--name：写入 custom-title，列表里可区分 fork 出来的侧问会话
   const oneLine = question.replace(/\s+/g, ' ').trim()
-  const sessionName = `BTW: ${oneLine.length > 60 ? `${oneLine.slice(0, 57)}…` : oneLine}`
+  const sessionName = `FORK: ${oneLine.length > 60 ? `${oneLine.slice(0, 57)}…` : oneLine}`
   let proc: ReturnType<typeof spawn>
   try {
     proc = spawn(
@@ -396,8 +396,8 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     return json({
       permissionPolicy: config.permissionPolicy,
       permissionModes: ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
-      effortLevels: ['low', 'medium', 'high', 'max'],
-      models: ['sonnet', 'opus', 'haiku', 'opusplan'],
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      models: ['haiku', 'sonnet', 'opus', 'fable'],
     })
   }
   return undefined

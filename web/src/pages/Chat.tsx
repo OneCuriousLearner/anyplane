@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchConfig, fetchHistory, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
-import { ControlsBar } from '../components/ControlsBar'
+import { StatusPill, type Effort } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RewindPicker } from '../components/RewindPicker'
 import { MessageView } from '../components/MessageView'
@@ -56,6 +56,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
   const [phase, setPhase] = useState<string>()
   const [initInfo, setInitInfo] = useState<{ model?: string; slashCommands?: string[] }>({})
   const [permMode, setPermMode] = useState<string>()
+  const [effort, setEffort] = useState<Effort>()
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -529,15 +530,32 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
           <div className="flex items-center gap-2 font-mono text-[10px] tracking-wide text-faint">
             <span className={connected ? 'text-ok' : 'text-danger'}>{connected ? '●' : '○'}</span>
             <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
-            {initInfo.model && <span className="text-line">│</span>}
-            {initInfo.model && <span className="truncate">{initInfo.model}</span>}
-            {permMode && <span className="text-line">│</span>}
-            {permMode && <span>{permMode}</span>}
           </div>
         </div>
       </div>
 
-      {cfg && <ControlsBar cfg={cfg} sock={() => sockRef.current} busy={busy} />}
+      {cfg && (
+        <StatusPill
+          cfg={cfg}
+          model={initInfo.model}
+          permissionMode={permMode}
+          effort={effort}
+          busy={busy}
+          onSetModel={(m) => {
+            setInitInfo((prev) => ({ ...prev, model: m }))
+            sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+          }}
+          onSetMode={(m) => {
+            setPermMode(m)
+            sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
+          }}
+          onSetEffort={(e) => {
+            setEffort(e)
+            sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
+          }}
+          onInterrupt={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
+        />
+      )}
 
       {/* 消息抄本 */}
       <div className="flex-1 overflow-y-auto">
