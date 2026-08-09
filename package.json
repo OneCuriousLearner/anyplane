@@ -11,6 +11,7 @@
     "dev:web": "bun run --cwd web dev",
     "build": "bun run --cwd web build",
     "start": "bun run --cwd server start",
+    "docs:claude": "bun scripts/fetch-claude-docs.ts",
     "test": "bun test server/"
   },
   "devDependencies": {

@@ -189,6 +189,7 @@ export class ClaudeSession {
       }
     })()
     this.proc = proc
+    console.log(`[session ${this.key}] spawned pid=${proc.pid} parent=${process.pid}`)
     this.exited = false
     this.exitEmitted = false
     this.sawStateEvents = false
@@ -250,18 +251,26 @@ export class ClaudeSession {
   dispose(): void {
     this.cancelRecycle()
     const pid = this.proc?.pid
+    console.log(`[session ${this.key}] dispose pid=${pid ?? 'none'} exited=${this.exited}`)
     try {
       this.proc?.kill()
-    } catch {}
+    } catch (e) {
+      console.warn(`[session ${this.key}] proc.kill failed pid=${pid}:`, e)
+    }
     // Windows：强制杀掉整棵进程树，避免 Ctrl+C 后 claude 子进程残留拖住端口
     if (process.platform === 'win32' && pid) {
       try {
-        spawnSync(['taskkill', '/PID', String(pid), '/T', '/F'], {
+        const killed = spawnSync(['taskkill', '/PID', String(pid), '/T', '/F'], {
           stdout: 'ignore',
-          stderr: 'ignore',
+          stderr: 'pipe',
           stdin: 'ignore',
         })
-      } catch {}
+        console.log(
+          `[session ${this.key}] taskkill pid=${pid} exitCode=${killed.exitCode} stderr=${killed.stderr.toString().trim() || '-'}`,
+        )
+      } catch (e) {
+        console.warn(`[session ${this.key}] taskkill failed pid=${pid}:`, e)
+      }
     }
     this.proc = undefined
     this.emitExit(-1)
@@ -427,6 +436,7 @@ export class ProcessManager {
   disposeAll(): void {
     const all = [...this.sessions.values()]
     this.sessions.clear()
+    console.log(`[processManager] disposeAll sessions=${all.length}`)
     for (const s of all) s.dispose()
   }
 }

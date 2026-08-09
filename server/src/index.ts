@@ -394,7 +394,46 @@ function json(data: unknown, init?: ResponseInit): Response {
   })
 }
 
+function logWindowsPortState(stage: string, port: number): void {
+  if (process.platform !== 'win32') return
+  try {
+    const result = Bun.spawnSync(['netstat.exe', '-ano', '-p', 'tcp'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      stdin: 'ignore',
+    })
+    const marker = `:${port}`
+    const rows = result.stdout
+      .toString()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.includes(marker))
+    console.log(
+      `[port-diagnostic] stage=${stage} appPid=${process.pid} port=${port} rows=${rows.length}`,
+    )
+    for (const row of rows) console.log(`[port-diagnostic] ${row}`)
+  } catch (e) {
+    console.warn(`[port-diagnostic] stage=${stage} failed:`, e)
+  }
+}
+
 const distDir = resolve(import.meta.dir, '../../web/dist')
+
+const [bunMajor = 0, bunMinor = 0, bunPatch = 0] = Bun.version.split(/[.-]/).map(Number)
+const hasWindowsSocketFix =
+  process.platform !== 'win32' ||
+  bunMajor > 1 ||
+  bunMinor > 3 ||
+  (bunMinor === 3 && bunPatch >= 15) ||
+  Bun.version.includes('canary')
+
+if (!hasWindowsSocketFix && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
+  console.error(
+    `[cc-remote] Bun ${Bun.version} on Windows has the inherited-listener bug oven-sh/bun#36936.`,
+  )
+  console.error('[cc-remote] Run `bun upgrade --canary` and restart the terminal. Server startup refused.')
+  process.exit(1)
+}
 
 async function handleApi(req: Request, url: URL): Promise<Response | undefined> {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
@@ -492,44 +531,75 @@ try {
   })
 } catch (e) {
   const msg = e instanceof Error ? e.message : String(e)
-  console.error(`[cc-remote] 无法监听 :${config.port}: ${msg}`)
+  console.error(
+    `[cc-remote] bind failed port=${config.port} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}: ${msg}`,
+  )
+  logWindowsPortState('bind-failed', config.port)
   if (process.platform === 'win32') {
-    console.error(`[cc-remote] 若 netstat 显示 LISTENING 但 PID 进程已不存在，属于 Windows 僵尸端口，只能重启电脑释放 :${config.port}`)
+    console.error(
+      '[cc-remote] 若 LISTENING PID 已不存在，通常是 Bun <=1.3.14 的 socket handle 继承问题；先升级 canary。已形成且找不到持有进程的绑定需重启 Windows 一次。',
+    )
   }
   process.exit(1)
 }
 
-console.log(`[cc-remote] listening on http://localhost:${server.port}`)
+console.log(
+  `[cc-remote] listening on http://localhost:${server.port} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}`,
+)
 console.log(`[cc-remote] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
 
 let shuttingDown = false
-function shutdown(reason: string): void {
+async function shutdown(reason: string): Promise<void> {
   if (shuttingDown) {
-    // 二次 Ctrl+C：不再等待，硬退
-    process.exit(1)
+    console.warn(`[cc-remote] shutdown already in progress; repeated=${reason}`)
+    return
   }
   shuttingDown = true
-  console.log(`[cc-remote] ${reason}, 正在关闭…`)
+  const started = performance.now()
+  console.log(`[cc-remote] shutdown begin reason=${reason} pid=${process.pid}`)
+
+  // 先发起 listener/连接关闭，再清 Claude 子进程。Bun <=1.3.14 在 Windows
+  // 会让这些子进程继承监听 handle；两边都完成前绝不能 process.exit()。
+  let stopPromise: Promise<void>
+  try {
+    console.log('[cc-remote] server.stop(true) begin')
+    stopPromise = Promise.resolve(server.stop(true))
+  } catch (e) {
+    console.error('[cc-remote] server.stop(true) invoke failed:', e)
+    stopPromise = Promise.resolve()
+  }
+
   try {
     processManager.disposeAll()
   } catch (e) {
     console.error('[cc-remote] disposeAll 失败:', e)
   }
-  // Windows：长时间 await stop 容易被控制台直接杀进程，留下僵尸 LISTENING。
-  // 限时强制 stop，超时也 exit，尽量先关掉 listen fd。
-  const forceExit = setTimeout(() => {
-    console.warn('[cc-remote] 关闭超时，强制退出')
-    process.exit(0)
-  }, 800)
-  forceExit.unref?.()
-  void Promise.resolve()
-    .then(() => server.stop(true))
-    .catch((e) => console.error('[cc-remote] server.stop 失败:', e))
-    .finally(() => {
-      clearTimeout(forceExit)
-      process.exit(0)
-    })
+
+  const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 5_000))
+  const stopped = stopPromise.then(
+    () => 'stopped' as const,
+    (e) => {
+      console.error('[cc-remote] server.stop(true) rejected:', e)
+      return 'failed' as const
+    },
+  )
+  const result = await Promise.race([stopped, timeout])
+  console.log(
+    `[cc-remote] shutdown server=${result} elapsedMs=${Math.round(performance.now() - started)}`,
+  )
+
+  if (result === 'timeout') {
+    // 到这里 listener 已调用 stop，强退只是最后兜底；正常路径不应触发。
+    console.error('[cc-remote] shutdown timed out after 5s; forcing exit')
+    process.exit(1)
+  }
+  logWindowsPortState('after-stop', config.port)
+  console.log(`[cc-remote] shutdown complete elapsedMs=${Math.round(performance.now() - started)}`)
+  process.exit(0)
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'))
-process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('exit', (code) => {
+  console.log(`[cc-remote] process exit pid=${process.pid} code=${code} shuttingDown=${shuttingDown}`)
+})

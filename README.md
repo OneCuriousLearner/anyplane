@@ -29,7 +29,9 @@ stdin/stdout 走双向 NDJSON（user 消息 + control_request/response），与�
 
 ## 运行
 
-要求：Bun >= 1.3.13，PATH 中有已登录的官方 `claude` CLI。支持 Windows 与 Linux。
+要求：Bun >= 1.3.13（Windows 请用 1.3.15+ 或 canary，见下方说明），PATH 中有已登录的官方 `claude` CLI。支持 Windows 与 Linux。
+
+**本项目仅使用 Bun，请勿使用 npm / npx / yarn / pnpm。** 依赖安装、脚本与运行时一律走 `bun`；用 npm 会产生错误的 lockfile、错误的进程树，并在 Windows 上更容易留下僵尸端口。
 
 ```bash
 bun install
@@ -40,8 +42,9 @@ bun run start      # 启动服务端（默认 :7480），托管 API + WebSocket 
 开发模式（前端热更新）：
 
 ```bash
-bun run dev:server   # 服务端 :7480
-bun run dev:web      # vite dev :5173，代理 /api 与 /ws 到 7480
+bun run dev          # 并行拉起 server + Vite（推荐）
+bun run dev:server   # 仅服务端 :7480
+bun run dev:web      # 仅 Vite :5173，代理 /api 与 /ws 到 7480
 ```
 
 ## 配置
@@ -64,7 +67,28 @@ bun run dev:web      # vite dev :5173，代理 /api 与 /ws 到 7480
 - `idleTimeoutMs`: 无权威状态事件时的回退回收延迟（默认 30 分钟）
 - `CC_REMOTE_PORT` 环境变量可覆盖端口（默认固定 7480）
 - spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号
-- Windows 上若 Ctrl+C 后 7480 变成僵尸监听（PID 已死仍 LISTENING），需重启电脑才能释放
+- Windows 请使用 Bun 1.3.15+。Bun 1.3.14 及更早版本存在监听 socket 被子进程继承的问题
+  ([oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936))；1.3.15 发布前可用
+  `bun upgrade --canary` 获取已合并的修复。已经产生的死 PID 监听通常需要重启一次 Windows 才能释放。
+- `bun run dev` 使用纯 Bun 启动器并等待 server 完成优雅关闭；不要用任务管理器直接结束 server，
+  否则可能绕过 `server.stop(true)` 与 Claude 子进程树清理。
+
+## Claude Code 官方文档（本地镜像）
+
+本地可拉取 [Claude Code Docs](https://code.claude.com/docs/en/overview) 的 Markdown 镜像到 `docs/claude-code/`（已加入 `.gitignore`，不进仓库）：
+
+```bash
+bun run docs:claude
+```
+
+会写入：
+
+- `docs/claude-code/llms.txt` — 官方文档索引
+- `docs/claude-code/llms-full.txt` — 全量合并文本
+- `docs/claude-code/en/**/*.md` — 按路径拆分的各页（当前约 185 篇）
+- `docs/claude-code/manifest.json` — 拉取元数据（时间、成功/失败计数）
+
+来源为官方 [`llms.txt`](https://code.claude.com/docs/llms.txt) / [`llms-full.txt`](https://code.claude.com/docs/llms-full.txt)；单页亦可直接访问 `https://code.claude.com/docs/en/<page>.md`。
 
 ## 部署到远程容器
 
