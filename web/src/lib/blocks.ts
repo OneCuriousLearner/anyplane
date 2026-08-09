@@ -102,6 +102,12 @@ export interface UserTextSegment {
   args?: string
 }
 
+function normalizeCommandName(raw: string): string {
+  const name = raw.trim()
+  if (!name) return ''
+  return name.startsWith('/') ? name : `/${name}`
+}
+
 /** 解析 user 文本里的斜杠命令回显 / 本地命令输出 / 中断标记 */
 export function parseUserText(raw: string): UserTextSegment[] {
   const segs: UserTextSegment[] = []
@@ -111,24 +117,47 @@ export function parseUserText(raw: string): UserTextSegment[] {
     segs.push({ kind: 'interrupted', text: '已中断' })
     rest = rest.replace('[Request interrupted by user]', '')
   }
+  // command-message 常与 command-name 成对出现（如 compact → /compact）；优先保留 command-name
   const tagRe =
-    /<(command-name|command-args|local-command-stdout|local-command-stderr)>([\s\S]*?)<\/\1>/g
+    /<(command-name|command-message|command-args|local-command-stdout|local-command-stderr)>([\s\S]*?)<\/\1>/g
   let last = 0
   let m: RegExpExecArray | null
   const pushText = (t: string) => {
-    const clean = t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+    const clean = t
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+      .replace(/<\/?(?:command-message|command-name|command-args)[^>]*>/g, '')
+      .trim()
     if (clean) segs.push({ kind: 'text', text: clean })
+  }
+  const lastCommand = () => {
+    for (let i = segs.length - 1; i >= 0; i--) if (segs[i]!.kind === 'command') return segs[i]!
+    return undefined
   }
   while ((m = tagRe.exec(rest))) {
     pushText(rest.slice(last, m.index))
     const [, tag, body] = m
-    if (tag === 'command-name') segs.push({ kind: 'command', text: body.trim() })
-    else if (tag === 'command-args') {
-      const lastCmd = [...segs].reverse().find((s) => s.kind === 'command')
-      if (lastCmd) lastCmd.args = body.trim()
-      else if (body.trim()) segs.push({ kind: 'text', text: body.trim() })
-    } else if (tag === 'local-command-stdout') segs.push({ kind: 'local-out', text: stripAnsi(body).trim() })
-    else segs.push({ kind: 'local-err', text: stripAnsi(body).trim() })
+    if (tag === 'command-name' || tag === 'command-message') {
+      const name = normalizeCommandName(body)
+      if (name) {
+        const prev = lastCommand()
+        if (prev) {
+          if (tag === 'command-name') prev.text = name
+        } else {
+          segs.push({ kind: 'command', text: name })
+        }
+      }
+    } else if (tag === 'command-args') {
+      const prev = lastCommand()
+      const args = body.trim()
+      if (prev) prev.args = args
+      else if (args) segs.push({ kind: 'text', text: args })
+    } else if (tag === 'local-command-stdout') {
+      const text = stripAnsi(body).trim()
+      if (text) segs.push({ kind: 'local-out', text })
+    } else {
+      const text = stripAnsi(body).trim()
+      if (text) segs.push({ kind: 'local-err', text })
+    }
     last = m.index + m[0].length
   }
   pushText(rest.slice(last))

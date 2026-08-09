@@ -29,7 +29,7 @@ function UserText(props: { text: string }) {
             return (
               <span
                 key={i}
-                className="inline-block rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[12px] text-accent-soft"
+                className="inline-block rounded border border-accent/50 bg-accent/20 px-1.5 py-0.5 font-mono text-[12px] text-accent-soft"
               >
                 {s.text}
                 {s.args ? ` ${s.args}` : ''}
@@ -40,7 +40,7 @@ function UserText(props: { text: string }) {
             return (
               <pre
                 key={i}
-                className={`mt-1 max-h-40 overflow-auto rounded border border-line/60 bg-bg px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap ${
+                className={`mt-1 max-h-40 overflow-auto rounded border border-accent/25 bg-black/20 px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap ${
                   s.kind === 'local-err' ? 'text-danger' : 'text-muted'
                 }`}
               >
@@ -113,12 +113,18 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   }
 
   const isUser = msg.role === 'user'
+  const assistantStartsWithCard = !isUser && msg.blocks[0]?.kind !== 'text'
   return (
-    <div className={`${compact ? 'my-1' : 'my-3'} flex gap-2.5`}>
+    <div className={`${compact ? 'my-1' : 'my-3'} flex items-start gap-2.5`}>
       <span
-        className={`flex w-5 shrink-0 items-center justify-center font-mono text-sm select-none ${
-          isUser ? 'text-accent-soft' : 'text-faint'
+        className={`flex w-5 shrink-0 justify-center font-mono text-sm leading-none select-none ${
+          isUser
+            ? 'pt-[12px] text-accent-soft'
+            : assistantStartsWithCard
+              ? 'pt-[13px] text-faint'
+              : 'pt-[4px] text-faint'
         }`}
+        aria-hidden="true"
       >
         {compact ? '' : isUser ? '›' : <ClaudeMark className="h-3.5 w-3.5 opacity-70" />}
       </span>

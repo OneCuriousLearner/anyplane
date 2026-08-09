@@ -25,6 +25,8 @@ html,
 body,
 #root {
   height: 100%;
+  margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -163,8 +165,52 @@ body {
   animation: cc-blink 1.1s steps(1) infinite;
 }
 
+/* Claude 星芒触手：向 viewBox 中心缩放 */
+.claude-star__ray {
+  transform-box: view-box;
+  transform-origin: 66px 65px;
+  transform: scale(1);
+  will-change: transform;
+}
+
+@keyframes claude-star-wave {
+  0%,
+  33.333%,
+  100% {
+    transform: scale(1);
+  }
+  16.667% {
+    transform: scale(0.5);
+  }
+}
+
+@keyframes claude-star-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.5);
+  }
+}
+
+/* 忙碌：每瓣持续 0.4s，每 0.1s 启动下一瓣，相邻瓣始终处于过渡阶段 */
+.claude-star--active .claude-star__ray {
+  animation: claude-star-wave 1.2s ease-in-out infinite;
+  animation-delay: calc(var(--ray-index) * 0.1s);
+}
+
+/* 空闲点击：12 瓣同步收缩再伸展，0.5s */
+.claude-star--pulse .claude-star__ray {
+  animation: claude-star-pulse 0.5s ease-in-out 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cc-cursor {
+    animation: none;
+  }
+  .claude-star--active .claude-star__ray,
+  .claude-star--pulse .claude-star__ray {
     animation: none;
   }
 }

@@ -7,6 +7,7 @@ import { RewindPicker } from '../components/RewindPicker'
 import { MessageView } from '../components/MessageView'
 import { Markdown } from '../components/Markdown'
 import { ClaudeMark } from '../components/ClaudeMark'
+import { ClaudeStar } from '../components/ClaudeStar'
 import { nextId, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 
 const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw']
@@ -480,9 +481,18 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     return () => sock.close()
   }, [session.key])
 
+  // 只滚消息列表容器。禁止 scrollIntoView：它会连带滚动 overflow 祖先，
+  // 把 absolute 顶/底栏一起顶出视口（表现为先对齐再跳到 top=-8px）。
+  const scrollToBottom = (smooth = false) => {
+    const el = scrollRef.current
+    if (!el) return
+    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    else el.scrollTop = el.scrollHeight
+  }
+
   // 贴底时才自动跟随滚动；用户上翻时保持位置（用 ↓ 按钮回到底部）
   useEffect(() => {
-    if (atBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (atBottomRef.current) scrollToBottom(true)
   }, [messages, approvals, draft])
 
   // 输入框自适应高度：随内容增长，超过 200px 后不再扩大、内部滚动。
@@ -556,7 +566,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
                 : '浏览中（发送消息时启动 CLI）'
 
   return (
-    <div className="relative h-full overflow-hidden bg-bg text-ink">
+    <div className="relative h-full overflow-clip bg-bg text-ink">
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto max-w-3xl px-3 pb-[100px] pt-[100px] md:px-6">
@@ -570,8 +580,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
 
           {/* 流式草稿 */}
           {draft && draft.blocks.length > 0 && (
-            <div className="my-3 flex gap-2.5">
-              <span className="flex w-5 shrink-0 items-center justify-center select-none">
+            <div className="my-3 flex items-start gap-2.5">
+              <span
+                className={`flex w-5 shrink-0 justify-center select-none ${
+                  draft.blocks[0]?.kind === 'text' ? 'pt-[4px]' : 'pt-[13px]'
+                }`}
+              >
                 <ClaudeMark className="h-3.5 w-3.5 opacity-70" />
               </span>
               <div className="min-w-0 flex-1">
@@ -623,6 +637,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
               onDecision={(decision) => sockRef.current?.send({ kind: 'approval', requestId: a.requestId, decision })}
             />
           ))}
+
+          {/* 底部 100px 空位上方：Claude 星芒触手（忙碌循环 / 空闲可点） */}
+          <div className="mt-4 ml-[30px] flex items-center gap-2.5">
+            <ClaudeStar active={busy || Boolean(draft) || Boolean(phase)} size={28} />
+          </div>
           <div ref={bottomRef} />
         </div>
       </div>
@@ -651,7 +670,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
             model={initInfo.model}
             permissionMode={permMode}
             effort={effort}
-            busy={busy}
             onSetModel={(m) => {
               setInitInfo((prev) => ({ ...prev, model: m }))
               sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
@@ -664,7 +682,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
               setEffort(e)
               sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
             }}
-            onInterrupt={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
           />
         )}
       </div>
@@ -689,51 +706,70 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
       {!atBottom && (
         <button
           className="absolute bottom-20 right-4 z-40 rounded-md border border-line bg-bg/55 px-2.5 py-1.5 font-mono text-sm text-ink shadow-lg shadow-black/40 backdrop-blur-md hover:bg-bg/70"
-          onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'auto' })}
+          onClick={() => scrollToBottom(false)}
           title="回到底部"
         >
           ↓
         </button>
       )}
 
-      {/* 输入区：悬浮毛玻璃；底部下沉 8px 出视口，杜绝底部细缝露出下方文字 */}
-      <div className={`absolute inset-x-0 -bottom-2 z-30 border-t border-line px-3 pb-5 pt-3 ${GLASS_BAR}`}>
-        {slashHints.length > 0 && (
-          <div className="mb-2 rounded border border-line bg-surface2/60 p-1">
-            {slashHints.map((c) => (
-              <button
-                key={c}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface2"
-                onClick={() => setInput(`/${c} `)}
-              >
-                <span className="font-mono text-[12px] text-accent-soft">/{c}</span>
-                {COMMAND_DESC[c] && <span className="text-xs text-faint">{COMMAND_DESC[c]}</span>}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="mx-auto flex max-w-3xl gap-2">
-          <textarea
-            ref={inputRef}
-            className="max-h-[200px] flex-1 resize-none overflow-hidden rounded border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-accent/60"
-            rows={1}
-            placeholder="发送消息…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                send()
-              }
-            }}
-          />
-          <button
-            className="rounded bg-accent px-4 text-sm font-medium text-bg hover:bg-accent-soft disabled:opacity-30"
-            onClick={send}
-            disabled={!input.trim()}
+      {/* 输入区：Claude Code 式双横线提示符；底部下沉 8px 出视口 */}
+      <div className={`absolute inset-x-0 -bottom-2 z-30 px-3 pb-5 pt-3 ${GLASS_BAR}`}>
+        <div className="mx-auto max-w-3xl">
+          {slashHints.length > 0 && (
+            <div className="mb-2 rounded border border-line bg-surface2/60 p-1">
+              {slashHints.map((c) => (
+                <button
+                  key={c}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface2"
+                  onClick={() => setInput(`/${c} `)}
+                >
+                  <span className="font-mono text-[12px] text-accent-soft">/{c}</span>
+                  {COMMAND_DESC[c] && <span className="text-xs text-faint">{COMMAND_DESC[c]}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          <div
+            className={`border-y px-1 py-2 transition-colors ${
+              busy ? 'border-busy/50' : 'border-line focus-within:border-accent/50'
+            }`}
           >
-            发送
-          </button>
+            <div className="flex items-start gap-2">
+              <span
+                className={`mt-[1px] shrink-0 select-none font-mono text-sm leading-none ${
+                  busy ? 'text-busy' : 'text-accent-soft'
+                }`}
+                aria-hidden="true"
+              >
+                ❯
+              </span>
+              <textarea
+                ref={inputRef}
+                className="max-h-[200px] min-h-[1.25rem] flex-1 resize-none overflow-hidden bg-transparent py-0 font-mono text-sm leading-snug text-ink outline-none placeholder:text-faint"
+                rows={1}
+                placeholder={busy ? '工作中…' : ''}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    send()
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-danger transition-opacity hover:text-danger/80 disabled:pointer-events-none disabled:opacity-25"
+                disabled={!busy}
+                onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
+                title="中断当前回合"
+                aria-label="中断当前回合"
+              >
+                ■
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -55,11 +55,9 @@ export function StatusPill(props: {
   model?: string
   permissionMode?: string
   effort?: Effort
-  busy: boolean
   onSetModel: (m: string) => void
   onSetMode: (m: string) => void
   onSetEffort: (e: Effort) => void
-  onInterrupt: () => void
 }) {
   const { cfg } = props
   const [open, setOpen] = useState(false)
@@ -194,30 +192,17 @@ export function StatusPill(props: {
 
   return (
     <div ref={rootRef} className="relative px-3 py-1.5">
-      <div className="flex items-center justify-between gap-3">
-        <button
-          ref={triggerRef}
-          onClick={() => setOpen(!open)}
-          className="inline-flex w-fit shrink-0 items-center gap-2 rounded-md border border-line bg-bg/60 px-2.5 py-1 text-left font-mono text-[11px] text-ink hover:border-accent/40 hover:bg-bg"
-        >
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode.dot}`} />
-          <span className="shrink-0">{mode.short}</span>
-          <span className="shrink-0 text-faint">[{props.model ?? '…'}]</span>
-          <span className={`shrink-0 ${effortMeta.color}`}>
-            {effortMeta.label}
-          </span>
-          <span className="shrink-0 text-faint">{open ? '▴' : '▾'}</span>
-        </button>
-
-        <button
-          className="shrink-0 rounded border border-danger/60 px-2.5 py-1 font-mono text-[11px] text-danger hover:bg-danger/10 disabled:opacity-30"
-          disabled={!props.busy}
-          onClick={props.onInterrupt}
-          title="中断当前回合"
-        >
-          ■
-        </button>
-      </div>
+      <button
+        ref={triggerRef}
+        onClick={() => setOpen(!open)}
+        className="inline-flex w-fit shrink-0 items-center gap-2 rounded-md border border-line bg-bg/60 px-2.5 py-1 text-left font-mono text-[11px] text-ink hover:border-accent/40 hover:bg-bg"
+      >
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode.dot}`} />
+        <span className="shrink-0">{mode.short}</span>
+        <span className="shrink-0 text-faint">[{props.model ?? '…'}]</span>
+        <span className={`shrink-0 ${effortMeta.color}`}>{effortMeta.label}</span>
+        <span className="shrink-0 text-faint">{open ? '▴' : '▾'}</span>
+      </button>
       {panel}
     </div>
   )
