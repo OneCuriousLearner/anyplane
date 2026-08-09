@@ -421,7 +421,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   if (url.pathname === '/api/config' && req.method === 'GET') {
     return json({
       permissionPolicy: config.permissionPolicy,
-      permissionModes: ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
+      permissionModes: ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'],
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       models: ['haiku', 'sonnet', 'opus', 'fable'],
     })

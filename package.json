@@ -6,7 +6,7 @@
     "web"
   ],
   "scripts": {
-    "dev": "bun run --cwd server dev & bun run --cwd web dev",
+    "dev": "bun scripts/dev.ts",
     "dev:server": "bun run --cwd server dev",
     "dev:web": "bun run --cwd web dev",
     "build": "bun run --cwd web build",

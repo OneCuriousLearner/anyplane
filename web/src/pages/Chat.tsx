@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchConfig, fetchHistory, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
-import { StatusPill, type Effort } from '../components/StatusPill'
+import { StatusPill, GLASS_BAR, type Effort } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RewindPicker } from '../components/RewindPicker'
 import { MessageView } from '../components/MessageView'
@@ -59,6 +59,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
   const [effort, setEffort] = useState<Effort>()
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [atBottom, setAtBottom] = useState(true)
+  const atBottomRef = useRef(true)
 
   // ref 镜像：事件处理器在 React 渲染外触发，直接基于 ref 计算，避免过期闭包/updater 双重调用
   const messagesRef = useRef<ChatMsg[]>([])
@@ -476,9 +480,29 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     return () => sock.close()
   }, [session.key])
 
+  // 贴底时才自动跟随滚动；用户上翻时保持位置（用 ↓ 按钮回到底部）
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (atBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, approvals, draft])
+
+  // 输入框自适应高度：随内容增长，超过 200px 后不再扩大、内部滚动。
+  // 注意 border-box：style.height 包含边框，需补回上下边框宽，否则单行时内容被裁出滚动条
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const h = el.scrollHeight + (el.offsetHeight - el.clientHeight)
+    el.style.height = `${Math.min(h, 200)}px`
+    el.style.overflowY = h > 200 ? 'auto' : 'hidden'
+  }, [input])
+
+  const onScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const at = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    atBottomRef.current = at
+    setAtBottom(at)
+  }
 
   // ---------- 发送 ----------
   const send = () => {
@@ -532,50 +556,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
                 : '浏览中（发送消息时启动 CLI）'
 
   return (
-    <div className="flex h-full flex-col bg-bg text-ink">
-      {/* 顶栏 */}
-      <div className="flex items-center gap-2 border-b border-line bg-surface px-3 py-2">
-        <button
-          className="rounded px-1.5 py-1 font-mono text-xs text-muted hover:bg-surface2 md:hidden"
-          onClick={props.onBack}
-        >
-          ← 列表
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{session.title ?? session.cwd ?? session.sessionId}</div>
-          <div className="flex items-center gap-2 font-mono text-[10px] tracking-wide text-faint">
-            <span className={connected ? 'text-ok' : 'text-danger'}>{connected ? '●' : '○'}</span>
-            <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
-          </div>
-        </div>
-      </div>
-
-      {cfg && (
-        <StatusPill
-          cfg={cfg}
-          model={initInfo.model}
-          permissionMode={permMode}
-          effort={effort}
-          busy={busy}
-          onSetModel={(m) => {
-            setInitInfo((prev) => ({ ...prev, model: m }))
-            sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
-          }}
-          onSetMode={(m) => {
-            setPermMode(m)
-            sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
-          }}
-          onSetEffort={(e) => {
-            setEffort(e)
-            sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
-          }}
-          onInterrupt={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
-        />
-      )}
-
-      {/* 消息抄本 */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-3 py-3 md:px-6">
+    <div className="relative h-full overflow-hidden bg-bg text-ink">
+      {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
+      <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-3 pb-[100px] pt-[100px] md:px-6">
           {messages.map((m, i) => (
             <MessageView
               key={m.id}
@@ -643,6 +627,48 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
         </div>
       </div>
 
+      {/* 顶栏 + 状态胶囊：同一块悬浮毛玻璃，避免两段玻璃割裂 */}
+      <div className={`absolute inset-x-0 top-0 z-30 border-b border-line ${GLASS_BAR}`}>
+        <div className="flex items-center gap-2 border-b border-line/60 px-3 py-2">
+          <button
+            className="rounded px-1.5 py-1 font-mono text-xs text-muted hover:bg-surface2 md:hidden"
+            onClick={props.onBack}
+          >
+            ← 列表
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{session.title ?? session.cwd ?? session.sessionId}</div>
+            <div className="flex items-center gap-2 font-mono text-[10px] tracking-wide text-faint">
+              <span className={connected ? 'text-ok' : 'text-danger'}>{connected ? '●' : '○'}</span>
+              <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
+            </div>
+          </div>
+        </div>
+
+        {cfg && (
+          <StatusPill
+            cfg={cfg}
+            model={initInfo.model}
+            permissionMode={permMode}
+            effort={effort}
+            busy={busy}
+            onSetModel={(m) => {
+              setInitInfo((prev) => ({ ...prev, model: m }))
+              sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+            }}
+            onSetMode={(m) => {
+              setPermMode(m)
+              sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
+            }}
+            onSetEffort={(e) => {
+              setEffort(e)
+              sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
+            }}
+            onInterrupt={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
+          />
+        )}
+      </div>
+
       {showRewind && (
         <RewindPicker
           targets={rewindTargets}
@@ -659,8 +685,19 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
         />
       )}
 
-      {/* 输入区 */}
-      <div className="border-t border-line bg-surface p-3">
+      {/* ↓ 必须与毛玻璃底栏同级：挂在带 backdrop-filter 的父级下时，子级只能模糊父级内部，看不到消息区 */}
+      {!atBottom && (
+        <button
+          className="absolute bottom-20 right-4 z-40 rounded-md border border-line bg-bg/55 px-2.5 py-1.5 font-mono text-sm text-ink shadow-lg shadow-black/40 backdrop-blur-md hover:bg-bg/70"
+          onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'auto' })}
+          title="回到底部"
+        >
+          ↓
+        </button>
+      )}
+
+      {/* 输入区：悬浮毛玻璃；底部下沉 8px 出视口，杜绝底部细缝露出下方文字 */}
+      <div className={`absolute inset-x-0 -bottom-2 z-30 border-t border-line px-3 pb-5 pt-3 ${GLASS_BAR}`}>
         {slashHints.length > 0 && (
           <div className="mb-2 rounded border border-line bg-surface2/60 p-1">
             {slashHints.map((c) => (
@@ -677,9 +714,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
         )}
         <div className="mx-auto flex max-w-3xl gap-2">
           <textarea
-            className="max-h-32 flex-1 resize-none rounded border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-accent/60"
+            ref={inputRef}
+            className="max-h-[200px] flex-1 resize-none overflow-hidden rounded border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-accent/60"
             rows={1}
-            placeholder="发送消息…（/ 开头出命令提示）"
+            placeholder="发送消息…"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
