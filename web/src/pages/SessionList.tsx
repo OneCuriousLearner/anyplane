@@ -79,7 +79,7 @@ export function SessionList(props: {
             + 新会话
           </button>
         </div>
-        <p className="mt-1 text-xs text-faint">远端 Claude Code 会话抄本</p>
+        <p className="mt-1 text-xs text-faint">Claude Code Claw</p>
       </div>
 
       {showNew && (

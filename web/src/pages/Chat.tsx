@@ -14,7 +14,7 @@ const COMMAND_DESC: Record<string, string> = {
   compact: '压缩上下文',
   context: '查看上下文占用',
   rewind: '回滚到之前的消息',
-  btw: '侧问（不污染主会话）',
+  btw: '侧问（临时分支会话）',
 }
 
 interface Approval {
@@ -85,6 +85,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     setMsgs(() => [])
     setDraftBoth(null)
     pendingResultsRef.current.clear()
+    // Chat 组件在 session 切换时会复用，清掉上一会话的运行时/待启动配置。
+    // 新会话的缓存选择会由随后到达的 status 恢复。
+    setInitInfo({})
+    setPermMode(undefined)
+    setEffort(undefined)
+    setApprovals([])
+    setPhase(undefined)
     if (!isExisting) return
     fetchHistory(session.slug, session.sessionId)
       .then((hist) => {
@@ -380,6 +387,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
         switch (ev.kind) {
           case 'status':
             setState(ev.state)
+            if (typeof ev.state.model === 'string') {
+              setInitInfo((prev) => ({ ...prev, model: ev.state.model }))
+            }
+            if (typeof ev.state.permissionMode === 'string') setPermMode(ev.state.permissionMode)
+            if (typeof ev.state.effort === 'string') setEffort(ev.state.effort as Effort)
             // 进程已退出时固化/清理未完成的流式草稿，避免半截内容悬挂
             if (ev.state.exited) {
               commitDraft()
@@ -499,6 +511,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
 
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
+  const hasPendingStartConfig =
+    !state.spawned && Boolean(state.model || state.permissionMode || state.effort)
   const statusLine = !connected
     ? '连接中…'
     : phase
@@ -513,7 +527,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
               : 'CLI 运行中'
             : state.exited
               ? '进程已退出'
-              : '浏览中（发送消息时启动 CLI）'
+              : hasPendingStartConfig
+                ? '配置已保存（发送消息时启动 CLI）'
+                : '浏览中（发送消息时启动 CLI）'
 
   return (
     <div className="flex h-full flex-col bg-bg text-ink">

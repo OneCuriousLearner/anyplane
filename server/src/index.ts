@@ -44,7 +44,10 @@ interface Hub {
   key: string
   clients: Set<import('bun').ServerWebSocket<WSData>>
   pendingApprovals: Map<string, PendingApproval>
-  spawnOpts?: SpawnOptions
+  /** 未 spawn 时缓存启动偏好；已 spawn 时记录当前选择，供 UI 重连恢复 */
+  spawnOpts?: Partial<SpawnOptions>
+  /** 除 effort 外、需要在进程启动后按顺序写入 stdin 的环境变量 */
+  pendingEnv?: Record<string, string>
 }
 
 const hubs = new Map<string, Hub>()
@@ -81,6 +84,9 @@ function statusOf(key: string): Record<string, unknown> {
     sessionState: s?.sessionState ?? 'idle',
     sessionId: s?.sessionId,
     clients: s?.connectedClients ?? hub?.clients.size ?? 0,
+    model: hub?.spawnOpts?.model,
+    permissionMode: hub?.spawnOpts?.permissionMode,
+    effort: hub?.spawnOpts?.effort,
   }
 }
 
@@ -125,6 +131,11 @@ function ensureSpawned(hub: Hub, opts?: Partial<SpawnOptions>): void {
     })
     // 懒 spawn：WS 可能在进程创建前已 open，对齐客户端引用计数
     s.syncClients(hub.clients.size)
+    // 自定义 env 必须排在首条 user 消息之前写入；stdin 保证顺序。
+    if (hub.pendingEnv && Object.keys(hub.pendingEnv).length > 0) {
+      s.write({ type: 'update_environment_variables', variables: hub.pendingEnv })
+      hub.pendingEnv = undefined
+    }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     console.error(`[session ${hub.key}] spawn 失败:`, message)
@@ -192,13 +203,22 @@ function handleClientMessage(hub: Hub, raw: string): void {
         }
         return
       }
-      // 切换 model/mode 等同于续聊意图：未启动则先 spawn
+      // model/mode 都有等价 CLI 启动参数。未 spawn 时只缓存最终选择，
+      // 等首条 user 消息触发 ensureSpawned；已 spawn 时才发送运行时控制。
+      if (subtype === 'set_model' && extra.model) {
+        hub.spawnOpts = { ...hub.spawnOpts, model: String(extra.model) }
+      }
+      if (subtype === 'set_permission_mode' && extra.mode) {
+        hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
+      }
       let s = session()
       if (!s || s.exited) {
-        const opts: Partial<SpawnOptions> = {}
-        if (subtype === 'set_model' && extra.model) opts.model = String(extra.model)
-        if (subtype === 'set_permission_mode' && extra.mode) opts.permissionMode = String(extra.mode)
-        ensureSpawned(hub, opts)
+        if (subtype === 'set_model' || subtype === 'set_permission_mode') {
+          pushStatus(hub)
+          return
+        }
+        // 其他控制可能没有 CLI 参数等价物，仍需进程承接。
+        ensureSpawned(hub)
         s = session()
       }
       if (!s || s.exited) return
@@ -212,16 +232,22 @@ function handleClientMessage(hub: Hub, raw: string): void {
       break
     }
     case 'update_env': {
-      // 切换 effort 等同于续聊意图：未启动则先 spawn
+      // effort 有 --effort 启动参数。未 spawn 时只缓存，首条消息时应用；
+      // 已 spawn 时通过 update_environment_variables 影响后续 turn。
       const variables = (data.variables as Record<string, string>) ?? {}
-      let s = session()
+      const effort = variables.CLAUDE_CODE_EFFORT_LEVEL
+      if (effort) hub.spawnOpts = { ...hub.spawnOpts, effort }
+      const otherVariables = Object.fromEntries(
+        Object.entries(variables).filter(([key]) => key !== 'CLAUDE_CODE_EFFORT_LEVEL'),
+      )
+      const s = session()
       if (!s || s.exited) {
-        const opts: Partial<SpawnOptions> = {}
-        if (variables.CLAUDE_CODE_EFFORT_LEVEL) opts.effort = variables.CLAUDE_CODE_EFFORT_LEVEL
-        ensureSpawned(hub, opts)
-        s = session()
+        if (Object.keys(otherVariables).length > 0) {
+          hub.pendingEnv = { ...hub.pendingEnv, ...otherVariables }
+        }
+        pushStatus(hub)
+        return
       }
-      if (!s || s.exited) return
       try {
         s.write({ type: 'update_environment_variables', variables })
         pushStatus(hub)

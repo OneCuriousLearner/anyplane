@@ -18,6 +18,9 @@ export interface SessionInfo {
     sessionState?: 'idle' | 'running' | 'requires_action'
     sessionId?: string
     clients: number
+    model?: string
+    permissionMode?: string
+    effort?: string
   }
 }
 

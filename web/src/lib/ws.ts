@@ -29,6 +29,10 @@ export interface SessionState {
   sessionState?: 'idle' | 'running' | 'requires_action'
   sessionId?: string
   clients?: number
+  /** 未启动时为待应用启动参数；已启动时为当前选择 */
+  model?: string
+  permissionMode?: string
+  effort?: string
   exited?: boolean
   exitCode?: number
 }
