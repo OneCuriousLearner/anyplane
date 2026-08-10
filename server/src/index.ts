@@ -84,6 +84,8 @@ function statusOf(key: string): Record<string, unknown> {
     sessionState: s?.sessionState ?? 'idle',
     sessionId: s?.sessionId,
     clients: s?.connectedClients ?? hub?.clients.size ?? 0,
+    activeTaskCount: s?.activeTaskCount ?? 0,
+    activeTasks: s?.backgroundTasks ?? [],
     model: hub?.spawnOpts?.model,
     permissionMode: hub?.spawnOpts?.permissionMode,
     effort: hub?.spawnOpts?.effort,

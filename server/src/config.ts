@@ -17,7 +17,7 @@ export interface ServerConfig {
    */
   idleTimeoutMs: number
   /**
-   * 已启用权威 session_state 时：客户端全断且 state=idle 后多久回收（默认 15 秒）。
+   * 已启用权威 session_state 时：客户端全断、主会话 idle 且无后台任务后多久回收（默认 5 分钟）。
    */
   detachRecycleMs: number
   /** claude 配置目录，默认 ~/.claude */
@@ -28,13 +28,16 @@ const DEFAULTS: ServerConfig = {
   port: 7480,
   permissionPolicy: 'ask',
   idleTimeoutMs: 30 * 60 * 1000,
-  detachRecycleMs: 15 * 1000,
+  detachRecycleMs: 5 * 60 * 1000,
   claudeConfigDir: join(homedir(), '.claude'),
 }
 
 function loadFileConfig(): Partial<ServerConfig> {
+  // server 从 workspace 的 server/ 目录启动时，仍应支持 README 中约定的项目根配置文件。
+  const projectRootConfig = join(import.meta.dir, '..', '..', 'cc-remote.config.json')
   const candidates = [
     join(process.cwd(), 'cc-remote.config.json'),
+    projectRootConfig,
     join(homedir(), '.config', 'cc-remote', 'config.json'),
   ]
   for (const p of candidates) {

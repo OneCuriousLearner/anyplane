@@ -40,7 +40,7 @@ bun run server/scripts/e2e-rewind.ts     # rewind_files 与对话回滚
 - **懒 spawn**：`attach` 只握手不启动 CLI；首条 user 消息 / 无启动参数等价物的控制请求才触发 `ensureSpawned`。未 spawn 时 model/mode/effort 选择缓存在 `hub.spawnOpts`，自定义 env 缓存在 `hub.pendingEnv`（必须排在首条 user 消息之前写入 stdin）。
 - **`processManager.ts`** — `ClaudeSession` 封装一个 CLI 子进程：spawn、NDJSON 行泵（pumpStdout）、控制请求、空闲回收。
   - **busy 语义（重要）**：优先信任 `system/session_state_changed`（spawn 时设 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`）；未收到该事件时回退到 sendUserText→result 启发式。审批等待（can_use_tool）也算 busy。**running / requires_action 时绝不回收进程。**
-  - **回收**：无 WS 客户端且 idle 后 `detachRecycleMs`（有权威事件，默认 15s）或 `idleTimeoutMs`（回退，默认 30min）回收子进程。
+  - **回收**：无 WS 客户端、主会话 idle 且无 `task_started` 记录的后台任务后，才按 `detachRecycleMs`（有权威事件，默认 5min）或 `idleTimeoutMs`（回退，默认 30min）回收子进程。
   - **Windows 进程树清理**：`dispose()` 里除 `proc.kill()` 外还 `taskkill /T /F`，防止 claude 子进程残留拖住端口。
 - **`discovery.ts`** — 会话发现：扫描 `~/.claude/projects/<slug>/*.jsonl`，合并 `~/.claude/sessions/<pid>.json` 的活跃状态（busy/idle/waiting/offline）。slug = `sanitizePath(cwd)`（非字母数字 → `-`）。
 - **`protocol.ts`** — stream-json NDJSON 类型，**宽松解析原则：未知字段/未知 type 一律透传**，保证官方 CLI 升级后不崩。改协议相关代码时遵守这一原则。

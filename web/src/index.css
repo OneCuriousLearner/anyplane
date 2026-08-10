@@ -173,36 +173,48 @@ body {
   will-change: transform;
 }
 
+/* 单瓣节奏（忙碌与点击共用）：前 1/3 快速收缩到峰值，后 2/3 缓慢归位。
+   收缩段用 easeOut 抢出速度，归位段用 easeInOutSine 让回弹平滑不抢眼。
+   两个 keyframes 的曲线必须保持一致，只有关键帧位置随各自周期换算。 */
 @keyframes claude-star-wave {
-  0%,
-  33.333%,
-  100% {
+  0% {
     transform: scale(1);
+    animation-timing-function: cubic-bezier(0.2, 0.9, 0.3, 1);
   }
   16.667% {
     transform: scale(0.5);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  50%,
+  100% {
+    transform: scale(1);
   }
 }
 
 @keyframes claude-star-pulse {
-  0%,
+  0% {
+    transform: scale(1);
+    animation-timing-function: cubic-bezier(0.2, 0.9, 0.3, 1);
+  }
+  33.333% {
+    transform: scale(0.5);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
   100% {
     transform: scale(1);
   }
-  50% {
-    transform: scale(0.5);
-  }
 }
 
-/* 忙碌：每瓣持续 0.4s，每 0.1s 启动下一瓣，相邻瓣始终处于过渡阶段 */
+/* 忙碌：每瓣持续 0.6s（收缩 0.2s + 归位 0.4s），每 0.1s 启动下一瓣；
+   1.2s 周期 = 12 瓣 × 0.1s，后半程停在 scale(1) 等待下一轮 */
 .claude-star--active .claude-star__ray {
-  animation: claude-star-wave 1.2s ease-in-out infinite;
+  animation: claude-star-wave 1.2s infinite;
   animation-delay: calc(var(--ray-index) * 0.1s);
 }
 
-/* 空闲点击：12 瓣同步收缩再伸展，0.5s */
+/* 空闲点击：12 瓣同步走一遍同样的 0.6s 节奏 */
 .claude-star--pulse .claude-star__ray {
-  animation: claude-star-pulse 0.5s ease-in-out 1;
+  animation: claude-star-pulse 0.6s 1;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -545,6 +545,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
 
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
+  const activeTaskCount = state.activeTaskCount ?? 0
   const hasPendingStartConfig =
     !state.spawned && Boolean(state.model || state.permissionMode || state.effort)
   const statusLine = !connected
@@ -553,6 +554,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
       ? `${PHASE_LABEL[phase] ?? phase}…`
       : waiting
         ? '等待审批'
+        : activeTaskCount > 0
+          ? `${activeTaskCount} 个后台任务运行中`
         : busy
           ? '工作中'
           : state.spawned

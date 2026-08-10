@@ -29,6 +29,18 @@ export interface SessionState {
   sessionState?: 'idle' | 'running' | 'requires_action'
   sessionId?: string
   clients?: number
+  /** Claude Code system/task_started 与 task_notification 之间的后台任务数。 */
+  activeTaskCount?: number
+  /** 运行中任务的最小信息；不含 prompt、输出等敏感/冗长内容。 */
+  activeTasks?: Array<{
+    id: string
+    description: string
+    taskType?: string
+    toolUseId?: string
+    startedAt: number
+    lastToolName?: string
+    summary?: string
+  }>
   /** 未启动时为待应用启动参数；已启动时为当前选择 */
   model?: string
   permissionMode?: string

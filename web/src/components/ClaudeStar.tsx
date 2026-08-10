@@ -48,7 +48,7 @@ export function ClaudeStar(props: {
 
   useEffect(() => {
     if (!pulse) return
-    const t = window.setTimeout(() => setPulse(false), 500)
+    const t = window.setTimeout(() => setPulse(false), 600)
     return () => window.clearTimeout(t)
   }, [pulse])
 

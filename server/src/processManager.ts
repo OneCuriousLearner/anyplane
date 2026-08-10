@@ -1,9 +1,10 @@
 // Claude CLI 子进程管理：spawn / NDJSON 读写 / 控制请求 / 空闲回收
 // 跨平台：Windows 上 claude 可能是 .cmd/.bat（需 cmd.exe 包装）或 .exe
 //
-// busy 语义：优先信任 Claude Code 的 system/session_state_changed
-// （需 CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1）；未发出该事件时回退到
-// sendUserText→result 启发式。requires_action / busy 时绝不回收进程。
+// busy 语义：优先信任 Claude Code 的 system/session_state_changed，另以
+// task_started/task_notification 维护后台任务表。后者覆盖 background Agent、
+// workflow 与后台 shell，防止主会话 idle 时误回收仍在运行的子任务。
+// 未发出 state 事件时回退到 sendUserText→result 启发式。
 
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -32,6 +33,17 @@ export interface SpawnOptions {
 
 /** Claude Code session_state_changed 三态 */
 export type SessionRunState = 'idle' | 'running' | 'requires_action'
+
+/** Claude Code SDK system/task_started 暴露的后台任务最小状态。 */
+export interface BackgroundTask {
+  id: string
+  description: string
+  taskType?: string
+  toolUseId?: string
+  startedAt: number
+  lastToolName?: string
+  summary?: string
+}
 
 /** 解析 claude 可执行文件。返回 [cmd, prefixArgs] —— .cmd/.bat 需要 cmd.exe 包装 */
 export function resolveClaudeCommand(): { cmd: string; prefix: string[] } {
@@ -96,6 +108,8 @@ export class ClaudeSession {
   private runState: SessionRunState = 'idle'
   /** 无 state 事件时的回退：sendUserText 成功 → true，result → false */
   private fallbackBusy = false
+  /** task_started → task_notification 的任务表，独立于主会话运行状态。 */
+  private activeTasks = new Map<string, BackgroundTask>()
   private proc: Subprocess | undefined
   private cb: SessionCallbacks
   private clientCount = 0
@@ -111,6 +125,7 @@ export class ClaudeSession {
   /** 对外：是否在工作（含等待审批） */
   get busy(): boolean {
     if (this.exited) return false
+    if (this.activeTasks.size > 0) return true
     if (this.sawStateEvents) {
       return this.runState === 'running' || this.runState === 'requires_action'
     }
@@ -129,6 +144,15 @@ export class ClaudeSession {
 
   get connectedClients(): number {
     return this.clientCount
+  }
+
+  get activeTaskCount(): number {
+    return this.activeTasks.size
+  }
+
+  /** 返回副本，避免调用方改写回收判定所依赖的任务表。 */
+  get backgroundTasks(): BackgroundTask[] {
+    return [...this.activeTasks.values()].map((task) => ({ ...task }))
   }
 
   /** 懒 spawn 后把已连接的 WS 客户端数对齐 */
@@ -195,6 +219,7 @@ export class ClaudeSession {
     this.sawStateEvents = false
     this.runState = 'idle'
     this.fallbackBusy = false
+    this.activeTasks.clear()
     void this.pumpStdout()
     void this.pumpStderr()
     void proc.exited.then((code) => {
@@ -282,6 +307,7 @@ export class ClaudeSession {
     this.exited = true
     this.fallbackBusy = false
     this.runState = 'idle'
+    this.activeTasks.clear()
     this.cancelRecycle()
     this.cb.onExit(code)
   }
@@ -293,7 +319,7 @@ export class ClaudeSession {
     }
   }
 
-  /** 无客户端且空闲时才调度回收；busy/requires_action 永不回收 */
+  /** 无客户端、主会话空闲且无后台任务时才调度回收。 */
   private scheduleRecycleIfSafe(): void {
     this.cancelRecycle()
     if (this.exited || this.clientCount > 0 || this.busy) return
@@ -358,6 +384,40 @@ export class ClaudeSession {
         this.runState = st
         if (st === 'idle') this.fallbackBusy = false
         console.log(`[session ${this.key}] session_state=${st}`)
+        this.cb.onStatusChange?.()
+        this.scheduleRecycleIfSafe()
+      }
+    }
+
+    // Claude Code 的后台任务生命周期。不能只依赖 session_state_changed：
+    // background Agent 可能让主会话先结束当前模型回合，而任务仍在异步执行。
+    // task_notification 是 task_started 的唯一终态 bookend。
+    if (msg.type === 'system' && msg.subtype === 'task_started' && typeof msg.task_id === 'string') {
+      this.activeTasks.set(msg.task_id, {
+        id: msg.task_id,
+        description: typeof msg.description === 'string' ? msg.description : '',
+        taskType: typeof msg.task_type === 'string' ? msg.task_type : undefined,
+        toolUseId: typeof msg.tool_use_id === 'string' ? msg.tool_use_id : undefined,
+        startedAt: Date.now(),
+      })
+      console.log(`[session ${this.key}] task_started id=${msg.task_id} type=${msg.task_type ?? '-'} active=${this.activeTasks.size}`)
+      this.cb.onStatusChange?.()
+      this.scheduleRecycleIfSafe()
+    }
+
+    if (msg.type === 'system' && msg.subtype === 'task_progress' && typeof msg.task_id === 'string') {
+      const task = this.activeTasks.get(msg.task_id)
+      if (task) {
+        if (typeof msg.last_tool_name === 'string') task.lastToolName = msg.last_tool_name
+        if (typeof msg.summary === 'string') task.summary = msg.summary
+      }
+      this.cb.onStatusChange?.()
+    }
+
+    if (msg.type === 'system' && msg.subtype === 'task_notification' && typeof msg.task_id === 'string') {
+      const removed = this.activeTasks.delete(msg.task_id)
+      if (removed) {
+        console.log(`[session ${this.key}] task_finished id=${msg.task_id} status=${msg.status ?? '-'} active=${this.activeTasks.size}`)
         this.cb.onStatusChange?.()
         this.scheduleRecycleIfSafe()
       }
