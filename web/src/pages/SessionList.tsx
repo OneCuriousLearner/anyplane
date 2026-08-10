@@ -121,9 +121,10 @@ export function SessionList(props: {
               {cwd}
             </div>
             {list.map((s) => {
-              const st = STATUS_META[
-                s.managed.waiting ? 'waiting' : s.managed.busy ? 'busy' : s.managed.spawned ? 'idle' : s.status
-              ]
+              const st =
+                STATUS_META[
+                  s.managed.waiting ? 'waiting' : s.managed.busy ? 'busy' : s.managed.spawned ? 'idle' : s.status
+                ] ?? STATUS_META.offline
               const active = props.selectedKey === s.key
               return (
                 <button

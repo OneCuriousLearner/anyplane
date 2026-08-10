@@ -12,6 +12,17 @@ export function sanitizePath(p: string): string {
 
 export type SessionStatus = 'busy' | 'idle' | 'waiting' | 'offline'
 
+const KNOWN_STATUS: readonly SessionStatus[] = ['busy', 'idle', 'waiting', 'offline']
+
+/**
+ * 归一化 pid 文件里的 status。官方 CLI 会写入本项目未建模的状态（例如 `shell`），
+ * 直接 `as SessionStatus` 断言会把未知值透传给前端并击穿其状态查找表。
+ * 遵循宽松解析原则：未知状态一律降级为 idle，而不是让下游崩溃。
+ */
+function normalizeStatus(raw: string | undefined): SessionStatus {
+  return raw && (KNOWN_STATUS as readonly string[]).includes(raw) ? (raw as SessionStatus) : 'idle'
+}
+
 export interface SessionInfo {
   sessionId: string
   /** 项目原始路径（从 jsonl 首行 cwd 字段还原；读不到则为 undefined） */
@@ -164,7 +175,7 @@ export function listSessions(): SessionInfo[] {
           lastPrompt: meta.lastPrompt,
           mtime: fst.mtimeMs,
           sizeBytes: fst.size,
-          status: pid ? ((pid.status as SessionStatus) ?? 'idle') : 'offline',
+          status: pid ? normalizeStatus(pid.status) : 'offline',
           live: pid ? { pid: pid.pid, startedAt: pid.startedAt, kind: pid.kind } : undefined,
         })
       } catch {}
@@ -180,7 +191,7 @@ export function listSessions(): SessionInfo[] {
         title: pid.name,
         mtime: pid.updatedAt ? Date.parse(pid.updatedAt) : Date.now(),
         sizeBytes: 0,
-        status: (pid.status as SessionStatus) ?? 'idle',
+        status: normalizeStatus(pid.status),
         live: { pid: pid.pid, startedAt: pid.startedAt, kind: pid.kind },
       })
     }
