@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { config } from './config'
 import { listSessions, readHistory, sanitizePath, type SessionInfo } from './discovery'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './processManager'
-import type { CliMessage } from './protocol'
+import { isInternalUserMessage, type CliMessage } from './protocol'
 
 // ---------- sessionKey ----------
 // 已存在会话：`s|<slug>|<sessionId>`；新会话：`n|<encodeURIComponent(cwd)>`
@@ -113,6 +113,10 @@ function ensureSpawned(hub: Hub, opts?: Partial<SpawnOptions>): void {
   try {
     const s = processManager.ensure(hub.key, spawnOpts, {
       onMessage: (msg: CliMessage) => {
+        // 后台 Agent 完成通知会作为伪装成 user 的内部 XML 记录出现。
+        // 生命周期本身已由 ProcessManager 消费为 system/task_notification；
+        // 不再把原始内部载荷广播进主聊天或 rewind 历史。
+        if (isInternalUserMessage(msg)) return
         broadcast(hub, { kind: 'cli', msg })
       },
       onApprovalRequest: (req) => {

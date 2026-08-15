@@ -117,3 +117,28 @@ export function isResultMessage(m: CliMessage): boolean {
 export function isSessionStateChanged(m: CliMessage): boolean {
   return m.type === 'system' && m.subtype === 'session_state_changed'
 }
+
+/**
+ * Claude Code 有少数内部事件以 type:user 写入 transcript/stream：最典型是
+ * 后台 Agent 的 <task-notification>。它们不是浏览器用户输入，不应进入主抄本
+ * 或 rewind 目标。保留真正的 tool_result，由前端与对应 tool_use 配对显示。
+ */
+export function isInternalUserMessage(m: CliMessage): boolean {
+  if (m.type !== 'user') return false
+  if (m.isMeta === true || m.isSynthetic === true) return true
+
+  const origin = m.origin
+  if (origin && typeof origin === 'object' && (origin as { kind?: unknown }).kind === 'task-notification') return true
+
+  const content = (m.message as { content?: unknown } | undefined)?.content
+  const text = typeof content === 'string' ? content : undefined
+  if (!text) return false
+
+  // 老版本/某些输出路径可能不保留 isMeta 或 origin；只在整条消息全是
+  // 内部 XML 包装时兜底过滤，避免误吞用户提到这些标签的正常提问。
+  const withoutInternalEnvelopes = text
+    .replace(/<task-notification\b[^>]*>[\s\S]*?<\/task-notification>/gi, '')
+    .replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, '')
+    .trim()
+  return withoutInternalEnvelopes.length === 0 && /<(?:task-notification|system-reminder)\b/i.test(text)
+}

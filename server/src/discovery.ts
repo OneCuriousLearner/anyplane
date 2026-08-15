@@ -4,6 +4,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { config } from './config'
+import { isInternalUserMessage, type CliMessage } from './protocol'
 
 /** 与快照 sanitizePath 一致：非字母数字 → '-'（截断/hash 情形极罕见，此处不实现） */
 export function sanitizePath(p: string): string {
@@ -273,6 +274,7 @@ export function readHistory(slug: string, sessionId: string, limit = 300): Histo
       continue
     }
     if (type !== 'user' && type !== 'assistant') continue
+    if (isInternalUserMessage(obj as CliMessage)) continue
     // 子代理内部消息不进主对话抄本
     if (obj.isSidechain) continue
     const message = obj.message as { content?: unknown } | undefined
