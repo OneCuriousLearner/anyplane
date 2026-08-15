@@ -183,7 +183,6 @@ export function rewindPreview(raw: string, maxSummaryLength = 160): RewindPrevie
     .filter((segment) => segment.kind !== 'local-out' && segment.kind !== 'local-err')
     .map((segment) => {
       if (segment.kind === 'command') return `${segment.text}${segment.args ? ` ${segment.args}` : ''}`
-      if (segment.kind === 'interrupted') return segment.text
       return segment.text
     })
     .map((text) => text.replace(/\s+/g, ' ').trim())

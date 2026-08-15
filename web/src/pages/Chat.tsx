@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchConfig, fetchHistory, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR, type Effort } from '../components/StatusPill'
@@ -465,6 +465,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
             )
             break
           case 'rewound':
+            // 回滚会销毁并重生 CLI 进程（dispose 先摘 map 再 kill，onExit 不会触发），
+            // 进行中的流式草稿/待配对工具结果/相位指示全部失效，必须一并清理，
+            // 否则陈旧草稿会挂在回滚标签之下。
+            setDraftBoth(null)
+            pendingResultsRef.current.clear()
+            setPhase(undefined)
             setMsgs((prev) => {
               const idx = prev.findIndex((m) => m.id === ev.userMessageId)
               const base = idx >= 0 ? prev.slice(0, idx + 1) : prev
@@ -538,15 +544,19 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     setInput('')
   }
 
-  const rewindTargets = messages
-    .filter((m) => m.role === 'user' && m.id.includes('-') && m.rewindable !== false)
-    .map((m) => {
-      const rawText = m.blocks
-        .filter((block): block is Extract<Block, { kind: 'text' }> => block.kind === 'text')
-        .map((block) => block.text)
-        .join('\n\n')
-      return { uuid: m.id, timestamp: m.timestamp, ...rewindPreview(rawText) }
-    })
+  // rewindPreview 会对每条用户消息跑正则解析，只有选择器打开时才计算
+  const rewindTargets = useMemo(() => {
+    if (!showRewind) return []
+    return messages
+      .filter((m) => m.role === 'user' && m.id.includes('-') && m.rewindable !== false)
+      .map((m) => {
+        const rawText = m.blocks
+          .filter((block): block is Extract<Block, { kind: 'text' }> => block.kind === 'text')
+          .map((block) => block.text)
+          .join('\n\n')
+        return { uuid: m.id, timestamp: m.timestamp, ...rewindPreview(rawText) }
+      })
+  }, [showRewind, messages])
 
   const cmdList = initInfo.slashCommands?.length ? initInfo.slashCommands : FALLBACK_COMMANDS
   const slashHints =

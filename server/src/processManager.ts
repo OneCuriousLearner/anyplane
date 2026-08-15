@@ -129,10 +129,13 @@ export class ClaudeSession {
     this.cb = cb
   }
 
-  /** 对外：是否在工作（含等待审批） */
+  /** 对外：是否在工作（含等待审批、等待控制请求应答） */
   get busy(): boolean {
     if (this.exited) return false
     if (this.activeTasks.size > 0) return true
+    // 等待中的控制请求（如 rewind_files）期间 CLI 不会发 session_state_changed，
+    // 但进程显然不算空闲——与审批等待同待遇，防止误回收
+    if (this.pendingControlRequests.size > 0) return true
     if (this.sawStateEvents) {
       return this.runState === 'running' || this.runState === 'requires_action'
     }
@@ -264,22 +267,26 @@ export class ClaudeSession {
   /**
    * 发送控制请求并等待同 request_id 的 CLI 应答。
    * 普通控制仍使用 sendControl 保持原有的纯透传语义；只有需要串行步骤时使用。
+   * rewind_files 没有 CLI 侧超时，大项目恢复可达分钟级——调用方应按需调大 timeoutMs。
    */
   sendControlAndWait(subtype: string, extra: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<unknown> {
-    const req = controlRequest(subtype as never, extra)
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingControlRequests.delete(req.request_id)
-        reject(new Error(`控制请求 ${subtype} 超时`))
-      }, timeoutMs)
-      this.pendingControlRequests.set(req.request_id, { resolve, reject, timeout })
+      let requestId: string
       try {
-        this.write(req)
+        requestId = this.sendControl(subtype, extra)
       } catch (error) {
-        clearTimeout(timeout)
-        this.pendingControlRequests.delete(req.request_id)
         reject(error instanceof Error ? error : new Error(String(error)))
+        return
       }
+      const timeout = setTimeout(() => {
+        this.pendingControlRequests.delete(requestId)
+        reject(new Error(`控制请求 ${subtype} 超时`))
+        this.scheduleRecycleIfSafe()
+      }, timeoutMs)
+      // write 已同步完成，CLI 的应答最早在后续事件循环 tick 才到达，此时注册不会丢响应
+      this.pendingControlRequests.set(requestId, { resolve, reject, timeout })
+      // 等待期间按 busy 处理（见 busy getter），这里只需取消已排程的回收
+      this.cancelRecycle()
     })
   }
 
@@ -473,12 +480,17 @@ export class ClaudeSession {
       }
       const requestId = typeof response.request_id === 'string' ? response.request_id : undefined
       const pending = requestId ? this.pendingControlRequests.get(requestId) : undefined
-      if (pending) {
-        this.pendingControlRequests.delete(requestId!)
+      if (pending && requestId) {
+        this.pendingControlRequests.delete(requestId)
         clearTimeout(pending.timeout)
         if (response.subtype === 'success') pending.resolve(response.response)
         else pending.reject(new Error(typeof response.error === 'string' ? response.error : '控制请求失败'))
+        this.scheduleRecycleIfSafe()
+        // 已被 sendControlAndWait 消费的应答不再透传（与 can_use_tool 同模式）：
+        // 消费方（如 rewind_both）会自行广播结果，透传会造成同一结果/错误双重展示
+        return
       }
+      // 无 pending 匹配的 control_response（其他客户端发起、或迟到应答）保持透传
     }
 
     if (isCliControlRequest(msg)) {

@@ -109,12 +109,22 @@ function rewindConversation(hub: Hub, userMessageId: string, scope: 'conversatio
   // 先从 map 摘掉再 kill，避免旧 onExit 污染新会话。
   processManager.dispose(hub.key)
   hub.spawnOpts = { ...hub.spawnOpts, cwd: parsed.cwd, resumeSessionId: sid, resumeSessionAt: userMessageId }
-  ensureSpawned(hub)
+  ensureSpawned(hub, undefined, parsed)
+  const respawned = processManager.get(hub.key)
+  if (!respawned || respawned.exited) {
+    // ensureSpawned 已广播具体的 spawn 错误；不能向客户端虚报回滚成功。
+    return
+  }
   broadcast(hub, { kind: 'rewound', userMessageId, scope })
 }
 
-function ensureSpawned(hub: Hub, opts?: Partial<SpawnOptions>): void {
-  const parsed = parseKey(hub.key)
+function ensureSpawned(
+  hub: Hub,
+  opts?: Partial<SpawnOptions>,
+  parsedHint?: { cwd: string; resumeSessionId?: string; slug?: string },
+): void {
+  // parseKey 会反查 listSessions()（一次文件系统扫描）；调用方已解析过时直接复用
+  const parsed = parsedHint ?? parseKey(hub.key)
   if (!parsed) {
     broadcast(hub, { kind: 'error', message: '无法解析会话（项目目录不存在？）' })
     return
@@ -163,9 +173,11 @@ function ensureSpawned(hub: Hub, opts?: Partial<SpawnOptions>): void {
     const message = e instanceof Error ? e.message : String(e)
     console.error(`[session ${hub.key}] spawn 失败:`, message)
     broadcast(hub, { kind: 'error', message })
-    pushStatus(hub)
-    return
   }
+  // resumeSessionAt 是一次性 spawn 参数（命令行 args 已在 spawn() 内同步生成）。
+  // 无论本次成败都不能留在 hub.spawnOpts 里，否则之后空闲回收后的普通 respawn
+  // 会带着它再次截断同一条消息，静默丢弃回滚之后的新对话。
+  if (hub.spawnOpts) delete hub.spawnOpts.resumeSessionAt
   pushStatus(hub)
 }
 
@@ -217,6 +229,11 @@ function handleClientMessage(hub: Hub, raw: string): void {
     case 'control': {
       const subtype = String(data.subtype)
       const extra = (data.extra as Record<string, unknown>) ?? {}
+      // 组合回滚等待期间，通用控制路径不得再发 rewind_files 与之竞争
+      if (hub.rewindPending && subtype === 'rewind_files') {
+        broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
+        return
+      }
       // 中断：未启动则无需操作
       if (subtype === 'interrupt') {
         const s = session()
@@ -310,9 +327,10 @@ function handleClientMessage(hub: Hub, raw: string): void {
 
       // 官方 TUI 的“恢复代码和对话”也是两个动作。这里必须先收到文件
       // checkpoint 成功响应，才允许销毁旧进程并以 resume-session-at 截断对话。
+      // rewind_files 没有 CLI 侧超时，大项目恢复可达分钟级，给足 120s。
       hub.rewindPending = true
       pushStatus(hub, { rewindPending: true })
-      void s.sendControlAndWait('rewind_files', { user_message_id: at })
+      void s.sendControlAndWait('rewind_files', { user_message_id: at }, 120_000)
         .then(() => {
           if (processManager.get(hub.key) !== s || s.exited) {
             broadcast(hub, { kind: 'error', message: '恢复文件后会话已变化，未回滚对话' })

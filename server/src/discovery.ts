@@ -238,12 +238,48 @@ function toolResultText(rc: unknown): string {
   return ''
 }
 
+/**
+ * 对齐官方 TUI 的 selectableUserMessagesFilter（MessageSelector.tsx）：
+ * 只有真实用户文本消息才会建文件 checkpoint、可作为 rewind 目标。
+ * tool_result、isMeta/isSynthetic、系统注入标签消息一律排除——
+ * 对它们调用 rewind_files 只会得到 "No file checkpoint found for this message"。
+ * 斜杠命令回显（<command-name>）不过滤：官方也不过滤，且 checkpoint 照常建立。
+ */
+const INTERNAL_TEXT_TAGS = [
+  '<local-command-stdout>',
+  '<local-command-stderr>',
+  '<bash-stdout>',
+  '<bash-stderr>',
+  '<task-notification>',
+  '<tick>',
+  '<teammate-message>',
+]
+
+function isSelectableRewindTarget(obj: Record<string, unknown>): boolean {
+  if (obj.isMeta === true || obj.isSynthetic === true) return false
+  const content = (obj.message as { content?: unknown } | undefined)?.content
+  if (Array.isArray(content)) {
+    if ((content[0] as { type?: unknown } | undefined)?.type === 'tool_result') return false
+  }
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((c): c is { type: string; text?: string } => c?.type === 'text')
+            .map((c) => c.text ?? '')
+            .join(' ')
+        : ''
+  return !INTERNAL_TEXT_TAGS.some((tag) => text.includes(tag))
+}
+
 export function readHistory(slug: string, sessionId: string, limit = 300): HistoryMessage[] {
   const path = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
   if (!existsSync(path)) return []
   const lines = readFileSync(path, 'utf8').split('\n')
   const msgs: HistoryMessage[] = []
   const msgLineIdx: number[] = []
+  const selectable: boolean[] = []
   let lastBoundaryLine = -1
   for (let li = 0; li < lines.length; li++) {
     const t = lines[li].trim()
@@ -271,6 +307,7 @@ export function readHistory(slug: string, sessionId: string, limit = 300): Histo
         timestamp: obj.timestamp as string | undefined,
       })
       msgLineIdx.push(li)
+      selectable.push(true)
       continue
     }
     if (type !== 'user' && type !== 'assistant') continue
@@ -302,10 +339,12 @@ export function readHistory(slug: string, sessionId: string, limit = 300): Histo
       isMeta: obj.isMeta as boolean | undefined,
     })
     msgLineIdx.push(li)
+    selectable.push(type !== 'user' || isSelectableRewindTarget(obj))
   }
-  // 只有最后一个 compact 边界之后的消息才是逻辑上存在、可回滚的
+  // 只有最后一个 compact 边界之后的消息才是逻辑上存在、可回滚的；
+  // user 消息还需通过官方同款的目标过滤（无 checkpoint 的消息不可作为 rewind 目标）
   for (let i = 0; i < msgs.length; i++) {
-    msgs[i].rewindable = msgLineIdx[i] > lastBoundaryLine
+    msgs[i].rewindable = msgLineIdx[i] > lastBoundaryLine && selectable[i]
   }
   return msgs.slice(-limit)
 }

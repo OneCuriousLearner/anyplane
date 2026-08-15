@@ -66,7 +66,8 @@ describe('ClaudeSession awaited control requests', () => {
     }))
 
     await expect(response).resolves.toEqual({ restored: true })
-    expect(seen).toHaveLength(1)
+    // 已被 sendControlAndWait 消费的应答不透传给普通消息流，避免双重展示
+    expect(seen).toHaveLength(0)
   })
 
   test('rejects an awaited control request when the CLI reports an error', async () => {
@@ -88,5 +89,40 @@ describe('ClaudeSession awaited control requests', () => {
     }))
 
     await expect(response).rejects.toThrow('checkpoint unavailable')
+  })
+
+  test('counts a pending awaited control request as busy so recycle stays off', async () => {
+    // rewind_files 处理期间 CLI 不发 session_state_changed；等待应答时必须按 busy 处理
+    config.detachRecycleMs = 20
+    const exits: number[] = []
+    const session = new ClaudeSession('test-awaited-control-busy', { cwd: process.cwd() }, {
+      onMessage: () => {},
+      onApprovalRequest: () => {},
+      onExit: (code) => exits.push(code),
+    })
+    let requestId = ''
+    ;(session as unknown as { write(message: { request_id?: string }): void }).write = (message) => {
+      requestId = message.request_id ?? ''
+    }
+    const handleLine = (session as unknown as { handleLine(line: string): void }).handleLine.bind(session)
+
+    // 启用权威状态事件，回收才走 detachRecycleMs（否则回退到 30min 的 idleTimeoutMs）
+    handleLine(JSON.stringify({ type: 'system', subtype: 'session_state_changed', state: 'idle' }))
+
+    const response = session.sendControlAndWait('rewind_files', { user_message_id: 'message-1' }, 500)
+    session.syncClients(0)
+    expect(session.busy).toBe(true)
+    await Bun.sleep(60) // 远超 20ms 的回收窗口：若未计入 busy 已被回收
+    expect(exits).toEqual([])
+
+    handleLine(JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: requestId, response: {} },
+    }))
+    await expect(response).resolves.toEqual({})
+    expect(session.busy).toBe(false)
+
+    await Bun.sleep(60) // 应答后恢复空闲，正常回收
+    expect(exits).toEqual([-1])
   })
 })

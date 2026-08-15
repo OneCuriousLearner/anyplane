@@ -14,13 +14,16 @@ function formatTime(timestamp?: string): string | undefined {
   if (!timestamp) return undefined
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return undefined
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
+  // 模块级共享实例，避免每行渲染重复构造 Intl.DateTimeFormat
+  return timeFormatter.format(date)
 }
+
+const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  month: 'numeric',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})
 
 export function RewindPicker(props: {
   targets: RewindTarget[]
@@ -47,11 +50,13 @@ export function RewindPicker(props: {
         {props.targets.length === 0 && (
           <p className="text-sm text-muted">没有可回滚的用户消息（compact 之前的内容不可回滚）</p>
         )}
-        {props.targets.map((t) => (
+        {props.targets.map((t) => {
+          const time = formatTime(t.timestamp)
+          return (
           <div key={t.uuid} className="mb-2 rounded border border-line bg-surface2/50 p-3">
             <div className="mb-2 flex items-center gap-2">
               <span className="font-mono text-[10px] text-faint">用户消息</span>
-              {formatTime(t.timestamp) && <span className="font-mono text-[10px] text-faint">{formatTime(t.timestamp)}</span>}
+              {time && <span className="font-mono text-[10px] text-faint">{time}</span>}
             </div>
             <p className="text-sm leading-relaxed text-ink">{t.summary || '（无可显示的用户文本）'}</p>
             {t.detail && t.detail !== t.summary && (
@@ -64,13 +69,13 @@ export function RewindPicker(props: {
             )}
             <div className="grid grid-cols-2 gap-2">
               <button
-                className="flex-1 rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
+                className="rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
                 onClick={() => props.onRewindFiles(t.uuid)}
               >
                 仅回滚文件
               </button>
               <button
-                className="flex-1 rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
+                className="rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
                 onClick={() => props.onRewindConversation(t.uuid)}
               >
                 仅回滚对话
@@ -83,7 +88,8 @@ export function RewindPicker(props: {
               </button>
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
