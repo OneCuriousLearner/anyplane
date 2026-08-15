@@ -1,4 +1,4 @@
-// E2E-回滚：rewind_files 控制请求 + rewind_conversation 重生进程
+// E2E-回滚：rewind_both 先确认 rewind_files，再重生进程截断对话
 const key = 's|D--Coder-Agents-cc-remote|ee01d38e-b1f9-4c3d-8110-518aa465cdb0'
 
 // 从 REST 拿一条用户消息 uuid
@@ -23,8 +23,8 @@ ws.onopen = () => {
   setTimeout(() => {
     if (phase !== 0) return
     phase = 1
-    console.log('>> rewind_files')
-    ws.send(JSON.stringify({ kind: 'control', subtype: 'rewind_files', extra: { user_message_id: target.uuid } }))
+    console.log('>> rewind_both（先恢复文件，成功后回滚对话）')
+    ws.send(JSON.stringify({ kind: 'rewind_both', userMessageId: target.uuid }))
   }, 3000)
 }
 
@@ -34,18 +34,6 @@ ws.onmessage = (e) => {
     const m = ev.msg
     if (m.type === 'control_response') {
       console.log('<< control_response:', JSON.stringify(m.response)?.slice(0, 300))
-      if (phase === 1) {
-        phase = 2
-        console.log('>> rewind_conversation（重生进程）')
-        ws.send(JSON.stringify({ kind: 'rewind_conversation', userMessageId: target.uuid }))
-        // init 是惰性的（首条输入后才发），等待 respawn 后直接发问
-        setTimeout(() => {
-          if (phase !== 2) return
-          phase = 3
-          console.log('>> 回滚后发问')
-          ws.send(JSON.stringify({ kind: 'user', text: '用两个字回答：2+2等于几？' }))
-        }, 5000)
-      }
     }
     if (m.type === 'result') {
       console.log('<< result', m.subtype, '— init 次数:', initCount)
@@ -54,7 +42,16 @@ ws.onmessage = (e) => {
       process.exit(0)
     }
   } else if (ev.kind === 'rewound') {
-    console.log('<< rewound 事件')
+    console.log('<< rewound 事件:', ev.scope)
+    if (phase !== 1 || ev.scope !== 'both') return
+    phase = 2
+    // init 是惰性的（首条输入后才发），等待 respawn 后直接发问
+    setTimeout(() => {
+      if (phase !== 2) return
+      phase = 3
+      console.log('>> 回滚后发问')
+      ws.send(JSON.stringify({ kind: 'user', text: '用两个字回答：2+2等于几？' }))
+    }, 5000)
   } else if (ev.kind === 'error') {
     console.log('<< error:', ev.message)
   }

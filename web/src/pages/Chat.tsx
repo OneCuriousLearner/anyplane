@@ -8,7 +8,7 @@ import { MessageView } from '../components/MessageView'
 import { Markdown } from '../components/Markdown'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { ClaudeStar } from '../components/ClaudeStar'
-import { nextId, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 
 const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw']
 const COMMAND_DESC: Record<string, string> = {
@@ -134,7 +134,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
               blocks.push({ kind: hb.kind, text: hb.text ?? '' })
             }
           }
-          if (blocks.length > 0) out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, rewindable: h.rewindable })
+          if (blocks.length > 0) {
+            out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, timestamp: h.timestamp, rewindable: h.rewindable })
+          }
           for (const r of stray) pushInto(out, r)
         }
         setMsgs(() => out)
@@ -466,7 +468,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
             setMsgs((prev) => {
               const idx = prev.findIndex((m) => m.id === ev.userMessageId)
               const base = idx >= 0 ? prev.slice(0, idx + 1) : prev
-              return [...base, { id: nextId(), role: 'system', blocks: [{ kind: 'text', text: '↩ 对话已回滚' }] }]
+              const label = ev.scope === 'both' ? '↩ 对话和文件已回滚' : '↩ 对话已回滚'
+              return [...base, { id: nextId(), role: 'system', blocks: [{ kind: 'text', text: label }] }]
             })
             break
           case 'cli':
@@ -537,7 +540,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
 
   const rewindTargets = messages
     .filter((m) => m.role === 'user' && m.id.includes('-') && m.rewindable !== false)
-    .map((m) => ({ uuid: m.id, text: m.blocks.find((b) => b.kind === 'text')?.text ?? '' }))
+    .map((m) => {
+      const rawText = m.blocks
+        .filter((block): block is Extract<Block, { kind: 'text' }> => block.kind === 'text')
+        .map((block) => block.text)
+        .join('\n\n')
+      return { uuid: m.id, timestamp: m.timestamp, ...rewindPreview(rawText) }
+    })
 
   const cmdList = initInfo.slashCommands?.length ? initInfo.slashCommands : FALLBACK_COMMANDS
   const slashHints =
@@ -700,6 +709,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
           }}
           onRewindConversation={(uuid) => {
             sockRef.current?.send({ kind: 'rewind_conversation', userMessageId: uuid })
+            setShowRewind(false)
+          }}
+          onRewindBoth={(uuid) => {
+            sockRef.current?.send({ kind: 'rewind_both', userMessageId: uuid })
             setShowRewind(false)
           }}
         />

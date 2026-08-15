@@ -43,3 +43,50 @@ describe('ClaudeSession background task lifecycle', () => {
     expect(exits).toEqual([-1])
   })
 })
+
+describe('ClaudeSession awaited control requests', () => {
+  test('matches a successful control response by request ID', async () => {
+    const seen: unknown[] = []
+    const session = new ClaudeSession('test-awaited-control', { cwd: process.cwd() }, {
+      onMessage: (message) => seen.push(message),
+      onApprovalRequest: () => {},
+      onExit: () => {},
+    })
+    let requestId = ''
+    ;(session as unknown as { write(message: { request_id?: string }): void }).write = (message) => {
+      requestId = message.request_id ?? ''
+    }
+    const handleLine = (session as unknown as { handleLine(line: string): void }).handleLine.bind(session)
+
+    const response = session.sendControlAndWait('rewind_files', { user_message_id: 'message-1' }, 100)
+    expect(requestId).not.toBe('')
+    handleLine(JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: requestId, response: { restored: true } },
+    }))
+
+    await expect(response).resolves.toEqual({ restored: true })
+    expect(seen).toHaveLength(1)
+  })
+
+  test('rejects an awaited control request when the CLI reports an error', async () => {
+    const session = new ClaudeSession('test-awaited-control-error', { cwd: process.cwd() }, {
+      onMessage: () => {},
+      onApprovalRequest: () => {},
+      onExit: () => {},
+    })
+    let requestId = ''
+    ;(session as unknown as { write(message: { request_id?: string }): void }).write = (message) => {
+      requestId = message.request_id ?? ''
+    }
+    const handleLine = (session as unknown as { handleLine(line: string): void }).handleLine.bind(session)
+
+    const response = session.sendControlAndWait('rewind_files', { user_message_id: 'message-1' }, 100)
+    handleLine(JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: requestId, error: 'checkpoint unavailable' },
+    }))
+
+    await expect(response).rejects.toThrow('checkpoint unavailable')
+  })
+})

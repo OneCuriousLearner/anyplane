@@ -15,6 +15,7 @@ import {
   approvalResponse,
   controlRequest,
   isCliControlRequest,
+  isControlResponse,
   isInitMessage,
   userMessage,
   type CliMessage,
@@ -115,6 +116,12 @@ export class ClaudeSession {
   private clientCount = 0
   private idleTimer: Timer | undefined
   private exitEmitted = false
+  /** 等待 CLI 确认的外发 control request，例如组合 rewind 的第一步。 */
+  private pendingControlRequests = new Map<string, {
+    resolve: (response: unknown) => void
+    reject: (error: Error) => void
+    timeout: Timer
+  }>()
 
   constructor(key: string, opts: SpawnOptions, cb: SessionCallbacks) {
     this.key = key
@@ -254,6 +261,28 @@ export class ClaudeSession {
     return req.request_id
   }
 
+  /**
+   * 发送控制请求并等待同 request_id 的 CLI 应答。
+   * 普通控制仍使用 sendControl 保持原有的纯透传语义；只有需要串行步骤时使用。
+   */
+  sendControlAndWait(subtype: string, extra: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<unknown> {
+    const req = controlRequest(subtype as never, extra)
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingControlRequests.delete(req.request_id)
+        reject(new Error(`控制请求 ${subtype} 超时`))
+      }, timeoutMs)
+      this.pendingControlRequests.set(req.request_id, { resolve, reject, timeout })
+      try {
+        this.write(req)
+      } catch (error) {
+        clearTimeout(timeout)
+        this.pendingControlRequests.delete(req.request_id)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
+  }
+
   sendApproval(requestId: string, decision: ApprovalDecision): void {
     this.write(approvalResponse(requestId, decision))
   }
@@ -308,6 +337,11 @@ export class ClaudeSession {
     this.fallbackBusy = false
     this.runState = 'idle'
     this.activeTasks.clear()
+    for (const pending of this.pendingControlRequests.values()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error('Claude 进程已退出'))
+    }
+    this.pendingControlRequests.clear()
     this.cancelRecycle()
     this.cb.onExit(code)
   }
@@ -428,6 +462,23 @@ export class ClaudeSession {
       this.fallbackBusy = false
       this.cb.onStatusChange?.()
       this.scheduleRecycleIfSafe()
+    }
+
+    if (isControlResponse(msg)) {
+      const response = msg.response as {
+        subtype?: unknown
+        request_id?: unknown
+        response?: unknown
+        error?: unknown
+      }
+      const requestId = typeof response.request_id === 'string' ? response.request_id : undefined
+      const pending = requestId ? this.pendingControlRequests.get(requestId) : undefined
+      if (pending) {
+        this.pendingControlRequests.delete(requestId!)
+        clearTimeout(pending.timeout)
+        if (response.subtype === 'success') pending.resolve(response.response)
+        else pending.reject(new Error(typeof response.error === 'string' ? response.error : '控制请求失败'))
+      }
     }
 
     if (isCliControlRequest(msg)) {

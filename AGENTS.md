@@ -56,7 +56,7 @@ bun run server/scripts/e2e-rewind.ts     # rewind_files 与对话回滚
 ### /btw 侧问与 rewind 的服务端实现（index.ts）
 
 - **btw**：spawn 一次性 `claude -p <问题> --fork-session --resume <sid> -n "FORK: ..."`，逐行泵 NDJSON 转发为 `btw_delta`/`btw_result`，不经过 ProcessManager。
-- **rewind_conversation**：先 `processManager.dispose()` 再带 `--resume-session-at` 重新 spawn（先摘 map 再 kill，避免旧 onExit 污染新会话）。
+- **rewind_conversation**：先 `processManager.dispose()` 再带 `--resume-session-at` 重新 spawn（先摘 map 再 kill，避免旧 onExit 污染新会话）。`rewind_both` 先等待 `rewind_files` 成功应答，再走此路径；绝不能先截断对话。
 
 ## Windows 平台注意事项
 

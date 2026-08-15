@@ -2,13 +2,31 @@
 
 export interface RewindTarget {
   uuid: string
-  text: string
+  /** 清理内部标签后的单行摘要。 */
+  summary: string
+  /** 供展开确认的完整可读文本。 */
+  detail: string
+  /** 历史消息时间（若可用）。 */
+  timestamp?: string
+}
+
+function formatTime(timestamp?: string): string | undefined {
+  if (!timestamp) return undefined
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return undefined
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
 }
 
 export function RewindPicker(props: {
   targets: RewindTarget[]
   onRewindFiles: (uuid: string) => void
   onRewindConversation: (uuid: string) => void
+  onRewindBoth: (uuid: string) => void
   onClose: () => void
 }) {
   return (
@@ -23,13 +41,28 @@ export function RewindPicker(props: {
             ✕
           </button>
         </div>
+        {props.targets.length > 0 && (
+          <p className="mb-3 text-xs leading-relaxed text-faint">选择一条用户消息作为目标；可单独恢复文件、单独恢复对话，或同时恢复两者。</p>
+        )}
         {props.targets.length === 0 && (
           <p className="text-sm text-muted">没有可回滚的用户消息（compact 之前的内容不可回滚）</p>
         )}
         {props.targets.map((t) => (
           <div key={t.uuid} className="mb-2 rounded border border-line bg-surface2/50 p-3">
-            <p className="mb-2 line-clamp-2 text-sm text-ink">{t.text || '（空消息）'}</p>
-            <div className="flex gap-2">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="font-mono text-[10px] text-faint">用户消息</span>
+              {formatTime(t.timestamp) && <span className="font-mono text-[10px] text-faint">{formatTime(t.timestamp)}</span>}
+            </div>
+            <p className="text-sm leading-relaxed text-ink">{t.summary || '（无可显示的用户文本）'}</p>
+            {t.detail && t.detail !== t.summary && (
+              <details className="mt-2 rounded border border-line/60 bg-surface/40">
+                <summary className="cursor-pointer px-2 py-1.5 font-mono text-[11px] text-muted select-none">查看完整内容</summary>
+                <pre className="max-h-48 overflow-auto border-t border-line/60 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted whitespace-pre-wrap">
+                  {t.detail}
+                </pre>
+              </details>
+            )}
+            <div className="grid grid-cols-2 gap-2">
               <button
                 className="flex-1 rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
                 onClick={() => props.onRewindFiles(t.uuid)}
@@ -37,8 +70,14 @@ export function RewindPicker(props: {
                 仅回滚文件
               </button>
               <button
-                className="flex-1 rounded bg-accent/90 py-1.5 font-mono text-[11px] font-medium text-bg hover:bg-accent"
+                className="flex-1 rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
                 onClick={() => props.onRewindConversation(t.uuid)}
+              >
+                仅回滚对话
+              </button>
+              <button
+                className="col-span-2 rounded bg-accent/90 py-1.5 font-mono text-[11px] font-medium text-bg hover:bg-accent"
+                onClick={() => props.onRewindBoth(t.uuid)}
               >
                 回滚对话+文件
               </button>

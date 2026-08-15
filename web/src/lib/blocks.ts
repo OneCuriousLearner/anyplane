@@ -17,6 +17,8 @@ export interface ChatMsg {
   id: string
   role: 'user' | 'assistant' | 'system'
   blocks: Block[]
+  /** 历史 JSONL 的时间；实时消息未必带此字段。 */
+  timestamp?: string
   /** system 消息的展示变体 */
   systemKind?: 'info' | 'error' | 'divider'
   /** compact_boundary 元数据 */
@@ -102,6 +104,13 @@ export interface UserTextSegment {
   args?: string
 }
 
+export interface RewindPreview {
+  /** 适合列表快速识别的单行摘要。 */
+  summary: string
+  /** 清理内部标签后的完整可读内容，供用户展开确认。 */
+  detail: string
+}
+
 function normalizeCommandName(raw: string): string {
   const name = raw.trim()
   if (!name) return ''
@@ -162,6 +171,28 @@ export function parseUserText(raw: string): UserTextSegment[] {
   }
   pushText(rest.slice(last))
   return segs
+}
+
+/**
+ * 把一条用户消息转为 rewind 选择器可读的摘要。
+ * 本地命令输出是命令回显的结果，通常既冗长又不代表用户意图，故不纳入目标摘要；
+ * 斜杠命令仍保留，以避免 /compact、/context 等目标显示为空。
+ */
+export function rewindPreview(raw: string, maxSummaryLength = 160): RewindPreview {
+  const parts = parseUserText(raw)
+    .filter((segment) => segment.kind !== 'local-out' && segment.kind !== 'local-err')
+    .map((segment) => {
+      if (segment.kind === 'command') return `${segment.text}${segment.args ? ` ${segment.args}` : ''}`
+      if (segment.kind === 'interrupted') return segment.text
+      return segment.text
+    })
+    .map((text) => text.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  const detail = parts.join('\n\n')
+  return {
+    detail,
+    summary: detail.length > maxSummaryLength ? `${detail.slice(0, maxSummaryLength).trimEnd()}…` : detail,
+  }
 }
 
 /** token 数简写：231952 → 232k */

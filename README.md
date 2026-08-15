@@ -25,7 +25,7 @@ stdin/stdout 走双向 NDJSON（user 消息 + control_request/response），与�
 - **状态利用**：`system/init` 提供模型/权限模式徽标与斜杠命令补全；`system/status` 驱动"请求中/压缩中"相位指示；`result` 生成"本轮 25s · 830 tok"回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
 - **运行时切换**：模型（set_model）、权限模式（set_permission_mode，等同 shift+tab）、effort（update_environment_variables，部分版本可能需重开会话生效）、中断（interrupt）
 - **权限审批**：`can_use_tool` 推到 UI 审批卡片；或配置 `permissionPolicy: "bypass"` 全自动
-- **斜杠命令**：`/compact`、`/context` 原生透传；`/rewind`（消息选择器，支持"仅回滚文件"与"回滚对话+文件"）；`/btw <问题>`（fork 侧问，不污染主会话）；其他命令原样发给 CLI 处理
+- **斜杠命令**：`/compact`、`/context` 原生透传；`/rewind`（消息选择器，支持仅回滚文件、仅回滚对话、回滚对话+文件；组合操作先确认文件检查点恢复成功再截断对话）；`/btw <问题>`（fork 侧问，不污染主会话）；其他命令原样发给 CLI 处理
 
 ## 运行
 

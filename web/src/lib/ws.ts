@@ -8,7 +8,7 @@ export type ServerEvent =
   | { kind: 'btw_pending'; question: string }
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
-  | { kind: 'rewound'; userMessageId: string }
+  | { kind: 'rewound'; userMessageId: string; scope?: 'conversation' | 'both' }
   | { kind: 'error'; message: string }
 
 export interface CliMsg {
@@ -56,6 +56,7 @@ export type ClientCommand =
   | { kind: 'update_env'; variables: Record<string, string> }
   | { kind: 'approval'; requestId: string; decision: unknown }
   | { kind: 'rewind_conversation'; userMessageId: string }
+  | { kind: 'rewind_both'; userMessageId: string }
   | { kind: 'btw'; question: string }
 
 export class SessionSocket {

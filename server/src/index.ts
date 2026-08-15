@@ -48,6 +48,8 @@ interface Hub {
   spawnOpts?: Partial<SpawnOptions>
   /** 除 effort 外、需要在进程启动后按顺序写入 stdin 的环境变量 */
   pendingEnv?: Record<string, string>
+  /** 组合回滚正在等待 rewind_files 的 CLI 确认，期间禁止再切断当前会话。 */
+  rewindPending?: boolean
 }
 
 const hubs = new Map<string, Hub>()
@@ -94,6 +96,21 @@ function statusOf(key: string): Record<string, unknown> {
 
 function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
   broadcast(hub, { kind: 'status', state: { ...statusOf(hub.key), ...extra } })
+}
+
+function rewindConversation(hub: Hub, userMessageId: string, scope: 'conversation' | 'both'): void {
+  const current = processManager.get(hub.key)
+  const parsed = parseKey(hub.key)
+  const sid = current?.sessionId ?? parsed?.resumeSessionId
+  if (!parsed || !sid) {
+    broadcast(hub, { kind: 'error', message: '无法回滚：未知会话 ID' })
+    return
+  }
+  // 先从 map 摘掉再 kill，避免旧 onExit 污染新会话。
+  processManager.dispose(hub.key)
+  hub.spawnOpts = { ...hub.spawnOpts, cwd: parsed.cwd, resumeSessionId: sid, resumeSessionAt: userMessageId }
+  ensureSpawned(hub)
+  broadcast(hub, { kind: 'rewound', userMessageId, scope })
 }
 
 function ensureSpawned(hub: Hub, opts?: Partial<SpawnOptions>): void {
@@ -175,6 +192,10 @@ function handleClientMessage(hub: Hub, raw: string): void {
       break
     }
     case 'user': {
+      if (hub.rewindPending) {
+        broadcast(hub, { kind: 'error', message: '正在恢复文件，请等待回滚完成后再发送消息' })
+        return
+      }
       let s = session()
       if (!s || s.exited) {
         ensureSpawned(hub)
@@ -264,20 +285,49 @@ function handleClientMessage(hub: Hub, raw: string): void {
       break
     }
     case 'rewind_conversation': {
-      // 对话回滚：销毁当前进程，带 --resume-session-at 重新 spawn
       const at = String(data.userMessageId ?? '')
       if (!at) return
-      const parsed = parseKey(hub.key)
-      const sid = session()?.sessionId ?? parsed?.resumeSessionId
-      if (!parsed || !sid) {
-        broadcast(hub, { kind: 'error', message: '无法回滚：未知会话 ID' })
+      if (hub.rewindPending) {
+        broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
         return
       }
-      // 先从 map 摘掉再 kill，避免旧 onExit 污染新会话
-      processManager.dispose(hub.key)
-      hub.spawnOpts = { ...hub.spawnOpts, cwd: parsed.cwd, resumeSessionId: sid, resumeSessionAt: at }
-      ensureSpawned(hub)
-      broadcast(hub, { kind: 'rewound', userMessageId: at })
+      rewindConversation(hub, at, 'conversation')
+      break
+    }
+    case 'rewind_both': {
+      const at = String(data.userMessageId ?? '')
+      if (!at) return
+      if (hub.rewindPending) {
+        broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
+        return
+      }
+      let s = session()
+      if (!s || s.exited) {
+        ensureSpawned(hub)
+        s = session()
+      }
+      if (!s || s.exited) return
+
+      // 官方 TUI 的“恢复代码和对话”也是两个动作。这里必须先收到文件
+      // checkpoint 成功响应，才允许销毁旧进程并以 resume-session-at 截断对话。
+      hub.rewindPending = true
+      pushStatus(hub, { rewindPending: true })
+      void s.sendControlAndWait('rewind_files', { user_message_id: at })
+        .then(() => {
+          if (processManager.get(hub.key) !== s || s.exited) {
+            broadcast(hub, { kind: 'error', message: '恢复文件后会话已变化，未回滚对话' })
+            return
+          }
+          rewindConversation(hub, at, 'both')
+        })
+        .catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error)
+          broadcast(hub, { kind: 'error', message: `回滚文件失败，未回滚对话：${detail}` })
+        })
+        .finally(() => {
+          hub.rewindPending = false
+          pushStatus(hub, { rewindPending: false })
+        })
       break
     }
     case 'btw': {
