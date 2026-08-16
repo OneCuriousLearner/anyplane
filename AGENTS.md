@@ -67,7 +67,7 @@ bun run server/scripts/e2e-rewind.ts     # rewind_files 与对话回滚
 ## 已知限制（改相关功能前先读 README）
 
 - `/rename` 不支持；compact 边界之前的消息不能作为 rewind 目标；`rewind_files` 只能回滚到有检查点的消息（spawn 时设了 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`）；effort 运行时切换依赖 `update_environment_variables`，旧版 CLI 可能需重开会话。
-- 认证未实现，勿直接暴露到不受信网络。
+- 认证未实现，勿直接暴露到不受信网络。`GET /api/fs/list?path=`（新会话目录选择器用）会暴露本机目录结构，与"任意目录起会话 = 任意命令执行"同级风险。
 
 ## 文档
 

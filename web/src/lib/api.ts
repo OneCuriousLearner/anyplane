@@ -80,3 +80,25 @@ export async function fetchConfig(): Promise<ServerConfigInfo> {
   const r = await fetch('/api/config')
   return r.json()
 }
+
+export interface DirEntry {
+  name: string
+  path: string
+}
+
+export interface DirListResult {
+  /** 当前目录；根集合视图为 '' */
+  path: string
+  parent: string | null
+  entries: DirEntry[]
+  home: string
+}
+
+export async function fetchDirList(path: string): Promise<DirListResult> {
+  const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`)
+  if (!r.ok) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `HTTP ${r.status}`)
+  }
+  return r.json()
+}

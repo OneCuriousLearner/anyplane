@@ -832,16 +832,28 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
                   }
                 }}
               />
-              <button
-                type="button"
-                className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-danger transition-opacity hover:text-danger/80 disabled:pointer-events-none disabled:opacity-25"
-                disabled={!busy}
-                onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
-                title="中断当前回合"
-                aria-label="中断当前回合"
-              >
-                ■
-              </button>
+              {busy ? (
+                <button
+                  type="button"
+                  className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-danger transition-opacity hover:text-danger/80"
+                  onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
+                  title="中断当前回合"
+                  aria-label="中断当前回合"
+                >
+                  ■
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-accent-soft transition-opacity hover:text-accent disabled:pointer-events-none disabled:opacity-25"
+                  disabled={!input.trim() || !connected}
+                  onClick={send}
+                  title="发送"
+                  aria-label="发送"
+                >
+                  ↑
+                </button>
+              )}
             </div>
           </div>
         </div>

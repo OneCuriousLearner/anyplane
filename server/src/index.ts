@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { config } from './config'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './discovery'
+import { FsBrowseError, listDirectories } from './fsbrowse'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './processManager'
 import { isInternalUserMessage, type CliMessage } from './protocol'
 import { TranscriptTailer } from './tailer'
@@ -581,6 +582,17 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     const body = (await req.json().catch(() => ({}))) as { cwd?: string }
     if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
     return json({ key: `n|${encodeURIComponent(body.cwd)}`, slug: sanitizePath(body.cwd) })
+  }
+  if (url.pathname === '/api/fs/list' && req.method === 'GET') {
+    // searchParams.get 已完成 URL 解码，禁止再 decodeURIComponent（含 % 的路径会被二次解码破坏）
+    const target = url.searchParams.get('path') ?? ''
+    try {
+      return json(listDirectories(target))
+    } catch (e) {
+      if (e instanceof FsBrowseError) return json({ error: e.message }, { status: e.status })
+      const message = e instanceof Error ? e.message : String(e)
+      return json({ error: message }, { status: 500 })
+    }
   }
   const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
   if (histMatch && req.method === 'GET') {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createSession, fetchSessions, type SessionInfo } from '../lib/api'
 import { ClaudeMark } from '../components/ClaudeMark'
+import { DirPicker } from './DirPicker'
 
 const STATUS_META: Record<SessionInfo['status'], { cls: string; label: string }> = {
   busy: { cls: 'bg-busy animate-pulse', label: '工作中' },
@@ -23,8 +24,7 @@ export function SessionList(props: {
 }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [loading, setLoading] = useState(true)
-  const [newCwd, setNewCwd] = useState('')
-  const [showNew, setShowNew] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const refresh = () => {
     fetchSessions()
@@ -45,12 +45,9 @@ export function SessionList(props: {
     groups.get(g)!.push(s)
   }
 
-  const startNew = async () => {
-    const cwd = newCwd.trim()
-    if (!cwd) return
+  const startNew = async (cwd: string) => {
     const { key, slug } = await createSession(cwd)
-    setNewCwd('')
-    setShowNew(false)
+    setPickerOpen(false)
     props.onSelect({
       key,
       slug,
@@ -74,7 +71,7 @@ export function SessionList(props: {
           </h1>
           <button
             className="rounded border border-accent/60 px-2.5 py-1 font-mono text-xs text-accent-soft hover:bg-accent/10"
-            onClick={() => setShowNew(!showNew)}
+            onClick={() => setPickerOpen(true)}
           >
             + 新会话
           </button>
@@ -82,37 +79,12 @@ export function SessionList(props: {
         <p className="mt-1 text-xs text-faint">Claude Code Claw</p>
       </div>
 
-      {showNew && (
-        <div className="border-b border-line bg-surface2/50 p-3">
-          <input
-            className="w-full rounded border border-line bg-bg px-3 py-2 font-mono text-xs outline-none placeholder:text-faint focus:border-accent/60"
-            placeholder="项目目录，如 /home/you/proj 或 D:\proj"
-            value={newCwd}
-            onChange={(e) => setNewCwd(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && startNew()}
-            list="recent-cwds"
-          />
-          <datalist id="recent-cwds">
-            {[...groups.keys()].map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
-          <button
-            className="mt-2 w-full rounded bg-accent py-2 text-sm font-medium text-bg hover:bg-accent-soft disabled:opacity-40"
-            onClick={startNew}
-            disabled={!newCwd.trim()}
-          >
-            开始
-          </button>
-        </div>
-      )}
-
       <div className="flex-1 overflow-y-auto">
         {loading && <p className="p-4 font-mono text-xs text-faint">加载中…</p>}
         {!loading && sessions.length === 0 && (
           <div className="p-4 text-sm text-muted">
             <p>还没有会话。</p>
-            <p className="mt-1 text-xs text-faint">点「+ 新会话」，输入远端项目目录即可开始。</p>
+            <p className="mt-1 text-xs text-faint">点「+ 新会话」，从文件系统选择项目目录即可开始。</p>
           </div>
         )}
         {[...groups.entries()].map(([cwd, list]) => (
@@ -156,6 +128,10 @@ export function SessionList(props: {
           </div>
         ))}
       </div>
+
+      {pickerOpen && (
+        <DirPicker sessions={sessions} onStart={startNew} onClose={() => setPickerOpen(false)} />
+      )}
     </div>
   )
 }
