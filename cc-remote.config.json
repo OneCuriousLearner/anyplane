@@ -1,8 +1,0 @@
-{
-  "port": 7480,
-  "permissionPolicy": "ask",
-  "claudePath": "/home/linuxbrew/.linuxbrew/bin/claude",
-  "detachRecycleMs": 15000,
-  "idleTimeoutMs": 1800000,
-  "claudeConfigDir": "/root/.claude"
-}

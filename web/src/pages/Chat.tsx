@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchConfig, fetchHistory, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { fetchConfig, fetchHistory, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR, type Effort } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -44,6 +44,54 @@ const PHASE_LABEL: Record<string, string> = {
   compacting: '压缩上下文',
 }
 
+/**
+ * 历史加载与 tail 实时追加共用的消息归并：
+ * tool_use ↔ tool_result 跨消息配对成卡，孤立结果降级为系统提示。
+ */
+function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage): void {
+  if (h.isMeta) return
+  if (h.role === 'system' && h.subtype === 'compact_boundary') {
+    out.push({ id: h.uuid ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: h.compactMeta, blocks: [] })
+    return
+  }
+  const pair = (toolUseId: string | undefined, text: string, isError: boolean): boolean => {
+    if (!toolUseId) return false
+    for (let mi = out.length - 1; mi >= 0; mi--) {
+      const blocks = out[mi].blocks
+      for (let bi = blocks.length - 1; bi >= 0; bi--) {
+        const b = blocks[bi]
+        if (b.kind === 'tool' && b.id === toolUseId) {
+          blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
+          return true
+        }
+      }
+    }
+    return false
+  }
+  const blocks: Block[] = []
+  const stray: { text: string; isError: boolean }[] = []
+  for (const hb of h.blocks) {
+    if (hb.kind === 'tool_use') {
+      blocks.push({ kind: 'tool', id: hb.id ?? nextId(), name: hb.name ?? '?', input: hb.input })
+    } else if (hb.kind === 'tool_result') {
+      if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
+    } else {
+      blocks.push({ kind: hb.kind, text: hb.text ?? '' })
+    }
+  }
+  if (blocks.length > 0) {
+    out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, timestamp: h.timestamp, rewindable: h.rewindable })
+  }
+  for (const r of stray) {
+    out.push({
+      id: nextId(),
+      role: 'system',
+      systemKind: r.isError ? 'error' : 'info',
+      blocks: [{ kind: 'text', text: r.text.slice(0, 500) }],
+    })
+  }
+}
+
 export function Chat(props: { session: SessionInfo; onBack: () => void }) {
   const { session } = props
   const [messages, setMessages] = useState<ChatMsg[]>([])
@@ -69,6 +117,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
   const messagesRef = useRef<ChatMsg[]>([])
   const draftRef = useRef<Draft | null>(null)
   const pendingResultsRef = useRef(new Map<string, { text: string; isError: boolean }>())
+  /** 历史加载时服务端读到的 transcript 字节数，tail_subscribe 的起始偏移 */
+  const historyOffsetRef = useRef<number | undefined>(undefined)
 
   const setMsgs = (up: (prev: ChatMsg[]) => ChatMsg[]) => {
     messagesRef.current = up(messagesRef.current)
@@ -90,6 +140,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     setMsgs(() => [])
     setDraftBoth(null)
     pendingResultsRef.current.clear()
+    historyOffsetRef.current = undefined
     // Chat 组件在 session 切换时会复用，清掉上一会话的运行时/待启动配置。
     // 新会话的缓存选择会由随后到达的 status 恢复。
     setInitInfo({})
@@ -99,59 +150,18 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     setPhase(undefined)
     if (!isExisting) return
     fetchHistory(session.slug, session.sessionId)
-      .then((hist) => {
+      .then((resp) => {
         if (cancelled) return
+        historyOffsetRef.current = resp.fileBytes
         const out: ChatMsg[] = []
-        // tool_use → tool_result 配对（历史里分处两条消息）
-        const pair = (toolUseId: string | undefined, text: string, isError: boolean) => {
-          if (!toolUseId) return false
-          for (let mi = out.length - 1; mi >= 0; mi--) {
-            const blocks = out[mi].blocks
-            for (let bi = blocks.length - 1; bi >= 0; bi--) {
-              const b = blocks[bi]
-              if (b.kind === 'tool' && b.id === toolUseId) {
-                blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-                return true
-              }
-            }
-          }
-          return false
-        }
-        for (const h of hist) {
-          if (h.isMeta) continue
-          if (h.role === 'system' && h.subtype === 'compact_boundary') {
-            out.push({ id: h.uuid ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: h.compactMeta, blocks: [] })
-            continue
-          }
-          const blocks: Block[] = []
-          const stray: { text: string; isError: boolean }[] = []
-          for (const hb of h.blocks) {
-            if (hb.kind === 'tool_use') {
-              blocks.push({ kind: 'tool', id: hb.id ?? nextId(), name: hb.name ?? '?', input: hb.input })
-            } else if (hb.kind === 'tool_result') {
-              if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
-            } else {
-              blocks.push({ kind: hb.kind, text: hb.text ?? '' })
-            }
-          }
-          if (blocks.length > 0) {
-            out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, timestamp: h.timestamp, rewindable: h.rewindable })
-          }
-          for (const r of stray) pushInto(out, r)
-        }
+        for (const h of resp.messages) appendHistoryMsg(out, h)
         setMsgs(() => out)
+        // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队
+        sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
       })
       .catch((e) => {
         if (!cancelled) pushSystem(`⚠ 加载历史失败: ${e}`, 'error')
       })
-    function pushInto(out: ChatMsg[], r: { text: string; isError: boolean }) {
-      out.push({
-        id: nextId(),
-        role: 'system',
-        systemKind: r.isError ? 'error' : 'info',
-        blocks: [{ kind: 'text', text: r.text.slice(0, 500) }],
-      })
-    }
     return () => {
       cancelled = true
     }
@@ -481,9 +491,41 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
           case 'cli':
             handleCli(ev.msg)
             break
+          case 'tail': {
+            // 外部会话 transcript 追加：与历史共用同一套归并；uuid 去重兜底（重连续订可能重放）
+            const h = ev.msg
+            if (h.uuid && messagesRef.current.some((m) => m.id === h.uuid)) break
+            setMsgs((prev) => {
+              const out = [...prev]
+              appendHistoryMsg(out, h)
+              return out
+            })
+            break
+          }
+          case 'tail_reset': {
+            // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
+            setDraftBoth(null)
+            pendingResultsRef.current.clear()
+            fetchHistory(session.slug, session.sessionId)
+              .then((resp) => {
+                historyOffsetRef.current = resp.fileBytes
+                const out: ChatMsg[] = []
+                for (const h of resp.messages) appendHistoryMsg(out, h)
+                setMsgs(() => out)
+                sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
+              })
+              .catch(() => {})
+            break
+          }
         }
       },
-      setConnected,
+      (open) => {
+        setConnected(open)
+        // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）
+        if (open && historyOffsetRef.current != null) {
+          sock.send({ kind: 'tail_subscribe', from: historyOffsetRef.current })
+        }
+      },
     )
     sockRef.current = sock
     sock.send({ kind: 'attach' })
@@ -572,20 +614,26 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     : phase
       ? `${PHASE_LABEL[phase] ?? phase}…`
       : waiting
-        ? '等待审批'
+        ? state.tailing
+          ? '外部会话等待操作'
+          : '等待审批'
         : activeTaskCount > 0
           ? `${activeTaskCount} 个后台任务运行中`
         : busy
-          ? '工作中'
+          ? state.tailing
+            ? '外部会话工作中'
+            : '工作中'
           : state.spawned
             ? state.sessionState === 'idle'
               ? 'CLI 空闲'
               : 'CLI 运行中'
             : state.exited
               ? '进程已退出'
-              : hasPendingStartConfig
-                ? '配置已保存（发送消息时启动 CLI）'
-                : '浏览中（发送消息时启动 CLI）'
+              : state.tailing
+                ? '外部会话 · 实时跟踪中'
+                : hasPendingStartConfig
+                  ? '配置已保存（发送消息时启动 CLI）'
+                  : '浏览中（发送消息时启动 CLI）'
 
   return (
     <div className="relative h-full overflow-clip bg-bg text-ink">

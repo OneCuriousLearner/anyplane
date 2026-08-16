@@ -5,6 +5,9 @@ dist/
 ## Environment
 .env
 
+## 本机服务端配置（示例见 cc-remote.config.example.json）
+cc-remote.config.json
+
 ## Logs
 *.log
 

@@ -1,5 +1,7 @@
 // WebSocket 客户端：按 sessionKey 连接，自动重连
 
+import type { HistoryMessage } from './api'
+
 export type ServerEvent =
   | { kind: 'cli'; msg: CliMsg }
   | { kind: 'status'; state: SessionState }
@@ -9,6 +11,10 @@ export type ServerEvent =
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
   | { kind: 'rewound'; userMessageId: string; scope?: 'conversation' | 'both' }
+  /** 外部会话 transcript 追加的完整消息（块级实时，非 token 流） */
+  | { kind: 'tail'; msg: HistoryMessage }
+  /** 外部会话 transcript 被截断/重建（rewind、clear），客户端应重载历史并重新订阅 */
+  | { kind: 'tail_reset' }
   | { kind: 'error'; message: string }
 
 export interface CliMsg {
@@ -45,12 +51,17 @@ export interface SessionState {
   model?: string
   permissionMode?: string
   effort?: string
+  /** 服务端正在 tail 外部会话的 transcript（实时跟踪中） */
+  tailing?: boolean
+  /** 外部会话 pid 文件的状态（busy/idle/waiting） */
+  liveStatus?: string
   exited?: boolean
   exitCode?: number
 }
 
 export type ClientCommand =
   | { kind: 'attach'; warm?: boolean; opts?: Record<string, unknown> }
+  | { kind: 'tail_subscribe'; from?: number }
   | { kind: 'user'; text: string }
   | { kind: 'control'; subtype: string; extra?: Record<string, unknown> }
   | { kind: 'update_env'; variables: Record<string, string> }

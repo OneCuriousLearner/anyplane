@@ -56,7 +56,13 @@ export async function fetchSessions(): Promise<SessionInfo[]> {
   return r.json()
 }
 
-export async function fetchHistory(slug: string, sessionId: string): Promise<HistoryMessage[]> {
+export interface HistoryResponse {
+  messages: HistoryMessage[]
+  /** 服务端本次实际读取的 transcript 字节数，作为 tail_subscribe 的起始偏移 */
+  fileBytes: number
+}
+
+export async function fetchHistory(slug: string, sessionId: string): Promise<HistoryResponse> {
   const r = await fetch(`/api/history/${slug}/${sessionId}`)
   return r.json()
 }

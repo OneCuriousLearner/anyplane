@@ -1,0 +1,9 @@
+{
+  "$comment": "复制为 cc-remote.config.json 使用（该文件已被 gitignore，勿提交机器相关路径）。所有字段均可选；claudePath/claudeConfigDir 建议优先用 PATH / CLAUDE_CONFIG_DIR 环境变量按机器覆盖。",
+  "port": 7480,
+  "permissionPolicy": "ask",
+  "claudePath": "/abs/path/to/claude",
+  "detachRecycleMs": 300000,
+  "idleTimeoutMs": 1800000,
+  "claudeConfigDir": "/abs/path/to/.claude"
+}

@@ -51,8 +51,8 @@ afterAll(() => {
 
 describe('readHistory rewind 目标过滤', () => {
   test('tool_result / isMeta / 本地命令回显不可回滚，真实文本与斜杠命令可回滚', () => {
-    const hist = readHistory(SLUG, SID)
-    const byUuid = new Map(hist.map((m) => [m.uuid, m]))
+    const { messages, fileBytes } = readHistory(SLUG, SID)
+    const byUuid = new Map(messages.map((m) => [m.uuid, m]))
 
     // 官方同款语义：斜杠命令回显也建 checkpoint，保留为可选目标
     expect(byUuid.get('u-text-1')?.rewindable).toBe(true)

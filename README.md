@@ -49,7 +49,8 @@ bun run dev:web      # 仅 Vite :5173，代理 /api 与 /ws 到 7480
 
 ## 配置
 
-项目根目录 `cc-remote.config.json` 或 `~/.config/cc-remote/config.json`（均可选）：
+项目根目录 `cc-remote.config.json` 或 `~/.config/cc-remote/config.json`（均可选）。
+根目录的配置文件**已被 gitignore**（机器相关路径不应入库），可复制 `cc-remote.config.example.json` 后按需修改：
 
 ```json
 {

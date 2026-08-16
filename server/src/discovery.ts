@@ -60,6 +60,12 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+/** 外部运行中会话的实时状态（来自 ~/.claude/sessions/<pid>.json）；tailer 用它反映非 spawn 会话的 busy/idle */
+export function liveSessionInfo(sessionId: string): { status: SessionStatus; pid: number } | undefined {
+  const p = readPidFiles().get(sessionId)
+  return p ? { status: normalizeStatus(p.status), pid: p.pid } : undefined
+}
+
 function readPidFiles(): Map<string, PidFile> {
   const dir = join(config.claudeConfigDir, 'sessions')
   const map = new Map<string, PidFile>()
@@ -255,7 +261,7 @@ const INTERNAL_TEXT_TAGS = [
   '<teammate-message>',
 ]
 
-function isSelectableRewindTarget(obj: Record<string, unknown>): boolean {
+export function isSelectableRewindTarget(obj: Record<string, unknown>): boolean {
   if (obj.isMeta === true || obj.isSynthetic === true) return false
   const content = (obj.message as { content?: unknown } | undefined)?.content
   if (Array.isArray(content)) {
@@ -273,10 +279,69 @@ function isSelectableRewindTarget(obj: Record<string, unknown>): boolean {
   return !INTERNAL_TEXT_TAGS.some((tag) => text.includes(tag))
 }
 
-export function readHistory(slug: string, sessionId: string, limit = 300): HistoryMessage[] {
+/**
+ * 把一条 transcript JSONL 记录转为 HistoryMessage；返回 null 表示不进主抄本。
+ * readHistory 与 transcript tailer 共用同一套解析，保证历史与实时追加渲染一致。
+ * 不含 rewindable 计算（依赖全文件行序上下文），由调用方补。
+ */
+export function entryToHistoryMessage(obj: Record<string, unknown>): HistoryMessage | null {
+  const type = obj.type as string
+  if (type === 'system' && obj.subtype === 'compact_boundary') {
+    const meta = (obj.compactMetadata ?? obj.compact_metadata ?? {}) as Record<string, unknown>
+    return {
+      uuid: obj.uuid as string | undefined,
+      role: 'system',
+      subtype: 'compact_boundary',
+      blocks: [],
+      compactMeta: {
+        trigger: meta.trigger as string | undefined,
+        preTokens: (meta.preTokens ?? meta.pre_tokens) as number | undefined,
+        postTokens: (meta.postTokens ?? meta.post_tokens) as number | undefined,
+      },
+      timestamp: obj.timestamp as string | undefined,
+    }
+  }
+  if (type !== 'user' && type !== 'assistant') return null
+  if (isInternalUserMessage(obj as CliMessage)) return null
+  // 子代理内部消息不进主对话抄本
+  if (obj.isSidechain) return null
+  const message = obj.message as { content?: unknown } | undefined
+  const content = message?.content
+  const blocks: HistoryBlock[] = []
+  if (typeof content === 'string') {
+    if (content.trim()) blocks.push({ kind: 'text', text: content })
+  } else if (Array.isArray(content)) {
+    for (const c of content) {
+      if (c?.type === 'text' && c.text?.trim()) blocks.push({ kind: 'text', text: c.text })
+      else if (c?.type === 'thinking' && c.thinking?.trim()) blocks.push({ kind: 'thinking', text: c.thinking })
+      else if (c?.type === 'tool_use') blocks.push({ kind: 'tool_use', name: c.name, id: c.id, input: c.input })
+      else if (c?.type === 'tool_result') {
+        const rt = toolResultText(c.content)
+        blocks.push({ kind: 'tool_result', id: c.tool_use_id, text: rt, isError: c.is_error === true })
+      }
+    }
+  }
+  if (blocks.length === 0) return null
+  return {
+    uuid: obj.uuid as string | undefined,
+    role: type,
+    blocks,
+    timestamp: obj.timestamp as string | undefined,
+    isMeta: obj.isMeta as boolean | undefined,
+  }
+}
+
+export function readHistory(
+  slug: string,
+  sessionId: string,
+  limit = 300,
+): { messages: HistoryMessage[]; fileBytes: number } {
   const path = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
-  if (!existsSync(path)) return []
-  const lines = readFileSync(path, 'utf8').split('\n')
+  if (!existsSync(path)) return { messages: [], fileBytes: 0 }
+  // 读 Buffer 而非 utf8 文本：fileBytes 必须与本次实际解析的字节精确一致，
+  // tailer 从该偏移续读才不会有缝（statSync 与 read 之间文件可能增长）。
+  const raw = readFileSync(path)
+  const lines = raw.toString('utf8').split('\n')
   const msgs: HistoryMessage[] = []
   const msgLineIdx: number[] = []
   const selectable: boolean[] = []
@@ -290,61 +355,17 @@ export function readHistory(slug: string, sessionId: string, limit = 300): Histo
     } catch {
       continue
     }
-    const type = obj.type as string
-    if (type === 'system' && obj.subtype === 'compact_boundary') {
-      lastBoundaryLine = li
-      const meta = (obj.compactMetadata ?? obj.compact_metadata ?? {}) as Record<string, unknown>
-      msgs.push({
-        uuid: obj.uuid as string | undefined,
-        role: 'system',
-        subtype: 'compact_boundary',
-        blocks: [],
-        compactMeta: {
-          trigger: meta.trigger as string | undefined,
-          preTokens: (meta.preTokens ?? meta.pre_tokens) as number | undefined,
-          postTokens: (meta.postTokens ?? meta.post_tokens) as number | undefined,
-        },
-        timestamp: obj.timestamp as string | undefined,
-      })
-      msgLineIdx.push(li)
-      selectable.push(true)
-      continue
-    }
-    if (type !== 'user' && type !== 'assistant') continue
-    if (isInternalUserMessage(obj as CliMessage)) continue
-    // 子代理内部消息不进主对话抄本
-    if (obj.isSidechain) continue
-    const message = obj.message as { content?: unknown } | undefined
-    const content = message?.content
-    const blocks: HistoryBlock[] = []
-    if (typeof content === 'string') {
-      if (content.trim()) blocks.push({ kind: 'text', text: content })
-    } else if (Array.isArray(content)) {
-      for (const c of content) {
-        if (c?.type === 'text' && c.text?.trim()) blocks.push({ kind: 'text', text: c.text })
-        else if (c?.type === 'thinking' && c.thinking?.trim()) blocks.push({ kind: 'thinking', text: c.thinking })
-        else if (c?.type === 'tool_use') blocks.push({ kind: 'tool_use', name: c.name, id: c.id, input: c.input })
-        else if (c?.type === 'tool_result') {
-          const rt = toolResultText(c.content)
-          blocks.push({ kind: 'tool_result', id: c.tool_use_id, text: rt, isError: c.is_error === true })
-        }
-      }
-    }
-    if (blocks.length === 0) continue
-    msgs.push({
-      uuid: obj.uuid as string | undefined,
-      role: type,
-      blocks,
-      timestamp: obj.timestamp as string | undefined,
-      isMeta: obj.isMeta as boolean | undefined,
-    })
+    if (obj.type === 'system' && obj.subtype === 'compact_boundary') lastBoundaryLine = li
+    const msg = entryToHistoryMessage(obj)
+    if (!msg) continue
+    msgs.push(msg)
     msgLineIdx.push(li)
-    selectable.push(type !== 'user' || isSelectableRewindTarget(obj))
+    selectable.push(msg.role !== 'user' || isSelectableRewindTarget(obj))
   }
   // 只有最后一个 compact 边界之后的消息才是逻辑上存在、可回滚的；
   // user 消息还需通过官方同款的目标过滤（无 checkpoint 的消息不可作为 rewind 目标）
   for (let i = 0; i < msgs.length; i++) {
     msgs[i].rewindable = msgLineIdx[i] > lastBoundaryLine && selectable[i]
   }
-  return msgs.slice(-limit)
+  return { messages: msgs.slice(-limit), fileBytes: raw.length }
 }

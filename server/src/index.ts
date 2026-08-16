@@ -3,9 +3,10 @@
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { config } from './config'
-import { listSessions, readHistory, sanitizePath, type SessionInfo } from './discovery'
+import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './discovery'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './processManager'
 import { isInternalUserMessage, type CliMessage } from './protocol'
+import { TranscriptTailer } from './tailer'
 
 // ---------- sessionKey ----------
 // 已存在会话：`s|<slug>|<sessionId>`；新会话：`n|<encodeURIComponent(cwd)>`
@@ -50,6 +51,10 @@ interface Hub {
   pendingEnv?: Record<string, string>
   /** 组合回滚正在等待 rewind_files 的 CLI 确认，期间禁止再切断当前会话。 */
   rewindPending?: boolean
+  /** 未 spawn 时对 transcript JSONL 的实时跟踪（外部运行中的会话） */
+  tailer?: TranscriptTailer
+  /** tail 状态推送的节流时间戳 */
+  tailStatusAt?: number
 }
 
 const hubs = new Map<string, Hub>()
@@ -76,9 +81,15 @@ function statusOf(key: string): Record<string, unknown> {
   const s = processManager.get(key)
   const hub = hubs.get(key)
   const pending = hub?.pendingApprovals.size ?? 0
-  const waiting = (s?.waiting ?? false) || pending > 0
+  // 未被本服务 spawn 的会话：读 pid 文件，把外部 CLI 的实时状态反映到 busy/waiting
+  let live: { status: string; pid: number } | undefined
+  if (!s || s.exited) {
+    const parts = key.split('|')
+    if (parts[0] === 's' && parts.length === 3) live = liveSessionInfo(parts[2])
+  }
+  const waiting = (s?.waiting ?? false) || pending > 0 || live?.status === 'waiting'
   // 审批等待也算 busy，防止误回收
-  const busy = (s?.busy ?? false) || waiting
+  const busy = (s?.busy ?? false) || waiting || live?.status === 'busy'
   return {
     spawned: !!s && !s.exited,
     busy,
@@ -91,11 +102,49 @@ function statusOf(key: string): Record<string, unknown> {
     model: hub?.spawnOpts?.model,
     permissionMode: hub?.spawnOpts?.permissionMode,
     effort: hub?.spawnOpts?.effort,
+    tailing: !!hub?.tailer,
+    liveStatus: live?.status,
   }
 }
 
 function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
   broadcast(hub, { kind: 'status', state: { ...statusOf(hub.key), ...extra } })
+}
+
+// ---------- transcript tailer（外部会话实时跟踪） ----------
+
+function stopTailer(hub: Hub): void {
+  hub.tailer?.stop()
+  hub.tailer = undefined
+}
+
+function throttledTailStatus(hub: Hub): void {
+  const now = Date.now()
+  if (now - (hub.tailStatusAt ?? 0) < 2000) return
+  hub.tailStatusAt = now
+  pushStatus(hub)
+}
+
+function startTailer(hub: Hub, from?: number): void {
+  if (hub.tailer) return
+  const parts = hub.key.split('|')
+  if (parts[0] !== 's' || parts.length !== 3) return // 新会话还没有 transcript
+  if (processManager.get(hub.key)) return // 已 spawn：live 流覆盖，无需 tail
+  const path = join(config.claudeConfigDir, 'projects', parts[1], `${parts[2]}.jsonl`)
+  hub.tailer = new TranscriptTailer(path, from, {
+    onMessage: (msg) => {
+      broadcast(hub, { kind: 'tail', msg })
+      throttledTailStatus(hub)
+    },
+    onReset: () => {
+      stopTailer(hub)
+      broadcast(hub, { kind: 'tail_reset' })
+      pushStatus(hub)
+    },
+    onTick: () => throttledTailStatus(hub),
+  })
+  hub.tailer.start()
+  pushStatus(hub)
 }
 
 function rewindConversation(hub: Hub, userMessageId: string, scope: 'conversation' | 'both'): void {
@@ -162,6 +211,8 @@ function ensureSpawned(
         pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
       },
     })
+    // spawn 成功（或已有存活进程）：live 流接管，停掉 transcript tailer 避免重复推送
+    stopTailer(hub)
     // 懒 spawn：WS 可能在进程创建前已 open，对齐客户端引用计数
     s.syncClients(hub.clients.size)
     // 自定义 env 必须排在首条 user 消息之前写入；stdin 保证顺序。
@@ -201,6 +252,11 @@ function handleClientMessage(hub: Hub, raw: string): void {
       for (const a of hub.pendingApprovals.values()) {
         broadcast(hub, { kind: 'approval_request', ...a })
       }
+      break
+    }
+    case 'tail_subscribe': {
+      // 客户端加载完历史后订阅 transcript 追加（from = 历史读取时的文件字节数，无缝衔接）
+      startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
       break
     }
     case 'user': {
@@ -529,6 +585,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
   if (histMatch && req.method === 'GET') {
     const [, slug, sessionId] = histMatch
+    // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移
     return json(readHistory(slug, sessionId))
   }
   if (url.pathname === '/api/config' && req.method === 'GET') {
@@ -599,7 +656,10 @@ try {
         if (!hub) return
         hub.clients.delete(ws)
         processManager.get(ws.data.key)?.detachClient()
-        if (hub.clients.size === 0 && !processManager.get(ws.data.key)) hubs.delete(ws.data.key)
+        if (hub.clients.size === 0) {
+          stopTailer(hub)
+          if (!processManager.get(ws.data.key)) hubs.delete(ws.data.key)
+        }
       },
     },
   })
