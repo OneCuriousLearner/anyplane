@@ -35,16 +35,51 @@ const MODE_META: Record<string, { dot: string; label: string; short: string; des
   bypassPermissions: { dot: 'bg-danger', label: 'bypass permissions', short: 'bypass', desc: '全部自动放行' },
 }
 
-/** 毛玻璃面板：半透明底 + blur-md。须 portal 到 body，否则会被带 backdrop-filter 的顶栏截成 backdrop root */
+/** 毛玻璃面板：半透明底 + blur-md。须 portal 到 body，否则会被带 backdrop-filter 的顶栏截成 backdrop root。
+ *  背景特效层见 index.css 的 .cc-panel-fx（CRT 扫描线 / 点阵 / 指针磷光），子面板复用同一层 */
 const GLASS =
   'rounded-md border border-white/15 bg-linear-[150deg] from-white/[0.10] via-bg/55 to-bg/70 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.75),inset_-0.58px_1px_0_rgba(255,255,255,0.10)] backdrop-blur-md'
 
 /** 悬浮顶/底栏用毛玻璃条：无圆角，配合单向边框 */
 export const GLASS_BAR = 'bg-bg/60 backdrop-blur-md'
 
-/** 嵌套子面板：已在玻璃面板内，用实底压住文字即可 */
+/** 嵌套子面板：已在玻璃面板内，用实底压住文字即可；背景特效与主面板共用 .cc-panel-fx */
 const GLASS_SUB =
   'rounded-md border border-white/10 bg-surface2/95 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)]'
+
+/** 指针磷光：把指针坐标（相对当前面板）写成 CSS 变量，供 .cc-panel-fx 消费（纯 CSS 渲染，不进 React state） */
+const trackFxPointer = (e: React.PointerEvent<HTMLElement>) => {
+  const el = e.currentTarget
+  const r = el.getBoundingClientRect()
+  el.style.setProperty('--mx', `${e.clientX - r.left}px`)
+  el.style.setProperty('--my', `${e.clientY - r.top}px`)
+}
+
+/** CRT 特效层：扫描线 + 点阵 + 指针磷光。corners 仅主面板使用（四角框线字符） */
+function PanelFx({ corners = false }: { corners?: boolean }) {
+  return (
+    <div className="cc-panel-fx" aria-hidden>
+      {corners && (
+        <>
+          <span className="absolute left-1 top-0.5">┌</span>
+          <span className="absolute right-1 top-0.5">┐</span>
+          <span className="absolute bottom-0.5 left-1">└</span>
+          <span className="absolute bottom-0.5 right-1">┘</span>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** mode/model 展开子面板：实底 + 与主面板相同的 CRT 特效层 */
+function SubPanel(props: { children: React.ReactNode }) {
+  return (
+    <div className={`relative mx-1 mb-1 mt-0.5 p-1 ${GLASS_SUB}`} onPointerMove={trackFxPointer}>
+      <PanelFx />
+      <div className="relative">{props.children}</div>
+    </div>
+  )
+}
 
 function modeLabel(mode?: string): string {
   return (mode && MODE_META[mode]?.label) ?? mode ?? 'default'
@@ -114,9 +149,12 @@ export function StatusPill(props: {
     createPortal(
       <div
         ref={panelRef}
-        className={`fixed z-50 p-2 ${GLASS}`}
+        className={`fixed z-50 overflow-hidden p-2 ${GLASS}`}
         style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
+        onPointerMove={trackFxPointer}
       >
+        <PanelFx corners />
+        <div className="relative">
         {/* mode 行 */}
         <button
           className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left hover:bg-surface2/60"
@@ -128,7 +166,7 @@ export function StatusPill(props: {
           <span className="text-[10px] text-faint">{sub === 'mode' ? '▴' : '▾'}</span>
         </button>
         {sub === 'mode' && (
-          <div className={`mx-1 mb-1 mt-0.5 p-1 ${GLASS_SUB}`}>
+          <SubPanel>
             {cfg.permissionModes.map((m) => {
               const mm = MODE_META[m] ?? { dot: 'bg-faint', label: m, short: m, desc: '' }
               const active = modeKey === m
@@ -150,7 +188,7 @@ export function StatusPill(props: {
                 </button>
               )
             })}
-          </div>
+          </SubPanel>
         )}
 
         {/* model 行 */}
@@ -163,7 +201,7 @@ export function StatusPill(props: {
           <span className="text-[10px] text-faint">{sub === 'model' ? '▴' : '▾'}</span>
         </button>
         {sub === 'model' && (
-          <div className={`mx-1 mb-1 mt-0.5 p-1 ${GLASS_SUB}`}>
+          <SubPanel>
             {cfg.models.map((m) => {
               const active = props.model === m
               return (
@@ -182,10 +220,11 @@ export function StatusPill(props: {
                 </button>
               )
             })}
-          </div>
+          </SubPanel>
         )}
 
         <EffortSlider value={effort} onChange={props.onSetEffort} />
+        </div>
       </div>,
       document.body,
     )

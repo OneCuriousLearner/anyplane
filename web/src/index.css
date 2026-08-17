@@ -150,6 +150,45 @@ body {
   border-radius: 6px;
 }
 
+/* ---- StatusPill 面板背景：CRT 终端特效（纯 CSS，零 JS 渲染开销） ----
+   三层叠加：指针磷光(径向高光, 消费 --mx/--my) + 水平扫描线 + 字符点阵。
+   主面板与 mode/model 展开的子面板共用本层；--mx/--my 由各面板容器的
+   onPointerMove 直接写 style（相对自身坐标），不触发 React 重渲染。 */
+.cc-panel-fx {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+/* 磷光余晖 + 扫描线 + 点阵 */
+.cc-panel-fx::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    /* 跟随指针的陶土橙磷光，默认藏在面板上方外 */
+    radial-gradient(
+      circle 130px at var(--mx, 50%) var(--my, -40%),
+      rgb(224 120 80 / 0.16),
+      transparent 70%
+    ),
+    /* CRT 水平扫描线 */
+    repeating-linear-gradient(0deg, rgb(255 255 255 / 0.03) 0 1px, transparent 1px 3px),
+    /* 终端字符网格点阵 */
+    radial-gradient(circle, rgb(237 228 211 / 0.10) 1px, transparent 1.4px);
+  background-size:
+    auto,
+    auto,
+    12px 12px;
+}
+
 /* 输入光标呼吸 */
 @keyframes cc-blink {
   0%,
