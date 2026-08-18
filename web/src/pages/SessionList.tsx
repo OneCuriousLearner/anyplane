@@ -89,10 +89,19 @@ export function SessionList(props: {
             <p className="mt-1 text-xs text-faint">点「+ 新会话」，从文件系统选择项目目录即可开始。</p>
           </div>
         )}
-        {[...groups.entries()].map(([cwd, list]) => (
+        {[...groups.entries()].map(([cwd, list]) => {
+          const branch = list.find((s) => s.gitBranch)?.gitBranch
+          const nClaude = list.filter((s) => s.backend !== 'codex').length
+          const nCodex = list.length - nClaude
+          return (
           <div key={cwd}>
-            <div className="sticky top-0 border-y border-line/60 bg-surface/95 px-4 py-1.5 font-mono text-[11px] tracking-wide text-muted backdrop-blur">
-              {cwd}
+            <div className="sticky top-0 flex items-center gap-2 border-y border-line/60 bg-surface/95 px-4 py-1.5 font-mono text-[11px] tracking-wide text-muted backdrop-blur">
+              <span className="truncate">{cwd}</span>
+              {branch && <span className="shrink-0 text-faint">⎇ {branch}</span>}
+              <span className="ml-auto flex shrink-0 gap-1.5 text-[10px] text-faint">
+                {nClaude > 0 && <span className="text-accent-soft/80">CC {nClaude}</span>}
+                {nCodex > 0 && <span className="text-sky-300/80">CX {nCodex}</span>}
+              </span>
             </div>
             {list.map((s) => {
               const st =
@@ -148,7 +157,8 @@ export function SessionList(props: {
               )
             })}
           </div>
-        ))}
+          )
+        })}
       </div>
 
       {pickerOpen && (

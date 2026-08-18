@@ -1,8 +1,28 @@
 // 新会话目录选择器的本地目录列举：仅目录、单层、懒加载友好
 
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+
+/** 读 git 分支名（普通仓库 .git/HEAD；worktree 的 .git 是 gitdir 指向文件）。非仓库返回 undefined */
+export function readGitBranch(cwd: string): string | undefined {
+  try {
+    let head: string
+    if (statSync(join(cwd, '.git')).isDirectory()) {
+      head = readFileSync(join(cwd, '.git', 'HEAD'), 'utf8').trim()
+    } else {
+      const ptr = readFileSync(join(cwd, '.git'), 'utf8').trim()
+      if (!ptr.startsWith('gitdir:')) return undefined
+      head = readFileSync(join(ptr.slice(7).trim(), 'HEAD'), 'utf8').trim()
+    }
+    if (head.startsWith('ref:')) {
+      return head.split('/').pop() ?? head
+    }
+    return head.slice(0, 7) // detached HEAD：短 sha
+  } catch {
+    return undefined
+  }
+}
 
 export interface DirEntry {
   name: string

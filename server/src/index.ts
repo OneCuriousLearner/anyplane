@@ -12,7 +12,7 @@ import { TranscriptTailer } from './backends/claude/tailer'
 import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as codexParseKey } from './backends/codex/backend'
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
 import { config } from './config'
-import { FsBrowseError, listDirectories } from './fsbrowse'
+import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 import {
   appendLineage,
   generateClaudeBrief,
@@ -813,9 +813,17 @@ if (!hasWindowsSocketFix && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
 async function handleApi(req: Request, url: URL): Promise<Response | undefined> {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     const sessions = listSessions()
+    // 项目行 git 分支：按 cwd 各读一次（普通仓库与 worktree 都支持）
+    const branchOf = (cwd?: string): string | undefined => {
+      if (!cwd) return undefined
+      if (!branchCache.has(cwd)) branchCache.set(cwd, readGitBranch(cwd))
+      return branchCache.get(cwd)
+    }
+    const branchCache = new Map<string, string | undefined>()
     const claudeRows = sessions.map((s: SessionInfo) => ({
       ...s,
       backend: 'claude' as const,
+      gitBranch: branchOf(s.cwd),
       key: keyFor(s.slug, s.sessionId),
       managed: statusOf(keyFor(s.slug, s.sessionId)),
     }))
@@ -833,6 +841,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         sizeBytes: 0,
         status: t.status,
         backend: 'codex' as const,
+        gitBranch: branchOf(t.cwd),
         key: t.key,
         managed: codexStatusOf(t.key),
       }))

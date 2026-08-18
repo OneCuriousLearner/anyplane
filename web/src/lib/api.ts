@@ -29,6 +29,8 @@ export interface SessionInfo {
   live?: { pid: number; startedAt?: string | number; kind?: string }
   /** 会话后端：claude（stream-json 子进程）| codex（app-server） */
   backend?: 'claude' | 'codex'
+  /** 项目目录的 git 分支（非仓库为空） */
+  gitBranch?: string
   key: string
   managed: {
     spawned: boolean
