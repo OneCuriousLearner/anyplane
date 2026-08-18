@@ -7,6 +7,14 @@ import { join } from 'node:path'
 
 export interface ServerConfig {
   port: number
+  /** 监听地址。默认仅回环；绑非回环地址必须同时配置 authToken */
+  host: string
+  /**
+   * 访问令牌。未配置时不做任何鉴权（仅限回环使用）；
+   * 配置后 /api 与 /ws 一律要求 Bearer 或 ?token= 校验。
+   * CC_REMOTE_TOKEN 环境变量优先。
+   */
+  authToken?: string
   /** 默认权限策略：ask = 转发到 UI 审批；bypass = spawn 时直接 bypassPermissions */
   permissionPolicy: 'ask' | 'bypass'
   /** claude CLI 路径，默认从 PATH 解析 */
@@ -26,6 +34,7 @@ export interface ServerConfig {
 
 const DEFAULTS: ServerConfig = {
   port: 7480,
+  host: '127.0.0.1',
   permissionPolicy: 'ask',
   idleTimeoutMs: 30 * 60 * 1000,
   detachRecycleMs: 5 * 60 * 1000,
@@ -56,5 +65,7 @@ export const config: ServerConfig = {
   ...DEFAULTS,
   ...loadFileConfig(),
   ...(process.env.CC_REMOTE_PORT ? { port: Number(process.env.CC_REMOTE_PORT) } : {}),
+  ...(process.env.CC_REMOTE_HOST ? { host: process.env.CC_REMOTE_HOST } : {}),
+  ...(process.env.CC_REMOTE_TOKEN ? { authToken: process.env.CC_REMOTE_TOKEN } : {}),
   ...(process.env.CLAUDE_CONFIG_DIR ? { claudeConfigDir: process.env.CLAUDE_CONFIG_DIR } : {}),
 }

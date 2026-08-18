@@ -1,5 +1,6 @@
 // WebSocket 客户端：按 sessionKey 连接，自动重连
 
+import { wsTokenQuery } from './auth'
 import type { HistoryMessage } from './api'
 
 export type ServerEvent =
@@ -86,7 +87,9 @@ export class SessionSocket {
 
   private connect(): void {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/ws/sessions/${encodeURIComponent(this.key)}`)
+    const ws = new WebSocket(
+      `${proto}://${location.host}/ws/sessions/${encodeURIComponent(this.key)}${wsTokenQuery()}`,
+    )
     this.ws = ws
     ws.onopen = () => {
       this.retry = 0

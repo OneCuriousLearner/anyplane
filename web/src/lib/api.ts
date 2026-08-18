@@ -1,5 +1,22 @@
 // API 类型与 fetch 封装
 
+import { authHeaders, notifyAuthRequired } from './auth'
+
+/** 401 时抛出；App 层会显示令牌输入页，调用方静默忽略即可 */
+export class AuthRequiredError extends Error {}
+
+async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  const r = await fetch(input, {
+    ...init,
+    headers: { ...authHeaders(), ...(init?.headers ?? {}) },
+  })
+  if (r.status === 401) {
+    notifyAuthRequired()
+    throw new AuthRequiredError('unauthorized')
+  }
+  return r
+}
+
 export interface SessionInfo {
   sessionId: string
   cwd?: string
@@ -52,7 +69,7 @@ export interface ServerConfigInfo {
 }
 
 export async function fetchSessions(): Promise<SessionInfo[]> {
-  const r = await fetch('/api/sessions')
+  const r = await apiFetch('/api/sessions')
   return r.json()
 }
 
@@ -63,12 +80,12 @@ export interface HistoryResponse {
 }
 
 export async function fetchHistory(slug: string, sessionId: string): Promise<HistoryResponse> {
-  const r = await fetch(`/api/history/${slug}/${sessionId}`)
+  const r = await apiFetch(`/api/history/${slug}/${sessionId}`)
   return r.json()
 }
 
 export async function createSession(cwd: string): Promise<{ key: string; slug: string }> {
-  const r = await fetch('/api/sessions', {
+  const r = await apiFetch('/api/sessions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ cwd }),
@@ -77,7 +94,7 @@ export async function createSession(cwd: string): Promise<{ key: string; slug: s
 }
 
 export async function fetchConfig(): Promise<ServerConfigInfo> {
-  const r = await fetch('/api/config')
+  const r = await apiFetch('/api/config')
   return r.json()
 }
 
@@ -95,7 +112,7 @@ export interface DirListResult {
 }
 
 export async function fetchDirList(path: string): Promise<DirListResult> {
-  const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`)
+  const r = await apiFetch(`/api/fs/list?path=${encodeURIComponent(path)}`)
   if (!r.ok) {
     const body = (await r.json().catch(() => null)) as { error?: string } | null
     throw new Error(body?.error ?? `HTTP ${r.status}`)

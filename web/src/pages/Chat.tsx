@@ -397,7 +397,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
 
   // ---------- WS 连接 ----------
   useEffect(() => {
-    fetchConfig().then(setCfg)
+    fetchConfig().then(setCfg).catch(() => {})
     const sock = new SessionSocket(
       session.key,
       (ev: ServerEvent) => {

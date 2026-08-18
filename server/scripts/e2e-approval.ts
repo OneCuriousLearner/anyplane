@@ -1,7 +1,8 @@
 // E2E-审批：验证 can_use_tool → approval_request → allow → 命令执行
 // 用法：bun run server/scripts/e2e-approval.ts
 const key = `n|${encodeURIComponent('D:\\Coder\\Agents\\cc-remote')}`
-const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}`)
+const tokenQ = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
+const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}${tokenQ}`)
 
 const timeout = setTimeout(() => {
   console.error('TIMEOUT: 未收到 result')

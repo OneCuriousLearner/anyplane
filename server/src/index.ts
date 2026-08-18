@@ -1,7 +1,9 @@
 // cc-remote 服务端入口：REST + WebSocket + 静态托管
 
 import { existsSync } from 'node:fs'
+import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
+import { isAuthorized, isLoopbackHost } from './auth'
 import { config } from './config'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './discovery'
 import { FsBrowseError, listDirectories } from './fsbrowse'
@@ -606,17 +608,33 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       permissionModes: ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'],
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       models: ['haiku', 'sonnet', 'opus', 'fable'],
+      authRequired: !!config.authToken,
     })
   }
   return undefined
 }
 
 let server: ReturnType<typeof Bun.serve<WSData>>
+
+// 绑定非回环地址却不配置 token = 把"任意目录起会话 + 任意命令执行"裸奔到网络上，拒绝启动
+if (!isLoopbackHost(config.host) && !config.authToken) {
+  console.error(`[cc-remote] 拒绝启动：host=${config.host} 为非回环地址，但未配置 authToken。`)
+  console.error('[cc-remote] 请在 cc-remote.config.json 设置 "authToken" 或设置环境变量 CC_REMOTE_TOKEN。')
+  process.exit(1)
+}
+
 try {
   server = Bun.serve<WSData>({
     port: config.port,
+    hostname: config.host,
     async fetch(req, srv) {
       const url = new URL(req.url)
+
+      // 数据面/控制面统一鉴权（静态壳不鉴权，JS 中无敏感数据）
+      const guarded = url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')
+      if (guarded && !isAuthorized(req, url)) {
+        return json({ error: 'unauthorized' }, { status: 401 })
+      }
 
       const wsMatch = url.pathname.match(/^\/ws\/sessions\/(.+)$/)
       if (wsMatch) {
@@ -689,10 +707,38 @@ try {
   process.exit(1)
 }
 
+// 通配绑定（0.0.0.0/::）时二维码与日志要显示可路由的局域网地址
+function lanAddress(): string {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === 'IPv4' && !a.internal) return a.address
+    }
+  }
+  return 'localhost'
+}
+const displayHost = isLoopbackHost(config.host)
+  ? 'localhost'
+  : config.host === '0.0.0.0' || config.host === '::'
+    ? lanAddress()
+    : config.host
+const accessUrl = `http://${displayHost}:${server.port}/${config.authToken ? `?token=${config.authToken}` : ''}`
 console.log(
-  `[cc-remote] listening on http://localhost:${server.port} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}`,
+  `[cc-remote] listening on ${accessUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}`,
 )
 console.log(`[cc-remote] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
+if (!config.authToken) {
+  console.log('[cc-remote] 未配置 authToken，仅监听回环地址。需要局域网访问时：配置 authToken 并设置 host。')
+}
+
+// 局域网模式：打印扫码即入的终端二维码（URL 已带 token）
+if (!isLoopbackHost(config.host)) {
+  try {
+    const { default: QRCode } = await import('qrcode')
+    console.log(await QRCode.toString(accessUrl, { type: 'terminal', small: true }))
+  } catch (e) {
+    console.warn('[cc-remote] 二维码生成失败（不影响服务）:', e)
+  }
+}
 
 let shuttingDown = false
 async function shutdown(reason: string): Promise<void> {

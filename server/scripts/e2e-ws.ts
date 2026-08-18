@@ -4,7 +4,8 @@ const slug = 'D--Coder-Agents-cc-remote'
 const sessionId = 'ee01d38e-b1f9-4c3d-8110-518aa465cdb0' // smoke 测试产生的会话
 const key = `s|${slug}|${sessionId}`
 
-const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}`)
+const tokenQ = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
+const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}${tokenQ}`)
 
 const timeout = setTimeout(() => {
   console.error('TIMEOUT')

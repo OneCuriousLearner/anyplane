@@ -29,6 +29,7 @@ export function SessionList(props: {
   const refresh = () => {
     fetchSessions()
       .then(setSessions)
+      .catch(() => {}) // 401 由 App 令牌门接管
       .finally(() => setLoading(false))
   }
   useEffect(() => {

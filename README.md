@@ -55,6 +55,8 @@ bun run dev:web      # 仅 Vite :5173，代理 /api 与 /ws 到 7480
 ```json
 {
   "port": 7480,
+  "host": "127.0.0.1",
+  "authToken": "change-me",
   "permissionPolicy": "ask",
   "claudePath": "/usr/local/bin/claude",
   "detachRecycleMs": 300000,
@@ -63,10 +65,13 @@ bun run dev:web      # 仅 Vite :5173，代理 /api 与 /ws 到 7480
 }
 ```
 
+- `host`: 监听地址，默认 `127.0.0.1`（仅本机）。**绑定非回环地址（如 `0.0.0.0`）必须同时配置 `authToken`**，否则拒绝启动——局域网内的任何人都能起会话 = 任意命令执行。
+- `authToken`: 访问令牌（可选）。配置后 `/api` 与 `/ws` 一律要求 `Authorization: Bearer <token>` 或 `?token=<token>`；静态前端壳不鉴权（JS 中无敏感数据）。局域网模式启动时终端会打印带 token 的扫码 URL 二维码，手机扫码即入；浏览器端令牌存 localStorage，401 时会弹出令牌输入页。
 - `permissionPolicy`: `"ask"`（默认，转发 UI 审批）| `"bypass"`（spawn 即 bypassPermissions）
 - `detachRecycleMs`: 已收到 Claude `session_state_changed` 时，客户端全断、主会话 `idle` 且无 Claude 后台任务后多久回收子进程（默认 5 分钟）；`running` / `requires_action` / 后台 Agent、workflow、shell 任务期间绝不回收
 - `idleTimeoutMs`: 无权威状态事件时的回退回收延迟（默认 30 分钟）
-- `CC_REMOTE_PORT` 环境变量可覆盖端口（默认固定 7480）
+- 环境变量覆盖：`CC_REMOTE_PORT`、`CC_REMOTE_HOST`、`CC_REMOTE_TOKEN`、`CLAUDE_CONFIG_DIR`
+- 跨网段访问**不自建公网穿透**：推荐 Tailscale serve/funnel 或自有反代 + TLS，配合 `authToken` 使用
 - spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号
 - Windows 请使用 Bun 1.3.15+。Bun 1.3.14 及更早版本存在监听 socket 被子进程继承的问题
   ([oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936))；1.3.15 发布前可用
