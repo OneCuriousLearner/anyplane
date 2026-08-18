@@ -16,20 +16,28 @@ stdin/stdout 走双向 NDJSON（user 消息 + control_request/response），与�
 
 ## 功能
 
-- **会话列表**：扫描 `~/.claude/projects/**/*.jsonl`，按项目分组，展示标题/最近活动/状态徽标（busy/idle/waiting/offline，活跃状态来自 `~/.claude/sessions/*.json` PID 文件）
-- **接续对话**：按目录 + session id 精准 `--resume`
+- **双后端**：Claude Code（stream-json 子进程）与 **Codex**（`codex app-server` JSON-RPC）统一接入，同一 UI 管理两个 agent 的会话；Codex 事件在服务端翻译为统一消息形状，前端零分叉
+- **接力（handoff）**：一键让另一个 agent 接续本目录工作——源会话 fork 自写交接简报（Claude fork-session / Codex ephemeral fork），目标会话带简报进场先确认现场再继续；血缘落盘 `~/.config/cc-remote/lineage.json`
+- **项目工作台**：会话按项目目录分组（git 分支 + 各后端计数），Chat 顶栏同目录兄弟会话快捷切换
+- **Token 计量**：只计 token 不计费用，分后端分桶（input/output/cache/reasoning），不跨后端合并
+- **会话列表**：扫描 `~/.claude/projects/**/*.jsonl` + `thread/list`，展示标题/最近活动/状态徽标（busy/idle/waiting/offline）
+- **接续对话**：按目录 + session id 精准 `--resume`；Codex 按 `thread/resume`
 - **流式输出**：`--include-partial-messages` 增量渲染，草稿气泡实时过 Markdown；assistant 块快照按 `message.id`+块序号归并定稿，不与增量重复
 - **Markdown 渲染**：react-markdown + GFM（表格/任务列表/删除线），代码块等宽底色
 - **工具卡片**：tool_use 与 tool_result 按 id 配对成一张卡（名称+摘要一行 trace，展开看参数与结果，失败染红）；思考块默认折叠
 - **消息标签**：斜杠命令回显（`<command-name>`）渲染为命令 chip，本地命令输出剥 ANSI 折叠，`<system-reminder>`/isMeta 不进主抄本，子代理 sidechain 消息不入主流
-- **状态利用**：`system/init` 提供模型/权限模式徽标与斜杠命令补全；`system/status` 驱动"请求中/压缩中"相位指示；`result` 生成"本轮 25s · 830 tok"回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
-- **运行时切换**：模型（set_model）、权限模式（set_permission_mode，等同 shift+tab）、effort（update_environment_variables，部分版本可能需重开会话生效）、中断（interrupt）
-- **权限审批**：`can_use_tool` 推到 UI 审批卡片；或配置 `permissionPolicy: "bypass"` 全自动
+- **状态利用**：`system/init` 提供模型/权限模式徽标；initialize 握手拿 42+ 斜杠命令（含描述）驱动补全；`result` 生成回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
+- **运行时切换**：模型（set_model）、权限模式（set_permission_mode，Codex 侧近似映射 approvalPolicy+sandbox）、effort、中断（interrupt）、/compact
+- **权限审批**：`can_use_tool` / `requestApproval` 统一推到 UI 审批卡片；Codex 侧强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；或配置 `permissionPolicy: "bypass"` 全自动
+- **会话详情抽屉**：context 分类用量 / MCP 状态 / 设置（只读控制查询）
 - **斜杠命令**：`/compact`、`/context` 原生透传；`/rewind`（消息选择器，支持仅回滚文件、仅回滚对话、回滚对话+文件；组合操作先确认文件检查点恢复成功再截断对话）；`/btw <问题>`（fork 侧问，不污染主会话）；其他命令原样发给 CLI 处理
+- **后台任务**：task_started → task_notification 活动任务芯片，可 `stop_task` 手动停止
+- **会话改名**：Claude 离线会话追加 custom-title（官方 /rename 同形）；Codex `thread/name/set`
+- **收件箱 + 通知**：`/ws/inbox` 跨会话审批/完成/错误汇总；桌面通知（页面隐藏时推送）；标题角标；PWA 可添加到手机主屏
 
 ## 运行
 
-要求：Bun >= 1.3.13（Windows 请用 1.3.15+ 或 canary，见下方说明），PATH 中有已登录的官方 `claude` CLI。支持 Windows 与 Linux。
+要求：Bun >= 1.3.13（Windows 请用 1.3.15+ 或 canary，见下方说明），PATH 中有已登录的官方 `claude` CLI；使用 Codex 后端需要 PATH 中有 `codex` CLI（>= 0.147，服务端自动 spawn `codex app-server --stdio` 并按其配置认证）。支持 Windows 与 Linux。
 
 **本项目仅使用 Bun，请勿使用 npm / npx / yarn / pnpm。** 依赖安装、脚本与运行时一律走 `bun`；用 npm 会产生错误的 lockfile、错误的进程树，并在 Windows 上更容易留下僵尸端口。
 
