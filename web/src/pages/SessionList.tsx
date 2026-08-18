@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createSession, fetchSessions, renameSession, type SessionInfo } from '../lib/api'
+import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { DirPicker } from './DirPicker'
 
@@ -18,6 +19,9 @@ function timeAgo(ms: number): string {
   return `${Math.floor(s / 86400)}d`
 }
 
+/** 桌面通知开关：localStorage 持久；浏览器授权后在页面隐藏时推送 */
+const NOTIFY_KEY = 'cc-remote-notify'
+
 export function SessionList(props: {
   selectedKey?: string
   onSelect: (s: SessionInfo) => void
@@ -25,6 +29,72 @@ export function SessionList(props: {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [approvals, setApprovals] = useState<InboxApproval[]>([])
+  const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1')
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
+  const notifyRef = useRef(notify)
+  notifyRef.current = notify
+
+  const titleOf = (key: string): string => {
+    const s = sessionsRef.current.find((x) => x.key === key)
+    return s?.title ?? s?.cwd ?? key.slice(0, 24)
+  }
+
+  const pushNotify = (title: string, body: string) => {
+    if (!notifyRef.current || !('Notification' in window)) return
+    if (Notification.permission !== 'granted' || !document.hidden) return
+    try {
+      new Notification(title, { body, tag: 'cc-remote-inbox' })
+    } catch {}
+  }
+
+  // 全局收件箱：审批队列 + 完成/错误通知
+  useEffect(() => {
+    const sock = new InboxSocket((ev) => {
+      switch (ev.type) {
+        case 'snapshot':
+          setApprovals(ev.approvals)
+          break
+        case 'approval':
+          setApprovals((prev) => (prev.some((a) => a.requestId === ev.requestId) ? prev : [...prev, ev]))
+          pushNotify(`⏸ 需要审批：${titleOf(ev.key)}`, `${ev.toolName} 等待你的决定`)
+          break
+        case 'approval_resolved':
+          setApprovals((prev) => prev.filter((a) => a.requestId !== ev.requestId))
+          break
+        case 'done':
+          if (ev.ok) pushNotify(`✓ 完成：${titleOf(ev.key)}`, '会话本轮工作已收尾')
+          break
+        case 'error':
+          pushNotify(`⚠ 出错：${titleOf(ev.key)}`, ev.message.slice(0, 120))
+          break
+      }
+    })
+    return () => sock.close()
+  }, [])
+
+  // 标题角标：待审批数
+  useEffect(() => {
+    document.title = approvals.length > 0 ? `(${approvals.length}) cc-remote` : 'cc-remote'
+    return () => {
+      document.title = 'cc-remote'
+    }
+  }, [approvals.length])
+
+  const toggleNotify = async () => {
+    if (notify) {
+      setNotify(false)
+      localStorage.setItem(NOTIFY_KEY, '0')
+      return
+    }
+    if ('Notification' in window && Notification.permission === 'default') {
+      await Notification.requestPermission()
+    }
+    const granted = !('Notification' in window) || Notification.permission === 'granted'
+    setNotify(granted)
+    localStorage.setItem(NOTIFY_KEY, granted ? '1' : '0')
+  }
 
   const refresh = () => {
     fetchSessions()
@@ -71,15 +141,51 @@ export function SessionList(props: {
             <ClaudeMark className="h-4 w-4" />
             cc-remote
           </h1>
-          <button
-            className="rounded border border-accent/60 px-2.5 py-1 font-mono text-xs text-accent-soft hover:bg-accent/10"
-            onClick={() => setPickerOpen(true)}
-          >
-            + 新会话
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className={`relative rounded border px-2 py-1 font-mono text-xs ${
+                notify ? 'border-accent/60 text-accent-soft' : 'border-line text-faint'
+              }`}
+              title={notify ? '桌面通知已开启（页面隐藏时推送）' : '开启桌面通知'}
+              onClick={toggleNotify}
+            >
+              🔔
+              {approvals.length > 0 && (
+                <span className="absolute -right-1.5 -top-1.5 rounded-full bg-danger px-1 text-[9px] leading-4 text-white">
+                  {approvals.length}
+                </span>
+              )}
+            </button>
+            <button
+              className="rounded border border-accent/60 px-2.5 py-1 font-mono text-xs text-accent-soft hover:bg-accent/10"
+              onClick={() => setPickerOpen(true)}
+            >
+              + 新会话
+            </button>
+          </div>
         </div>
         <p className="mt-1 text-xs text-faint">Claude Code Claw</p>
       </div>
+
+      {/* 待审批收件箱：点击直达会话 */}
+      {approvals.length > 0 && (
+        <div className="border-b border-wait/40 bg-wait/10 px-4 py-2">
+          {approvals.map((a) => (
+            <button
+              key={a.requestId}
+              className="flex w-full items-center gap-2 py-1 text-left font-mono text-[11px] text-wait hover:text-ink"
+              onClick={() => {
+                const s = sessions.find((x) => x.key === a.key)
+                if (s) props.onSelect(s)
+              }}
+            >
+              <span className="animate-pulse">⏸</span>
+              <span className="truncate">{titleOf(a.key)}</span>
+              <span className="shrink-0 text-faint">{a.toolName}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         {loading && <p className="p-4 font-mono text-xs text-faint">加载中…</p>}

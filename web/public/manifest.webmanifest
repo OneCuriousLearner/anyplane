@@ -1,0 +1,17 @@
+{
+  "name": "cc-remote",
+  "short_name": "cc-remote",
+  "description": "本机 Claude Code / Codex 会话的浏览器控制面",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#16130f",
+  "theme_color": "#16130f",
+  "icons": [
+    {
+      "src": "/claude.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

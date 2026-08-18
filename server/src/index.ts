@@ -34,9 +34,17 @@ interface PendingApproval {
   input: unknown
 }
 
-interface WSData {
+interface WSDataSession {
   key: string
+  inbox?: never
 }
+
+interface WSDataInbox {
+  inbox: true
+  key?: never
+}
+
+type WSData = WSDataSession | WSDataInbox
 
 interface Hub {
   key: string
@@ -56,6 +64,45 @@ interface Hub {
 
 const hubs = new Map<string, Hub>()
 
+// ---------- 全局收件箱（/ws/inbox）：跨会话审批/完成/错误汇总 ----------
+
+interface InboxData {
+  inbox: true
+}
+
+const inboxClients = new Set<import('bun').ServerWebSocket<WSDataInbox>>()
+
+type InboxEvent =
+  | { type: 'approval'; key: string; requestId: string; toolName: string; input: unknown }
+  | { type: 'approval_resolved'; key: string; requestId: string }
+  | { type: 'done'; key: string; ok: boolean }
+  | { type: 'error'; key: string; message: string }
+
+function publishInbox(ev: InboxEvent): void {
+  if (inboxClients.size === 0) return
+  const text = JSON.stringify(ev)
+  for (const ws of inboxClients) {
+    try {
+      ws.send(text)
+    } catch {}
+  }
+}
+
+/** inbox 快照：所有 Hub 的待审批与忙闲状态（新连接建立时下发） */
+function inboxSnapshot(): Record<string, unknown> {
+  const approvals: unknown[] = []
+  const states: Record<string, unknown>[] = []
+  for (const hub of hubs.values()) {
+    const st = statusOf(hub.key)
+    if (st.spawned || st.busy || st.waiting) states.push({ key: hub.key, ...st })
+    for (const a of hub.pendingApprovals.values()) {
+      approvals.push({ type: 'approval', key: hub.key, ...a })
+    }
+  }
+  return { type: 'snapshot', states, approvals }
+}
+
+
 function getHub(key: string): Hub {
   let h = hubs.get(key)
   if (!h) {
@@ -71,6 +118,11 @@ function broadcast(hub: Hub, payload: unknown): void {
     try {
       ws.send(text)
     } catch {}
+  }
+  // 错误事件同步进全局收件箱（审批/完成由各自路径单独发布）
+  const kind = (payload as { kind?: string } | null | undefined)?.kind
+  if (kind === 'error') {
+    publishInbox({ type: 'error', key: hub.key, message: String((payload as { message?: unknown }).message ?? '') })
   }
 }
 
@@ -143,6 +195,10 @@ function sessionCallbacks(hub: Hub) {
       // 不再把原始内部载荷广播进主聊天或 rewind 历史。
       if (isInternalUserMessage(msg)) return
       broadcast(hub, { kind: 'cli', msg })
+      // turn 收尾是收件箱的核心提醒信号（agent 跑完了）
+      if (msg.type === 'result') {
+        publishInbox({ type: 'done', key: hub.key, ok: msg.is_error !== true })
+      }
     },
     onApprovalRequest: (req: { requestId: string; toolName: string; input: unknown }) => {
       hub.pendingApprovals.set(req.requestId, req)
@@ -152,6 +208,7 @@ function sessionCallbacks(hub: Hub) {
         toolName: req.toolName,
         input: req.input,
       })
+      publishInbox({ type: 'approval', key: hub.key, requestId: req.requestId, toolName: req.toolName, input: req.input })
       pushStatus(hub)
       processManager.get(hub.key)?.notifyExternalGate()
     },
@@ -580,6 +637,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
           }
         }
         broadcast(hub, { kind: 'approval_resolved', requestId })
+        publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
         pushStatus(hub)
         return
       }
@@ -592,6 +650,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
         }
       }
       broadcast(hub, { kind: 'approval_resolved', requestId })
+      publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
       pushStatus(hub)
       s?.notifyExternalGate()
       break
@@ -979,6 +1038,12 @@ try {
         return new Response('WebSocket upgrade failed', { status: 400 })
       }
 
+      // 全局收件箱频道：跨会话审批/完成/错误汇总
+      if (url.pathname === '/ws/inbox') {
+        if (srv.upgrade(req, { data: { inbox: true } })) return undefined
+        return new Response('WebSocket upgrade failed', { status: 400 })
+      }
+
       if (url.pathname.startsWith('/api/')) {
         const res = await handleApi(req, url)
         if (res) return res
@@ -997,15 +1062,22 @@ try {
     },
     websocket: {
       open(ws) {
+        if (ws.data.inbox) {
+          inboxClients.add(ws as import('bun').ServerWebSocket<WSDataInbox>)
+          ws.send(JSON.stringify(inboxSnapshot()))
+          return
+        }
         const hub = getHub(ws.data.key)
         hub.clients.add(ws)
         processManager.get(ws.data.key)?.attachClient()
+        codexRuntime.get(ws.data.key)?.attachClient()
         ws.send(JSON.stringify({ kind: 'status', state: statusOf(ws.data.key) }))
         for (const a of hub.pendingApprovals.values()) {
           ws.send(JSON.stringify({ kind: 'approval_request', ...a }))
         }
       },
       message(ws, raw) {
+        if (ws.data.inbox) return // inbox 频道只发不收
         const hub = getHub(ws.data.key)
         try {
           handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString())
@@ -1018,6 +1090,10 @@ try {
         }
       },
       close(ws) {
+        if (ws.data.inbox) {
+          inboxClients.delete(ws as import('bun').ServerWebSocket<WSDataInbox>)
+          return
+        }
         const hub = hubs.get(ws.data.key)
         if (!hub) return
         hub.clients.delete(ws)
