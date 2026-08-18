@@ -1,6 +1,5 @@
 import { Markdown } from './Markdown'
 import { ToolCard } from './ToolCard'
-import { ClaudeMark } from './ClaudeMark'
 import { parseUserText, shortTokens, type ChatMsg } from '../lib/blocks'
 
 /** 思考块：默认折叠 */
@@ -126,7 +125,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
         }`}
         aria-hidden="true"
       >
-        {compact ? '' : isUser ? '›' : <ClaudeMark className="h-3.5 w-3.5 opacity-70" />}
+        {compact ? '' : isUser ? '›' : <span className="block h-3.5 w-3.5 rounded-full bg-zinc-400/70" />}
       </span>
       <div
         className={`min-w-0 flex-1 ${

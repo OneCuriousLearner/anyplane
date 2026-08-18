@@ -12,8 +12,10 @@ export function CodexMark(props: {
   active?: boolean
   className?: string
   size?: number
+  /** 图标颜色，默认纯白 */
+  color?: string
 }) {
-  const { active = false, className = '', size = 28 } = props
+  const { active = false, className = '', size = 28, color = '#ffffff' } = props
   const [deg, setDeg] = useState(0)
 
   return (
@@ -40,7 +42,7 @@ export function CodexMark(props: {
           height="100%"
           aria-hidden="true"
           className={active ? 'codex-mark--active' : ''}
-          style={{ color: '#7dd3fc' }}
+          style={{ color }}
         >
           <defs>
             <path

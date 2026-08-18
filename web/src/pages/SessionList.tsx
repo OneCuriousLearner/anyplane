@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createSession, fetchSessions, renameSession, type SessionInfo } from '../lib/api'
 import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { ClaudeMark } from '../components/ClaudeMark'
+import { CodexMark } from '../components/CodexMark'
 import { DirPicker } from './DirPicker'
 
 const STATUS_META: Record<SessionInfo['status'], { cls: string; label: string }> = {
@@ -239,12 +240,12 @@ export function SessionList(props: {
                     >
                       ✎
                     </span>
-                    <span
-                      className={`shrink-0 rounded border px-1 font-mono text-[9px] leading-4 ${
-                        s.backend === 'codex' ? 'border-sky-500/40 text-sky-300' : 'border-accent/40 text-accent-soft'
-                      }`}
-                    >
-                      {s.backend === 'codex' ? 'CX' : 'CC'}
+                    <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center" title={s.backend === 'codex' ? 'Codex' : 'Claude'}>
+                      {s.backend === 'codex' ? (
+                        <CodexMark size={15} />
+                      ) : (
+                        <ClaudeMark className="h-[15px] w-[15px]" />
+                      )}
                     </span>
                     <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
                       {timeAgo(s.mtime)}

@@ -65,28 +65,28 @@ export class ThreadTranslator {
     }
   }
 
-  /** item/completed：收尾流 + assistant 快照 / tool_result */
+  /** item/completed：assistant 快照必须在 message_stop 之前（对齐 claude 真实序：快照合并草稿、stop 提交） */
   itemCompleted(item: ThreadItem): CliMessage[] {
     if (!item.id || !item.type) return []
     switch (item.type) {
       case 'agentMessage':
         return [
-          { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
-          { type: 'stream_event', event: { type: 'message_stop' } },
           {
             type: 'assistant',
             message: { id: item.id, role: 'assistant', content: [{ type: 'text', text: item.text ?? '' }] },
           },
-        ]
-      case 'reasoning': {
-        const text = [...(item.summary ?? []), ...(Array.isArray(item.content) ? (item.content as string[]) : [])].join('\n\n')
-        return [
           { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
           { type: 'stream_event', event: { type: 'message_stop' } },
+        ]
+      case 'reasoning': {
+        const text = reasoningText(item.summary, item.content)
+        return [
           {
             type: 'assistant',
             message: { id: item.id, role: 'assistant', content: [{ type: 'thinking', thinking: text }] },
           },
+          { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
+          { type: 'stream_event', event: { type: 'message_stop' } },
         ]
       }
       case 'commandExecution': {
@@ -179,6 +179,14 @@ function systemText(text: string): CliMessage {
   return { type: 'system', subtype: 'status', text }
 }
 
+/** reasoning 的 summary 与 content 可能互为镜像（部分供应商），重复时只取一份 */
+function reasoningText(summary?: string[], content?: unknown): string {
+  const s = (summary ?? []).filter(Boolean)
+  const c = (Array.isArray(content) ? (content as string[]) : []).filter(Boolean)
+  if (s.length > 0 && s.join('\n') === c.join('\n')) return s.join('\n\n')
+  return [...s, ...c].join('\n\n')
+}
+
 function stringifyResult(r: unknown): string {
   if (r == null) return ''
   if (typeof r === 'string') return r
@@ -228,7 +236,7 @@ export function itemsToHistory(items: ThreadItem[]): HistoryMessage[] {
         out.push({ uuid, role: 'assistant', blocks: [{ kind: 'text', text: item.text ?? '' }] })
         break
       case 'reasoning': {
-        const text = [...(item.summary ?? []), ...(Array.isArray(item.content) ? (item.content as string[]) : [])].join('\n\n')
+        const text = reasoningText(item.summary, item.content)
         if (text) out.push({ uuid, role: 'assistant', blocks: [{ kind: 'thinking', text }] })
         break
       }
