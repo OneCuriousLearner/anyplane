@@ -22,6 +22,17 @@ function timeAgo(ms: number): string {
 
 /** 桌面通知开关：localStorage 持久；浏览器授权后在页面隐藏时推送 */
 const NOTIFY_KEY = 'cc-remote-notify'
+/** 按项目目录折叠的分组，cwd 字符串数组 */
+const COLLAPSE_KEY = 'cc-remote-collapsed-groups'
+
+function loadCollapsed(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]') as unknown
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
 
 export function SessionList(props: {
   selectedKey?: string
@@ -32,6 +43,7 @@ export function SessionList(props: {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [approvals, setApprovals] = useState<InboxApproval[]>([])
   const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1')
+  const [collapsed, setCollapsed] = useState(loadCollapsed)
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
   const notifyRef = useRef(notify)
@@ -136,9 +148,9 @@ export function SessionList(props: {
   return (
     <div className="flex h-full flex-col bg-surface text-ink">
       {/* 报头 */}
-      <div className="border-b border-line px-4 pb-3 pt-4">
+      <div className="border-b border-line bg-surface2 px-4 pb-3 pt-4">
         <div className="flex items-baseline justify-between">
-          <h1 className="flex items-center gap-2 font-mono text-sm tracking-widest text-muted uppercase">
+          <h1 className="flex items-center gap-2 font-mono text-sm tracking-widest text-ink/80 uppercase">
             <ClaudeMark className="h-4 w-4" />
             cc-remote
           </h1>
@@ -165,7 +177,7 @@ export function SessionList(props: {
             </button>
           </div>
         </div>
-        <p className="mt-1 text-xs text-faint">Claude Code Claw</p>
+        <p className="mt-1 text-xs text-muted">Claude Code Claw</p>
       </div>
 
       {/* 待审批收件箱：点击直达会话 */}
@@ -198,19 +210,29 @@ export function SessionList(props: {
         )}
         {[...groups.entries()].map(([cwd, list]) => {
           const branch = list.find((s) => s.gitBranch)?.gitBranch
-          const nClaude = list.filter((s) => s.backend !== 'codex').length
-          const nCodex = list.length - nClaude
+          const folded = collapsed.has(cwd)
           return (
           <div key={cwd}>
-            <div className="sticky top-0 z-10 flex items-center gap-2 border-y border-line/60 bg-surface/95 px-4 py-1.5 font-mono text-[11px] tracking-wide text-muted backdrop-blur">
+            <button
+              type="button"
+              aria-expanded={!folded}
+              title={folded ? '展开分组' : '折叠分组'}
+              className="sticky top-0 z-10 flex w-full items-center gap-2 border-y border-line/60 bg-surface2/95 px-4 py-1.5 text-left font-mono text-[11px] tracking-wide text-ink/70 backdrop-blur hover:bg-surface2"
+              onClick={() => {
+                setCollapsed((prev) => {
+                  const next = new Set(prev)
+                  if (next.has(cwd)) next.delete(cwd)
+                  else next.add(cwd)
+                  localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]))
+                  return next
+                })
+              }}
+            >
+              <span className="w-3 shrink-0 text-muted">{folded ? '▸' : '▾'}</span>
               <span className="truncate">{cwd}</span>
-              {branch && <span className="shrink-0 text-faint">⎇ {branch}</span>}
-              <span className="ml-auto flex shrink-0 gap-1.5 text-[10px] text-faint">
-                {nClaude > 0 && <span className="text-accent-soft/80">CC {nClaude}</span>}
-                {nCodex > 0 && <span className="text-sky-300/80">CX {nCodex}</span>}
-              </span>
-            </div>
-            {list.map((s) => {
+              {branch && <span className="ml-auto shrink-0 text-muted">⎇ {branch}</span>}
+            </button>
+            {!folded && list.map((s) => {
               const st =
                 STATUS_META[
                   s.managed.waiting ? 'waiting' : s.managed.busy ? 'busy' : s.managed.spawned ? 'idle' : s.status
@@ -240,15 +262,15 @@ export function SessionList(props: {
                     >
                       ✎
                     </span>
-                    <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center overflow-hidden" title={s.backend === 'codex' ? 'Codex' : 'Claude'}>
+                    <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
+                      {timeAgo(s.mtime)}
+                    </span>
+                    <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center overflow-hidden" aria-hidden="true">
                       {s.backend === 'codex' ? (
-                        <CodexMark size={15} />
+                        <CodexMark size={15} static />
                       ) : (
                         <ClaudeMark className="h-[15px] w-[15px]" />
                       )}
-                    </span>
-                    <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
-                      {timeAgo(s.mtime)}
                     </span>
                   </div>
                   <div className="mt-1 flex items-center gap-1.5 pl-3.5 font-mono text-[11px] text-faint">

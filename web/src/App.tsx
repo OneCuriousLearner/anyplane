@@ -1,15 +1,57 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { SessionList } from './pages/SessionList'
 import { Chat } from './pages/Chat'
 import { ClaudeMark } from './components/ClaudeMark'
 import { getToken, onAuthRequired, setToken } from './lib/auth'
 import type { SessionInfo } from './lib/api'
 
+const SIDEBAR_KEY = 'cc-remote-sidebar-width'
+const SIDEBAR_DEFAULT = 300
+const SIDEBAR_MIN = 275
+const SIDEBAR_MAX = 560
+
+function clampSidebar(n: number): number {
+  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(n)))
+}
+
+function loadSidebarWidth(): number {
+  const n = Number(localStorage.getItem(SIDEBAR_KEY))
+  return Number.isFinite(n) ? clampSidebar(n) : SIDEBAR_DEFAULT
+}
+
 export default function App() {
   const [selected, setSelected] = useState<SessionInfo | undefined>()
   const [authNeeded, setAuthNeeded] = useState(false)
+  const [sidebarW, setSidebarW] = useState(loadSidebarWidth)
+  const [resizing, setResizing] = useState(false)
 
   useEffect(() => onAuthRequired(() => setAuthNeeded(true)), [])
+
+  const persistWidth = (w: number) => {
+    const next = clampSidebar(w)
+    setSidebarW(next)
+    localStorage.setItem(SIDEBAR_KEY, String(next))
+  }
+
+  const onResizeDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+  const onResizeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    setSidebarW(clampSidebar(e.clientX))
+  }
+  const onResizeUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    setResizing(false)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    persistWidth(e.clientX)
+  }
 
   if (authNeeded) {
     return (
@@ -47,12 +89,32 @@ export default function App() {
   }
 
   return (
-    <div className="h-dvh bg-bg md:grid md:grid-cols-[300px_1fr] md:grid-rows-[minmax(0,1fr)]">
-      {/* 移动端：选中后隐藏列表；桌面端：双栏常显 */}
-      <div className={`h-full border-line md:border-r ${selected ? 'hidden md:block' : 'block'}`}>
+    <div
+      className="h-dvh bg-bg md:grid md:grid-rows-[minmax(0,1fr)]"
+      style={{ gridTemplateColumns: `${sidebarW}px minmax(0, 1fr)` }}
+    >
+      {/* 移动端：选中后隐藏列表；桌面端：双栏常显，右缘可拖宽 */}
+      <div className={`relative h-full border-line md:border-r ${selected ? 'hidden md:block' : 'block'}`}>
         <SessionList selectedKey={selected?.key} onSelect={setSelected} />
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧栏宽度"
+          aria-valuenow={sidebarW}
+          aria-valuemin={SIDEBAR_MIN}
+          aria-valuemax={SIDEBAR_MAX}
+          title="拖动调整宽度，双击恢复默认"
+          className={`absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none md:block ${
+            resizing ? 'bg-accent/50' : 'hover:bg-accent/35'
+          }`}
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          onDoubleClick={() => persistWidth(SIDEBAR_DEFAULT)}
+        />
       </div>
-      <div className={`h-full ${selected ? 'block' : 'hidden md:block'}`}>
+      <div className={`h-full min-w-0 ${selected ? 'block' : 'hidden md:block'}`}>
         {selected ? (
           <Chat session={selected} onBack={() => setSelected(undefined)} onNavigate={setSelected} />
         ) : (

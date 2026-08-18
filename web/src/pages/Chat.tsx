@@ -726,7 +726,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     <div className="relative h-full overflow-clip bg-bg text-ink">
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-3 pb-[100px] pt-[100px] md:px-6">
+        <div className="mx-auto max-w-3xl px-3 pb-[100px] pt-[120px] md:px-6">
           {messages.map((m, i) => (
             <MessageView
               key={m.id}
@@ -809,48 +809,52 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
       {/* 顶栏 + 状态胶囊：同一块悬浮毛玻璃，避免两段玻璃割裂 */}
       <div className={`absolute inset-x-0 top-0 z-30 border-b border-line ${GLASS_BAR}`}>
-        <div className="flex items-center gap-2 border-b border-line/60 px-3 py-2">
-          <button
-            className="rounded px-1.5 py-1 font-mono text-xs text-muted hover:bg-surface2 md:hidden"
-            onClick={props.onBack}
-          >
-            ← 列表
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{session.title ?? session.cwd ?? session.sessionId}</div>
-            <div className="flex items-center gap-2 font-mono text-[10px] tracking-wide text-faint">
-              <span className={connected ? 'text-ok' : 'text-danger'}>{connected ? '●' : '○'}</span>
-              <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
-              {usageLine && <span className="shrink-0 text-faint/80">{usageLine}</span>}
+        <div className="border-b border-line/60 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded px-1.5 py-1 font-mono text-xs text-muted hover:bg-surface2 md:hidden"
+              onClick={props.onBack}
+            >
+              ← 列表
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{session.title ?? session.cwd ?? session.sessionId}</div>
+              <div className="flex items-center gap-2 font-mono text-[10px] tracking-wide text-faint">
+                <span className={connected ? 'text-ok' : 'text-danger'}>{connected ? '●' : '○'}</span>
+                <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
+              </div>
             </div>
+            {isExisting && (
+              <button
+                className="shrink-0 rounded border border-line px-2 py-1 font-mono text-[11px] text-faint hover:text-muted"
+                title="会话详情：context 用量 / MCP 状态 / 设置"
+                onClick={() => {
+                  setDetailOpen((v) => !v)
+                  if (!detailOpen) runQuery('get_context_usage', 'context 用量')
+                }}
+              >
+                详情
+              </button>
+            )}
+            {isExisting && (
+              <button
+                className="shrink-0 rounded border border-accent/60 px-2 py-1 font-mono text-[11px] text-accent-soft hover:bg-accent/10 disabled:opacity-40"
+                disabled={handoffBusy}
+                title="让另一个 agent 接续本目录的工作（源会话 fork 自写简报，目标会话带简报进场）"
+                onClick={() => {
+                  const toBackend = isCodex ? 'claude' : 'codex'
+                  setHandoffBusy(true)
+                  startHandoff(session.key, toBackend)
+                    .catch((e) => pushSystem(`⚠ 接力失败: ${e instanceof Error ? e.message : e}`, 'error'))
+                    .finally(() => setHandoffBusy(false))
+                }}
+              >
+                {handoffBusy ? '接力中…' : `⇄ 接力给${isCodex ? ' Claude' : ' Codex'}`}
+              </button>
+            )}
           </div>
-          {isExisting && (
-            <button
-              className="shrink-0 rounded border border-line px-2 py-1 font-mono text-[11px] text-faint hover:text-muted"
-              title="会话详情：context 用量 / MCP 状态 / 设置"
-              onClick={() => {
-                setDetailOpen((v) => !v)
-                if (!detailOpen) runQuery('get_context_usage', 'context 用量')
-              }}
-            >
-              详情
-            </button>
-          )}
-          {isExisting && (
-            <button
-              className="shrink-0 rounded border border-accent/60 px-2 py-1 font-mono text-[11px] text-accent-soft hover:bg-accent/10 disabled:opacity-40"
-              disabled={handoffBusy}
-              title="让另一个 agent 接续本目录的工作（源会话 fork 自写简报，目标会话带简报进场）"
-              onClick={() => {
-                const toBackend = isCodex ? 'claude' : 'codex'
-                setHandoffBusy(true)
-                startHandoff(session.key, toBackend)
-                  .catch((e) => pushSystem(`⚠ 接力失败: ${e instanceof Error ? e.message : e}`, 'error'))
-                  .finally(() => setHandoffBusy(false))
-              }}
-            >
-              {handoffBusy ? '接力中…' : `⇄ 接力给${isCodex ? ' Claude' : ' Codex'}`}
-            </button>
+          {usageLine && (
+            <div className="mt-1 font-mono text-[10px] tracking-wide text-faint/80">{usageLine}</div>
           )}
         </div>
 
