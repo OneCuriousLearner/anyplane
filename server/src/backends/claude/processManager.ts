@@ -111,6 +111,8 @@ export class ClaudeSession {
   private fallbackBusy = false
   /** task_started → task_notification 的任务表，独立于主会话运行状态。 */
   private activeTasks = new Map<string, BackgroundTask>()
+  /** initialize 握手返回的 slash 命令（含描述），供前端补全 */
+  slashCommands: Array<{ name: string; description?: string }> = []
   private proc: Subprocess | undefined
   private cb: SessionCallbacks
   private clientCount = 0
@@ -237,6 +239,19 @@ export class ClaudeSession {
     this.runState = 'idle'
     this.fallbackBusy = false
     this.activeTasks.clear()
+    // initialize 握手：拿 slash 命令清单（含描述）；开启 prompt_suggestion（若该版本支持）。
+    // 必须在首条 user 消息前发出；失败不影响会话（老版本无此请求）。
+    void this.sendControlAndWait('initialize', { promptSuggestions: true }, 10_000)
+      .then((resp) => {
+        const commands = (resp as { commands?: Array<{ name?: string; description?: string }> } | undefined)?.commands
+        if (Array.isArray(commands)) {
+          this.slashCommands = commands
+            .filter((c): c is { name: string; description?: string } => typeof c?.name === 'string')
+            .map((c) => ({ name: c.name, description: c.description }))
+          this.cb.onStatusChange?.()
+        }
+      })
+      .catch(() => {})
     void this.pumpStdout()
     void this.pumpStderr()
     void proc.exited.then((code) => {

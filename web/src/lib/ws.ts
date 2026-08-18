@@ -17,6 +17,8 @@ export type ServerEvent =
   | { kind: 'handoff_brief'; brief: string }
   | { kind: 'handoff_done'; targetKey: string; targetSessionId?: string; toBackend: 'claude' | 'codex'; brief: string }
   | { kind: 'handoff_error'; message: string }
+  /** 只读控制查询应答（mcp_status / get_settings / get_context_usage） */
+  | { kind: 'query_result'; id: string; ok: boolean; data?: unknown; error?: string }
   /** 外部会话 transcript 追加的完整消息（块级实时，非 token 流） */
   | { kind: 'tail'; msg: HistoryMessage }
   /** 外部会话 transcript 被截断/重建（rewind、clear），客户端应重载历史并重新订阅 */
@@ -65,6 +67,8 @@ export interface SessionState {
   model?: string
   permissionMode?: string
   effort?: string
+  /** initialize 握手返回的 slash 命令（含描述） */
+  slashCommands?: Array<{ name: string; description?: string }>
   /** 服务端正在 tail 外部会话的 transcript（实时跟踪中） */
   tailing?: boolean
   /** 外部会话 pid 文件的状态（busy/idle/waiting） */
@@ -83,6 +87,7 @@ export type ClientCommand =
   | { kind: 'rewind_conversation'; userMessageId: string }
   | { kind: 'rewind_both'; userMessageId: string }
   | { kind: 'btw'; question: string }
+  | { kind: 'query'; id: string; query: string }
 
 export class SessionSocket {
   private ws: WebSocket | undefined

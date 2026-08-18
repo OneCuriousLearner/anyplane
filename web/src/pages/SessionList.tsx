@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createSession, fetchSessions, type SessionInfo } from '../lib/api'
+import { createSession, fetchSessions, renameSession, type SessionInfo } from '../lib/api'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { DirPicker } from './DirPicker'
 
@@ -104,13 +104,26 @@ export function SessionList(props: {
                 <button
                   key={s.key}
                   onClick={() => props.onSelect(s)}
-                  className={`block w-full border-b border-line/40 px-4 py-3 text-left transition-colors hover:bg-surface2/60 ${
+                  className={`group block w-full border-b border-line/40 px-4 py-3 text-left transition-colors hover:bg-surface2/60 ${
                     active ? 'bg-surface2/80 shadow-[inset_2px_0_0_var(--color-accent)]' : ''
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.cls}`} />
                     <span className="truncate text-sm">{s.title ?? s.sessionId.slice(0, 8)}</span>
+                    <span
+                      className="shrink-0 rounded px-0.5 font-mono text-[10px] text-faint/40 transition-colors hover:text-faint"
+                      title="改名"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const title = prompt('会话名称', s.title ?? '')
+                        if (title?.trim()) {
+                          renameSession(s.key, title.trim()).then(refresh).catch((err) => alert(String(err)))
+                        }
+                      }}
+                    >
+                      ✎
+                    </span>
                     <span
                       className={`shrink-0 rounded border px-1 font-mono text-[9px] leading-4 ${
                         s.backend === 'codex' ? 'border-sky-500/40 text-sky-300' : 'border-accent/40 text-accent-soft'

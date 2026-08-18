@@ -101,6 +101,19 @@ export async function createSession(cwd: string, backend?: 'claude' | 'codex'): 
   return r.json()
 }
 
+/** 改名：claude 离线会话追加 custom-title；codex 走 thread/name/set */
+export async function renameSession(key: string, title: string): Promise<void> {
+  const r = await apiFetch('/api/sessions/rename', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key, title }),
+  })
+  if (!r.ok) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `HTTP ${r.status}`)
+  }
+}
+
 export async function fetchConfig(): Promise<ServerConfigInfo> {
   const r = await apiFetch('/api/config')
   return r.json()

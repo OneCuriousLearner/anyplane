@@ -107,6 +107,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [permMode, setPermMode] = useState<string>()
   const [effort, setEffort] = useState<Effort>()
   const [handoffBusy, setHandoffBusy] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailTitle, setDetailTitle] = useState('')
+  const [detailContent, setDetailContent] = useState('加载中…')
+  const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -508,6 +512,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           case 'handoff_error':
             pushSystem(`⚠ 接力失败: ${ev.message}`, 'error')
             break
+          case 'query_result':
+            setDetailContent(
+              ev.ok
+                ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
+                : `⚠ ${ev.error ?? '查询失败'}`,
+            )
+            break
           case 'rewound':
             // 回滚会销毁并重生 CLI 进程（dispose 先摘 map 再 kill，onExit 不会触发），
             // 进行中的流式草稿/待配对工具结果/相位指示全部失效，必须一并清理，
@@ -600,6 +611,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   }
 
   // ---------- 发送 ----------
+  const runQuery = (query: string, title: string) => {
+    querySeq.current += 1
+    setDetailTitle(title)
+    setDetailContent('加载中…')
+    sockRef.current?.send({ kind: 'query', id: `q-${querySeq.current}`, query })
+  }
+
   const send = () => {
     const text = input.trim()
     if (!text || !sockRef.current) return
@@ -650,9 +668,17 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       })
   }, [showRewind, messages])
 
-  const cmdList = initInfo.slashCommands?.length ? initInfo.slashCommands : FALLBACK_COMMANDS
+  // 优先 initialize 握手返回的命令（含描述），其次 init 消息的命令名，最后静态兜底
+  const cmdEntries: Array<{ name: string; desc?: string }> = state.slashCommands?.length
+    ? state.slashCommands.map((c) => ({ name: c.name, desc: c.description }))
+    : (initInfo.slashCommands?.length ? initInfo.slashCommands : FALLBACK_COMMANDS).map((n) => ({
+        name: n,
+        desc: COMMAND_DESC[n],
+      }))
   const slashHints =
-    input.startsWith('/') && !input.includes(' ') ? cmdList.filter((c) => `/${c}`.startsWith(input.trim())).slice(0, 6) : []
+    input.startsWith('/') && !input.includes(' ')
+      ? cmdEntries.filter((c) => `/${c.name}`.startsWith(input.trim())).slice(0, 6)
+      : []
 
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
@@ -793,6 +819,18 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           </div>
           {isExisting && (
             <button
+              className="shrink-0 rounded border border-line px-2 py-1 font-mono text-[11px] text-faint hover:text-muted"
+              title="会话详情：context 用量 / MCP 状态 / 设置"
+              onClick={() => {
+                setDetailOpen((v) => !v)
+                if (!detailOpen) runQuery('get_context_usage', 'context 用量')
+              }}
+            >
+              详情
+            </button>
+          )}
+          {isExisting && (
+            <button
               className="shrink-0 rounded border border-accent/60 px-2 py-1 font-mono text-[11px] text-accent-soft hover:bg-accent/10 disabled:opacity-40"
               disabled={handoffBusy}
               title="让另一个 agent 接续本目录的工作（源会话 fork 自写简报，目标会话带简报进场）"
@@ -828,6 +866,56 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
             }}
           />
+        )}
+
+        {/* 后台任务芯片：task_started → task_notification 之间的活动任务，可手动停止 */}
+        {(state.activeTasks?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-3 py-1.5">
+            {state.activeTasks!.map((t) => (
+              <span
+                key={t.id}
+                className="flex items-center gap-1.5 rounded border border-busy/40 bg-busy/10 px-2 py-0.5 font-mono text-[10px] text-busy"
+                title={t.summary ?? t.description}
+              >
+                <span className="animate-pulse">●</span>
+                <span className="max-w-48 truncate">{t.description || t.id}</span>
+                {t.lastToolName && <span className="text-faint">· {t.lastToolName}</span>}
+                <button
+                  className="ml-0.5 text-danger hover:font-bold"
+                  title="停止该后台任务"
+                  onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'stop_task', extra: { task_id: t.id } })}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* 会话详情抽屉 */}
+        {detailOpen && (
+          <div className="border-t border-line/60 px-3 py-2">
+            <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px]">
+              <span className="text-muted">{detailTitle}</span>
+              {(['get_context_usage', 'mcp_status', 'get_settings'] as const).map((q) => (
+                <button
+                  key={q}
+                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-faint hover:text-muted"
+                  onClick={() =>
+                    runQuery(q, q === 'get_context_usage' ? 'context 用量' : q === 'mcp_status' ? 'MCP 状态' : '设置')
+                  }
+                >
+                  {q === 'get_context_usage' ? 'context' : q === 'mcp_status' ? 'MCP' : '设置'}
+                </button>
+              ))}
+              <button className="ml-auto text-faint hover:text-muted" onClick={() => setDetailOpen(false)}>
+                ✕
+              </button>
+            </div>
+            <pre className="max-h-56 overflow-auto rounded bg-bg/60 p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
+              {detailContent}
+            </pre>
+          </div>
         )}
       </div>
 
@@ -869,12 +957,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             <div className="mb-2 rounded border border-line bg-surface2/60 p-1">
               {slashHints.map((c) => (
                 <button
-                  key={c}
+                  key={c.name}
                   className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface2"
-                  onClick={() => setInput(`/${c} `)}
+                  onClick={() => setInput(`/${c.name} `)}
                 >
-                  <span className="font-mono text-[12px] text-accent-soft">/{c}</span>
-                  {COMMAND_DESC[c] && <span className="text-xs text-faint">{COMMAND_DESC[c]}</span>}
+                  <span className="font-mono text-[12px] text-accent-soft">/{c.name}</span>
+                  {c.desc && <span className="truncate text-xs text-faint">{c.desc}</span>}
                 </button>
               ))}
             </div>

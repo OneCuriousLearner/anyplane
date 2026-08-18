@@ -1,6 +1,6 @@
 // cc-remote 服务端入口：REST + WebSocket + 静态托管
 
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { isAuthorized, isLoopbackHost } from './auth'
@@ -98,6 +98,7 @@ function statusOf(key: string): Record<string, unknown> {
     activeTaskCount: s?.activeTaskCount ?? 0,
     activeTasks: s?.backgroundTasks ?? [],
     usage: s?.tokenUsage,
+    slashCommands: s?.slashCommands,
     model: hub?.spawnOpts?.model,
     permissionMode: hub?.spawnOpts?.permissionMode,
     effort: hub?.spawnOpts?.effort,
@@ -534,6 +535,38 @@ function handleClientMessage(hub: Hub, raw: string): void {
       runBtw(hub, parsed.cwd, sid, question)
       break
     }
+    case 'query': {
+      // 只读控制查询：mcp_status / get_settings / get_context_usage（claude 控制请求直通；
+      // codex 仅 mcp_status 有对应物 mcpServerStatus/list）
+      const id = String(data.id ?? '')
+      const query = String(data.query ?? '')
+      const reply = (payload: Record<string, unknown>) => broadcast(hub, { kind: 'query_result', id, ...payload })
+      if (!id || !query) return
+      if (isCodexKey(hub.key)) {
+        if (query !== 'mcp_status') {
+          reply({ ok: false, error: `codex 后端暂不支持 ${query}` })
+          return
+        }
+        void codexRuntime
+          .rpcRequest('mcpServerStatus/list', {})
+          .then((d) => reply({ ok: true, data: d }))
+          .catch((e) => reply({ ok: false, error: e instanceof Error ? e.message : String(e) }))
+        return
+      }
+      let s = session()
+      if (!s || s.exited) {
+        ensureSpawned(hub)
+        s = session()
+      }
+      if (!s || s.exited) {
+        reply({ ok: false, error: '进程未运行' })
+        return
+      }
+      s.sendControlAndWait(query, {}, 15_000)
+        .then((d) => reply({ ok: true, data: d }))
+        .catch((e) => reply({ ok: false, error: e instanceof Error ? e.message : String(e) }))
+      break
+    }
     case 'approval': {
       const requestId = String(data.requestId)
       hub.pendingApprovals.delete(requestId)
@@ -825,6 +858,38 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       if (e instanceof FsBrowseError) return json({ error: e.message }, { status: e.status })
       const message = e instanceof Error ? e.message : String(e)
       return json({ error: message }, { status: 500 })
+    }
+  }
+  if (url.pathname === '/api/sessions/rename' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as { key?: string; title?: string }
+    const title = body.title?.trim()
+    if (!body.key || !title) return json({ error: '缺少 key 或 title' }, { status: 400 })
+    // codex：官方 API，loaded/stored thread 均可
+    if (isCodexKey(body.key)) {
+      const threadId = body.key.split('|')[1]
+      if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
+      try {
+        await codexRuntime.rpcRequest('thread/name/set', { threadId, name: title })
+        return json({ ok: true })
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+      }
+    }
+    // claude：仅离线会话（在线会话的 transcript 由 CLI 持有，改名走其内部路径）
+    const parts = body.key.split('|')
+    if (parts[0] !== 's' || parts.length !== 3) return json({ error: '仅支持已有 claude 会话' }, { status: 400 })
+    const [, slug, sessionId] = parts
+    if (processManager.get(body.key) || liveSessionInfo(sessionId)) {
+      return json({ error: '会话正在运行，请在 CLI 退出后改名' }, { status: 409 })
+    }
+    const file = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
+    if (!existsSync(file)) return json({ error: 'transcript 不存在' }, { status: 404 })
+    try {
+      // 与官方 /rename 相同的条目形状；discovery 读取时后者优先
+      appendFileSync(file, JSON.stringify({ type: 'custom-title', sessionId, customTitle: title }) + '\n')
+      return json({ ok: true })
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
     }
   }
   if (url.pathname === '/api/handoff' && req.method === 'POST') {
