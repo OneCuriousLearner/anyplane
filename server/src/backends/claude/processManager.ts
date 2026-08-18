@@ -116,6 +116,8 @@ export class ClaudeSession {
   private clientCount = 0
   private idleTimer: Timer | undefined
   private exitEmitted = false
+  /** 本进程内各 turn result.usage 的累计（只计 token，不含任何费用字段） */
+  private usageAcc = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
   /** 等待 CLI 确认的外发 control request，例如组合 rewind 的第一步。 */
   private pendingControlRequests = new Map<string, {
     resolve: (response: unknown) => void
@@ -158,6 +160,11 @@ export class ClaudeSession {
 
   get activeTaskCount(): number {
     return this.activeTasks.size
+  }
+
+  /** 累计 token 用量（本进程生命周期内） */
+  get tokenUsage(): { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } {
+    return { ...this.usageAcc }
   }
 
   /** 返回副本，避免调用方改写回收判定所依赖的任务表。 */
@@ -469,6 +476,16 @@ export class ClaudeSession {
       this.fallbackBusy = false
       this.cb.onStatusChange?.()
       this.scheduleRecycleIfSafe()
+    }
+
+    // token 用量累计：result.usage（费用字段不进累加器、不进 UI）
+    if (msg.type === 'result' && msg.usage && typeof msg.usage === 'object') {
+      const u = msg.usage as Record<string, unknown>
+      this.usageAcc.inputTokens += Number(u.input_tokens ?? 0) || 0
+      this.usageAcc.outputTokens += Number(u.output_tokens ?? 0) || 0
+      this.usageAcc.cacheReadTokens += Number(u.cache_read_input_tokens ?? 0) || 0
+      this.usageAcc.cacheWriteTokens += Number(u.cache_creation_input_tokens ?? 0) || 0
+      this.cb.onStatusChange?.()
     }
 
     if (isControlResponse(msg)) {

@@ -15,6 +15,18 @@ import type { CliMessage, StdinMessage } from './claude/protocol'
 
 export type BackendName = 'claude' | 'codex'
 
+/**
+ * 统一 token 用量（只计 token，不计费用；分后端分桶展示，不跨后端合并）。
+ * claude 取自 result.usage；codex 取自 thread/tokenUsage/updated 的累计 total。
+ */
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+}
+
 /** 会话列表项（聚合 Claude discovery 与 Codex thread/list） */
 export interface SessionSummary {
   backend: BackendName

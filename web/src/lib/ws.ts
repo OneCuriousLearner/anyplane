@@ -41,6 +41,14 @@ export interface SessionState {
   sessionState?: 'idle' | 'running' | 'requires_action'
   sessionId?: string
   clients?: number
+  /** 累计 token 用量（只计 token；claude 为本进程累计，codex 为线程累计） */
+  usage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    reasoningTokens?: number
+  }
   /** Claude Code system/task_started 与 task_notification 之间的后台任务数。 */
   activeTaskCount?: number
   /** 运行中任务的最小信息；不含 prompt、输出等敏感/冗长内容。 */

@@ -657,6 +657,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
   const activeTaskCount = state.activeTaskCount ?? 0
+  const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+  const u = state.usage
+  const usageLine =
+    u && u.inputTokens + u.outputTokens > 0
+      ? `tok ↑${fmtTok(u.inputTokens)} ↓${fmtTok(u.outputTokens)}` +
+        (u.cacheReadTokens ? ` · cache ${fmtTok(u.cacheReadTokens)}` : '') +
+        (u.reasoningTokens ? ` · rs ${fmtTok(u.reasoningTokens)}` : '')
+      : undefined
   const hasPendingStartConfig =
     !state.spawned && Boolean(state.model || state.permissionMode || state.effort)
   const statusLine = !connected
@@ -780,6 +788,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             <div className="flex items-center gap-2 font-mono text-[10px] tracking-wide text-faint">
               <span className={connected ? 'text-ok' : 'text-danger'}>{connected ? '●' : '○'}</span>
               <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
+              {usageLine && <span className="shrink-0 text-faint/80">{usageLine}</span>}
             </div>
           </div>
           {isExisting && (

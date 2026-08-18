@@ -68,6 +68,8 @@ export class CodexSession {
   private approvals = new Map<string, PendingCodexApproval>()
   private translator: ThreadTranslator | undefined
   private lastUsage: Record<string, number> | undefined
+  /** tokenUsage.total：线程累计用量（codex 侧是覆盖语义，不是累加） */
+  private totalUsage: Record<string, number> | undefined
   /** turn/start 的覆盖项（model/approvalPolicy/sandbox），未 spawn 时缓存 */
   turnOverrides: Params = {}
 
@@ -111,6 +113,24 @@ export class CodexSession {
   }
   get cwd(): string | undefined {
     return this.opts.cwd
+  }
+
+  /** 线程累计 token 用量（统一形状；reasoning 单独成桶） */
+  get tokenUsage(): {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    reasoningTokens: number
+  } {
+    const u = this.totalUsage ?? {}
+    return {
+      inputTokens: Number(u.inputTokens ?? 0) || 0,
+      outputTokens: Number(u.outputTokens ?? 0) || 0,
+      cacheReadTokens: Number(u.cachedInputTokens ?? 0) || 0,
+      cacheWriteTokens: Number(u.cacheWriteInputTokens ?? 0) || 0,
+      reasoningTokens: Number(u.reasoningOutputTokens ?? 0) || 0,
+    }
   }
 
   /** attach / 首条消息时启动：resume 已有线程或 start 新线程 */
@@ -173,8 +193,12 @@ export class CodexSession {
         break
       }
       case 'thread/tokenUsage/updated': {
-        const usage = (params.tokenUsage as { last?: Record<string, number> } | undefined)?.last
-        if (usage) this.lastUsage = usage
+        const tu = params.tokenUsage as { last?: Record<string, number>; total?: Record<string, number> } | undefined
+        if (tu?.last) this.lastUsage = tu.last
+        if (tu?.total) {
+          this.totalUsage = tu.total
+          this.cb.onStatusChange?.()
+        }
         break
       }
       case 'item/started': {
