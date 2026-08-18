@@ -21,7 +21,7 @@ export function CodexMark(props: {
   return (
     <button
       type="button"
-      className={`inline-flex shrink-0 appearance-none border-0 bg-transparent p-0 ${
+      className={`inline-flex shrink-0 overflow-hidden appearance-none border-0 bg-transparent p-0 ${
         active ? 'cursor-default' : 'cursor-pointer'
       } ${className}`}
       style={{ width: size, height: size }}

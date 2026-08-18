@@ -310,6 +310,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       const msgId = (rec.message as { id?: string } | undefined)?.id
       const d = draftRef.current
       if (!d || msgId !== d.msgId) {
+        // 去重兜底：同 msgId 的 assistant 消息已落过（旧事件序/重放/快照迟到）时不再落第二条
+        if (msgId && messagesRef.current.some((m) => m.id === msgId && m.role === 'assistant')) return
         // 没有对应草稿（如中途接入）：直接落为完整消息
         const direct: Block[] = []
         for (const c of blocks) {

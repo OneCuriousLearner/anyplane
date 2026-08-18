@@ -180,7 +180,7 @@ function systemText(text: string): CliMessage {
 }
 
 /** reasoning 的 summary 与 content 可能互为镜像（部分供应商），重复时只取一份 */
-function reasoningText(summary?: string[], content?: unknown): string {
+export function reasoningText(summary?: string[], content?: unknown): string {
   const s = (summary ?? []).filter(Boolean)
   const c = (Array.isArray(content) ? (content as string[]) : []).filter(Boolean)
   if (s.length > 0 && s.join('\n') === c.join('\n')) return s.join('\n\n')

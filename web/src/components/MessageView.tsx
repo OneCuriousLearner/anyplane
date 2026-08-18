@@ -120,12 +120,12 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
           isUser
             ? 'pt-[12px] text-accent-soft'
             : assistantStartsWithCard
-              ? 'pt-[13px] text-faint'
-              : 'pt-[4px] text-faint'
+              ? 'pt-[17px] text-faint'
+              : 'pt-[8px] text-faint'
         }`}
         aria-hidden="true"
       >
-        {compact ? '' : isUser ? '›' : <span className="block h-3.5 w-3.5 rounded-full bg-zinc-400/70" />}
+        {compact ? '' : isUser ? '›' : <span className="block h-1.5 w-1.5 rounded-full bg-zinc-400/70" />}
       </span>
       <div
         className={`min-w-0 flex-1 ${

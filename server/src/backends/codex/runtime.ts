@@ -5,9 +5,11 @@
 import type { ApprovalDecision, BackgroundTask, SessionCallbacks } from '../types'
 import type { CliMessage } from '../claude/protocol'
 import { RpcClient, RpcError } from './rpc'
+import { appendReasoning, readReasoning } from './reasoningStore'
 import {
   itemsToHistory,
   mapThreadStatus,
+  reasoningText,
   turnCompletedMsg,
   ThreadTranslator,
   type HistoryMessage,
@@ -209,7 +211,20 @@ export class CodexSession {
       }
       case 'item/completed': {
         const item = params.item as Params
-        if ((item as { type?: string }).type === 'userMessage') break
+        const itemType = (item as { type?: string }).type
+        if (itemType === 'userMessage') break // 用户消息本地已回显
+        // codex rollout 不持久化 reasoning：侧车落盘，历史读取时按 turn 时间窗回插
+        if (itemType === 'reasoning' && this.threadId) {
+          const it = item as { summary?: string[]; content?: unknown }
+          const text = reasoningText(it.summary, it.content)
+          if (text) {
+            appendReasoning(this.threadId, {
+              ts: Date.now(),
+              turnId: typeof params.turnId === 'string' ? params.turnId : null,
+              text,
+            })
+          }
+        }
         for (const m of t?.itemCompleted(item as never) ?? []) this.emit(m)
         break
       }
@@ -607,13 +622,43 @@ export class CodexRuntime {
     return out
   }
 
-  /** 历史：thread/read includeTurns（只读，不加载不订阅） */
+  /** 历史：thread/read includeTurns（只读，不加载不订阅）+ 侧车 reasoning 按 turn 时间窗回插 */
   async readHistory(threadId: string): Promise<HistoryMessage[]> {
     const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: true }, 60_000)) as {
-      thread?: { turns?: Array<{ items?: never[] }> }
+      thread?: {
+        turns?: Array<{ startedAt?: number | null; completedAt?: number | null; items?: never[] }>
+      }
     }
-    const items = (res.thread?.turns ?? []).flatMap((t) => t.items ?? [])
-    return itemsToHistory(items)
+    const turns = res.thread?.turns ?? []
+    const reasoning = readReasoning(threadId)
+    const used = new Set<number>()
+    const out: HistoryMessage[] = []
+    for (const turn of turns) {
+      const msgs = itemsToHistory(turn.items ?? [])
+      if (reasoning.length > 0) {
+        const start = turn.startedAt ?? 0
+        const end = turn.completedAt ?? turn.startedAt ?? Number.MAX_SAFE_INTEGER / 1000
+        const hit: number[] = []
+        reasoning.forEach((r, i) => {
+          if (used.has(i)) return
+          const ts = r.ts / 1000
+          if (ts >= start - 1 && ts <= end + 30) hit.push(i)
+        })
+        if (hit.length > 0) {
+          const thinkingMsgs = hit.map((i) => ({
+            uuid: `rs-${reasoning[i].ts}-${i}`,
+            role: 'assistant' as const,
+            blocks: [{ kind: 'thinking' as const, text: reasoning[i].text }],
+          }))
+          // 插到该 turn 第一个 assistant 之前（userMessage 之后），保持叙事顺序
+          const insertAt = msgs.findIndex((m) => m.role === 'assistant')
+          msgs.splice(insertAt >= 0 ? insertAt : msgs.length, 0, ...thinkingMsgs)
+          hit.forEach((i) => used.add(i))
+        }
+      }
+      out.push(...msgs)
+    }
+    return out
   }
 
   /** x| key 的 cwd 惰性解析：优先已加载会话，否则 thread/read */

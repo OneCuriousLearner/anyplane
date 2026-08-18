@@ -202,7 +202,7 @@ export function SessionList(props: {
           const nCodex = list.length - nClaude
           return (
           <div key={cwd}>
-            <div className="sticky top-0 flex items-center gap-2 border-y border-line/60 bg-surface/95 px-4 py-1.5 font-mono text-[11px] tracking-wide text-muted backdrop-blur">
+            <div className="sticky top-0 z-10 flex items-center gap-2 border-y border-line/60 bg-surface/95 px-4 py-1.5 font-mono text-[11px] tracking-wide text-muted backdrop-blur">
               <span className="truncate">{cwd}</span>
               {branch && <span className="shrink-0 text-faint">⎇ {branch}</span>}
               <span className="ml-auto flex shrink-0 gap-1.5 text-[10px] text-faint">
@@ -240,7 +240,7 @@ export function SessionList(props: {
                     >
                       ✎
                     </span>
-                    <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center" title={s.backend === 'codex' ? 'Codex' : 'Claude'}>
+                    <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center overflow-hidden" title={s.backend === 'codex' ? 'Codex' : 'Claude'}>
                       {s.backend === 'codex' ? (
                         <CodexMark size={15} />
                       ) : (
