@@ -4,33 +4,16 @@ import { existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { isAuthorized, isLoopbackHost } from './auth'
+import { keyFor, parseKey } from './backends/claude/backend'
+import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
+import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
+import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
+import { TranscriptTailer } from './backends/claude/tailer'
 import { config } from './config'
-import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './discovery'
 import { FsBrowseError, listDirectories } from './fsbrowse'
-import { processManager, type ApprovalDecision, type SpawnOptions } from './processManager'
-import { isInternalUserMessage, type CliMessage } from './protocol'
-import { TranscriptTailer } from './tailer'
 
 // ---------- sessionKey ----------
-// 已存在会话：`s|<slug>|<sessionId>`；新会话：`n|<encodeURIComponent(cwd)>`
-
-export function keyFor(slug: string, sessionId: string): string {
-  return `s|${slug}|${sessionId}`
-}
-
-function parseKey(key: string): { cwd: string; resumeSessionId?: string; slug?: string } | null {
-  const parts = key.split('|')
-  if (parts[0] === 's' && parts.length === 3) {
-    const [, slug, sessionId] = parts
-    const info = listSessions().find((s) => s.slug === slug && s.sessionId === sessionId)
-    if (!info?.cwd) return null
-    return { cwd: info.cwd, resumeSessionId: sessionId, slug }
-  }
-  if (parts[0] === 'n' && parts.length === 2) {
-    return { cwd: decodeURIComponent(parts[1]) }
-  }
-  return null
-}
+// 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
 
 // ---------- WS 枢纽 ----------
 
@@ -440,7 +423,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
 
 // ---------- /btw 一次性侧问 ----------
 
-import { resolveClaudeCommand } from './processManager'
+import { resolveClaudeCommand } from './backends/claude/processManager'
 import { spawn } from 'bun'
 
 function runBtw(hub: Hub, cwd: string, sessionId: string, question: string): void {

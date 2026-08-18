@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { config } from './config'
+import { config } from '../../config'
 import { readHistory } from './discovery'
 
 const SLUG = 'D--test-rewind-filter'

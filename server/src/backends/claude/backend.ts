@@ -1,0 +1,70 @@
+// Claude 后端门面：把 discovery / processManager / tailer 收敛为 AgentBackend 形状。
+// sessionKey：已存在会话 `s|<slug>|<sessionId>`；新会话 `n|<encodeURIComponent(cwd)>`。
+
+import { config } from '../../config'
+import type { SessionSummary } from '../types'
+import {
+  listSessions,
+  liveSessionInfo,
+  readHistory,
+  sanitizePath,
+  type SessionInfo,
+} from './discovery'
+import { processManager } from './processManager'
+
+export function keyFor(slug: string, sessionId: string): string {
+  return `s|${slug}|${sessionId}`
+}
+
+export function keyForNew(cwd: string): string {
+  return `n|${encodeURIComponent(cwd)}`
+}
+
+/** parseKey 靠 listSessions() 反查 cwd——slug 目录被删时 key 无法解析（已知限制） */
+export function parseKey(key: string): { cwd: string; resumeSessionId?: string; slug?: string } | null {
+  const parts = key.split('|')
+  if (parts[0] === 's' && parts.length === 3) {
+    const [, slug, sessionId] = parts
+    const info = listSessions().find((s) => s.slug === slug && s.sessionId === sessionId)
+    if (!info?.cwd) return null
+    return { cwd: info.cwd, resumeSessionId: sessionId, slug }
+  }
+  if (parts[0] === 'n' && parts.length === 2) {
+    return { cwd: decodeURIComponent(parts[1]) }
+  }
+  return null
+}
+
+function toSummary(s: SessionInfo): SessionSummary {
+  return {
+    backend: 'claude',
+    key: keyFor(s.slug, s.sessionId),
+    id: s.sessionId,
+    slug: s.slug,
+    cwd: s.cwd,
+    title: s.title,
+    lastPrompt: s.lastPrompt,
+    mtime: s.mtime,
+    sizeBytes: s.sizeBytes,
+    status: s.status,
+    live: s.live,
+  }
+}
+
+export const claudeBackend = {
+  name: 'claude' as const,
+  keyFor,
+  keyForNew,
+  parseKey,
+  listSessions: (): SessionSummary[] => listSessions().map(toSummary),
+  readHistory,
+  liveSessionInfo,
+  sanitizePath,
+  ensure: (key: string, opts: Parameters<typeof processManager.ensure>[1], cb: Parameters<typeof processManager.ensure>[2]) =>
+    processManager.ensure(key, opts, cb),
+  get: (key: string) => processManager.get(key),
+  dispose: (key: string) => processManager.dispose(key),
+  disposeAll: () => processManager.disposeAll(),
+}
+
+export { config }

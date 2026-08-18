@@ -3,7 +3,7 @@
 
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { config } from './config'
+import { config } from '../../config'
 import { isInternalUserMessage, type CliMessage } from './protocol'
 
 /** 与快照 sanitizePath 一致：非字母数字 → '-'（截断/hash 情形极罕见，此处不实现） */

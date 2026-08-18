@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type Subprocess } from 'bun'
-import { config } from './config'
+import { config } from '../../config'
 import {
   approvalResponse,
   controlRequest,

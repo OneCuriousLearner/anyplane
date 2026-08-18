@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { config } from './config'
+import { config } from '../../config'
 import { ClaudeSession } from './processManager'
 
 const originalDetachRecycleMs = config.detachRecycleMs
