@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchCodexHistory, fetchConfig, fetchHistory, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { fetchCodexHistory, fetchConfig, fetchHistory, startHandoff, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR, type Effort } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -92,7 +92,7 @@ function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage): void {
   }
 }
 
-export function Chat(props: { session: SessionInfo; onBack: () => void }) {
+export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: (s: SessionInfo) => void }) {
   const { session } = props
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
@@ -106,6 +106,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
   const [initInfo, setInitInfo] = useState<{ model?: string; slashCommands?: string[] }>({})
   const [permMode, setPermMode] = useState<string>()
   const [effort, setEffort] = useState<Effort>()
+  const [handoffBusy, setHandoffBusy] = useState(false)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -479,6 +480,34 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
               }),
             )
             break
+          case 'handoff_pending':
+            pushSystem(`⇄ 源会话正在生成交接简报（→ ${ev.toBackend === 'codex' ? 'Codex' : 'Claude'}）…`)
+            break
+          case 'handoff_brief':
+            break // 简报在 handoff_done 时一并展示
+          case 'handoff_done': {
+            pushMsg({
+              id: nextId(),
+              role: 'system',
+              systemKind: 'info',
+              blocks: [{ kind: 'text', text: `⇄ 接力简报（已播种给 ${ev.toBackend === 'codex' ? 'Codex' : 'Claude'} 新会话）：\n\n${ev.brief}` }],
+            })
+            props.onNavigate?.({
+              key: ev.targetKey,
+              slug: ev.toBackend === 'codex' ? 'codex' : session.slug,
+              sessionId: 'new',
+              cwd: session.cwd,
+              backend: ev.toBackend,
+              mtime: Date.now(),
+              sizeBytes: 0,
+              status: 'busy',
+              managed: { spawned: true, busy: true, clients: 0 },
+            })
+            break
+          }
+          case 'handoff_error':
+            pushSystem(`⚠ 接力失败: ${ev.message}`, 'error')
+            break
           case 'rewound':
             // 回滚会销毁并重生 CLI 进程（dispose 先摘 map 再 kill，onExit 不会触发），
             // 进行中的流式草稿/待配对工具结果/相位指示全部失效，必须一并清理，
@@ -753,6 +782,22 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
               <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
             </div>
           </div>
+          {isExisting && (
+            <button
+              className="shrink-0 rounded border border-accent/60 px-2 py-1 font-mono text-[11px] text-accent-soft hover:bg-accent/10 disabled:opacity-40"
+              disabled={handoffBusy}
+              title="让另一个 agent 接续本目录的工作（源会话 fork 自写简报，目标会话带简报进场）"
+              onClick={() => {
+                const toBackend = isCodex ? 'claude' : 'codex'
+                setHandoffBusy(true)
+                startHandoff(session.key, toBackend)
+                  .catch((e) => pushSystem(`⚠ 接力失败: ${e instanceof Error ? e.message : e}`, 'error'))
+                  .finally(() => setHandoffBusy(false))
+              }}
+            >
+              {handoffBusy ? '接力中…' : `⇄ 接力给${isCodex ? ' Claude' : ' Codex'}`}
+            </button>
+          )}
         </div>
 
         {cfg && !isCodex && (

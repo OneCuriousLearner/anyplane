@@ -23,7 +23,9 @@ export interface CodexSpawnOpts {
   permissionMode?: string
 }
 
-/** claude permissionMode → codex {approvalPolicy, sandbox}（近似，见 README 已知限制） */
+/** claude permissionMode → codex {approvalPolicy, sandbox}（近似，见 README 已知限制）
+ *  注意：sandbox 值用于 thread/start 的 kebab-case `sandbox` 字段；
+ *  turn/start·settings/update 的 `sandboxPolicy` 对象是另一套 camelCase 枚举，用 sandboxPolicyOf 转换。 */
 export function mapPermissionMode(mode?: string): { approvalPolicy?: string; sandbox?: string } {
   switch (mode) {
     case 'bypassPermissions':
@@ -37,6 +39,17 @@ export function mapPermissionMode(mode?: string): { approvalPolicy?: string; san
     default:
       return { approvalPolicy: 'on-request', sandbox: 'workspace-write' }
   }
+}
+
+/** kebab-case sandbox（thread/start 用）→ camelCase sandboxPolicy 对象（turn/start、settings/update 用） */
+export function sandboxPolicyOf(kebab: string): Record<string, unknown> | undefined {
+  const map: Record<string, string> = {
+    'read-only': 'readOnly',
+    'workspace-write': 'workspaceWrite',
+    'danger-full-access': 'dangerFullAccess',
+  }
+  const type = map[kebab]
+  return type ? { type } : undefined
 }
 
 interface PendingCodexApproval {
@@ -270,8 +283,13 @@ export class CodexSession {
       }
       case 'set_permission_mode': {
         const perm = mapPermissionMode(extra.mode as string | undefined)
-        Object.assign(this.turnOverrides, perm)
-        void this.settingsUpdate({ approvalPolicy: perm.approvalPolicy, sandboxPolicy: perm.sandbox ? { type: perm.sandbox } : undefined })
+        // turn/start 只接受 sandboxPolicy 对象（camelCase），不接受 kebab 的 sandbox 简写
+        this.turnOverrides.approvalPolicy = perm.approvalPolicy
+        this.turnOverrides.sandboxPolicy = perm.sandbox ? sandboxPolicyOf(perm.sandbox) : undefined
+        void this.settingsUpdate({
+          approvalPolicy: perm.approvalPolicy,
+          sandboxPolicy: this.turnOverrides.sandboxPolicy,
+        })
         break
       }
       case 'compact': {
@@ -384,11 +402,21 @@ function mapApprovalDecision(d: ApprovalDecision): string {
 
 // ---------- 运行时单例 ----------
 
+interface EphemeralCollector {
+  resolve: (r: { text: string; usage?: Record<string, number> }) => void
+  reject: (e: Error) => void
+  text: string
+  usage?: Record<string, number>
+  timer: Timer
+}
+
 export class CodexRuntime {
   private rpc: RpcClient | undefined
   private starting: Promise<RpcClient> | undefined
   private sessions = new Map<string, CodexSession>()
   private byThread = new Map<string, CodexSession>()
+  /** ephemeral fork（/btw、接力简报）的临时事件收集器，按 threadId 路由 */
+  private collectors = new Map<string, EphemeralCollector>()
 
   async ensureRpc(): Promise<RpcClient> {
     if (this.rpc && !this.rpc.exited) return this.rpc
@@ -441,9 +469,63 @@ export class CodexRuntime {
   private demux(method: string, params: Params): void {
     const threadId = typeof params.threadId === 'string' ? params.threadId : undefined
     if (threadId) {
+      const collector = this.collectors.get(threadId)
+      if (collector) {
+        this.feedCollector(threadId, collector, method, params)
+        return
+      }
       this.byThread.get(threadId)?.handleNotification(method, params)
     }
     // 无 threadId 的全局通知（account/*、remoteControl/* 等）暂不处理
+  }
+
+  private feedCollector(threadId: string, c: EphemeralCollector, method: string, params: Params): void {
+    if (method === 'item/completed') {
+      const item = params.item as { type?: string; text?: string } | undefined
+      if (item?.type === 'agentMessage' && item.text) c.text += item.text
+    } else if (method === 'thread/tokenUsage/updated') {
+      const usage = (params.tokenUsage as { last?: Record<string, number> } | undefined)?.last
+      if (usage) c.usage = usage
+    } else if (method === 'turn/completed') {
+      const turn = params.turn as { status?: string; error?: { message?: string } | null } | undefined
+      clearTimeout(c.timer)
+      this.collectors.delete(threadId)
+      if (turn?.status === 'completed') c.resolve({ text: c.text.trim(), usage: c.usage })
+      else c.reject(new Error(turn?.error?.message ?? `fork 问答未完成 (${turn?.status ?? '?'})`))
+    } else if (method === 'error') {
+      clearTimeout(c.timer)
+      this.collectors.delete(threadId)
+      const err = params.error as { message?: string } | undefined
+      c.reject(new Error(err?.message ?? 'codex 错误'))
+    }
+  }
+
+  /**
+   * ephemeral fork 一次性问答：fork 源线程（纯内存不落盘）→ 单轮提问 → 收集回答。
+   * 用于 Codex 侧交接简报生成与 /btw 侧问。只读沙箱 + 无审批，保证不会改现场。
+   */
+  async runEphemeralQuestion(sourceThreadId: string, question: string, timeoutMs = 180_000): Promise<{ text: string; usage?: Record<string, number> }> {
+    const fork = (await this.rpcRequest('thread/fork', { threadId: sourceThreadId, ephemeral: true }, 60_000)) as {
+      thread: { id: string }
+    }
+    const forkId = fork.thread.id
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.collectors.delete(forkId)
+        reject(new Error('fork 问答超时'))
+      }, timeoutMs)
+      this.collectors.set(forkId, { resolve, reject, text: '', timer })
+      this.rpcRequest('turn/start', {
+        threadId: forkId,
+        input: [{ type: 'text', text: question }],
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'readOnly' },
+      }).catch((e) => {
+        clearTimeout(timer)
+        this.collectors.delete(forkId)
+        reject(e instanceof Error ? e : new Error(String(e)))
+      })
+    })
   }
 
   private demuxRequest(id: number | string, method: string, params: Params): void {
@@ -508,6 +590,17 @@ export class CodexRuntime {
     }
     const items = (res.thread?.turns ?? []).flatMap((t) => t.items ?? [])
     return itemsToHistory(items)
+  }
+
+  /** x| key 的 cwd 惰性解析：优先已加载会话，否则 thread/read */
+  async threadCwd(threadId: string): Promise<string | undefined> {
+    for (const s of this.sessions.values()) {
+      if (s.threadId === threadId && s.cwd) return s.cwd
+    }
+    const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: false }, 30_000)) as {
+      thread?: { cwd?: string }
+    }
+    return res.thread?.cwd
   }
 }
 

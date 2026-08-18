@@ -106,6 +106,23 @@ export async function fetchConfig(): Promise<ServerConfigInfo> {
   return r.json()
 }
 
+/** 发起接力：进度经源会话 WS 推送（handoff_pending/done/error） */
+export async function startHandoff(
+  fromKey: string,
+  toBackend: 'claude' | 'codex',
+  detail: 'brief' | 'standard' | 'detailed' = 'standard',
+): Promise<void> {
+  const r = await apiFetch('/api/handoff', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fromKey, toBackend, detail }),
+  })
+  if (!r.ok) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `HTTP ${r.status}`)
+  }
+}
+
 export interface DirEntry {
   name: string
   path: string

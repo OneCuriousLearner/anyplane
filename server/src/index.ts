@@ -13,6 +13,15 @@ import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as code
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
 import { config } from './config'
 import { FsBrowseError, listDirectories } from './fsbrowse'
+import {
+  appendLineage,
+  generateClaudeBrief,
+  generateCodexBrief,
+  lineageFor,
+  seedMessage,
+  type HandoffDetail,
+  type LineageRecord,
+} from './handoff'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -560,6 +569,87 @@ function handleClientMessage(hub: Hub, raw: string): void {
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { spawn } from 'bun'
 
+// ---------- 接力（handoff）编排 ----------
+
+/**
+ * POST /api/handoff { fromKey, toBackend, detail } → 立即应答；进度事件推到 fromKey 所在 Hub：
+ * handoff_pending → handoff_done { targetKey, brief } / handoff_error { message }。
+ * 目标会话由服务端直接创建并播种首条消息（无需浏览器在场）。
+ */
+function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: HandoffDetail): string | undefined {
+  const sourceHub = hubs.get(fromKey)
+  const fromBackend = isCodexKey(fromKey) ? ('codex' as const) : ('claude' as const)
+  if (fromBackend === toBackend) return '接力目标必须与源会话是不同后端'
+
+  // 源解析：cwd + 会话 id（codex 的 x| key 不含 cwd，需在异步路径里 thread/read 解析）
+  let cwd: string | undefined
+  let sourceId: string | undefined
+  if (fromBackend === 'claude') {
+    const parsed = parseKey(fromKey)
+    cwd = parsed?.cwd
+    sourceId = processManager.get(fromKey)?.sessionId ?? parsed?.resumeSessionId
+    if (!cwd) return '无法确定源会话目录'
+  } else {
+    const parsed = codexParseKey(fromKey)
+    cwd = parsed?.cwd
+    sourceId = parsed?.resumeThreadId
+  }
+  if (!sourceId) return '源会话还没有任何消息，无法接力'
+
+  const sid = sourceId
+  void (async () => {
+    try {
+      // codex x| key：cwd 需要 thread/read 惰性解析
+      const sourceCwd = cwd ?? (await codexRuntime.threadCwd(sid))
+      if (!sourceCwd) throw new Error('无法确定源会话目录（thread/read 未返回 cwd）')
+      if (sourceHub) broadcast(sourceHub, { kind: 'handoff_pending', toBackend })
+      // 1. 源会话 fork 自摘要
+      const { text: brief, usage } =
+        fromBackend === 'claude'
+          ? await generateClaudeBrief(sourceCwd, sid, detail)
+          : await generateCodexBrief(sid, detail)
+      if (sourceHub) broadcast(sourceHub, { kind: 'handoff_brief', brief })
+
+      // 2. 目标会话播种（服务端直接发送首条消息）
+      const targetKey = toBackend === 'codex' ? codexKeyForNew(sourceCwd) : `n|${encodeURIComponent(sourceCwd)}`
+      const targetHub = getHub(targetKey)
+      const seed = seedMessage(sourceCwd, fromBackend, brief)
+      let targetSessionId: string | undefined
+      if (toBackend === 'codex') {
+        const s = await ensureCodexSession(targetHub)
+        if (!s || s.exited) throw new Error('目标 codex 会话启动失败')
+        s.sendUserText(seed)
+        targetSessionId = s.sessionId
+      } else {
+        ensureSpawned(targetHub)
+        const s = processManager.get(targetKey)
+        if (!s || s.exited) throw new Error('目标 claude 会话启动失败')
+        s.sendUserText(seed)
+        targetSessionId = s.sessionId
+      }
+
+      // 3. 血缘
+      appendLineage({
+        id: `ho-${Date.now().toString(36)}`,
+        at: new Date().toISOString(),
+        fromKey,
+        toKey: targetKey,
+        fromBackend,
+        toBackend,
+        cwd: sourceCwd,
+        detail,
+        brief,
+        briefUsage: usage,
+      })
+      if (sourceHub) broadcast(sourceHub, { kind: 'handoff_done', targetKey, targetSessionId, toBackend, brief })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      if (sourceHub) broadcast(sourceHub, { kind: 'handoff_error', message })
+    }
+  })()
+  return undefined
+}
+
 function runBtw(hub: Hub, cwd: string, sessionId: string, question: string): void {
   const { cmd, prefix } = resolveClaudeCommand()
   // Claude Code -p 支持 -n/--name：写入 custom-title，列表里可区分 fork 出来的侧问会话
@@ -734,6 +824,26 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       const message = e instanceof Error ? e.message : String(e)
       return json({ error: message }, { status: 500 })
     }
+  }
+  if (url.pathname === '/api/handoff' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as {
+      fromKey?: string
+      toBackend?: string
+      detail?: HandoffDetail
+    }
+    if (!body.fromKey) return json({ error: '缺少 fromKey' }, { status: 400 })
+    if (body.toBackend !== 'claude' && body.toBackend !== 'codex') {
+      return json({ error: 'toBackend 必须是 claude 或 codex' }, { status: 400 })
+    }
+    const detail: HandoffDetail =
+      body.detail === 'brief' || body.detail === 'detailed' ? body.detail : 'standard'
+    const error = runHandoff(body.fromKey, body.toBackend, detail)
+    if (error) return json({ error }, { status: 400 })
+    return json({ ok: true })
+  }
+  if (url.pathname === '/api/lineage' && req.method === 'GET') {
+    const key = url.searchParams.get('key') ?? ''
+    return json({ records: lineageFor(key) })
   }
   const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
   if (histMatch && req.method === 'GET') {

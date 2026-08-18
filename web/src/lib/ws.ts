@@ -12,6 +12,11 @@ export type ServerEvent =
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
   | { kind: 'rewound'; userMessageId: string; scope?: 'conversation' | 'both' }
+  /** 接力进度：源会话 fork 摘要中 */
+  | { kind: 'handoff_pending'; toBackend: 'claude' | 'codex' }
+  | { kind: 'handoff_brief'; brief: string }
+  | { kind: 'handoff_done'; targetKey: string; targetSessionId?: string; toBackend: 'claude' | 'codex'; brief: string }
+  | { kind: 'handoff_error'; message: string }
   /** 外部会话 transcript 追加的完整消息（块级实时，非 token 流） */
   | { kind: 'tail'; msg: HistoryMessage }
   /** 外部会话 transcript 被截断/重建（rewind、clear），客户端应重载历史并重新订阅 */

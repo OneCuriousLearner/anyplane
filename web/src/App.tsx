@@ -54,7 +54,7 @@ export default function App() {
       </div>
       <div className={`h-full ${selected ? 'block' : 'hidden md:block'}`}>
         {selected ? (
-          <Chat session={selected} onBack={() => setSelected(undefined)} />
+          <Chat session={selected} onBack={() => setSelected(undefined)} onNavigate={setSelected} />
         ) : (
           <div className="hidden h-full flex-col items-center justify-center gap-3 text-faint md:flex">
             <ClaudeMark className="h-10 w-10 opacity-25" />
