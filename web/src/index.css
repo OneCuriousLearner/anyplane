@@ -256,12 +256,25 @@ body {
   animation: claude-star-pulse 0.6s 1;
 }
 
+/* Codex 结标：active 时整体持续旋转（点击彩蛋的 -30° 在外层 span 上，互不干扰） */
+@keyframes codex-mark-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.codex-mark--active {
+  animation: codex-mark-spin 2.8s linear infinite;
+  transform-origin: 50% 50%;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cc-cursor {
     animation: none;
   }
   .claude-star--active .claude-star__ray,
-  .claude-star--pulse .claude-star__ray {
+  .claude-star--pulse .claude-star__ray,
+  .codex-mark--active {
     animation: none;
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchCodexHistory, fetchConfig, fetchHistory, fetchSessions, startHandoff, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { fetchCodexHistory, fetchConfig, fetchHistory, startHandoff, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR, type Effort } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -8,6 +8,7 @@ import { MessageView } from '../components/MessageView'
 import { Markdown } from '../components/Markdown'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { ClaudeStar } from '../components/ClaudeStar'
+import { CodexMark } from '../components/CodexMark'
 import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 
 const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw']
@@ -110,7 +111,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailTitle, setDetailTitle] = useState('')
   const [detailContent, setDetailContent] = useState('加载中…')
-  const [siblings, setSiblings] = useState<SessionInfo[]>([])
   const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -177,19 +177,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       cancelled = true
     }
   }, [session.key])
-
-  // ---------- 同目录兄弟会话（工作台快捷切换条） ----------
-  useEffect(() => {
-    if (!session.cwd) {
-      setSiblings([])
-      return
-    }
-    fetchSessions()
-      .then((list) =>
-        setSiblings(list.filter((s) => s.cwd === session.cwd && s.key !== session.key).slice(0, 4)),
-      )
-      .catch(() => {})
-  }, [session.key, session.cwd])
 
   // ---------- 流式草稿 ----------
 
@@ -806,9 +793,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             />
           ))}
 
-          {/* 底部 100px 空位上方：Claude 星芒触手（忙碌循环 / 空闲可点） */}
+          {/* 底部 100px 空位上方：后端徽标（忙碌旋转 / 空闲可点彩蛋） */}
           <div className="mt-4 ml-[30px] flex items-center gap-2.5">
-            <ClaudeStar active={busy || Boolean(draft) || Boolean(phase)} size={28} />
+            {isCodex ? (
+              <CodexMark active={busy || Boolean(draft) || Boolean(phase)} size={28} />
+            ) : (
+              <ClaudeStar active={busy || Boolean(draft) || Boolean(phase)} size={28} />
+            )}
           </div>
           <div ref={bottomRef} />
         </div>
@@ -880,26 +871,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
             }}
           />
-        )}
-
-        {/* 同目录兄弟会话快捷切换条（项目工作台） */}
-        {siblings.length > 0 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-line/60 px-3 py-1.5 font-mono text-[10px]">
-            <span className="shrink-0 text-faint">此目录:</span>
-            {siblings.map((s) => (
-              <button
-                key={s.key}
-                className="flex shrink-0 items-center gap-1 rounded border border-line px-1.5 py-0.5 text-muted hover:bg-surface2"
-                onClick={() => props.onNavigate?.(s)}
-              >
-                <span className={s.backend === 'codex' ? 'text-sky-300' : 'text-accent-soft'}>
-                  {s.backend === 'codex' ? 'CX' : 'CC'}
-                </span>
-                <span className="max-w-32 truncate">{s.title ?? s.sessionId.slice(0, 8)}</span>
-                {(s.managed?.busy || s.status === 'busy') && <span className="text-busy">●</span>}
-              </button>
-            ))}
-          </div>
         )}
 
         {/* 后台任务芯片：task_started → task_notification 之间的活动任务，可手动停止 */}
