@@ -46,14 +46,15 @@ export function SessionList(props: {
     groups.get(g)!.push(s)
   }
 
-  const startNew = async (cwd: string) => {
-    const { key, slug } = await createSession(cwd)
+  const startNew = async (cwd: string, backend: 'claude' | 'codex') => {
+    const { key, slug } = await createSession(cwd, backend)
     setPickerOpen(false)
     props.onSelect({
       key,
       slug,
       sessionId: 'new',
       cwd,
+      backend,
       mtime: Date.now(),
       sizeBytes: 0,
       status: 'offline',
@@ -110,6 +111,13 @@ export function SessionList(props: {
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.cls}`} />
                     <span className="truncate text-sm">{s.title ?? s.sessionId.slice(0, 8)}</span>
+                    <span
+                      className={`shrink-0 rounded border px-1 font-mono text-[9px] leading-4 ${
+                        s.backend === 'codex' ? 'border-sky-500/40 text-sky-300' : 'border-accent/40 text-accent-soft'
+                      }`}
+                    >
+                      {s.backend === 'codex' ? 'CX' : 'CC'}
+                    </span>
                     <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
                       {timeAgo(s.mtime)}
                     </span>

@@ -1,0 +1,514 @@
+// CodexRuntime：单个 codex app-server 进程托管全部 Codex 线程。
+// CodexSession 实现与 ClaudeSession 同形的会话句柄（见 backends/types.ts 的 AgentSession），
+// 事件经 ThreadTranslator 翻译成 claude stream-json 形状后走统一回调。
+
+import type { ApprovalDecision, BackgroundTask, SessionCallbacks } from '../types'
+import type { CliMessage } from '../claude/protocol'
+import { RpcClient, RpcError } from './rpc'
+import {
+  itemsToHistory,
+  mapThreadStatus,
+  turnCompletedMsg,
+  ThreadTranslator,
+  type HistoryMessage,
+} from './translate'
+
+type Params = Record<string, unknown>
+
+export interface CodexSpawnOpts {
+  cwd?: string
+  resumeThreadId?: string
+  model?: string
+  /** claude 风格权限模式 → codex approvalPolicy/sandbox 近似映射 */
+  permissionMode?: string
+}
+
+/** claude permissionMode → codex {approvalPolicy, sandbox}（近似，见 README 已知限制） */
+export function mapPermissionMode(mode?: string): { approvalPolicy?: string; sandbox?: string } {
+  switch (mode) {
+    case 'bypassPermissions':
+      return { approvalPolicy: 'never', sandbox: 'danger-full-access' }
+    case 'acceptEdits':
+    case 'auto':
+      return { approvalPolicy: 'never', sandbox: 'workspace-write' }
+    case 'plan':
+      return { approvalPolicy: 'on-request', sandbox: 'read-only' }
+    case 'default':
+    default:
+      return { approvalPolicy: 'on-request', sandbox: 'workspace-write' }
+  }
+}
+
+interface PendingCodexApproval {
+  rpcId: number | string
+  kind: string
+}
+
+export class CodexSession {
+  readonly key: string
+  threadId: string | undefined
+  exited = false
+
+  private runState: 'idle' | 'running' | 'requires_action' = 'idle'
+  private clientCount = 0
+  private currentTurnId: string | undefined
+  private approvals = new Map<string, PendingCodexApproval>()
+  private translator: ThreadTranslator | undefined
+  private lastUsage: Record<string, number> | undefined
+  /** turn/start 的覆盖项（model/approvalPolicy/sandbox），未 spawn 时缓存 */
+  turnOverrides: Params = {}
+
+  constructor(
+    key: string,
+    private opts: CodexSpawnOpts,
+    private runtime: CodexRuntime,
+    private cb: SessionCallbacks,
+  ) {
+    this.key = key
+    this.threadId = opts.resumeThreadId
+  }
+
+  /** 重连场景：会话句柄复用时把回调重绑到新 Hub 的闭包上（防御消息黑洞） */
+  rebind(cb: SessionCallbacks): void {
+    this.cb = cb
+  }
+
+  get sessionId(): string | undefined {
+    return this.threadId
+  }
+  get busy(): boolean {
+    if (this.exited) return false
+    return this.runState !== 'idle'
+  }
+  get waiting(): boolean {
+    if (this.exited) return false
+    return this.runState === 'requires_action'
+  }
+  get sessionState(): 'idle' | 'running' | 'requires_action' {
+    return this.exited ? 'idle' : this.runState
+  }
+  get connectedClients(): number {
+    return this.clientCount
+  }
+  get activeTaskCount(): number {
+    return 0 // codex 的后台终端管理（backgroundTerminals/*）留待后续版本
+  }
+  get backgroundTasks(): BackgroundTask[] {
+    return []
+  }
+  get cwd(): string | undefined {
+    return this.opts.cwd
+  }
+
+  /** attach / 首条消息时启动：resume 已有线程或 start 新线程 */
+  async start(): Promise<void> {
+    if (this.threadId && this.translator) return // 已加载
+    const rpc = await this.runtime.ensureRpc()
+    const perm = mapPermissionMode(this.opts.permissionMode)
+    try {
+      if (this.threadId) {
+        await rpc.request('thread/resume', {
+          threadId: this.threadId,
+          excludeTurns: true,
+          ...perm,
+          ...(this.opts.model ? { model: this.opts.model } : {}),
+        })
+      } else {
+        const res = (await rpc.request('thread/start', {
+          cwd: this.opts.cwd,
+          ...perm,
+          ...(this.opts.model ? { model: this.opts.model } : {}),
+          serviceName: 'cc-remote',
+        })) as { thread: { id: string; cwd?: string } }
+        this.threadId = res.thread.id
+        if (res.thread.cwd) this.opts.cwd = res.thread.cwd
+      }
+    } catch (e) {
+      // 线程被另一个 app-server 进程持有（TUI/VSCode 正在用）
+      if (e instanceof RpcError && e.code === -32600 && /owned|another process|lock/i.test(e.message)) {
+        throw new Error(`该线程正被另一个 codex 进程占用（TUI/VSCode？），请先关闭那边: ${e.message}`)
+      }
+      throw e
+    }
+    this.translator = new ThreadTranslator(this.threadId!)
+    this.runtime.registerThread(this.threadId!, this)
+    this.cb.onMessage({ type: 'system', subtype: 'init', session_id: this.threadId, model: this.opts.model })
+    this.cb.onStatusChange?.()
+  }
+
+  // ---------- 事件入口（runtime 按 threadId 分发） ----------
+
+  handleNotification(method: string, params: Params): void {
+    const t = this.translator
+    switch (method) {
+      case 'thread/status/changed': {
+        const st = mapThreadStatus(params.status as { type?: string } | undefined)
+        // 审批等待期间保持 requires_action，由审批通道恢复
+        if (this.approvals.size === 0) this.setRunState(st)
+        break
+      }
+      case 'turn/started': {
+        this.currentTurnId = (params.turn as { id?: string })?.id
+        this.setRunState('running')
+        break
+      }
+      case 'turn/completed': {
+        const turn = (params.turn as Params) ?? {}
+        this.currentTurnId = undefined
+        this.setRunState('idle')
+        this.emit(turnCompletedMsg(this.threadId!, turn, this.lastUsage))
+        break
+      }
+      case 'thread/tokenUsage/updated': {
+        const usage = (params.tokenUsage as { last?: Record<string, number> } | undefined)?.last
+        if (usage) this.lastUsage = usage
+        break
+      }
+      case 'item/started': {
+        const item = params.item as Params
+        if ((item as { type?: string }).type === 'userMessage') break // 用户消息本地已回显
+        for (const m of t?.itemStarted(item as never) ?? []) this.emit(m)
+        break
+      }
+      case 'item/completed': {
+        const item = params.item as Params
+        if ((item as { type?: string }).type === 'userMessage') break
+        for (const m of t?.itemCompleted(item as never) ?? []) this.emit(m)
+        break
+      }
+      case 'item/agentMessage/delta':
+      case 'item/reasoning/textDelta':
+      case 'item/reasoning/summaryTextDelta': {
+        for (const m of t?.itemDelta(method, params) ?? []) this.emit(m)
+        break
+      }
+      case 'serverRequest/resolved':
+        break // 审批清理由 sendApproval 处理
+      case 'error': {
+        const err = params.error as { message?: string } | undefined
+        this.emit({
+          type: 'result',
+          subtype: 'error',
+          is_error: true,
+          result: err?.message ?? 'codex 错误',
+          session_id: this.threadId,
+        })
+        this.setRunState('idle')
+        break
+      }
+      case 'warning': {
+        this.emit({ type: 'system', subtype: 'status', text: `⚠ ${String(params.message ?? '')}` })
+        break
+      }
+      default:
+        break // turn/diff/updated、turn/plan/updated、realtime/* 等暂不渲染
+    }
+  }
+
+  handleServerRequest(id: number | string, method: string, params: Params): void {
+    const requestId = `cx-${id}`
+    let toolName = 'Bash'
+    let input: unknown = params
+    switch (method) {
+      case 'item/commandExecution/requestApproval':
+        toolName = 'Bash'
+        input = { command: params.command ?? '', cwd: params.cwd, reason: params.reason }
+        break
+      case 'item/fileChange/requestApproval':
+        toolName = 'Edit'
+        input = { reason: params.reason, grantRoot: params.grantRoot }
+        break
+      case 'item/permissions/requestApproval':
+        toolName = 'Permissions'
+        input = { reason: params.reason, permissions: params.permissions }
+        break
+      case 'item/tool/requestUserInput':
+        toolName = 'AskUserQuestion'
+        break
+      default:
+        // 未知 server request：拒绝掉避免悬挂（elicitation 等后续支持）
+        this.runtime.respondSafe(id, { decision: 'decline' })
+        return
+    }
+    this.approvals.set(requestId, { rpcId: id, kind: method })
+    this.setRunState('requires_action')
+    this.cb.onApprovalRequest({ requestId, toolName, input, toolUseId: String(params.itemId ?? '') })
+  }
+
+  // ---------- AgentSession 同形接口 ----------
+
+  sendUserText(text: string): void {
+    if (!this.threadId) throw new Error('线程未启动')
+    void this.runtime
+      .rpcRequest('turn/start', {
+        threadId: this.threadId,
+        input: [{ type: 'text', text }],
+        // 审批必须路由给远程用户（cc-remote 的存在意义），覆盖用户配置里的 auto_review
+        approvalsReviewer: 'user',
+        ...this.turnOverrides,
+      })
+      .catch((e) => this.emitError(`发送失败: ${e instanceof Error ? e.message : e}`))
+  }
+
+  sendControl(subtype: string, extra: Record<string, unknown> = {}): string {
+    const reqId = `cx-ctl-${Date.now().toString(36)}`
+    switch (subtype) {
+      case 'interrupt': {
+        if (this.threadId && this.currentTurnId) {
+          void this.runtime
+            .rpcRequest('turn/interrupt', { threadId: this.threadId, turnId: this.currentTurnId })
+            .catch(() => {}) // 无活动 turn 时 app-server 报 -32600，忽略
+        }
+        break
+      }
+      case 'set_model': {
+        if (extra.model) {
+          this.turnOverrides.model = String(extra.model)
+          void this.settingsUpdate({ model: String(extra.model) })
+        }
+        break
+      }
+      case 'set_permission_mode': {
+        const perm = mapPermissionMode(extra.mode as string | undefined)
+        Object.assign(this.turnOverrides, perm)
+        void this.settingsUpdate({ approvalPolicy: perm.approvalPolicy, sandboxPolicy: perm.sandbox ? { type: perm.sandbox } : undefined })
+        break
+      }
+      case 'compact': {
+        if (this.threadId) {
+          void this.runtime.rpcRequest('thread/compact/start', { threadId: this.threadId }).catch((e) => {
+            this.emitError(`压缩失败: ${e instanceof Error ? e.message : e}`)
+          })
+        }
+        break
+      }
+      default:
+        console.log(`[codex ${this.key}] 不支持的控制请求 ${subtype}（忽略）`)
+    }
+    return reqId
+  }
+
+  sendControlAndWait(subtype: string, _extra: Record<string, unknown> = {}, _timeoutMs = 15_000): Promise<unknown> {
+    if (subtype === 'rewind_files') {
+      return Promise.reject(new Error('Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）'))
+    }
+    return Promise.reject(new Error(`codex 后端暂不支持控制请求 ${subtype}`))
+  }
+
+  sendApproval(requestId: string, decision: ApprovalDecision): void {
+    const pending = this.approvals.get(requestId)
+    this.approvals.delete(requestId)
+    if (!pending) return
+    const mapped = mapApprovalDecision(decision)
+    this.runtime.respondSafe(pending.rpcId, { decision: mapped })
+    if (this.approvals.size === 0 && this.runState === 'requires_action') {
+      this.setRunState(this.currentTurnId ? 'running' : 'idle')
+    }
+  }
+
+  /** claude 的 update_environment_variables：只取用 CLAUDE_CODE_EFFORT_LEVEL 映射 reasoning effort */
+  write(msg: { type: string; variables?: Record<string, string> }): void {
+    if (msg.type === 'update_environment_variables' && msg.variables?.CLAUDE_CODE_EFFORT_LEVEL) {
+      const effort = msg.variables.CLAUDE_CODE_EFFORT_LEVEL
+      this.turnOverrides.effort = effort
+      void this.settingsUpdate({ reasoningEffort: effort })
+    }
+    // 其余 stdin 形状（keep_alive 等）对 codex 无意义，忽略
+  }
+
+  attachClient(): void {
+    this.clientCount++
+  }
+  detachClient(): void {
+    this.clientCount = Math.max(0, this.clientCount - 1)
+  }
+  syncClients(count: number): void {
+    this.clientCount = Math.max(0, count)
+  }
+  notifyExternalGate(): void {
+    // codex 进程由 runtime 统一托管，不按会话回收
+  }
+
+  dispose(): void {
+    if (this.exited) return
+    this.exited = true
+    // 断开订阅即可；app-server 会在 30 分钟无订阅后自行卸载线程
+    if (this.threadId) {
+      void this.runtime.rpcRequest('thread/unsubscribe', { threadId: this.threadId }).catch(() => {})
+      this.runtime.unregisterThread(this.threadId, this)
+    }
+    this.cb.onExit(-1)
+  }
+
+  handleProcessExit(): void {
+    if (this.exited) return
+    this.exited = true
+    this.setRunState('idle')
+    this.cb.onExit(1)
+  }
+
+  // ---------- 内部 ----------
+
+  private emit(msg: CliMessage): void {
+    this.cb.onMessage(msg)
+  }
+
+  private emitError(text: string): void {
+    this.emit({ type: 'result', subtype: 'error', is_error: true, result: text, session_id: this.threadId })
+  }
+
+  private setRunState(st: 'idle' | 'running' | 'requires_action'): void {
+    if (this.runState === st) return
+    this.runState = st
+    this.emit({ type: 'system', subtype: 'session_state_changed', state: st })
+    this.cb.onStatusChange?.()
+  }
+
+  /** 实验性 API，老版本可能拒绝：失败静默（turn/start 时仍会带覆盖项） */
+  private async settingsUpdate(patch: Params): Promise<void> {
+    if (!this.threadId) return
+    const cleaned = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+    try {
+      await this.runtime.rpcRequest('thread/settings/update', { threadId: this.threadId, ...cleaned })
+    } catch {}
+  }
+}
+
+function mapApprovalDecision(d: ApprovalDecision): string {
+  if (d.behavior === 'allow') {
+    // updatedPermissions（"总是允许"）→ 会话级记住（类型上宽松透传，运行期探测）
+    return (d as { updatedPermissions?: unknown }).updatedPermissions ? 'acceptForSession' : 'accept'
+  }
+  return 'decline'
+}
+
+// ---------- 运行时单例 ----------
+
+export class CodexRuntime {
+  private rpc: RpcClient | undefined
+  private starting: Promise<RpcClient> | undefined
+  private sessions = new Map<string, CodexSession>()
+  private byThread = new Map<string, CodexSession>()
+
+  async ensureRpc(): Promise<RpcClient> {
+    if (this.rpc && !this.rpc.exited) return this.rpc
+    if (this.starting) return this.starting
+    this.starting = (async () => {
+      const rpc = RpcClient.spawn(['codex', 'app-server', '--stdio'])
+      rpc.onNotification = (n) => this.demux(n.method, n.params as Params)
+      rpc.onServerRequest = (r) => this.demuxRequest(r.id, r.method, r.params as Params)
+      rpc.onExit = (code) => {
+        console.error(`[codex] app-server 退出 code=${code}`)
+        this.rpc = undefined
+        for (const s of this.sessions.values()) s.handleProcessExit()
+      }
+      await rpc.request('initialize', {
+        clientInfo: { name: 'cc-remote', title: 'cc-remote', version: '0.2.0' },
+        capabilities: { experimentalApi: true },
+      })
+      rpc.notify('initialized', {})
+      this.rpc = rpc
+      console.log('[codex] app-server 已启动并完成握手')
+      return rpc
+    })()
+    try {
+      return await this.starting
+    } finally {
+      this.starting = undefined
+    }
+  }
+
+  async rpcRequest(method: string, params?: unknown, timeoutMs?: number): Promise<unknown> {
+    const rpc = await this.ensureRpc()
+    return rpc.request(method, params, { timeoutMs })
+  }
+
+  respondSafe(id: number | string, result: unknown): void {
+    try {
+      this.rpc?.respond(id, result)
+    } catch (e) {
+      console.error('[codex] 审批应答失败:', e)
+    }
+  }
+
+  registerThread(threadId: string, s: CodexSession): void {
+    this.byThread.set(threadId, s)
+  }
+  unregisterThread(threadId: string, s?: CodexSession): void {
+    if (!s || this.byThread.get(threadId) === s) this.byThread.delete(threadId)
+  }
+
+  private demux(method: string, params: Params): void {
+    const threadId = typeof params.threadId === 'string' ? params.threadId : undefined
+    if (threadId) {
+      this.byThread.get(threadId)?.handleNotification(method, params)
+    }
+    // 无 threadId 的全局通知（account/*、remoteControl/* 等）暂不处理
+  }
+
+  private demuxRequest(id: number | string, method: string, params: Params): void {
+    const threadId = typeof params.threadId === 'string' ? params.threadId : undefined
+    const session = threadId ? this.byThread.get(threadId) : undefined
+    if (session) session.handleServerRequest(id, method, params)
+    else this.respondSafe(id, { decision: 'decline' }) // 无主请求拒绝掉避免悬挂
+  }
+
+  ensure(key: string, opts: CodexSpawnOpts, cb: SessionCallbacks): CodexSession {
+    const existing = this.sessions.get(key)
+    if (existing && !existing.exited) {
+      existing.rebind(cb)
+      return existing
+    }
+    if (existing) this.sessions.delete(key)
+    const s = new CodexSession(key, opts, this, cb)
+    this.sessions.set(key, s)
+    return s
+  }
+
+  get(key: string): CodexSession | undefined {
+    return this.sessions.get(key)
+  }
+
+  dispose(key: string): void {
+    const s = this.sessions.get(key)
+    if (!s) return
+    this.sessions.delete(key)
+    s.dispose()
+  }
+
+  disposeAll(): void {
+    for (const s of [...this.sessions.values()]) s.dispose()
+    this.sessions.clear()
+    this.rpc?.kill()
+    this.rpc = undefined
+  }
+
+  /** 会话发现：thread/list 分页拉全（含 cli/exec/appServer 来源） */
+  async listThreads(limitPages = 3): Promise<Params[]> {
+    const out: Params[] = []
+    let cursor: string | null = null
+    for (let page = 0; page < limitPages; page++) {
+      const res = (await this.rpcRequest('thread/list', {
+        cursor,
+        limit: 100,
+        sortKey: 'updated_at',
+        sourceKinds: ['cli', 'vscode', 'exec', 'appServer'],
+      })) as { data?: Params[]; nextCursor?: string | null }
+      out.push(...(res.data ?? []))
+      cursor = res.nextCursor ?? null
+      if (!cursor) break
+    }
+    return out
+  }
+
+  /** 历史：thread/read includeTurns（只读，不加载不订阅） */
+  async readHistory(threadId: string): Promise<HistoryMessage[]> {
+    const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: true }, 60_000)) as {
+      thread?: { turns?: Array<{ items?: never[] }> }
+    }
+    const items = (res.thread?.turns ?? []).flatMap((t) => t.items ?? [])
+    return itemsToHistory(items)
+  }
+}
+
+export const codexRuntime = new CodexRuntime()

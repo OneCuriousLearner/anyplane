@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchConfig, fetchHistory, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { fetchCodexHistory, fetchConfig, fetchHistory, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR, type Effort } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -132,7 +132,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
   const pushSystem = (text: string, kind: 'info' | 'error' = 'info') =>
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
 
-  const isExisting = session.key.startsWith('s|')
+  const isCodex = session.key.startsWith('x|') || session.key.startsWith('xn|')
+  const isExisting = session.key.startsWith('s|') || session.key.startsWith('x|')
 
   // ---------- 历史加载（切换会话时取消过期请求，避免「卡住不出对话」） ----------
   useEffect(() => {
@@ -149,7 +150,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     setApprovals([])
     setPhase(undefined)
     if (!isExisting) return
-    fetchHistory(session.slug, session.sessionId)
+    const loader = isCodex
+      ? fetchCodexHistory(session.sessionId)
+      : fetchHistory(session.slug, session.sessionId)
+    loader
       .then((resp) => {
         if (cancelled) return
         historyOffsetRef.current = resp.fileBytes
@@ -157,7 +161,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
         for (const h of resp.messages) appendHistoryMsg(out, h)
         setMsgs(() => out)
         // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队
-        sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
+        // codex 的实时流走 app-server 订阅（attach 即 resume），无 tailer
+        if (!isCodex) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
       })
       .catch((e) => {
         if (!cancelled) pushSystem(`⚠ 加载历史失败: ${e}`, 'error')
@@ -570,14 +575,30 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
     const text = input.trim()
     if (!text || !sockRef.current) return
     if (text === '/rewind') {
+      if (isCodex) {
+        pushSystem('Codex 会话暂不支持回滚（后续版本开放）')
+        setInput('')
+        return
+      }
       setShowRewind(true)
       setInput('')
       return
     }
     if (text.startsWith('/btw')) {
+      if (isCodex) {
+        pushSystem('Codex 侧问将随接力功能一同开放')
+        setInput('')
+        return
+      }
       const q = text.slice(4).trim()
       if (q) sockRef.current.send({ kind: 'btw', question: q })
       else pushSystem('用法：/btw <问题>')
+      setInput('')
+      return
+    }
+    // codex 的 /compact 走控制请求（thread/compact/start），不作为文本发给模型
+    if (isCodex && text === '/compact') {
+      sockRef.current.send({ kind: 'control', subtype: 'compact' })
       setInput('')
       return
     }
@@ -734,7 +755,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void }) {
           </div>
         </div>
 
-        {cfg && (
+        {cfg && !isCodex && (
           <StatusPill
             cfg={cfg}
             model={initInfo.model}

@@ -27,6 +27,8 @@ export interface SessionInfo {
   sizeBytes: number
   status: 'busy' | 'idle' | 'waiting' | 'offline'
   live?: { pid: number; startedAt?: string | number; kind?: string }
+  /** 会话后端：claude（stream-json 子进程）| codex（app-server） */
+  backend?: 'claude' | 'codex'
   key: string
   managed: {
     spawned: boolean
@@ -84,11 +86,17 @@ export async function fetchHistory(slug: string, sessionId: string): Promise<His
   return r.json()
 }
 
-export async function createSession(cwd: string): Promise<{ key: string; slug: string }> {
+/** codex 线程历史（thread/read includeTurns）；fileBytes 恒 0（无 tailer） */
+export async function fetchCodexHistory(threadId: string): Promise<HistoryResponse> {
+  const r = await apiFetch(`/api/codex/history/${threadId}`)
+  return r.json()
+}
+
+export async function createSession(cwd: string, backend?: 'claude' | 'codex'): Promise<{ key: string; slug: string }> {
   const r = await apiFetch('/api/sessions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ cwd }),
+    body: JSON.stringify({ cwd, backend }),
   })
   return r.json()
 }

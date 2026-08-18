@@ -9,6 +9,8 @@ import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionI
 import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
 import { TranscriptTailer } from './backends/claude/tailer'
+import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as codexParseKey } from './backends/codex/backend'
+import { codexRuntime, type CodexSession } from './backends/codex/runtime'
 import { config } from './config'
 import { FsBrowseError, listDirectories } from './fsbrowse'
 
@@ -64,6 +66,7 @@ function broadcast(hub: Hub, payload: unknown): void {
 }
 
 function statusOf(key: string): Record<string, unknown> {
+  if (isCodexKey(key)) return codexStatusOf(key)
   const s = processManager.get(key)
   const hub = hubs.get(key)
   const pending = hub?.pendingApprovals.size ?? 0
@@ -95,6 +98,84 @@ function statusOf(key: string): Record<string, unknown> {
 
 function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
   broadcast(hub, { kind: 'status', state: { ...statusOf(hub.key), ...extra } })
+}
+
+/** codex 会话状态：与 statusOf 同形，供列表 managed 字段与 WS status 复用 */
+function codexStatusOf(key: string): Record<string, unknown> {
+  const s = codexRuntime.get(key)
+  const hub = hubs.get(key)
+  const pending = hub?.pendingApprovals.size ?? 0
+  const waiting = (s?.waiting ?? false) || pending > 0
+  return {
+    spawned: !!s && !s.exited,
+    busy: (s?.busy ?? false) || waiting,
+    waiting,
+    sessionState: s?.sessionState ?? 'idle',
+    sessionId: s?.sessionId,
+    clients: s?.connectedClients ?? hub?.clients.size ?? 0,
+    activeTaskCount: 0,
+    activeTasks: [],
+    model: hub?.spawnOpts?.model,
+    permissionMode: hub?.spawnOpts?.permissionMode,
+    effort: hub?.spawnOpts?.effort,
+    tailing: false,
+  }
+}
+
+/** 两个后端共用的会话回调：CLI/翻译层消息广播、审批入 Hub 表、状态推动 */
+function sessionCallbacks(hub: Hub) {
+  return {
+    onMessage: (msg: CliMessage) => {
+      // 后台 Agent 完成通知会作为伪装成 user 的内部 XML 记录出现。
+      // 生命周期本身已由 ProcessManager 消费为 system/task_notification；
+      // 不再把原始内部载荷广播进主聊天或 rewind 历史。
+      if (isInternalUserMessage(msg)) return
+      broadcast(hub, { kind: 'cli', msg })
+    },
+    onApprovalRequest: (req: { requestId: string; toolName: string; input: unknown }) => {
+      hub.pendingApprovals.set(req.requestId, req)
+      broadcast(hub, {
+        kind: 'approval_request',
+        requestId: req.requestId,
+        toolName: req.toolName,
+        input: req.input,
+      })
+      pushStatus(hub)
+      processManager.get(hub.key)?.notifyExternalGate()
+    },
+    onStatusChange: () => pushStatus(hub),
+    onExit: (code: number) => {
+      pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
+    },
+  }
+}
+
+/** codex 会话懒启动：attach(x|) 或首条 user 消息时 resume/start 线程 */
+async function ensureCodexSession(hub: Hub, opts?: Partial<SpawnOptions>): Promise<CodexSession | undefined> {
+  const parsed = codexParseKey(hub.key)
+  if (!parsed) {
+    broadcast(hub, { kind: 'error', message: '无法解析 codex 会话 key' })
+    return undefined
+  }
+  const spawnOpts = {
+    cwd: parsed.cwd,
+    resumeThreadId: parsed.resumeThreadId,
+    permissionMode: config.permissionPolicy === 'bypass' ? 'bypassPermissions' : undefined,
+    ...hub.spawnOpts,
+    ...opts,
+  }
+  hub.spawnOpts = spawnOpts
+  const s = codexRuntime.ensure(hub.key, spawnOpts, sessionCallbacks(hub))
+  s.syncClients(hub.clients.size)
+  try {
+    await s.start()
+  } catch (e) {
+    broadcast(hub, { kind: 'error', message: e instanceof Error ? e.message : String(e) })
+    pushStatus(hub)
+    return undefined
+  }
+  pushStatus(hub)
+  return s
 }
 
 // ---------- transcript tailer（外部会话实时跟踪） ----------
@@ -173,30 +254,7 @@ function ensureSpawned(
   }
   hub.spawnOpts = spawnOpts
   try {
-    const s = processManager.ensure(hub.key, spawnOpts, {
-      onMessage: (msg: CliMessage) => {
-        // 后台 Agent 完成通知会作为伪装成 user 的内部 XML 记录出现。
-        // 生命周期本身已由 ProcessManager 消费为 system/task_notification；
-        // 不再把原始内部载荷广播进主聊天或 rewind 历史。
-        if (isInternalUserMessage(msg)) return
-        broadcast(hub, { kind: 'cli', msg })
-      },
-      onApprovalRequest: (req) => {
-        hub.pendingApprovals.set(req.requestId, req)
-        broadcast(hub, {
-          kind: 'approval_request',
-          requestId: req.requestId,
-          toolName: req.toolName,
-          input: req.input,
-        })
-        pushStatus(hub)
-        processManager.get(hub.key)?.notifyExternalGate()
-      },
-      onStatusChange: () => pushStatus(hub),
-      onExit: (code) => {
-        pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
-      },
-    })
+    const s = processManager.ensure(hub.key, spawnOpts, sessionCallbacks(hub))
     // spawn 成功（或已有存活进程）：live 流接管，停掉 transcript tailer 避免重复推送
     stopTailer(hub)
     // 懒 spawn：WS 可能在进程创建前已 open，对齐客户端引用计数
@@ -230,7 +288,14 @@ function handleClientMessage(hub: Hub, raw: string): void {
     case 'attach': {
       // 浏览历史只握手，不 spawn。发消息 / 切 model·mode·effort / rewind / btw 时再启动 CLI。
       // 若客户端显式传 warm:true，则预热 resume（用于主动续聊）。
-      if (data.warm === true || data.opts) {
+      // codex：x| 会话 attach 即 resume（订阅实时事件）；xn| 新会话保持懒启动。
+      if (isCodexKey(hub.key)) {
+        if (data.warm === true || data.opts || hub.key.startsWith('x|')) {
+          void ensureCodexSession(hub, data.opts as Partial<SpawnOptions> | undefined)
+        } else {
+          pushStatus(hub)
+        }
+      } else if (data.warm === true || data.opts) {
         ensureSpawned(hub, data.opts as Partial<SpawnOptions> | undefined)
       } else {
         pushStatus(hub)
@@ -242,12 +307,32 @@ function handleClientMessage(hub: Hub, raw: string): void {
     }
     case 'tail_subscribe': {
       // 客户端加载完历史后订阅 transcript 追加（from = 历史读取时的文件字节数，无缝衔接）
-      startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
+      // codex 的实时流走 app-server 订阅，无 tailer 概念
+      if (!isCodexKey(hub.key)) {
+        startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
+      }
       break
     }
     case 'user': {
       if (hub.rewindPending) {
         broadcast(hub, { kind: 'error', message: '正在恢复文件，请等待回滚完成后再发送消息' })
+        return
+      }
+      if (isCodexKey(hub.key)) {
+        void (async () => {
+          let s = codexRuntime.get(hub.key)
+          if (!s || s.exited || !s.sessionId) {
+            s = await ensureCodexSession(hub)
+          }
+          if (!s || s.exited) return // ensureCodexSession 已广播具体错误
+          try {
+            s.sendUserText(String(data.text ?? ''))
+            pushStatus(hub)
+          } catch (e) {
+            broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
+            pushStatus(hub)
+          }
+        })()
         return
       }
       let s = session()
@@ -274,6 +359,21 @@ function handleClientMessage(hub: Hub, raw: string): void {
       // 组合回滚等待期间，通用控制路径不得再发 rewind_files 与之竞争
       if (hub.rewindPending && subtype === 'rewind_files') {
         broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
+        return
+      }
+      // codex：interrupt/set_model/set_permission_mode/compact 直接翻译；其余控制请求暂无对应物
+      if (isCodexKey(hub.key)) {
+        if (subtype === 'set_model' && extra.model) {
+          hub.spawnOpts = { ...hub.spawnOpts, model: String(extra.model) }
+        }
+        if (subtype === 'set_permission_mode' && extra.mode) {
+          hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
+        }
+        const s = codexRuntime.get(hub.key)
+        if (s && !s.exited) {
+          s.sendControl(subtype, extra)
+        }
+        pushStatus(hub)
         return
       }
       // 中断：未启动则无需操作
@@ -323,6 +423,15 @@ function handleClientMessage(hub: Hub, raw: string): void {
       const variables = (data.variables as Record<string, string>) ?? {}
       const effort = variables.CLAUDE_CODE_EFFORT_LEVEL
       if (effort) hub.spawnOpts = { ...hub.spawnOpts, effort }
+      if (isCodexKey(hub.key)) {
+        // codex：映射为 reasoning effort（CodexSession.write 内部翻译）
+        const s = codexRuntime.get(hub.key)
+        if (s && !s.exited) {
+          s.write({ type: 'update_environment_variables', variables })
+        }
+        pushStatus(hub)
+        return
+      }
       const otherVariables = Object.fromEntries(
         Object.entries(variables).filter(([key]) => key !== 'CLAUDE_CODE_EFFORT_LEVEL'),
       )
@@ -346,6 +455,10 @@ function handleClientMessage(hub: Hub, raw: string): void {
     case 'rewind_conversation': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
+      if (isCodexKey(hub.key)) {
+        broadcast(hub, { kind: 'error', message: 'Codex 会话回滚（thread/revert 或 fork 截断）将在后续版本开放' })
+        return
+      }
       if (hub.rewindPending) {
         broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
         return
@@ -356,6 +469,10 @@ function handleClientMessage(hub: Hub, raw: string): void {
     case 'rewind_both': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
+      if (isCodexKey(hub.key)) {
+        broadcast(hub, { kind: 'error', message: 'Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）' })
+        return
+      }
       if (hub.rewindPending) {
         broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
         return
@@ -393,6 +510,10 @@ function handleClientMessage(hub: Hub, raw: string): void {
     case 'btw': {
       // 侧问：fork 当前会话的一次性问答，不污染主会话
       const question = String(data.question ?? '').trim()
+      if (isCodexKey(hub.key)) {
+        broadcast(hub, { kind: 'btw_result', ok: false, text: 'Codex 侧问（ephemeral fork）将随接力功能一同开放' })
+        return
+      }
       const parsed = parseKey(hub.key)
       const sid = session()?.sessionId ?? parsed?.resumeSessionId
       if (!question || !parsed || !sid) {
@@ -403,9 +524,22 @@ function handleClientMessage(hub: Hub, raw: string): void {
       break
     }
     case 'approval': {
-      const s = session()
       const requestId = String(data.requestId)
       hub.pendingApprovals.delete(requestId)
+      if (isCodexKey(hub.key)) {
+        const s = codexRuntime.get(hub.key)
+        if (s && !s.exited) {
+          try {
+            s.sendApproval(requestId, data.decision as ApprovalDecision)
+          } catch (e) {
+            broadcast(hub, { kind: 'error', message: `审批回复失败: ${e}` })
+          }
+        }
+        broadcast(hub, { kind: 'approval_resolved', requestId })
+        pushStatus(hub)
+        return
+      }
+      const s = session()
       if (s && !s.exited) {
         try {
           s.sendApproval(requestId, data.decision as ApprovalDecision)
@@ -554,19 +688,41 @@ if (!hasWindowsSocketFix && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
 async function handleApi(req: Request, url: URL): Promise<Response | undefined> {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     const sessions = listSessions()
-    // 附加 key 与进程内状态
-    return json(
-      sessions.map((s: SessionInfo) => ({
-        ...s,
-        key: keyFor(s.slug, s.sessionId),
-        managed: statusOf(keyFor(s.slug, s.sessionId)),
-      })),
-    )
+    const claudeRows = sessions.map((s: SessionInfo) => ({
+      ...s,
+      backend: 'claude' as const,
+      key: keyFor(s.slug, s.sessionId),
+      managed: statusOf(keyFor(s.slug, s.sessionId)),
+    }))
+    // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
+    let codexRows: Record<string, unknown>[] = []
+    try {
+      const threads = await codexBackend.listSessions()
+      codexRows = threads.map((t) => ({
+        sessionId: t.id,
+        cwd: t.cwd,
+        slug: 'codex',
+        title: t.title,
+        lastPrompt: t.lastPrompt,
+        mtime: t.mtime,
+        sizeBytes: 0,
+        status: t.status,
+        backend: 'codex' as const,
+        key: t.key,
+        managed: codexStatusOf(t.key),
+      }))
+    } catch (e) {
+      console.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
+    }
+    return json([...codexRows, ...claudeRows])
   }
   if (url.pathname === '/api/sessions' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { cwd?: string }
+    const body = (await req.json().catch(() => ({}))) as { cwd?: string; backend?: string }
     if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
-    return json({ key: `n|${encodeURIComponent(body.cwd)}`, slug: sanitizePath(body.cwd) })
+    if (body.backend === 'codex') {
+      return json({ key: codexKeyForNew(body.cwd), slug: 'codex', backend: 'codex' })
+    }
+    return json({ key: `n|${encodeURIComponent(body.cwd)}`, slug: sanitizePath(body.cwd), backend: 'claude' })
   }
   if (url.pathname === '/api/fs/list' && req.method === 'GET') {
     // searchParams.get 已完成 URL 解码，禁止再 decodeURIComponent（含 % 的路径会被二次解码破坏）
@@ -584,6 +740,17 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     const [, slug, sessionId] = histMatch
     // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移
     return json(readHistory(slug, sessionId))
+  }
+  // codex 历史：thread/read includeTurns（只读），无 tailer 偏移概念
+  const codexHistMatch = url.pathname.match(/^\/api\/codex\/history\/([^/]+)$/)
+  if (codexHistMatch && req.method === 'GET') {
+    try {
+      const messages = await codexBackend.readHistory(codexHistMatch[1])
+      return json({ messages, fileBytes: 0 })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      return json({ error: message }, { status: 500 })
+    }
   }
   if (url.pathname === '/api/config' && req.method === 'GET') {
     return json({
@@ -668,10 +835,22 @@ try {
         const hub = hubs.get(ws.data.key)
         if (!hub) return
         hub.clients.delete(ws)
-        processManager.get(ws.data.key)?.detachClient()
+        // 不变量：任何后端的会话句柄存活期间，其 Hub 必须存活——
+        // 否则重连时复用旧会话，其回调会把事件广播进已删除的 Hub（消息黑洞）。
+        const alive = isCodexKey(ws.data.key)
+          ? (() => {
+              const s = codexRuntime.get(ws.data.key)
+              s?.detachClient()
+              return !!s && !s.exited
+            })()
+          : (() => {
+              const s = processManager.get(ws.data.key)
+              s?.detachClient()
+              return !!s
+            })()
         if (hub.clients.size === 0) {
           stopTailer(hub)
-          if (!processManager.get(ws.data.key)) hubs.delete(ws.data.key)
+          if (!alive) hubs.delete(ws.data.key)
         }
       },
     },
@@ -746,6 +925,7 @@ async function shutdown(reason: string): Promise<void> {
 
   try {
     processManager.disposeAll()
+    codexRuntime.disposeAll()
   } catch (e) {
     console.error('[cc-remote] disposeAll 失败:', e)
   }

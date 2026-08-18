@@ -18,12 +18,13 @@ function baseName(cwd: string): string {
 
 export function DirPicker(props: {
   sessions: SessionInfo[]
-  onStart: (cwd: string) => Promise<void>
+  onStart: (cwd: string, backend: 'claude' | 'codex') => Promise<void>
   onClose: () => void
 }) {
   const [tree, setTree] = useState<Map<string, NodeState>>(new Map())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState('')
+  const [backend, setBackend] = useState<'claude' | 'codex'>('claude')
   const [starting, setStarting] = useState(false)
   const [revealing, setRevealing] = useState(false)
   const [notice, setNotice] = useState('')
@@ -149,7 +150,7 @@ export function DirPicker(props: {
     if (!cwd || starting) return
     setStarting(true)
     try {
-      await props.onStart(cwd)
+      await props.onStart(cwd, backend)
     } finally {
       setStarting(false)
     }
@@ -294,7 +295,20 @@ export function DirPicker(props: {
 
       {/* 底部确认栏 */}
       <div className="border-t border-line bg-surface px-4 py-3">
-        <div className="mb-2 truncate font-mono text-xs text-muted">{selected || '未选择目录'}</div>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="truncate font-mono text-xs text-muted">{selected || '未选择目录'}</div>
+          <div className="flex shrink-0 overflow-hidden rounded border border-line font-mono text-[11px]">
+            {(['claude', 'codex'] as const).map((b) => (
+              <button
+                key={b}
+                className={`px-2.5 py-1 ${backend === b ? 'bg-accent text-bg' : 'text-faint hover:text-muted'}`}
+                onClick={() => setBackend(b)}
+              >
+                {b === 'claude' ? 'Claude' : 'Codex'}
+              </button>
+            ))}
+          </div>
+        </div>
         <button
           className="w-full rounded bg-accent py-2 text-sm font-medium text-bg hover:bg-accent-soft disabled:opacity-40"
           disabled={!selected || starting || revealing}
