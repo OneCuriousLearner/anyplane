@@ -12,6 +12,8 @@ export type ServerEvent =
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
   | { kind: 'rewound'; userMessageId: string; scope?: 'conversation' | 'both' }
+  /** codex 分叉回滚完成：原线程不动，新线程已生成 */
+  | { kind: 'forked'; targetKey: string; targetSessionId: string; fromTurnId: string }
   /** 接力进度：源会话 fork 摘要中 */
   | { kind: 'handoff_pending'; toBackend: 'claude' | 'codex' }
   | { kind: 'handoff_brief'; brief: string }
@@ -80,7 +82,7 @@ export interface SessionState {
 export type ClientCommand =
   | { kind: 'attach'; warm?: boolean; opts?: Record<string, unknown> }
   | { kind: 'tail_subscribe'; from?: number }
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; sendMode?: 'steer' | 'queue' }
   | { kind: 'control'; subtype: string; extra?: Record<string, unknown> }
   | { kind: 'update_env'; variables: Record<string, string> }
   | { kind: 'approval'; requestId: string; decision: unknown }

@@ -111,6 +111,9 @@ export class ClaudeSession {
   private fallbackBusy = false
   /** task_started → task_notification 的任务表，独立于主会话运行状态。 */
   private activeTasks = new Map<string, BackgroundTask>()
+  /** queue 模式（busy 时发消息）：headless 下 'next'/'later' 会在本轮结束后滞留，
+   *  因此排队由服务端实现——idle/result 时按序 flush。 */
+  private queuedTexts: string[] = []
   /** initialize 握手返回的 slash 命令（含描述），供前端补全 */
   slashCommands: Array<{ name: string; description?: string }> = []
   private proc: Subprocess | undefined
@@ -133,9 +136,10 @@ export class ClaudeSession {
     this.cb = cb
   }
 
-  /** 对外：是否在工作（含等待审批、等待控制请求应答） */
+  /** 对外：是否在工作（含等待审批、等待控制请求应答、排队消息待发） */
   get busy(): boolean {
     if (this.exited) return false
+    if (this.queuedTexts.length > 0) return true
     if (this.activeTasks.size > 0) return true
     // 等待中的控制请求（如 rewind_files）期间 CLI 不会发 session_state_changed，
     // 但进程显然不算空闲——与审批等待同待遇，防止误回收
@@ -269,9 +273,21 @@ export class ClaudeSession {
     stdin.write(JSON.stringify(msg) + '\n')
   }
 
-  sendUserText(text: string): void {
+  /**
+   * sendMode（busy 时语义）：
+   * - steer = priority 'now'：中断当前操作并立即处理本条（2.1.220 实测可用）
+   * - queue = 服务端排队：session_state idle / result 后按序 flush
+   *   （headless 下 priority 'next'/'later' 会在本轮结束后滞留队列，不可用）
+   */
+  sendUserText(text: string, sendMode?: 'steer' | 'queue'): void {
+    if (sendMode === 'queue' && this.busy) {
+      this.queuedTexts.push(text)
+      this.cb.onStatusChange?.()
+      return
+    }
+    const priority = sendMode === 'steer' && this.busy ? ('now' as const) : undefined
     // 先写再标 busy，避免 write 失败导致永久 busy
-    this.write(userMessage(text))
+    this.write(userMessage(text, priority))
     if (!this.sawStateEvents) {
       this.fallbackBusy = true
       this.cb.onStatusChange?.()
@@ -366,6 +382,7 @@ export class ClaudeSession {
     this.fallbackBusy = false
     this.runState = 'idle'
     this.activeTasks.clear()
+    this.queuedTexts.length = 0
     for (const pending of this.pendingControlRequests.values()) {
       clearTimeout(pending.timeout)
       pending.reject(new Error('Claude 进程已退出'))
@@ -379,6 +396,19 @@ export class ClaudeSession {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer)
       this.idleTimer = undefined
+    }
+  }
+
+  /** queue 模式排队消息：idle 时按序发出下一条（其 result/idle 再触发下一条） */
+  private flushQueue(): void {
+    if (this.exited || this.queuedTexts.length === 0) return
+    if (this.sawStateEvents ? this.runState !== 'idle' : this.fallbackBusy) return
+    const next = this.queuedTexts.shift()!
+    try {
+      this.sendUserText(next)
+    } catch (e) {
+      console.warn(`[session ${this.key}] 排队消息发送失败:`, e)
+      this.queuedTexts.unshift(next)
     }
   }
 
@@ -445,7 +475,10 @@ export class ClaudeSession {
       if (st === 'idle' || st === 'running' || st === 'requires_action') {
         this.sawStateEvents = true
         this.runState = st
-        if (st === 'idle') this.fallbackBusy = false
+        if (st === 'idle') {
+          this.fallbackBusy = false
+          this.flushQueue()
+        }
         console.log(`[session ${this.key}] session_state=${st}`)
         this.cb.onStatusChange?.()
         this.scheduleRecycleIfSafe()
@@ -489,6 +522,7 @@ export class ClaudeSession {
     // 兼容回退：无 state 事件时用 result 清 busy
     if (msg.type === 'result' && !this.sawStateEvents) {
       this.fallbackBusy = false
+      this.flushQueue()
       this.cb.onStatusChange?.()
       this.scheduleRecycleIfSafe()
     }

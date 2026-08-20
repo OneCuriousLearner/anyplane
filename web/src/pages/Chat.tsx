@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, startHandoff, type CodexModelInfo, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type LineageResponse, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -108,7 +108,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [permMode, setPermMode] = useState<string>()
   const [effort, setEffort] = useState<string>()
   const [codexModels, setCodexModels] = useState<CodexModelInfo[]>()
+  const [lineage, setLineage] = useState<LineageResponse>()
   const [handoffBusy, setHandoffBusy] = useState(false)
+  const [sendMode, setSendMode] = useState<'steer' | 'queue'>('steer')
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailTitle, setDetailTitle] = useState('')
   const [detailContent, setDetailContent] = useState('加载中…')
@@ -149,6 +151,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       .then((r) => setCodexModels(r.models))
       .catch(() => {})
   }, [isCodex])
+
+  // 接力链：当前会话参与的血缘记录（仅在链上时显示导航条）
+  useEffect(() => {
+    setLineage(undefined)
+    fetchLineage(session.key)
+      .then((r) => setLineage(r.records.length > 0 ? r : undefined))
+      .catch(() => {})
+  }, [session.key])
 
   /** claude 权限模式名 → codex 预设档位（显示用） */
   const codexModeOf = (m?: string): string => {
@@ -527,6 +537,23 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               }),
             )
             break
+          case 'forked': {
+            // codex 分叉回滚完成：原线程不动，跳到携带截断历史的新线程
+            pushSystem('⎇ 已分叉：新会话携带所选消息之前的历史，原会话保持不动')
+            setShowRewind(false)
+            props.onNavigate?.({
+              key: ev.targetKey,
+              slug: 'codex',
+              sessionId: ev.targetSessionId,
+              cwd: session.cwd,
+              backend: 'codex',
+              mtime: Date.now(),
+              sizeBytes: 0,
+              status: 'idle',
+              managed: { spawned: true, busy: false, clients: 0 },
+            })
+            break
+          }
           case 'handoff_pending':
             pushSystem(`⇄ 源会话正在生成交接简报（→ ${ev.toBackend === 'codex' ? 'Codex' : 'Claude'}）…`)
             break
@@ -665,21 +692,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     const text = input.trim()
     if (!text || !sockRef.current) return
     if (text === '/rewind') {
-      if (isCodex) {
-        pushSystem('Codex 会话暂不支持回滚（后续版本开放）')
-        setInput('')
-        return
-      }
       setShowRewind(true)
       setInput('')
       return
     }
     if (text.startsWith('/btw')) {
-      if (isCodex) {
-        pushSystem('Codex 侧问将随接力功能一同开放')
-        setInput('')
-        return
-      }
       const q = text.slice(4).trim()
       if (q) sockRef.current.send({ kind: 'btw', question: q })
       else pushSystem('用法：/btw <问题>')
@@ -693,7 +710,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       return
     }
     pushMsg({ id: nextId(), role: 'user', blocks: [{ kind: 'text', text }] })
-    sockRef.current.send({ kind: 'user', text })
+    sockRef.current.send({ kind: 'user', text, ...(busy ? { sendMode } : {}) })
     setInput('')
   }
 
@@ -940,6 +957,47 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           />
         )}
 
+        {/* 接力链导航条：仅在当前会话参与血缘时出现 */}
+        {lineage && (
+          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-line/60 px-3 py-1.5 font-mono text-[10px]">
+            <span className="shrink-0 text-faint">⇄ 接力链:</span>
+            {lineage.records
+              .slice()
+              .sort((a, b) => a.at.localeCompare(b.at))
+              .map((r) => {
+                const fromKey = r.fromResolvedKey ?? r.fromKey
+                const toKey = r.toResolvedKey ?? r.toKey
+                const node = (k: string, backend: 'claude' | 'codex') => {
+                  const info = lineage.nodes[k]
+                  const current = k === session.key
+                  return (
+                    <button
+                      key={k}
+                      disabled={!info}
+                      onClick={() => info && props.onNavigate?.(info)}
+                      className={`flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 ${
+                        current
+                          ? 'border-accent/60 bg-accent/15 text-accent-soft'
+                          : 'border-line text-faint hover:text-muted'
+                      }`}
+                      title={k}
+                    >
+                      {backend === 'codex' ? <CodexMark size={10} /> : <ClaudeMark className="h-2.5 w-2.5" />}
+                      {new Date(r.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                    </button>
+                  )
+                }
+                return (
+                  <span key={r.id} className="flex shrink-0 items-center gap-1.5">
+                    {node(fromKey, r.fromBackend)}
+                    <span className="text-faint/60">→</span>
+                    {node(toKey, r.toBackend)}
+                  </span>
+                )
+              })}
+          </div>
+        )}
+
         {/* 后台任务芯片：task_started → task_notification 之间的活动任务，可手动停止 */}
         {(state.activeTasks?.length ?? 0) > 0 && (
           <div className="flex flex-wrap gap-1.5 px-3 py-1.5">
@@ -994,6 +1052,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       {showRewind && (
         <RewindPicker
           targets={rewindTargets}
+          mode={isCodex ? 'codex' : 'claude'}
           onClose={() => setShowRewind(false)}
           onRewindFiles={(uuid) => {
             sockRef.current?.send({ kind: 'control', subtype: 'rewind_files', extra: { user_message_id: uuid } })
@@ -1037,6 +1096,30 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   {c.desc && <span className="truncate text-xs text-faint">{c.desc}</span>}
                 </button>
               ))}
+            </div>
+          )}
+          {/* busy 时发送方式：插队（steer，下一边界被模型看到）/ 排队（queue，当前轮结束后） */}
+          {busy && (
+            <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px]">
+              <span className="text-faint">工作中，发送：</span>
+              {(['steer', 'queue'] as const).map((m) => (
+                <button
+                  key={m}
+                  className={`rounded border px-1.5 py-0.5 ${
+                    sendMode === m ? 'border-accent/60 bg-accent/15 text-accent-soft' : 'border-line text-faint hover:text-muted'
+                  }`}
+                  onClick={() => setSendMode(m)}
+                >
+                  {m === 'steer' ? '插队' : '排队'}
+                </button>
+              ))}
+              <span className="text-faint/70">
+                {sendMode === 'steer'
+                  ? isCodex
+                    ? '追加进当前轮'
+                    : '打断当前并立即处理'
+                  : '当前轮结束后自动开始'}
+              </span>
             </div>
           )}
           <div

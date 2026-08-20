@@ -221,15 +221,26 @@ export function turnCompletedMsg(threadId: string, turn: Params, lastUsage?: Rec
 
 // ---------- 历史（thread.turns）→ HistoryMessage ----------
 
-/** turn.items[] → 历史消息序列（tool_use/tool_result 跨消息配对由前端归并） */
-export function itemsToHistory(items: ThreadItem[]): HistoryMessage[] {
+/** turn.items[] → 历史消息序列（tool_use/tool_result 跨消息配对由前端归并）。
+ *  turnId 存在时：该轮首条 userMessage 以 turnId 为 uuid 且 rewindable——
+ *  供 /rewind 分叉回滚定位（thread/fork 的 beforeTurnId 目标）。 */
+export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMessage[] {
   const out: HistoryMessage[] = []
+  let firstUserMarked = false
   for (const item of items) {
     const uuid = item.id
     switch (item.type) {
       case 'userMessage': {
         const text = userInputText(item.content)
-        if (text) out.push({ uuid, role: 'user', blocks: [{ kind: 'text', text }], rewindable: false })
+        if (!text) break
+        const markable = !!turnId && !firstUserMarked
+        if (markable) firstUserMarked = true
+        out.push({
+          uuid: markable ? turnId : uuid,
+          role: 'user',
+          blocks: [{ kind: 'text', text }],
+          rewindable: markable,
+        })
         break
       }
       case 'agentMessage':

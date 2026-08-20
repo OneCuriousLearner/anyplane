@@ -127,6 +127,9 @@ export interface LineageRecord {
   at: string
   fromKey: string
   toKey: string
+  /** 解析后的真实会话 key（s|slug|sid / x|threadId）；目标 sessionId 就绪后回填 */
+  fromResolvedKey?: string
+  toResolvedKey?: string
   fromBackend: BackendName
   toBackend: BackendName
   cwd: string
@@ -164,7 +167,13 @@ export function lineageFor(key: string): LineageRecord[] {
   if (!existsSync(path)) return []
   try {
     const all = JSON.parse(readFileSync(path, 'utf8')) as LineageRecord[]
-    return all.filter((r) => r.fromKey === key || r.toKey === key)
+    return all.filter(
+      (r) =>
+        r.fromKey === key ||
+        r.toKey === key ||
+        r.fromResolvedKey === key ||
+        r.toResolvedKey === key,
+    )
   } catch {
     return []
   }

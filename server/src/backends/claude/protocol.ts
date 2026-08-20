@@ -69,11 +69,12 @@ export function nextRequestId(): string {
   return `ccr-${Date.now().toString(36)}-${++reqCounter}`
 }
 
-export function userMessage(text: string): UserMessageInput {
+export function userMessage(text: string, priority?: 'now' | 'next' | 'later'): UserMessageInput {
   return {
     type: 'user',
     message: { role: 'user', content: text },
     parent_tool_use_id: null,
+    ...(priority ? { priority } : {}),
   }
 }
 

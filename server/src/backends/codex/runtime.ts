@@ -306,12 +306,36 @@ export class CodexSession {
 
   // ---------- AgentSession 同形接口 ----------
 
-  sendUserText(text: string): void {
+  /** sendMode：steer=插队（turn/steer 追加进当前轮）；queue=排队（thread/queue/add，idle 后自动开始）；缺省普通新轮 */
+  sendUserText(text: string, sendMode?: 'steer' | 'queue'): void {
     if (!this.threadId) throw new Error('线程未启动')
+    const input = [{ type: 'text', text }]
+    if (sendMode === 'queue') {
+      void this.runtime
+        .rpcRequest('thread/queue/add', {
+          threadId: this.threadId,
+          input,
+          clientUserMessageId: crypto.randomUUID(),
+        })
+        .catch((e) => this.emitError(`排队失败: ${e instanceof Error ? e.message : e}`))
+      return
+    }
+    if (sendMode === 'steer' && this.currentTurnId) {
+      const turnId = this.currentTurnId
+      void this.runtime
+        .rpcRequest('turn/steer', { threadId: this.threadId, input, expectedTurnId: turnId })
+        .catch(() => {
+          // 轮刚好结束/不可 steer：回退普通新轮
+          void this.runtime
+            .rpcRequest('turn/start', { threadId: this.threadId, input, approvalsReviewer: 'user', ...this.turnOverrides })
+            .catch((e) => this.emitError(`发送失败: ${e instanceof Error ? e.message : e}`))
+        })
+      return
+    }
     void this.runtime
       .rpcRequest('turn/start', {
         threadId: this.threadId,
-        input: [{ type: 'text', text }],
+        input,
         // 审批必须路由给远程用户（cc-remote 的存在意义），覆盖用户配置里的 auto_review
         approvalsReviewer: 'user',
         ...this.turnOverrides,
@@ -464,6 +488,8 @@ interface EphemeralCollector {
   text: string
   usage?: Record<string, number>
   timer: Timer
+  /** 增量回调（btw 流式展示用） */
+  onDelta?: (delta: string, thinking?: boolean) => void
 }
 
 export class CodexRuntime {
@@ -539,6 +565,10 @@ export class CodexRuntime {
     if (method === 'item/completed') {
       const item = params.item as { type?: string; text?: string } | undefined
       if (item?.type === 'agentMessage' && item.text) c.text += item.text
+    } else if (method === 'item/agentMessage/delta') {
+      c.onDelta?.(String(params.delta ?? ''), false)
+    } else if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
+      c.onDelta?.(String(params.delta ?? ''), true)
     } else if (method === 'thread/tokenUsage/updated') {
       const usage = (params.tokenUsage as { last?: Record<string, number> } | undefined)?.last
       if (usage) c.usage = usage
@@ -560,7 +590,12 @@ export class CodexRuntime {
    * ephemeral fork 一次性问答：fork 源线程（纯内存不落盘）→ 单轮提问 → 收集回答。
    * 用于 Codex 侧交接简报生成与 /btw 侧问。只读沙箱 + 无审批，保证不会改现场。
    */
-  async runEphemeralQuestion(sourceThreadId: string, question: string, timeoutMs = 180_000): Promise<{ text: string; usage?: Record<string, number> }> {
+  async runEphemeralQuestion(
+    sourceThreadId: string,
+    question: string,
+    timeoutMs = 180_000,
+    onDelta?: (delta: string, thinking?: boolean) => void,
+  ): Promise<{ text: string; usage?: Record<string, number> }> {
     const fork = (await this.rpcRequest('thread/fork', { threadId: sourceThreadId, ephemeral: true }, 60_000)) as {
       thread: { id: string }
     }
@@ -570,7 +605,7 @@ export class CodexRuntime {
         this.collectors.delete(forkId)
         reject(new Error('fork 问答超时'))
       }, timeoutMs)
-      this.collectors.set(forkId, { resolve, reject, text: '', timer })
+      this.collectors.set(forkId, { resolve, reject, text: '', timer, onDelta })
       this.rpcRequest('turn/start', {
         threadId: forkId,
         input: [{ type: 'text', text: question }],
@@ -682,15 +717,15 @@ export class CodexRuntime {
   async readHistory(threadId: string): Promise<HistoryMessage[]> {
     const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: true }, 60_000)) as {
       thread?: {
-        turns?: Array<{ startedAt?: number | null; completedAt?: number | null; items?: never[] }>
+        turns?: Array<{ id?: string; startedAt?: number | null; completedAt?: number | null; items?: never[] }>
       }
     }
     const turns = res.thread?.turns ?? []
     const reasoning = readReasoning(threadId)
     const used = new Set<number>()
     const out: HistoryMessage[] = []
-    for (const turn of turns) {
-      const msgs = itemsToHistory(turn.items ?? [])
+    for (const turn of turns as Array<{ id?: string; startedAt?: number | null; completedAt?: number | null; items?: never[] }>) {
+      const msgs = itemsToHistory(turn.items ?? [], typeof turn.id === 'string' ? turn.id : undefined)
       if (reasoning.length > 0) {
         const start = turn.startedAt ?? 0
         const end = turn.completedAt ?? turn.startedAt ?? Number.MAX_SAFE_INTEGER / 1000
@@ -715,6 +750,14 @@ export class CodexRuntime {
       out.push(...msgs)
     }
     return out
+  }
+
+  /** 分叉回滚：thread/fork beforeTurnId——复制该轮之前的历史为新线程，原线程不动 */
+  async forkAt(threadId: string, beforeTurnId: string): Promise<string> {
+    const res = (await this.rpcRequest('thread/fork', { threadId, beforeTurnId }, 60_000)) as {
+      thread: { id: string }
+    }
+    return res.thread.id
   }
 
   /** x| key 的 cwd 惰性解析：优先已加载会话，否则 thread/read */

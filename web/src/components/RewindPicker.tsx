@@ -31,7 +31,10 @@ export function RewindPicker(props: {
   onRewindConversation: (uuid: string) => void
   onRewindBoth: (uuid: string) => void
   onClose: () => void
+  /** codex：分叉语义（thread/fork beforeTurnId），无文件回滚 */
+  mode?: 'claude' | 'codex'
 }) {
+  const isCodex = props.mode === 'codex'
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 md:items-center" onClick={props.onClose}>
       <div
@@ -39,13 +42,16 @@ export function RewindPicker(props: {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-mono text-xs tracking-widest text-muted uppercase">回滚到…</h2>
+          <h2 className="font-mono text-xs tracking-widest text-muted uppercase">{isCodex ? '从…分叉' : '回滚到…'}</h2>
           <button className="text-faint hover:text-ink" onClick={props.onClose}>
             ✕
           </button>
         </div>
-        {props.targets.length > 0 && (
+        {props.targets.length > 0 && !isCodex && (
           <p className="mb-3 text-xs leading-relaxed text-faint">选择一条用户消息作为目标；可单独恢复文件、单独恢复对话，或同时恢复两者。</p>
+        )}
+        {props.targets.length > 0 && isCodex && (
+          <p className="mb-3 text-xs leading-relaxed text-faint">选择一条用户消息：新会话将携带该消息所在轮<b>之前</b>的全部历史，原会话保持不动。</p>
         )}
         {props.targets.length === 0 && (
           <p className="text-sm text-muted">没有可回滚的用户消息（compact 之前的内容不可回滚）</p>
@@ -67,6 +73,14 @@ export function RewindPicker(props: {
                 </pre>
               </details>
             )}
+            {isCodex ? (
+              <button
+                className="mt-2 w-full rounded bg-accent/90 py-1.5 font-mono text-[11px] font-medium text-bg hover:bg-accent"
+                onClick={() => props.onRewindConversation(t.uuid)}
+              >
+                从此处分叉（原会话不动）
+              </button>
+            ) : (
             <div className="grid grid-cols-2 gap-2">
               <button
                 className="rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
@@ -87,6 +101,7 @@ export function RewindPicker(props: {
                 回滚对话+文件
               </button>
             </div>
+            )}
           </div>
           )
         })}

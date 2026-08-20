@@ -387,6 +387,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
         broadcast(hub, { kind: 'error', message: '正在恢复文件，请等待回滚完成后再发送消息' })
         return
       }
+      const sendMode = data.sendMode === 'steer' || data.sendMode === 'queue' ? data.sendMode : undefined
       if (isCodexKey(hub.key)) {
         void (async () => {
           let s = codexRuntime.get(hub.key)
@@ -395,7 +396,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
           }
           if (!s || s.exited) return // ensureCodexSession 已广播具体错误
           try {
-            s.sendUserText(String(data.text ?? ''))
+            s.sendUserText(String(data.text ?? ''), sendMode)
             pushStatus(hub)
           } catch (e) {
             broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
@@ -414,7 +415,8 @@ function handleClientMessage(hub: Hub, raw: string): void {
         return
       }
       try {
-        s.sendUserText(String(data.text ?? ''))
+        // sendMode 直通：claude 侧 steer=priority 'now'（中断处理）、queue=服务端排队
+        s.sendUserText(String(data.text ?? ''), sendMode)
         pushStatus(hub)
       } catch (e) {
         broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
@@ -525,7 +527,26 @@ function handleClientMessage(hub: Hub, raw: string): void {
       const at = String(data.userMessageId ?? '')
       if (!at) return
       if (isCodexKey(hub.key)) {
-        broadcast(hub, { kind: 'error', message: 'Codex 会话回滚（thread/revert 或 fork 截断）将在后续版本开放' })
+        // codex：分叉语义——thread/fork(beforeTurnId) 复制该轮之前的历史为新线程，
+        // 原线程不动。userMessageId 即历史的轮首 userMessage 的 turnId。
+        const tid = codexRuntime.get(hub.key)?.sessionId ?? codexParseKey(hub.key)?.resumeThreadId
+        if (!tid) {
+          broadcast(hub, { kind: 'error', message: 'codex 会话未就绪，无法分叉' })
+          return
+        }
+        void codexRuntime
+          .forkAt(tid, at)
+          .then((newId) => {
+            broadcast(hub, {
+              kind: 'forked',
+              targetKey: `x|${newId}`,
+              targetSessionId: newId,
+              fromTurnId: at,
+            })
+          })
+          .catch((e) =>
+            broadcast(hub, { kind: 'error', message: `分叉失败: ${e instanceof Error ? e.message : e}` }),
+          )
         return
       }
       if (hub.rewindPending) {
@@ -580,7 +601,26 @@ function handleClientMessage(hub: Hub, raw: string): void {
       // 侧问：fork 当前会话的一次性问答，不污染主会话
       const question = String(data.question ?? '').trim()
       if (isCodexKey(hub.key)) {
-        broadcast(hub, { kind: 'btw_result', ok: false, text: 'Codex 侧问（ephemeral fork）将随接力功能一同开放' })
+        const parsed = codexParseKey(hub.key)
+        const tid = codexRuntime.get(hub.key)?.sessionId ?? parsed?.resumeThreadId
+        if (!question || !tid) {
+          broadcast(hub, { kind: 'btw_result', ok: false, text: '侧问需要已有会话（先发过至少一条消息）' })
+          return
+        }
+        broadcast(hub, { kind: 'btw_pending', question })
+        void codexRuntime
+          .runEphemeralQuestion(tid, question, 180_000, (delta, thinking) => {
+            broadcast(hub, { kind: 'btw_delta', question, delta, thinking: thinking || undefined })
+          })
+          .then((r) => broadcast(hub, { kind: 'btw_result', ok: true, question, text: r.text }))
+          .catch((e) =>
+            broadcast(hub, {
+              kind: 'btw_result',
+              ok: false,
+              question,
+              text: `侧问失败: ${e instanceof Error ? e.message : e}`,
+            }),
+          )
         return
       }
       const parsed = parseKey(hub.key)
@@ -721,6 +761,33 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
         s.sendUserText(seed)
         targetSessionId = s.sessionId
       }
+      // claude 的 sessionId 在 init 时才就绪：短轮询等待，随后回填真实 key（血缘导航用）
+      if (toBackend === 'claude' && !targetSessionId) {
+        const s = processManager.get(targetKey)
+        const deadline = Date.now() + 30_000
+        while (s && !s.sessionId && !s.exited && Date.now() < deadline) {
+          await Bun.sleep(500)
+        }
+        targetSessionId = s?.sessionId
+      }
+      const toResolvedKey =
+        toBackend === 'codex'
+          ? targetSessionId
+            ? `x|${targetSessionId}`
+            : undefined
+          : targetSessionId
+            ? `s|${sanitizePath(sourceCwd)}|${targetSessionId}`
+            : undefined
+      const fromResolvedKey = (() => {
+        if (fromBackend === 'claude') {
+          if (fromKey.startsWith('s|')) return fromKey
+          const sidNow = processManager.get(fromKey)?.sessionId
+          return sidNow ? `s|${sanitizePath(sourceCwd)}|${sidNow}` : undefined
+        }
+        if (fromKey.startsWith('x|')) return fromKey
+        const tidNow = codexRuntime.get(fromKey)?.sessionId
+        return tidNow ? `x|${tidNow}` : undefined
+      })()
 
       // 3. 血缘
       appendLineage({
@@ -728,6 +795,8 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
         at: new Date().toISOString(),
         fromKey,
         toKey: targetKey,
+        fromResolvedKey,
+        toResolvedKey,
         fromBackend,
         toBackend,
         cwd: sourceCwd,
@@ -735,7 +804,14 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
         brief,
         briefUsage: usage,
       })
-      if (sourceHub) broadcast(sourceHub, { kind: 'handoff_done', targetKey, targetSessionId, toBackend, brief })
+      if (sourceHub)
+        broadcast(sourceHub, {
+          kind: 'handoff_done',
+          targetKey: toResolvedKey ?? targetKey,
+          targetSessionId,
+          toBackend,
+          brief,
+        })
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_error', message })
@@ -978,7 +1054,29 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   }
   if (url.pathname === '/api/lineage' && req.method === 'GET') {
     const key = url.searchParams.get('key') ?? ''
-    return json({ records: lineageFor(key) })
+    const records = lineageFor(key)
+    // 为链上每个 key 附带导航所需的节点元数据（前端接力链渲染用）
+    const nodes: Record<string, Record<string, unknown>> = {}
+    for (const r of records) {
+      for (const k of [r.fromKey, r.toKey, r.fromResolvedKey, r.toResolvedKey]) {
+        if (!k || nodes[k]) continue
+        const parts = k.split('|')
+        if (parts[0] === 's' && parts.length === 3) {
+          nodes[k] = { key: k, backend: 'claude', slug: parts[1], sessionId: parts[2], cwd: r.cwd }
+        } else if (parts[0] === 'x' && parts.length === 2) {
+          nodes[k] = { key: k, backend: 'codex', slug: 'codex', sessionId: parts[1], cwd: r.cwd }
+        } else if (parts[0] === 'n' || parts[0] === 'xn') {
+          nodes[k] = {
+            key: k,
+            backend: parts[0] === 'xn' ? 'codex' : 'claude',
+            slug: parts[0] === 'xn' ? 'codex' : sanitizePath(decodeURIComponent(parts[1] ?? '')),
+            sessionId: 'new',
+            cwd: r.cwd,
+          }
+        }
+      }
+    }
+    return json({ records, nodes })
   }
   const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
   if (histMatch && req.method === 'GET') {

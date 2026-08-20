@@ -118,6 +118,32 @@ export async function fetchCodexModels(): Promise<{ models: CodexModelInfo[] }> 
   return r.json()
 }
 
+/** 接力血缘记录 */
+export interface LineageRecord {
+  id: string
+  at: string
+  fromKey: string
+  toKey: string
+  fromResolvedKey?: string
+  toResolvedKey?: string
+  fromBackend: 'claude' | 'codex'
+  toBackend: 'claude' | 'codex'
+  cwd: string
+  detail: 'brief' | 'standard' | 'detailed'
+  brief: string
+  briefUsage?: Record<string, number>
+}
+
+export interface LineageResponse {
+  records: LineageRecord[]
+  nodes: Record<string, SessionInfo>
+}
+
+export async function fetchLineage(key: string): Promise<LineageResponse> {
+  const r = await apiFetch(`/api/lineage?key=${encodeURIComponent(key)}`)
+  return r.json()
+}
+
 /** 改名：claude 离线会话追加 custom-title；codex 走 thread/name/set */
 export async function renameSession(key: string, title: string): Promise<void> {
   const r = await apiFetch('/api/sessions/rename', {
