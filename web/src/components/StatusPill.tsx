@@ -33,7 +33,24 @@ const MODE_META: Record<string, { dot: string; label: string; short: string; des
   auto: { dot: 'bg-accent', label: 'auto', short: 'auto', desc: 'AI 自动审批指令' },
   plan: { dot: 'bg-wait', label: 'plan', short: 'plan', desc: '先出计划再动手' },
   bypassPermissions: { dot: 'bg-danger', label: 'bypass permissions', short: 'bypass', desc: '全部自动放行' },
+  // codex 预设（sandbox × approvalPolicy 二维组合的常用档）
+  readOnly: { dot: 'bg-wait', label: 'read only', short: '只读', desc: '只读沙箱 · 每次询问' },
+  workspace: { dot: 'bg-faint', label: 'workspace', short: '工作区', desc: '工作区可写 · 每次询问' },
+  workspaceAuto: { dot: 'bg-busy', label: 'workspace auto', short: '免审', desc: '工作区可写 · 自动放行' },
+  fullAccess: { dot: 'bg-danger', label: 'full access', short: '全开', desc: '完全访问 · 自动放行' },
 }
+
+/** effort 元信息兜底：非 claude 五档时按索引循环 glyph、中性色 */
+const EFFORT_GLYPHS = ['○', '◐', '⬤', '◉', '◈'] as const
+const effortMetaOf = (level: string) =>
+  (EFFORT_META as Record<string, (typeof EFFORT_META)[Effort]>)[level] ?? {
+    color: 'text-ok',
+    fill: 'bg-ok',
+    label: level,
+    desc: '',
+  }
+const effortGlyphOf = (level: string, idx: number) =>
+  (EFFORT_GLYPH as Record<string, string>)[level] ?? EFFORT_GLYPHS[idx % EFFORT_GLYPHS.length]
 
 /** 毛玻璃面板：半透明底 + blur-md。须 portal 到 body，否则会被带 backdrop-filter 的顶栏截成 backdrop root。
  *  背景特效层见 index.css 的 .cc-panel-fx（CRT 扫描线 / 点阵 / 指针磷光），子面板复用同一层 */
@@ -89,10 +106,12 @@ export function StatusPill(props: {
   cfg: ServerConfigInfo
   model?: string
   permissionMode?: string
-  effort?: Effort
+  effort?: string
+  /** effort 档位表（默认 claude 五档；codex 按模型 supportedReasoningEfforts 传入） */
+  effortLevels?: readonly string[]
   onSetModel: (m: string) => void
   onSetMode: (m: string) => void
-  onSetEffort: (e: Effort) => void
+  onSetEffort: (e: string) => void
 }) {
   const { cfg } = props
   const [open, setOpen] = useState(false)
@@ -140,8 +159,9 @@ export function StatusPill(props: {
 
   const modeKey = props.permissionMode ?? 'default'
   const mode = MODE_META[modeKey] ?? MODE_META.default
-  const effort: Effort = props.effort ?? 'high'
-  const effortMeta = EFFORT_META[effort]
+  const levels = props.effortLevels ?? EFFORT_LEVELS
+  const effort: string = props.effort && levels.includes(props.effort) ? props.effort : (levels[Math.min(2, levels.length - 1)] ?? 'high')
+  const effortMeta = effortMetaOf(effort)
 
   const panel =
     open &&
@@ -223,7 +243,7 @@ export function StatusPill(props: {
           </SubPanel>
         )}
 
-        <EffortSlider value={effort} onChange={props.onSetEffort} />
+        <EffortSlider levels={levels} value={effort} onChange={props.onSetEffort} />
         </div>
       </div>,
       document.body,
@@ -248,15 +268,17 @@ export function StatusPill(props: {
 }
 
 /** 终端字符滑条：整条轨道用等宽字符渲染（[●══●══◉──○──○]），磷光辉光点缀。
- *  交互：拖动 / 点击吸附五档，聚焦后 ←→↑↓ 步进、Home/End 跳两端 */
-function EffortSlider(props: { value: Effort; onChange: (e: Effort) => void }) {
+ *  交互：拖动 / 点击吸附档位，聚焦后 ←→↑↓ 步进、Home/End 跳两端。
+ *  档位表由调用方传入（claude 五档 / codex 按模型 supportedReasoningEfforts）。 */
+function EffortSlider(props: { levels: readonly string[]; value: string; onChange: (e: string) => void }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
-  const valueIdx = EFFORT_LEVELS.indexOf(props.value)
+  const LEVELS = props.levels
+  const valueIdx = Math.max(0, LEVELS.indexOf(props.value))
   const idx = dragIdx ?? valueIdx
-  const meta = EFFORT_META[EFFORT_LEVELS[idx]]
+  const meta = effortMetaOf(LEVELS[idx])
 
-  const N = EFFORT_LEVELS.length
+  const N = LEVELS.length
   const GAP = 4 // 相邻档位的字符间隔
   const WIDTH = (N - 1) * GAP + 1
   const cursor = idx * GAP
@@ -280,13 +302,13 @@ function EffortSlider(props: { value: Effort; onChange: (e: Effort) => void }) {
     setDragIdx(idxFromPointer(e.clientX))
   }
   const onPointerUp = () => {
-    if (dragIdx !== null) props.onChange(EFFORT_LEVELS[dragIdx])
+    if (dragIdx !== null) props.onChange(LEVELS[dragIdx])
     setDragIdx(null)
   }
 
   const step = (d: number) => {
     const next = Math.min(N - 1, Math.max(0, valueIdx + d))
-    if (next !== valueIdx) props.onChange(EFFORT_LEVELS[next])
+    if (next !== valueIdx) props.onChange(LEVELS[next])
   }
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
@@ -297,10 +319,10 @@ function EffortSlider(props: { value: Effort; onChange: (e: Effort) => void }) {
       step(-1)
     } else if (e.key === 'Home') {
       e.preventDefault()
-      props.onChange(EFFORT_LEVELS[0])
+      props.onChange(LEVELS[0])
     } else if (e.key === 'End') {
       e.preventDefault()
-      props.onChange(EFFORT_LEVELS[N - 1])
+      props.onChange(LEVELS[N - 1])
     }
   }
 
@@ -310,7 +332,7 @@ function EffortSlider(props: { value: Effort; onChange: (e: Effort) => void }) {
       <div className="mb-1 flex items-baseline gap-2">
         <span className="w-10 font-mono text-[10px] uppercase tracking-widest text-faint">effort</span>
         <span className={`font-mono text-[10px] ${meta.color}`}>
-          {EFFORT_LEVELS[idx]} · {meta.desc}
+          {LEVELS[idx]} · {meta.desc}
         </span>
         <span className="ml-auto font-mono text-[9px] text-faint">←→</span>
       </div>
@@ -326,7 +348,7 @@ function EffortSlider(props: { value: Effort; onChange: (e: Effort) => void }) {
           aria-valuemin={1}
           aria-valuemax={N}
           aria-valuenow={idx + 1}
-          aria-valuetext={EFFORT_LEVELS[idx]}
+          aria-valuetext={LEVELS[idx]}
           className="flex flex-1 cursor-pointer touch-none rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -344,7 +366,7 @@ function EffortSlider(props: { value: Effort; onChange: (e: Effort) => void }) {
                     dragIdx !== null ? 'text-accent' : meta.color
                   }`}
                 >
-                  {EFFORT_GLYPH[EFFORT_LEVELS[idx]]}
+                  {effortGlyphOf(LEVELS[idx], idx)}
                 </span>
               )
             }
@@ -376,10 +398,10 @@ function EffortSlider(props: { value: Effort; onChange: (e: Effort) => void }) {
 
       {/* 档位标签：与轨道相同的水平内缩（px-2 + 1ch 括号），保证刻度对齐 */}
       <div className="relative mx-[calc(0.5rem+1ch)] mt-1 h-4 font-mono text-[9px]">
-        {EFFORT_LEVELS.map((l, i) => (
+        {LEVELS.map((l, i) => (
           <span
             key={l}
-            className={`absolute ${i === idx ? EFFORT_META[l].color : 'text-faint'} ${
+            className={`absolute ${i === idx ? effortMetaOf(l).color : 'text-faint'} ${
               i === 0 ? '' : i === N - 1 ? '-translate-x-full' : '-translate-x-1/2'
             }`}
             style={{ left: `${(i / (N - 1)) * 100}%` }}

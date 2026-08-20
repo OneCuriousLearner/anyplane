@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchCodexHistory, fetchConfig, fetchHistory, startHandoff, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, startHandoff, type CodexModelInfo, type HistoryMessage, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
-import { StatusPill, GLASS_BAR, type Effort } from '../components/StatusPill'
+import { StatusPill, GLASS_BAR } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RewindPicker } from '../components/RewindPicker'
 import { MessageView } from '../components/MessageView'
@@ -106,7 +106,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [phase, setPhase] = useState<string>()
   const [initInfo, setInitInfo] = useState<{ model?: string; slashCommands?: string[] }>({})
   const [permMode, setPermMode] = useState<string>()
-  const [effort, setEffort] = useState<Effort>()
+  const [effort, setEffort] = useState<string>()
+  const [codexModels, setCodexModels] = useState<CodexModelInfo[]>()
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailTitle, setDetailTitle] = useState('')
@@ -140,6 +141,45 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   const isCodex = session.key.startsWith('x|') || session.key.startsWith('xn|')
   const isExisting = session.key.startsWith('s|') || session.key.startsWith('x|')
+
+  // codex 模型目录（model/list）：模型/effort 档位/默认值
+  useEffect(() => {
+    if (!isCodex) return
+    fetchCodexModels()
+      .then((r) => setCodexModels(r.models))
+      .catch(() => {})
+  }, [isCodex])
+
+  /** claude 权限模式名 → codex 预设档位（显示用） */
+  const codexModeOf = (m?: string): string => {
+    switch (m) {
+      case 'bypassPermissions':
+        return 'fullAccess'
+      case 'acceptEdits':
+      case 'auto':
+        return 'workspaceAuto'
+      case 'plan':
+        return 'readOnly'
+      case 'readOnly':
+      case 'workspace':
+      case 'workspaceAuto':
+      case 'fullAccess':
+        return m
+      default:
+        return 'workspace'
+    }
+  }
+
+  const codexDefaultModel = codexModels?.find((m) => m.isDefault) ?? codexModels?.[0]
+  const codexModelId = state.model ?? codexDefaultModel?.id
+  const codexCurrentModel = codexModels?.find((m) => m.id === codexModelId) ?? codexDefaultModel
+  const codexEffortLevels: readonly string[] = codexCurrentModel?.efforts.map((e) => e.value) ?? ['low', 'high', 'max']
+  const codexCfg: ServerConfigInfo = {
+    permissionPolicy: 'ask',
+    permissionModes: ['readOnly', 'workspace', 'workspaceAuto', 'fullAccess'],
+    effortLevels: [...codexEffortLevels],
+    models: (codexModels ?? []).map((m) => m.id),
+  }
 
   // ---------- 历史加载（切换会话时取消过期请求，避免「卡住不出对话」） ----------
   useEffect(() => {
@@ -421,7 +461,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               setInitInfo((prev) => ({ ...prev, model: ev.state.model }))
             }
             if (typeof ev.state.permissionMode === 'string') setPermMode(ev.state.permissionMode)
-            if (typeof ev.state.effort === 'string') setEffort(ev.state.effort as Effort)
+            if (typeof ev.state.effort === 'string') setEffort(ev.state.effort)
             // 进程已退出时固化/清理未完成的流式草稿，避免半截内容悬挂
             if (ev.state.exited) {
               commitDraft()
@@ -866,6 +906,27 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             effort={effort}
             onSetModel={(m) => {
               setInitInfo((prev) => ({ ...prev, model: m }))
+              sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+            }}
+            onSetMode={(m) => {
+              setPermMode(m)
+              sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
+            }}
+            onSetEffort={(e) => {
+              setEffort(e)
+              sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
+            }}
+          />
+        )}
+
+        {isCodex && codexModels && codexModels.length > 0 && (
+          <StatusPill
+            cfg={codexCfg}
+            model={codexModelId}
+            permissionMode={codexModeOf(permMode ?? state.permissionMode)}
+            effort={effort ?? state.effort ?? codexCurrentModel?.defaultEffort}
+            effortLevels={codexEffortLevels}
+            onSetModel={(m) => {
               sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
             }}
             onSetMode={(m) => {

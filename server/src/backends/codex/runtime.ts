@@ -21,15 +21,31 @@ export interface CodexSpawnOpts {
   cwd?: string
   resumeThreadId?: string
   model?: string
-  /** claude 风格权限模式 → codex approvalPolicy/sandbox 近似映射 */
+  /** claude 风格权限模式或 codex 预设 → approvalPolicy/sandbox 近似映射 */
   permissionMode?: string
+  /** reasoning effort（turn/start 的 effort 字段），懒启动时缓存 */
+  effort?: string
 }
 
-/** claude permissionMode → codex {approvalPolicy, sandbox}（近似，见 README 已知限制）
+/** claude permissionMode 或 codex 预设 → codex {approvalPolicy, sandbox}（近似映射）
+ *  codex 预设（UI 原生展示）：
+ *    readOnly      = read-only + on-request（只读·询问）
+ *    workspace     = workspace-write + on-request（工作区·询问）
+ *    workspaceAuto = workspace-write + never（工作区·免审，类比 --full-auto）
+ *    fullAccess    = danger-full-access + never（完全访问）
  *  注意：sandbox 值用于 thread/start 的 kebab-case `sandbox` 字段；
  *  turn/start·settings/update 的 `sandboxPolicy` 对象是另一套 camelCase 枚举，用 sandboxPolicyOf 转换。 */
 export function mapPermissionMode(mode?: string): { approvalPolicy?: string; sandbox?: string } {
   switch (mode) {
+    case 'readOnly':
+      return { approvalPolicy: 'on-request', sandbox: 'read-only' }
+    case 'workspaceAuto':
+      return { approvalPolicy: 'never', sandbox: 'workspace-write' }
+    case 'fullAccess':
+      return { approvalPolicy: 'never', sandbox: 'danger-full-access' }
+    case 'workspace':
+      return { approvalPolicy: 'on-request', sandbox: 'workspace-write' }
+    // claude 名称的近似映射（spawnOpts 缓存/接力默认值可能带过来）
     case 'bypassPermissions':
       return { approvalPolicy: 'never', sandbox: 'danger-full-access' }
     case 'acceptEdits':
@@ -167,6 +183,7 @@ export class CodexSession {
     }
     this.translator = new ThreadTranslator(this.threadId!)
     this.runtime.registerThread(this.threadId!, this)
+    if (this.opts.effort) this.turnOverrides.effort = this.opts.effort
     this.cb.onMessage({ type: 'system', subtype: 'init', session_id: this.threadId, model: this.opts.model })
     this.cb.onStatusChange?.()
   }
@@ -602,6 +619,45 @@ export class CodexRuntime {
     this.sessions.clear()
     this.rpc?.kill()
     this.rpc = undefined
+  }
+
+  /** 模型目录：model/list 分页拉全（含每个模型支持的 effort 列表与默认 effort） */
+  async listModels(): Promise<
+    Array<{
+      id: string
+      label: string
+      description: string
+      efforts: Array<{ value: string; description: string }>
+      defaultEffort?: string
+      isDefault: boolean
+    }>
+  > {
+    const out: Array<Record<string, unknown>> = []
+    let cursor: string | null = null
+    for (let page = 0; page < 3; page++) {
+      const res = (await this.rpcRequest('model/list', { cursor, limit: 100 })) as {
+        data?: Array<Record<string, unknown>>
+        nextCursor?: string | null
+      }
+      out.push(...(res.data ?? []))
+      cursor = res.nextCursor ?? null
+      if (!cursor) break
+    }
+    return out
+      .filter((m) => m.hidden !== true)
+      .map((m) => ({
+        id: String(m.model ?? m.id ?? ''),
+        label: String(m.displayName ?? m.model ?? m.id ?? ''),
+        description: String(m.description ?? ''),
+        efforts: (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts : []).map(
+          (e) => ({
+            value: String((e as { reasoningEffort?: unknown }).reasoningEffort ?? ''),
+            description: String((e as { description?: unknown }).description ?? ''),
+          }),
+        ),
+        defaultEffort: typeof m.defaultReasoningEffort === 'string' ? m.defaultReasoningEffort : undefined,
+        isDefault: m.isDefault === true,
+      }))
   }
 
   /** 会话发现：thread/list 分页拉全（含 cli/exec/appServer 来源） */

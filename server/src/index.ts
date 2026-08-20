@@ -997,6 +997,16 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       return json({ error: message }, { status: 500 })
     }
   }
+  // codex 模型目录（model/list）：模型 id/显示名/effort 列表/默认 effort
+  if (url.pathname === '/api/codex/models' && req.method === 'GET') {
+    try {
+      const models = await codexRuntime.listModels()
+      return json({ models })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      return json({ error: message }, { status: 500 })
+    }
+  }
   if (url.pathname === '/api/config' && req.method === 'GET') {
     return json({
       permissionPolicy: config.permissionPolicy,

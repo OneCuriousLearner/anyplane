@@ -73,7 +73,7 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 ## 已知限制（改相关功能前先读 README）
 
 - compact 边界之前的消息不能作为 rewind 目标；`rewind_files` 只能回滚到有检查点的消息（spawn 时设了 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`）；effort 运行时切换依赖 `update_environment_variables`，旧版 CLI 可能需重开会话。
-- Codex 侧：无文件检查点（不支持 rewind_both）；会话回滚（thread/revert / fork 截断）与 /btw 侧问待开放；模型/effort 选择器暂未对 Codex 会话开放。
+- Codex 侧：无文件检查点（不支持 rewind_both）；会话回滚（thread/revert / fork 截断）与 /btw 侧问待开放；rollout 不持久化 reasoning（cc-remote 侧车落盘 `~/.config/cc-remote/reasoning/<threadId>.jsonl` 并在历史读取时按 turn 时间窗回插）。
 - 认证已实现（authToken），但**未配置 token 时严禁绑定非回环地址**。`GET /api/fs/list?path=`（新会话目录选择器用）会暴露本机目录结构，与"任意目录起会话 = 任意命令执行"同级风险。
 - 跨网段不自建公网穿透：推荐 Tailscale serve/funnel 或自有反代 + TLS。
 

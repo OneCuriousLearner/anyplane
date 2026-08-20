@@ -103,6 +103,21 @@ export async function createSession(cwd: string, backend?: 'claude' | 'codex'): 
   return r.json()
 }
 
+export interface CodexModelInfo {
+  id: string
+  label: string
+  description: string
+  efforts: Array<{ value: string; description: string }>
+  defaultEffort?: string
+  isDefault: boolean
+}
+
+/** codex model/list 目录 */
+export async function fetchCodexModels(): Promise<{ models: CodexModelInfo[] }> {
+  const r = await apiFetch('/api/codex/models')
+  return r.json()
+}
+
 /** 改名：claude 离线会话追加 custom-title；codex 走 thread/name/set */
 export async function renameSession(key: string, title: string): Promise<void> {
   const r = await apiFetch('/api/sessions/rename', {
