@@ -1,6 +1,7 @@
 # 第二梯队方案侦察报告（2026-08-20）
 
 > 每条都经过源码分析 + 实际测试确认，标注了证据。讨论后再落地。
+> 2026-08-20 更新：折入 claude-code 源码快照的细则（见各节"快照确认"）。
 
 ## 1. 图片/附件输入 —— 可行，两个后端路径都已实测通过
 
@@ -14,6 +15,12 @@
 - 前端：输入区加附件按钮（手机相册/拍照），消息块渲染图片缩略（HistoryBlock 加 image 类型；历史里 claude 有 base64 原文、codex 只有路径——缩略图渲染要分别处理，v1 历史里显示 `[图片]` 占位即可）
 - 模型能力检测：codex `model/list` 的 `inputModalities` 有 image 时才显示按钮（deepseek-v4-flash 标称支持但 dataURL 实测失效，localImage 兜底）
 
+**快照确认（claude 侧细节）**：
+- `media_type` 必须是 snake_case——stdin 路径不做 camelCase 转换（`normalizeControlMessageKeys` 只转 requestId）
+- base64 上限 5MB（`API_IMAGE_MAX_BASE64_SIZE`），客户端自动缩放到 2000x2000；media_type 限 jpeg/png/gif/webp
+- 不支持 `source:{type:'file'}`；但 text 里 `@路径` 会被附件系统读成 image/document（零成本的本地文件引用路径）
+- SDK schema 对 content 是 `z.unknown()` 宽松透传，结构在下游处理时才校验
+
 ## 2. 协议漂移防护 —— 推荐做，两件小事
 
 **claude 侧**：写 `scripts/check-claude-protocol.ts`，从快照仓库（/data/workspace/claude-code，或后续刷新）grep 出：
@@ -25,11 +32,13 @@
 
 **回放 harness**：`scripts/replay-fixture.ts` 把录制的 NDJSON（如 handoff-lab 的 claude-turn1.jsonl）喂给 ClaudeSession 的假 stdout，断言 translate/busy/审批状态机输出——把单测从"必须真起 CLI"解耦。
 
-## 3. 双后端登录状态页 —— 可行，但价值有限
+## 3. 双后端登录状态页 —— 修正：信号比初判强
 
-- codex：`account/read` 实测返回 `{account: null, requiresOpenaiAuth: false}`（自定义 provider 不需要 OpenAI 登录）；`account/login/start` 支持 apiKey/chatGPT。可做"未登录引导"
-- claude：`--enable-auth-status` + initialize 握手后发出 `auth_status` 消息（实测字段 `{isAuthenticating, output, error}`）——只反映 CLI 自己管理面（Bedrock 等）的状态， OAuth 主链路不在里面
-- **判断**：两者都只能给出弱信号。建议先做一个轻的"后端健康行"（app-server 握手成功/claude 可执行），不做完整登录引导。优先级往后放
+- **initialize 响应的 `account` 字段就是现成账号信息**（email / organization / subscriptionType / tokenSource / apiProvider，print.ts:4470）——我们 spawn 时已发 initialize 并捕获响应，直接透传到 UI 即可，零新机制
+- `auth_status` 只管 AWS/GCP 云凭证刷新流程（AwsAuthStatusManager），不管 Anthropic OAuth——按原判忽略
+- 额度有独立的 `rate_limit_event`（限流状态变化时推送）——配额百分比不是钱，可进状态栏
+- codex：`account/read` 实测 `{account: null, requiresOpenaiAuth: false}`（自定义 provider 免登录）；`account/login/start` 支持 apiKey/chatGPT 引导
+- **落地建议**：升级原"健康行"方案——状态区直接显示账号摘要（claude 取 initialize.account，codex 取 account/read），未登录时给引导入口。可以做，成本低
 
 ## 4. fleet 管理（归档/删除）—— codex 已实测，claude 需自建语义
 
@@ -42,3 +51,5 @@
 - codex `thread/read` 无 itemsView 参数，历史投影就是 summary；reasoning 不落 rollout 已确认（我们的侧车方案是对的）
 - claude `--enable-auth-status` 的 auth_status 只在 initialize 握手后发出（print.ts:4505）——我们 spawn 时已经发 initialize，所以这个 flag 是免费的
 - claude user 消息支持 `uuid` 字段用于幂等去重（print.ts:4064-4100）——以后做多端同步/重发安全时可以带上
+- **file-history-snapshot 可用于 rewind 预览**：jsonl 行 `{type:'file-history-snapshot', messageId, snapshot:{trackedFileBackups: Record<path, {backupFileName|null, version, backupTime}>}}`——RewindPicker 选中某条消息时可以展示"该检查点包含哪些文件"（backupFileName 为 null = 当时不存在）
+
