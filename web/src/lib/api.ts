@@ -159,6 +159,49 @@ export async function renameSession(key: string, title: string): Promise<void> {
   }
 }
 
+/** 归档（回收站语义，无物理删除）：claude 移入 ~/.cc-remote/trash；codex 走官方 thread/archive */
+export async function archiveSession(key: string): Promise<void> {
+  const r = await apiFetch('/api/sessions/archive', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key }),
+  })
+  if (!r.ok) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `HTTP ${r.status}`)
+  }
+}
+
+export async function restoreSession(key: string): Promise<void> {
+  const r = await apiFetch('/api/sessions/restore', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key }),
+  })
+  if (!r.ok) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `HTTP ${r.status}`)
+  }
+}
+
+export interface ArchivedEntry {
+  key: string
+  sessionId: string
+  slug: string
+  backend: 'claude' | 'codex'
+  title?: string
+  lastPrompt?: string
+  cwd?: string
+  mtime?: number
+  trashedAt?: string
+  sizeBytes?: number
+}
+
+export async function fetchArchived(): Promise<{ entries: ArchivedEntry[] }> {
+  const r = await apiFetch('/api/sessions/archived')
+  return r.json()
+}
+
 export async function fetchConfig(): Promise<ServerConfigInfo> {
   const r = await apiFetch('/api/config')
   return r.json()

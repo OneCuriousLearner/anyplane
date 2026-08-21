@@ -47,6 +47,8 @@ function loadFileConfig(): Partial<ServerConfig> {
   const candidates = [
     join(process.cwd(), 'cc-remote.config.json'),
     projectRootConfig,
+    join(homedir(), '.cc-remote', 'config.json'),
+    // 旧路径兜底（不再推荐；新装请用 ~/.cc-remote/）
     join(homedir(), '.config', 'cc-remote', 'config.json'),
   ]
   for (const p of candidates) {

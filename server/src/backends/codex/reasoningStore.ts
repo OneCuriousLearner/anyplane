@@ -2,7 +2,7 @@
 // full 视图实测只有 userMessage+agentMessage），cc-remote 自行落盘并在历史读取时按
 // turn 时间窗回插，让"思考"在重进会话后仍可见。
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -14,7 +14,17 @@ export interface ReasoningEntry {
 }
 
 function dir(): string {
-  const d = join(homedir(), '.config', 'cc-remote', 'reasoning')
+  // 运行数据统一放 ~/.cc-remote；旧路径 ~/.config/cc-remote/reasoning 只做一次性迁移
+  const root = join(homedir(), '.cc-remote')
+  const d = join(root, 'reasoning')
+  const legacy = join(homedir(), '.config', 'cc-remote', 'reasoning')
+  if (!existsSync(d) && existsSync(legacy)) {
+    try {
+      mkdirSync(root, { recursive: true })
+      renameSync(legacy, d)
+      console.log('[codex] reasoning 目录已从 ~/.config/cc-remote 迁移到 ~/.cc-remote')
+    } catch {}
+  }
   if (!existsSync(d)) mkdirSync(d, { recursive: true })
   return d
 }

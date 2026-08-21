@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { createSession, fetchSessions, renameSession, type SessionInfo } from '../lib/api'
+import {
+  archiveSession,
+  createSession,
+  fetchArchived,
+  fetchSessions,
+  renameSession,
+  restoreSession,
+  type ArchivedEntry,
+  type SessionInfo,
+} from '../lib/api'
 import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -43,6 +52,8 @@ export function SessionList(props: {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [approvals, setApprovals] = useState<InboxApproval[]>([])
   const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1')
+  const [view, setView] = useState<'active' | 'archived'>('active')
+  const [archived, setArchived] = useState<ArchivedEntry[]>([])
   const [collapsed, setCollapsed] = useState(loadCollapsed)
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
@@ -120,6 +131,26 @@ export function SessionList(props: {
     const t = setInterval(refresh, 10_000)
     return () => clearInterval(t)
   }, [])
+
+  // 归档视图数据
+  useEffect(() => {
+    if (view !== 'archived') return
+    fetchArchived()
+      .then((r) => setArchived(r.entries))
+      .catch(() => {})
+  }, [view])
+
+  const doArchive = (key: string) => {
+    archiveSession(key)
+      .then(refresh)
+      .catch((err) => alert(String(err)))
+  }
+  const doRestore = (key: string) => {
+    restoreSession(key)
+      .then(() => fetchArchived().then((r) => setArchived(r.entries)))
+      .then(refresh)
+      .catch((err) => alert(String(err)))
+  }
 
   // 按项目目录分组
   const groups = new Map<string, SessionInfo[]>()
@@ -201,6 +232,34 @@ export function SessionList(props: {
       )}
 
       <div className="flex-1 overflow-y-auto">
+        {view === 'archived' ? (
+          <div className="p-2">
+            {archived.length === 0 && <p className="p-4 font-mono text-xs text-faint">回收站为空</p>}
+            {archived.map((e) => (
+              <div key={e.key} className="mb-2 rounded border border-line bg-surface2/40 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center overflow-hidden" aria-hidden="true">
+                    {e.backend === 'codex' ? <CodexMark size={15} static /> : <ClaudeMark className="h-[15px] w-[15px]" />}
+                  </span>
+                  <span className="truncate text-sm">{e.title ?? e.lastPrompt?.slice(0, 30) ?? e.sessionId.slice(0, 8)}</span>
+                  <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
+                    {e.trashedAt ? timeAgo(Date.parse(e.trashedAt)) : e.mtime ? timeAgo(e.mtime) : ''}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2 pl-6">
+                  <span className="truncate font-mono text-[10px] text-faint">{e.cwd ?? e.slug}</span>
+                  <button
+                    className="ml-auto shrink-0 rounded border border-line px-2 py-0.5 font-mono text-[10px] text-muted hover:bg-surface2 hover:text-ink"
+                    onClick={() => doRestore(e.key)}
+                  >
+                    恢复
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+        <>
         {loading && <p className="p-4 font-mono text-xs text-faint">加载中…</p>}
         {!loading && sessions.length === 0 && (
           <div className="p-4 text-sm text-muted">
@@ -262,6 +321,18 @@ export function SessionList(props: {
                     >
                       ✎
                     </span>
+                    <span
+                      className="shrink-0 rounded px-0.5 font-mono text-[10px] text-faint/40 transition-colors hover:text-faint"
+                      title="归档（进回收站，不物理删除；claude 仅离线会话）"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (confirm(`归档会话「${s.title ?? s.sessionId.slice(0, 8)}」？\n（进入回收站，随时可恢复）`)) {
+                          doArchive(s.key)
+                        }
+                      }}
+                    >
+                      ⌄
+                    </span>
                     <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
                       {timeAgo(s.mtime)}
                     </span>
@@ -288,6 +359,21 @@ export function SessionList(props: {
           </div>
           )
         })}
+        </>
+        )}
+      </div>
+
+      {/* 底栏：活跃 / 回收站切换 */}
+      <div className="flex border-t border-line font-mono text-[11px]">
+        {(['active', 'archived'] as const).map((v) => (
+          <button
+            key={v}
+            className={`flex-1 py-2 ${view === v ? 'bg-surface2 text-ink' : 'text-faint hover:text-muted'}`}
+            onClick={() => setView(v)}
+          >
+            {v === 'active' ? '会话' : '回收站'}
+          </button>
+        ))}
       </div>
 
       {pickerOpen && (

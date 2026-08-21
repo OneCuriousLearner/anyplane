@@ -12,6 +12,7 @@ import { TranscriptTailer } from './backends/claude/tailer'
 import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as codexParseKey } from './backends/codex/backend'
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
 import { config } from './config'
+import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
 import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 import { resolveUpload } from './uploads'
 import {
@@ -1012,6 +1013,76 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       const message = e instanceof Error ? e.message : String(e)
       return json({ error: message }, { status: 500 })
     }
+  }
+  if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as { key?: string }
+    if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
+    try {
+      if (isCodexKey(body.key)) {
+        const threadId = body.key.split('|')[1]
+        if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
+        await codexRuntime.rpcRequest('thread/archive', { threadId })
+        return json({ ok: true })
+      }
+      const parts = body.key.split('|')
+      if (parts[0] !== 's' || parts.length !== 3) return json({ error: '仅支持已有会话' }, { status: 400 })
+      const [, slug, sessionId] = parts
+      if (processManager.get(body.key) || liveSessionInfo(sessionId)) {
+        return json({ error: '会话正在运行，无法归档' }, { status: 409 })
+      }
+      archiveClaudeSession(slug, sessionId)
+      return json({ ok: true })
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+    }
+  }
+  if (url.pathname === '/api/sessions/restore' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as { key?: string }
+    if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
+    try {
+      if (isCodexKey(body.key)) {
+        const threadId = body.key.split('|')[1]
+        if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
+        await codexRuntime.rpcRequest('thread/unarchive', { threadId })
+        return json({ ok: true })
+      }
+      const parts = body.key.split('|')
+      if (parts[0] !== 's' || parts.length !== 3) return json({ error: '仅支持 claude 会话恢复' }, { status: 400 })
+      restoreClaudeSession(parts[1], parts[2])
+      return json({ ok: true })
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+    }
+  }
+  // 归档/回收站列表：codex archived + claude trash 合并
+  if (url.pathname === '/api/sessions/archived' && req.method === 'GET') {
+    const claudeTrash = listTrash().map((t) => ({
+      key: t.key,
+      sessionId: t.sessionId,
+      slug: t.slug,
+      backend: 'claude' as const,
+      trashedAt: t.trashedAt,
+      sizeBytes: t.sizeBytes,
+    }))
+    let codexArchived: Record<string, unknown>[] = []
+    try {
+      const res = (await codexRuntime.rpcRequest('thread/list', { archived: true, limit: 100 })) as {
+        data?: Array<Record<string, unknown>>
+      }
+      codexArchived = (res.data ?? []).map((t) => ({
+        key: `x|${String(t.id)}`,
+        sessionId: String(t.id),
+        slug: 'codex',
+        backend: 'codex' as const,
+        title: typeof t.name === 'string' ? t.name : undefined,
+        lastPrompt: typeof t.preview === 'string' ? t.preview : undefined,
+        cwd: typeof t.cwd === 'string' ? t.cwd : undefined,
+        mtime: Number(t.updatedAt ?? t.createdAt ?? 0) * 1000,
+      }))
+    } catch (e) {
+      console.warn('[api] codex archived 列表失败:', e instanceof Error ? e.message : e)
+    }
+    return json({ entries: [...codexArchived, ...claudeTrash] })
   }
   if (url.pathname === '/api/sessions/rename' && req.method === 'POST') {
     const body = (await req.json().catch(() => ({}))) as { key?: string; title?: string }
