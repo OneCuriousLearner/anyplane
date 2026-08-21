@@ -460,6 +460,11 @@ export class ClaudeSession {
     if (text.trim()) console.error(`[session ${this.key}] stderr:`, text.slice(0, 4000))
   }
 
+  /** 测试钩子：不 spawn 直接注入 NDJSON 行（scripts/replay-fixture.ts 回放用） */
+  injectLine(line: string): void {
+    this.handleLine(line)
+  }
+
   private handleLine(line: string): void {
     let msg: CliMessage
     try {
