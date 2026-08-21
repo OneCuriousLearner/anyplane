@@ -39,6 +39,7 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 
 ### 服务端（server/src）
 
+- **运行数据目录（约定）**：一切 cc-remote 自产的运行数据都放 `~/.cc-remote/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）。**这些数据目录不做自动清理**，由用户自行管理。
 - **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（key → clients/pendingApprovals/spawnOpts/pendingEnv），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
 - **认证**：`auth.ts`——配置 `authToken` 后 `/api` 与 `/ws` 一律校验（Bearer 或 `?token=`）；**绑非回环 host 必须配 token，否则拒绝启动**。静态前端壳不鉴权。
 - **sessionKey 编码**：Claude 会话 `s|<slug>|<sessionId>`、新会话 `n|<encodeURIComponent(cwd)>`；Codex 线程 `x|<threadId>`、新线程 `xn|<encodeURIComponent(cwd)>`。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）；Codex key 靠 `thread/read` 惰性解析 cwd。

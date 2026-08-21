@@ -122,11 +122,11 @@ export function StatusPill(props: {
   const panelRef = useRef<HTMLDivElement>(null)
 
   const syncPanelPos = () => {
-    // 锚胶囊按钮左缘，而不是整行容器（容器含 px-3，会贴到消息区左边）
+    // 锚胶囊按钮左上角（与触发器重叠展开），而不是整行容器（容器含 px-3，会贴到消息区左边）
     const el = triggerRef.current ?? rootRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    setPanelPos({ top: r.bottom + 8, left: r.left, width: 320 })
+    setPanelPos({ top: r.top, left: r.left, width: 320 })
   }
 
   useLayoutEffect(() => {
@@ -254,7 +254,7 @@ export function StatusPill(props: {
       <button
         ref={triggerRef}
         onClick={() => setOpen(!open)}
-        className="inline-flex w-fit shrink-0 items-center gap-2 rounded-md border border-line bg-bg/60 px-2.5 py-1 text-left font-mono text-[11px] text-ink hover:border-accent/40 hover:bg-bg"
+        className={`inline-flex w-fit shrink-0 items-center gap-2 rounded-md border border-line bg-bg/60 px-2.5 py-1 text-left font-mono text-[11px] text-ink hover:border-accent/40 hover:bg-bg ${open ? 'invisible' : ''}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode.dot}`} />
         <span className="shrink-0">{mode.short}</span>

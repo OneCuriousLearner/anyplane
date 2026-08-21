@@ -2,7 +2,7 @@
 // 已在 handoff-lab 实验验证：两家的"对话内隐藏设计"可经简报无损传递（见 docs/PLAN 附录）。
 
 import { spawn } from 'bun'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
@@ -139,17 +139,7 @@ export interface LineageRecord {
 }
 
 function lineageDir(): string {
-  // 运行数据统一放 ~/.cc-remote（uploads/trash/reasoning 同处）；旧路径 ~/.config/cc-remote 只做一次性迁移
   const dir = join(homedir(), '.cc-remote')
-  const legacy = join(homedir(), '.config', 'cc-remote', 'lineage.json')
-  const current = join(dir, 'lineage.json')
-  if (!existsSync(current) && existsSync(legacy)) {
-    try {
-      mkdirSync(dir, { recursive: true })
-      renameSync(legacy, current)
-      console.log('[handoff] lineage.json 已从 ~/.config/cc-remote 迁移到 ~/.cc-remote')
-    } catch {}
-  }
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
 }
