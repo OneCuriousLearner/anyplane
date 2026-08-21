@@ -1175,11 +1175,35 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             </div>
           )}
           <div
-            className={`border-y px-1 py-2 transition-colors ${
+            className={`flex items-start gap-2 border-y px-1 py-2 transition-colors ${
               busy ? 'border-busy/50' : 'border-line focus-within:border-accent/50'
             }`}
           >
-            <div className="flex items-start gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                pickImages(e.target.files)
+                e.target.value = ''
+              }}
+            />
+            <button
+              type="button"
+              className="mt-[1px] shrink-0 self-start text-faint transition-colors hover:text-accent-soft"
+              title="添加图片（jpg/png/gif/webp，≤5MB）"
+              aria-label="添加图片"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+                <rect x="1.25" y="2.25" width="13.5" height="11.5" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
+                <circle cx="5.25" cy="6" r="1.15" fill="currentColor" />
+                <path d="M1.5 12.25 6 8.25l2.4 2.1 2.1-1.7 4 3.6" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <div className="flex min-w-0 flex-1 items-start gap-2">
               <span
                 className={`mt-[1px] shrink-0 select-none font-mono text-sm leading-none ${
                   busy ? 'text-busy' : 'text-accent-soft'
@@ -1188,26 +1212,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               >
                 ❯
               </span>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/gif,image/webp"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  pickImages(e.target.files)
-                  e.target.value = ''
-                }}
-              />
-              <button
-                type="button"
-                className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-faint transition-colors hover:text-accent-soft"
-                title="添加图片（jpg/png/gif/webp，≤5MB）"
-                aria-label="添加图片"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                📎
-              </button>
               <textarea
                 ref={inputRef}
                 className="max-h-[200px] min-h-[1.25rem] flex-1 resize-none overflow-hidden bg-transparent py-0 font-mono text-sm leading-snug text-ink outline-none placeholder:text-faint"
