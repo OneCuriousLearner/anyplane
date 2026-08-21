@@ -11,7 +11,11 @@ export interface ToolBlock {
   pending?: boolean
 }
 
-export type Block = { kind: 'text'; text: string } | { kind: 'thinking'; text: string } | ToolBlock
+export type Block =
+  | { kind: 'text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'image'; src: string }
+  | ToolBlock
 
 export interface ChatMsg {
   id: string

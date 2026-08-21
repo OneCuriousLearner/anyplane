@@ -113,7 +113,7 @@ export class ClaudeSession {
   private activeTasks = new Map<string, BackgroundTask>()
   /** queue 模式（busy 时发消息）：headless 下 'next'/'later' 会在本轮结束后滞留，
    *  因此排队由服务端实现——idle/result 时按序 flush。 */
-  private queuedTexts: string[] = []
+  private queuedTexts: Array<{ text: string; images?: Array<{ mediaType: string; dataBase64: string }> }> = []
   /** initialize 握手返回的 slash 命令（含描述），供前端补全 */
   slashCommands: Array<{ name: string; description?: string }> = []
   private proc: Subprocess | undefined
@@ -279,15 +279,19 @@ export class ClaudeSession {
    * - queue = 服务端排队：session_state idle / result 后按序 flush
    *   （headless 下 priority 'next'/'later' 会在本轮结束后滞留队列，不可用）
    */
-  sendUserText(text: string, sendMode?: 'steer' | 'queue'): void {
+  sendUserText(
+    text: string,
+    sendMode?: 'steer' | 'queue',
+    images?: Array<{ mediaType: string; dataBase64: string }>,
+  ): void {
     if (sendMode === 'queue' && this.busy) {
-      this.queuedTexts.push(text)
+      this.queuedTexts.push({ text, images })
       this.cb.onStatusChange?.()
       return
     }
     const priority = sendMode === 'steer' && this.busy ? ('now' as const) : undefined
     // 先写再标 busy，避免 write 失败导致永久 busy
-    this.write(userMessage(text, priority))
+    this.write(userMessage(text, priority, images))
     if (!this.sawStateEvents) {
       this.fallbackBusy = true
       this.cb.onStatusChange?.()
@@ -405,7 +409,7 @@ export class ClaudeSession {
     if (this.sawStateEvents ? this.runState !== 'idle' : this.fallbackBusy) return
     const next = this.queuedTexts.shift()!
     try {
-      this.sendUserText(next)
+      this.sendUserText(next.text, undefined, next.images)
     } catch (e) {
       console.warn(`[session ${this.key}] 排队消息发送失败:`, e)
       this.queuedTexts.unshift(next)

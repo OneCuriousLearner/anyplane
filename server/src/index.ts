@@ -13,6 +13,7 @@ import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as code
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
 import { config } from './config'
 import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
+import { resolveUpload } from './uploads'
 import {
   appendLineage,
   generateClaudeBrief,
@@ -388,6 +389,14 @@ function handleClientMessage(hub: Hub, raw: string): void {
         return
       }
       const sendMode = data.sendMode === 'steer' || data.sendMode === 'queue' ? data.sendMode : undefined
+      // 图片附件：服务端统一校验（类型/大小），claude 并 content blocks，codex 落盘走 localImage
+      const attachments = (
+        Array.isArray(data.attachments) ? (data.attachments as Array<Record<string, unknown>>) : []
+      ).map((a) => ({
+        name: String(a.name ?? 'image'),
+        mediaType: String(a.mediaType ?? 'image/png'),
+        dataBase64: String(a.dataBase64 ?? ''),
+      }))
       if (isCodexKey(hub.key)) {
         void (async () => {
           let s = codexRuntime.get(hub.key)
@@ -396,7 +405,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
           }
           if (!s || s.exited) return // ensureCodexSession 已广播具体错误
           try {
-            s.sendUserText(String(data.text ?? ''), sendMode)
+            s.sendUserText(String(data.text ?? ''), sendMode, attachments)
             pushStatus(hub)
           } catch (e) {
             broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
@@ -416,7 +425,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
       }
       try {
         // sendMode 直通：claude 侧 steer=priority 'now'（中断处理）、queue=服务端排队
-        s.sendUserText(String(data.text ?? ''), sendMode)
+        s.sendUserText(String(data.text ?? ''), sendMode, attachments)
         pushStatus(hub)
       } catch (e) {
         broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
@@ -1077,6 +1086,19 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       }
     }
     return json({ records, nodes })
+  }
+  // 上传图片：仅 ~/.cc-remote/uploads/ 内的 hash 命名文件（resolveUpload 边界校验）
+  const uploadMatch = url.pathname.match(/^\/api\/uploads\/([^/]+)$/)
+  if (uploadMatch && req.method === 'GET') {
+    const path = resolveUpload(uploadMatch[1])
+    if (!path) return json({ error: 'not found' }, { status: 404 })
+    const ext = path.split('.').pop() ?? ''
+    const mime =
+      ({ jpg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' })[ext] ??
+      'application/octet-stream'
+    return new Response(Bun.file(path), {
+      headers: { 'content-type': mime, 'cache-control': 'public, max-age=31536000, immutable' },
+    })
   }
   const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
   if (histMatch && req.method === 'GET') {

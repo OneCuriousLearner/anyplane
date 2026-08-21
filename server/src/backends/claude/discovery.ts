@@ -2,7 +2,8 @@
 // 合并 ~/.claude/sessions/<pid>.json 的活跃状态
 
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
+import { saveUpload } from '../../uploads'
 import { config } from '../../config'
 import { isInternalUserMessage, type CliMessage } from './protocol'
 
@@ -209,9 +210,9 @@ export function listSessions(): SessionInfo[] {
 
 // ---------- 历史消息（供 UI 首次加载） ----------
 
-/** 结构化内容块：前端按块渲染（markdown 文本 / 思考 / 工具调用 / 工具结果） */
+/** 结构化内容块：前端按块渲染（markdown 文本 / 思考 / 工具调用 / 工具结果 / 图片） */
 export interface HistoryBlock {
-  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'
+  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image'
   text?: string
   /** tool_use：工具名；tool_result：无 */
   name?: string
@@ -221,6 +222,8 @@ export interface HistoryBlock {
   input?: unknown
   /** tool_result 是否失败 */
   isError?: boolean
+  /** image 块的展示地址（/api/uploads/<hash>.<ext>，hash 命名去重落盘） */
+  src?: string
 }
 
 export interface HistoryMessage {
@@ -315,7 +318,19 @@ export function entryToHistoryMessage(obj: Record<string, unknown>): HistoryMess
       if (c?.type === 'text' && c.text?.trim()) blocks.push({ kind: 'text', text: c.text })
       else if (c?.type === 'thinking' && c.thinking?.trim()) blocks.push({ kind: 'thinking', text: c.thinking })
       else if (c?.type === 'tool_use') blocks.push({ kind: 'tool_use', name: c.name, id: c.id, input: c.input })
-      else if (c?.type === 'tool_result') {
+      else if (c?.type === 'image' && c.source?.type === 'base64' && typeof c.source.data === 'string') {
+        // 历史中的 base64 原图：hash 命名落盘去重，前端经 /api/uploads 展示
+        try {
+          const path = saveUpload({
+            name: 'history',
+            mediaType: String(c.source.media_type ?? 'image/png'),
+            dataBase64: c.source.data,
+          })
+          blocks.push({ kind: 'image', src: `/api/uploads/${basename(path)}` })
+        } catch {
+          blocks.push({ kind: 'text', text: '[图片]' })
+        }
+      } else if (c?.type === 'tool_result') {
         const rt = toolResultText(c.content)
         blocks.push({ kind: 'tool_result', id: c.tool_use_id, text: rt, isError: c.is_error === true })
       }

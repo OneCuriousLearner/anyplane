@@ -76,7 +76,9 @@ function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage): void {
       blocks.push({ kind: 'tool', id: hb.id ?? nextId(), name: hb.name ?? '?', input: hb.input })
     } else if (hb.kind === 'tool_result') {
       if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
-    } else {
+    } else if (hb.kind === 'image' && hb.src) {
+      blocks.push({ kind: 'image', src: hb.src })
+    } else if (hb.kind === 'text' || hb.kind === 'thinking') {
       blocks.push({ kind: hb.kind, text: hb.text ?? '' })
     }
   }
@@ -111,6 +113,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [lineage, setLineage] = useState<LineageResponse>()
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [sendMode, setSendMode] = useState<'steer' | 'queue'>('steer')
+  /** 待发送的图片附件（预览用 dataURL 与传输用 base64 分离） */
+  const [pendingImages, setPendingImages] = useState<
+    Array<{ name: string; mediaType: string; dataBase64: string; previewUrl: string }>
+  >([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailTitle, setDetailTitle] = useState('')
   const [detailContent, setDetailContent] = useState('加载中…')
@@ -688,9 +695,27 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     sockRef.current?.send({ kind: 'query', id: `q-${querySeq.current}`, query })
   }
 
+  const pickImages = (files: FileList | null) => {
+    if (!files) return
+    for (const f of Array.from(files)) {
+      if (!f.type.startsWith('image/')) continue
+      const reader = new FileReader()
+      reader.onload = () => {
+        const url = String(reader.result ?? '')
+        const comma = url.indexOf(',')
+        if (comma < 0) return
+        setPendingImages((prev) => [
+          ...prev,
+          { name: f.name, mediaType: f.type, dataBase64: url.slice(comma + 1), previewUrl: url },
+        ])
+      }
+      reader.readAsDataURL(f)
+    }
+  }
+
   const send = () => {
     const text = input.trim()
-    if (!text || !sockRef.current) return
+    if ((!text && pendingImages.length === 0) || !sockRef.current) return
     if (text === '/rewind') {
       setShowRewind(true)
       setInput('')
@@ -709,9 +734,20 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       setInput('')
       return
     }
-    pushMsg({ id: nextId(), role: 'user', blocks: [{ kind: 'text', text }] })
-    sockRef.current.send({ kind: 'user', text, ...(busy ? { sendMode } : {}) })
+    const attachments = pendingImages.map(({ name, mediaType, dataBase64 }) => ({ name, mediaType, dataBase64 }))
+    const echoBlocks: Block[] = [
+      ...pendingImages.map((img) => ({ kind: 'image' as const, src: img.previewUrl })),
+      ...(text ? [{ kind: 'text' as const, text }] : []),
+    ]
+    pushMsg({ id: nextId(), role: 'user', blocks: echoBlocks })
+    sockRef.current.send({
+      kind: 'user',
+      text,
+      ...(busy ? { sendMode } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+    })
     setInput('')
+    setPendingImages([])
   }
 
   // rewindPreview 会对每条用户消息跑正则解析，只有选择器打开时才计算
@@ -1122,6 +1158,22 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               </span>
             </div>
           )}
+          {/* 待发送图片预览 */}
+          {pendingImages.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-2">
+              {pendingImages.map((img, i) => (
+                <span key={i} className="relative">
+                  <img src={img.previewUrl} alt={img.name} className="h-14 w-14 rounded border border-line object-cover" />
+                  <button
+                    className="absolute -right-1.5 -top-1.5 rounded-full bg-danger px-1 text-[10px] leading-4 text-white"
+                    onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div
             className={`border-y px-1 py-2 transition-colors ${
               busy ? 'border-busy/50' : 'border-line focus-within:border-accent/50'
@@ -1136,6 +1188,26 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               >
                 ❯
               </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  pickImages(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-faint transition-colors hover:text-accent-soft"
+                title="添加图片（jpg/png/gif/webp，≤5MB）"
+                aria-label="添加图片"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                📎
+              </button>
               <textarea
                 ref={inputRef}
                 className="max-h-[200px] min-h-[1.25rem] flex-1 resize-none overflow-hidden bg-transparent py-0 font-mono text-sm leading-snug text-ink outline-none placeholder:text-faint"
@@ -1164,7 +1236,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 <button
                   type="button"
                   className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-accent-soft transition-opacity hover:text-accent disabled:pointer-events-none disabled:opacity-25"
-                  disabled={!input.trim() || !connected}
+                  disabled={(!input.trim() && pendingImages.length === 0) || !connected}
                   onClick={send}
                   title="发送"
                   aria-label="发送"

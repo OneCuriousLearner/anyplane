@@ -4,6 +4,7 @@
 
 import type { CliMessage } from '../claude/protocol'
 import type { HistoryBlock, HistoryMessage } from '../claude/discovery'
+import { resolveUpload } from '../../uploads'
 
 // ---------- 通知 → CliMessage（live 流） ----------
 
@@ -231,14 +232,14 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
     const uuid = item.id
     switch (item.type) {
       case 'userMessage': {
-        const text = userInputText(item.content)
-        if (!text) break
+        const blocks = userInputBlocks(item.content)
+        if (blocks.length === 0) break
         const markable = !!turnId && !firstUserMarked
         if (markable) firstUserMarked = true
         out.push({
           uuid: markable ? turnId : uuid,
           role: 'user',
-          blocks: [{ kind: 'text', text }],
+          blocks,
           rewindable: markable,
         })
         break
@@ -319,17 +320,30 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
   return out
 }
 
-function userInputText(content: unknown): string {
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
-  for (const c of content as Array<{ type?: string; text?: string }>) {
-    if (c?.type === 'text' && c.text) parts.push(c.text)
-    else if (c?.type === 'image' || c?.type === 'localImage') parts.push('[图片]')
-    else if (c?.type === 'audio' || c?.type === 'localAudio') parts.push('[音频]')
-    else if (c?.type === 'skill') parts.push(`[skill: ${(c as { name?: string }).name ?? '?'}]`)
-    else if (c?.type === 'mention') parts.push(`[${(c as { name?: string }).name ?? 'mention'}]`)
+/** userMessage content → 历史块；localImage 在 uploads 目录内时给可展示 URL，其余降级占位 */
+function userInputBlocks(content: unknown): HistoryBlock[] {
+  if (!Array.isArray(content)) return []
+  const texts: string[] = []
+  const images: HistoryBlock[] = []
+  for (const c of content as Array<Record<string, unknown>>) {
+    if (!c) continue
+    if (c.type === 'text' && typeof c.text === 'string') {
+      texts.push(c.text)
+    } else if (c.type === 'image' || c.type === 'localImage') {
+      const base = typeof c.path === 'string' ? (c.path.split('/').pop() ?? '') : ''
+      if (base && resolveUpload(base)) images.push({ kind: 'image', src: `/api/uploads/${base}` })
+      else texts.push('[图片]')
+    } else if (c.type === 'audio' || c.type === 'localAudio') {
+      texts.push('[音频]')
+    } else if (c.type === 'skill') {
+      texts.push(`[skill: ${(c as { name?: string }).name ?? '?'}]`)
+    } else if (c.type === 'mention') {
+      texts.push(`[${(c as { name?: string }).name ?? 'mention'}]`)
+    }
   }
-  return parts.join('\n')
+  const blocks: HistoryBlock[] = []
+  if (texts.join('\n').trim()) blocks.push({ kind: 'text', text: texts.join('\n') })
+  return [...blocks, ...images]
 }
 
 export type { HistoryBlock, HistoryMessage }

@@ -82,7 +82,12 @@ export interface SessionState {
 export type ClientCommand =
   | { kind: 'attach'; warm?: boolean; opts?: Record<string, unknown> }
   | { kind: 'tail_subscribe'; from?: number }
-  | { kind: 'user'; text: string; sendMode?: 'steer' | 'queue' }
+  | {
+      kind: 'user'
+      text: string
+      sendMode?: 'steer' | 'queue'
+      attachments?: Array<{ name: string; mediaType: string; dataBase64: string }>
+    }
   | { kind: 'control'; subtype: string; extra?: Record<string, unknown> }
   | { kind: 'update_env'; variables: Record<string, string> }
   | { kind: 'approval'; requestId: string; decision: unknown }

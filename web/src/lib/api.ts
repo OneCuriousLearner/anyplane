@@ -46,12 +46,14 @@ export interface SessionInfo {
 }
 
 export interface HistoryBlock {
-  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'
+  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image'
   text?: string
   name?: string
   id?: string
   input?: unknown
   isError?: boolean
+  /** image 块：/api/uploads/<hash>.<ext> */
+  src?: string
 }
 
 export interface HistoryMessage {

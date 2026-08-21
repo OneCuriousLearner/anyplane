@@ -69,10 +69,24 @@ export function nextRequestId(): string {
   return `ccr-${Date.now().toString(36)}-${++reqCounter}`
 }
 
-export function userMessage(text: string, priority?: 'now' | 'next' | 'later'): UserMessageInput {
+export function userMessage(
+  text: string,
+  priority?: 'now' | 'next' | 'later',
+  images?: Array<{ mediaType: string; dataBase64: string }>,
+): UserMessageInput {
+  // 图片走 Anthropic API 原生 content block（media_type 必须 snake_case——stdin 路径不做 camelCase 转换）
+  const content: string | unknown[] = images?.length
+    ? [
+        ...images.map((img) => ({
+          type: 'image',
+          source: { type: 'base64', media_type: img.mediaType, data: img.dataBase64 },
+        })),
+        ...(text.trim() ? [{ type: 'text', text }] : []),
+      ]
+    : text
   return {
     type: 'user',
-    message: { role: 'user', content: text },
+    message: { role: 'user', content },
     parent_tool_use_id: null,
     ...(priority ? { priority } : {}),
   }

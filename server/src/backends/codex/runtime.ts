@@ -4,6 +4,7 @@
 
 import type { ApprovalDecision, BackgroundTask, SessionCallbacks } from '../types'
 import type { CliMessage } from '../claude/protocol'
+import { saveUpload } from '../../uploads'
 import { RpcClient, RpcError } from './rpc'
 import { appendReasoning, readReasoning } from './reasoningStore'
 import {
@@ -306,10 +307,17 @@ export class CodexSession {
 
   // ---------- AgentSession 同形接口 ----------
 
-  /** sendMode：steer=插队（turn/steer 追加进当前轮）；queue=排队（thread/queue/add，idle 后自动开始）；缺省普通新轮 */
-  sendUserText(text: string, sendMode?: 'steer' | 'queue'): void {
+  /** sendMode：steer=插队（turn/steer 追加进当前轮）；queue=排队（thread/queue/add，idle 后自动开始）；缺省普通新轮。
+   *  images：浏览器上传的 base64 图片——实测 data URL 在部分 provider 下不可见，统一落盘后走 localImage。 */
+  sendUserText(
+    text: string,
+    sendMode?: 'steer' | 'queue',
+    images?: Array<{ name: string; mediaType: string; dataBase64: string }>,
+  ): void {
     if (!this.threadId) throw new Error('线程未启动')
-    const input = [{ type: 'text', text }]
+    const imageInputs = (images ?? []).map((img) => ({ type: 'localImage', path: saveUpload(img) }))
+    const input = [...imageInputs, ...(text.trim() ? [{ type: 'text', text }] : [])]
+    if (input.length === 0) return
     if (sendMode === 'queue') {
       void this.runtime
         .rpcRequest('thread/queue/add', {

@@ -80,6 +80,16 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
           {msg.blocks.map((b, i) => {
             if (b.kind === 'text') return <Markdown key={i} text={b.text} />
             if (b.kind === 'thinking') return <Thinking key={i} text={b.text} streaming={msg.btwPending} />
+            if (b.kind === 'image')
+              return (
+                <img
+                  key={i}
+                  src={b.src}
+                  alt="图片附件"
+                  loading="lazy"
+                  className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
+                />
+              )
             return <ToolCard key={b.id} tool={b} />
           })}
         </div>
@@ -133,6 +143,16 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
         }`}
       >
         {msg.blocks.map((b, i) => {
+          if (b.kind === 'image')
+            return (
+              <img
+                key={i}
+                src={b.src}
+                alt="图片附件"
+                loading="lazy"
+                className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
+              />
+            )
           if (b.kind === 'text') return isUser ? <UserText key={i} text={b.text} /> : <Markdown key={i} text={b.text} />
           if (b.kind === 'thinking') return <Thinking key={i} text={b.text} />
           return <ToolCard key={b.id} tool={b} />
