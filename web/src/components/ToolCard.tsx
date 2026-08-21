@@ -2,13 +2,13 @@ import { useState } from 'react'
 import { toolDetail, toolSummary, type ToolBlock } from '../lib/blocks'
 
 /** 工具调用卡片：一行 trace（图标+名称+摘要+结果状态），点击展开参数与结果 */
-export function ToolCard(props: { tool: ToolBlock }) {
+export function ToolCard(props: { tool: ToolBlock; className?: string }) {
   const { tool } = props
   const [open, setOpen] = useState(false)
   const summary = toolSummary(tool.name, tool.input)
 
   return (
-    <div className="my-1.5 overflow-hidden rounded-md border border-line bg-surface2/40">
+    <div className={`my-1.5 overflow-hidden rounded-md border border-line bg-surface2/40 ${props.className ?? ''}`}>
       <button
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left font-mono text-[12px] hover:bg-surface2/70"
         onClick={() => setOpen(!open)}

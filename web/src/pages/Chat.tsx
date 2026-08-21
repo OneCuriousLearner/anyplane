@@ -828,53 +828,53 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             />
           ))}
 
-          {/* 流式草稿 */}
+          {/* 流式草稿：移除 message 级 Claude 图标，按块分行；thinking/tool 块左栏圆点 */}
           {draft && draft.blocks.length > 0 && (
-            <div className="my-3 flex items-start gap-2.5">
-              <span
-                className={`flex w-5 shrink-0 justify-center select-none ${
-                  draft.blocks[0]?.kind === 'text' ? 'pt-[4px]' : 'pt-[13px]'
-                }`}
-              >
-                <ClaudeMark className="h-3.5 w-3.5 opacity-70" />
-              </span>
-              <div className="min-w-0 flex-1">
-                {draft.blocks.map((b) => {
-                  if (b.kind === 'tool') {
-                    return (
-                      <div
-                        key={b.idx}
-                        className="my-1.5 rounded-md border border-line bg-surface2/40 px-2.5 py-1.5 font-mono text-[12px]"
-                      >
-                        <span className="text-accent-soft">{b.name ?? '…'}</span>
-                        <span className="ml-2 animate-pulse text-busy">…</span>
-                      </div>
-                    )
-                  }
-                  if (b.kind === 'thinking') {
-                    return (
-                      <div key={b.idx} className="my-1.5 rounded-md border border-line/60 bg-surface2/30 px-2.5 py-1.5">
-                        <span className="font-mono text-[11px] tracking-wide text-faint">思考</span>
-                        <span className="ml-1 animate-pulse font-mono text-[11px] text-busy">进行中…</span>
-                        {b.text && (
-                          <div className="mt-1 max-h-48 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
-                            {b.text}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  }
-                  return (
-                    <div key={b.idx} className="relative">
-                      <Markdown text={b.text} />
-                      <span className="cc-cursor ml-0.5 inline-block h-3.5 w-[7px] bg-accent-soft align-text-bottom" />
+            <div className="my-3 flex flex-col">
+              {draft.blocks.map((b) => {
+                const dot = b.kind === 'thinking' || b.kind === 'tool'
+                return (
+                  <div key={b.idx} className="flex items-start gap-2.5">
+                    <span
+                      className={`flex w-5 shrink-0 justify-center select-none ${dot ? 'pt-[17px]' : ''}`}
+                      aria-hidden="true"
+                    >
+                      {dot && <span className="block h-1.5 w-1.5 rounded-full bg-zinc-400/70" />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      {b.kind === 'tool' ? (
+                        <div className="my-1.5 rounded-md border border-line bg-surface2/40 px-2.5 py-1.5 font-mono text-[12px]">
+                          <span className="text-accent-soft">{b.name ?? '…'}</span>
+                          <span className="ml-2 animate-pulse text-busy">…</span>
+                        </div>
+                      ) : b.kind === 'thinking' ? (
+                        <div className="my-1.5 rounded-md border border-line/60 bg-surface2/30 px-2.5 py-1.5">
+                          <span className="font-mono text-[11px] tracking-wide text-faint">思考</span>
+                          <span className="ml-1 animate-pulse font-mono text-[11px] text-busy">进行中…</span>
+                          {b.text && (
+                            <div className="mt-1 max-h-48 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
+                              {b.text}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <Markdown text={b.text} />
+                          <span className="cc-cursor ml-0.5 inline-block h-3.5 w-[7px] bg-accent-soft align-text-bottom" />
+                        </div>
+                      )}
                     </div>
-                  )
-                })}
-                {draft.blocks.every((b) => b.kind !== 'text') && (
-                  <span className="cc-cursor inline-block h-3.5 w-[7px] bg-accent-soft" />
-                )}
-              </div>
+                  </div>
+                )
+              })}
+              {draft.blocks.every((b) => b.kind !== 'text') && (
+                <div className="flex items-start gap-2.5">
+                  <span className="flex w-5 shrink-0" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <span className="cc-cursor inline-block h-3.5 w-[7px] bg-accent-soft" />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

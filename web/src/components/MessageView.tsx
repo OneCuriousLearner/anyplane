@@ -3,9 +3,12 @@ import { ToolCard } from './ToolCard'
 import { parseUserText, shortTokens, type ChatMsg } from '../lib/blocks'
 
 /** 思考块：默认折叠 */
-function Thinking(props: { text: string; streaming?: boolean }) {
+function Thinking(props: { text: string; streaming?: boolean; className?: string }) {
   return (
-    <details className="my-1.5 rounded-md border border-line/60 bg-surface2/30" open={props.streaming}>
+    <details
+      className={`my-1.5 rounded-md border border-line/60 bg-surface2/30 ${props.className ?? ''}`}
+      open={props.streaming}
+    >
       <summary className="cursor-pointer px-2.5 py-1.5 font-mono text-[11px] tracking-wide text-faint select-none">
         思考{props.streaming && <span className="ml-1 animate-pulse text-busy">进行中…</span>}
       </summary>
@@ -122,42 +125,69 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   }
 
   const isUser = msg.role === 'user'
-  const assistantStartsWithCard = !isUser && msg.blocks[0]?.kind !== 'text'
-  return (
-    <div className={`${compact ? 'my-1' : 'my-3'} flex items-start gap-2.5`}>
-      <span
-        className={`flex w-5 shrink-0 justify-center font-mono text-sm leading-none select-none ${
-          isUser
-            ? 'pt-[12px] text-accent-soft'
-            : assistantStartsWithCard
-              ? 'pt-[17px] text-faint'
-              : 'pt-[8px] text-faint'
-        }`}
-        aria-hidden="true"
-      >
-        {compact ? '' : isUser ? '›' : <span className="block h-1.5 w-1.5 rounded-full bg-zinc-400/70" />}
-      </span>
-      <div
-        className={`min-w-0 flex-1 ${
-          isUser ? 'rounded-md border border-accent/30 bg-accent/15 px-3 py-2' : ''
-        }`}
-      >
-        {msg.blocks.map((b, i) => {
-          if (b.kind === 'image')
-            return (
-              <img
-                key={i}
-                src={b.src}
-                alt="图片附件"
-                loading="lazy"
-                className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
-              />
-            )
-          if (b.kind === 'text') return isUser ? <UserText key={i} text={b.text} /> : <Markdown key={i} text={b.text} />
-          if (b.kind === 'thinking') return <Thinking key={i} text={b.text} />
-          return <ToolCard key={b.id} tool={b} />
-        })}
+
+  // user 消息保持单条气泡；assistant 按块分行，thinking/tool 块在左栏圆点
+  if (isUser) {
+    return (
+      <div className={`${compact ? 'my-1' : 'my-3'} flex items-start gap-2.5`}>
+        <span
+          className="flex w-5 shrink-0 justify-center pt-[12px] font-mono text-sm leading-none select-none text-accent-soft"
+          aria-hidden="true"
+        >
+          {compact ? '' : '›'}
+        </span>
+        <div className="min-w-0 flex-1 rounded-md border border-accent/30 bg-accent/15 px-3 py-2">
+          {msg.blocks.map((b, i) => {
+            if (b.kind === 'image')
+              return (
+                <img
+                  key={i}
+                  src={b.src}
+                  alt="图片附件"
+                  loading="lazy"
+                  className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
+                />
+              )
+            if (b.kind === 'text') return <UserText key={i} text={b.text} />
+            if (b.kind === 'thinking') return <Thinking key={i} text={b.text} />
+            return <ToolCard key={b.id} tool={b} />
+          })}
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div className={`${compact ? 'my-1' : 'my-3'} flex flex-col`}>
+      {msg.blocks.map((b, i) => {
+        const dot = b.kind === 'thinking' || b.kind === 'tool'
+        return (
+          <div key={b.kind === 'tool' ? b.id : i} className="flex items-start gap-2.5">
+            <span
+              className={`flex w-5 shrink-0 justify-center select-none ${dot ? 'pt-[17px]' : ''}`}
+              aria-hidden="true"
+            >
+              {dot && <span className="block h-1.5 w-1.5 rounded-full bg-zinc-400/70" />}
+            </span>
+            <div className="min-w-0 flex-1">
+              {b.kind === 'image' ? (
+                <img
+                  src={b.src}
+                  alt="图片附件"
+                  loading="lazy"
+                  className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
+                />
+              ) : b.kind === 'text' ? (
+                <Markdown text={b.text} />
+              ) : b.kind === 'thinking' ? (
+                <Thinking text={b.text} />
+              ) : (
+                <ToolCard tool={b} />
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

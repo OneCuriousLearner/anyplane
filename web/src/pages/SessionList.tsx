@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   archiveSession,
   createSession,
@@ -12,6 +13,8 @@ import {
 import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
+import { ConfirmDialog, PromptDialog } from '../components/Dialogs'
+import { PopupPanel } from '../components/PopupPanel'
 import { DirPicker } from './DirPicker'
 
 const STATUS_META: Record<SessionInfo['status'], { cls: string; label: string }> = {
@@ -55,6 +58,15 @@ export function SessionList(props: {
   const [view, setView] = useState<'active' | 'archived'>('active')
   const [archived, setArchived] = useState<ArchivedEntry[]>([])
   const [collapsed, setCollapsed] = useState(loadCollapsed)
+  /** 二级菜单：打开的会话 + 锚点元素；null 表示无 */
+  const [menu, setMenu] = useState<{ session: SessionInfo; anchor: HTMLElement } | null>(null)
+  /** 重命名弹窗目标 */
+  const [renameTarget, setRenameTarget] = useState<{ session: SessionInfo; anchor: HTMLElement } | null>(null)
+  /** 回收站确认弹窗目标 */
+  const [archiveTarget, setArchiveTarget] = useState<{ session: SessionInfo; anchor: HTMLElement } | null>(null)
+  /** 轻量错误提示（替代 alert） */
+  const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
   const notifyRef = useRef(notify)
@@ -71,6 +83,22 @@ export function SessionList(props: {
     try {
       new Notification(title, { body, tag: 'cc-remote-inbox' })
     } catch {}
+  }
+
+  // 二级菜单：Escape 关闭
+  useEffect(() => {
+    if (menu === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menu])
+
+  const showToast = (text: string, kind: 'ok' | 'err' = 'err') => {
+    setToast({ text, kind })
+    clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000)
   }
 
   // 全局收件箱：审批队列 + 完成/错误通知
@@ -142,14 +170,20 @@ export function SessionList(props: {
 
   const doArchive = (key: string) => {
     archiveSession(key)
-      .then(refresh)
-      .catch((err) => alert(String(err)))
+      .then(() => {
+        refresh()
+        showToast('已放入回收站，可随时恢复', 'ok')
+      })
+      .catch((err) => showToast(String(err)))
   }
   const doRestore = (key: string) => {
     restoreSession(key)
       .then(() => fetchArchived().then((r) => setArchived(r.entries)))
-      .then(refresh)
-      .catch((err) => alert(String(err)))
+      .then(() => {
+        refresh()
+        showToast('已恢复', 'ok')
+      })
+      .catch((err) => showToast(String(err)))
   }
 
   // 按项目目录分组
@@ -298,51 +332,43 @@ export function SessionList(props: {
                 ] ?? STATUS_META.offline
               const active = props.selectedKey === s.key
               return (
-                <button
+                <div
                   key={s.key}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => props.onSelect(s)}
-                  className={`group block w-full border-b border-line/40 px-4 py-3 text-left transition-colors hover:bg-surface2/60 ${
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      props.onSelect(s)
+                    }
+                  }}
+                  className={`group block w-full cursor-pointer border-b border-line/40 px-4 py-3 text-left transition-colors hover:bg-surface2/60 ${
                     active ? 'bg-surface2/80 shadow-[inset_2px_0_0_var(--color-accent)]' : ''
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.cls}`} />
                     <span className="truncate text-sm">{s.title ?? s.sessionId.slice(0, 8)}</span>
-                    <span
-                      className="shrink-0 rounded px-0.5 font-mono text-[10px] text-faint/40 transition-colors hover:text-faint"
-                      title="改名"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        const title = prompt('会话名称', s.title ?? '')
-                        if (title?.trim()) {
-                          renameSession(s.key, title.trim()).then(refresh).catch((err) => alert(String(err)))
-                        }
-                      }}
-                    >
-                      ✎
-                    </span>
-                    <span
-                      className="shrink-0 rounded px-0.5 font-mono text-[10px] text-faint/40 transition-colors hover:text-faint"
-                      title="归档（进回收站，不物理删除；claude 仅离线会话）"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (confirm(`归档会话「${s.title ?? s.sessionId.slice(0, 8)}」？\n（进入回收站，随时可恢复）`)) {
-                          doArchive(s.key)
-                        }
-                      }}
-                    >
-                      ⌄
-                    </span>
                     <span className="ml-auto shrink-0 font-mono text-[10px] text-faint">
                       {timeAgo(s.mtime)}
                     </span>
-                    <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center overflow-hidden" aria-hidden="true">
+                    <button
+                      type="button"
+                      className="flex h-[15px] w-[15px] shrink-0 items-center justify-center overflow-hidden rounded transition-colors hover:bg-surface2"
+                      title="更多操作"
+                      aria-label={`会话操作：${s.title ?? s.sessionId.slice(0, 8)}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setMenu(menu?.session.key === s.key ? null : { session: s, anchor: e.currentTarget })
+                      }}
+                    >
                       {s.backend === 'codex' ? (
                         <CodexMark size={15} static />
                       ) : (
                         <ClaudeMark className="h-[15px] w-[15px]" />
                       )}
-                    </span>
+                    </button>
                   </div>
                   <div className="mt-1 flex items-center gap-1.5 pl-3.5 font-mono text-[11px] text-faint">
                     <span className="shrink-0">{st.label}</span>
@@ -353,7 +379,7 @@ export function SessionList(props: {
                       </>
                     )}
                   </div>
-                </button>
+                </div>
               )
             })}
           </div>
@@ -379,6 +405,94 @@ export function SessionList(props: {
       {pickerOpen && (
         <DirPicker sessions={sessions} onStart={startNew} onClose={() => setPickerOpen(false)} />
       )}
+
+      {/* 会话二级菜单：固定定位 + 玻璃子面板样式 */}
+      <PopupPanel
+        open={menu !== null}
+        anchor={menu?.anchor ?? null}
+        onClose={() => setMenu(null)}
+        placement="bottom-end"
+        offset={4}
+        className="w-24"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[12px] text-muted transition-colors hover:bg-surface2/60 hover:text-ink"
+          onClick={() => {
+            if (!menu) return
+            setRenameTarget(menu)
+            setMenu(null)
+          }}
+        >
+          重命名
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[12px] text-muted transition-colors hover:bg-surface2/60 hover:text-danger"
+          onClick={() => {
+            if (!menu) return
+            setArchiveTarget(menu)
+            setMenu(null)
+          }}
+        >
+          回收站
+        </button>
+      </PopupPanel>
+
+      {/* 重命名弹窗 */}
+      <PromptDialog
+        open={renameTarget !== null}
+        anchor={renameTarget?.anchor ?? null}
+        title="重命名会话"
+        initialValue={renameTarget?.session.title ?? renameTarget?.session.sessionId.slice(0, 8) ?? ''}
+        onConfirm={(title) => {
+          if (!renameTarget) return
+          if (title.trim()) {
+            renameSession(renameTarget.session.key, title.trim())
+              .then(() => {
+                refresh()
+                showToast('已重命名', 'ok')
+              })
+              .catch((err) => showToast(String(err)))
+          }
+          setRenameTarget(null)
+        }}
+        onClose={() => setRenameTarget(null)}
+      />
+
+      {/* 回收站确认弹窗 */}
+      <ConfirmDialog
+        open={archiveTarget !== null}
+        anchor={archiveTarget?.anchor ?? null}
+        title="归档会话"
+        message={`归档会话「${archiveTarget?.session.title ?? archiveTarget?.session.sessionId.slice(0, 8)}」？\n（进入回收站，随时可恢复）`}
+        confirmLabel="归档"
+        danger
+        onConfirm={() => {
+          if (!archiveTarget) return
+          doArchive(archiveTarget.session.key)
+          setArchiveTarget(null)
+        }}
+        onClose={() => setArchiveTarget(null)}
+      />
+
+      {/* 轻量提示（替代 alert）：portal 到 body，避免被祖先裁剪/遮挡 */}
+      {toast &&
+        createPortal(
+          <div
+            role="status"
+            className={`fixed bottom-4 right-4 z-[60] max-w-xs rounded-md border px-3 py-2 text-xs shadow-lg ${
+              toast.kind === 'ok'
+                ? 'border-ok/50 bg-surface2 text-ok'
+                : 'border-danger/50 bg-surface2 text-danger'
+            }`}
+          >
+            {toast.text}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
