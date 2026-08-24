@@ -11,8 +11,9 @@
     "dev:web": "bun run --cwd web dev",
     "build": "bun run --cwd web build",
     "start": "bun run --cwd server start",
+    "gateway": "bun scripts/gateway.ts",
     "docs:claude": "bun scripts/fetch-claude-docs.ts",
-    "test": "bun test server/"
+    "test": "bun test server/ scripts/"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

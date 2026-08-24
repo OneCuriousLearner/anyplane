@@ -2,6 +2,7 @@ import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'rea
 import { SessionList } from './pages/SessionList'
 import { Chat } from './pages/Chat'
 import { ClaudeMark } from './components/ClaudeMark'
+import { ModeBadge } from './components/ModeBadge'
 import { getToken, onAuthRequired, setToken } from './lib/auth'
 import type { SessionInfo } from './lib/api'
 
@@ -56,6 +57,7 @@ export default function App() {
   if (authNeeded) {
     return (
       <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-bg px-6">
+        {import.meta.env.DEV && <ModeBadge />}
         <ClaudeMark className="h-10 w-10 opacity-40" />
         <div className="font-mono text-xs tracking-widest text-faint">需要访问令牌</div>
         <form
@@ -93,6 +95,7 @@ export default function App() {
       className="h-dvh bg-bg md:grid md:grid-rows-[minmax(0,1fr)]"
       style={{ gridTemplateColumns: `${sidebarW}px minmax(0, 1fr)` }}
     >
+      {import.meta.env.DEV && <ModeBadge />}
       {/* 移动端：选中后隐藏列表；桌面端：双栏常显，右缘可拖宽 */}
       <div className={`relative h-full border-line md:border-r ${selected ? 'hidden md:block' : 'block'}`}>
         <SessionList selectedKey={selected?.key} onSelect={setSelected} />

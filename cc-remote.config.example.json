@@ -7,5 +7,12 @@
   "claudePath": "/abs/path/to/claude",
   "detachRecycleMs": 300000,
   "idleTimeoutMs": 1800000,
-  "claudeConfigDir": "/abs/path/to/.claude"
+  "claudeConfigDir": "/abs/path/to/.claude",
+  "gateway": {
+    "httpPort": 80,
+    "httpsPort": 443,
+    "prodHost": "cc-remote.devcloud.woa.com",
+    "devHost": "cc-remote-dev.devcloud.woa.com",
+    "muxSsh": true
+  }
 }

@@ -15,6 +15,7 @@ bun run dev:server   # 仅服务端
 bun run dev:web      # 仅 Vite
 bun run build        # 构建前端到 web/dist
 bun run start        # 生产模式：服务端托管 API + WS + 静态前端
+bun run gateway      # 80/443 网关：按 ?mode=dev|prod 反代到 :5173 / :7480（无 token 需 --insecure；默认替换上一份网关）
 ```
 
 端到端验证脚本（需服务端已启动，会真实调用 claude/codex CLI）：

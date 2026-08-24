@@ -268,8 +268,24 @@ body {
   transform-origin: 50% 50%;
 }
 
+@keyframes mode-badge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.mode-badge-pulse {
+  animation: mode-badge-pulse 1.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cc-cursor {
+    animation: none;
+  }
+  .mode-badge-pulse {
     animation: none;
   }
   .claude-star--active .claude-star__ray,

@@ -53,6 +53,7 @@ bun run start      # 启动服务端（默认 :7480），托管 API + WebSocket 
 bun run dev          # 并行拉起 server + Vite（推荐）
 bun run dev:server   # 仅服务端 :7480
 bun run dev:web      # 仅 Vite :5173，代理 /api 与 /ws 到 7480
+bun run gateway      # 对外 80/443 网关（见下方「域名访问」）
 ```
 
 ## 配置
@@ -103,6 +104,26 @@ bun run docs:claude
 - `docs/claude-code/manifest.json` — 拉取元数据（时间、成功/失败计数）
 
 来源为官方 [`llms.txt`](https://code.claude.com/docs/llms.txt) / [`llms-full.txt`](https://code.claude.com/docs/llms-full.txt)；单页亦可直接访问 `https://code.claude.com/docs/en/<page>.md`。
+
+## 域名访问（80/443 网关）
+
+开发态 Vite 仍在 `:5173`、生产态服务端仍在 `:7480`，默认都只绑 `127.0.0.1`。需要用域名从外部访问、且不写端口（或只走 80/443）时，另开网关：
+
+```bash
+bun run gateway --insecure   # 仅授信内网；有 authToken 则可去掉 --insecure
+```
+
+启动时若 80/443 已被**上一份** `scripts/gateway.ts` 占用，会 SIGTERM 替换后继续听；nginx/sshd 等其它进程不会动（`--no-replace` 可关闭替换）。
+
+| 怎么进 | 落到哪 |
+|---|---|
+| `http://cc-remote.devcloud.woa.com/` | 生产 `:7480`（默认，无角标） |
+| `http://cc-remote.devcloud.woa.com/?mode=dev` | 开发 `:5173`，左下角 **DEV**（点击新开生产标签） |
+| `http://cc-remote.devcloud.woa.com/?mode=prod` | 显式生产 `:7480` |
+| `http://cc-remote-dev.devcloud.woa.com/` | 永远开发（需在 DevCloud 再挂一个自定义域名） |
+| `https://…` 同样规则 | 自签证书；若平台在边缘终结 TLS，浏览器 HTTPS 实际打到容器明文 80，也能分流 |
+
+`127.0.0.1:5173` / `127.0.0.1:7480` 不受影响。80 上若收到 SSH 握手，会转到本机 `:36000`。状态页：`/__gateway`。
 
 ## 部署到远程容器
 
