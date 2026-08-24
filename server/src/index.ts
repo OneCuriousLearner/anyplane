@@ -4,7 +4,7 @@ import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { isAuthorized, isLoopbackHost } from './auth'
-import { keyFor, parseKey } from './backends/claude/backend'
+import { keyFor, keyForBranch, parseKey, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
@@ -17,6 +17,7 @@ import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 import { resolveUpload } from './uploads'
 import {
   appendLineage,
+  briefPrompt,
   generateClaudeBrief,
   generateCodexBrief,
   lineageFor,
@@ -62,6 +63,8 @@ interface Hub {
   tailer?: TranscriptTailer
   /** tail 状态推送的节流时间戳 */
   tailStatusAt?: number
+  /** 当前目标（claude /goal 由出站消息解析跟踪；codex 由 thread/goal/* 通知驱动） */
+  goal?: { condition: string; since: number }
 }
 
 const hubs = new Map<string, Hub>()
@@ -158,6 +161,7 @@ function statusOf(key: string): Record<string, unknown> {
     effort: hub?.spawnOpts?.effort,
     tailing: !!hub?.tailer,
     liveStatus: live?.status,
+    goal: hub?.goal ?? null,
   }
 }
 
@@ -185,6 +189,7 @@ function codexStatusOf(key: string): Record<string, unknown> {
     permissionMode: hub?.spawnOpts?.permissionMode,
     effort: hub?.spawnOpts?.effort,
     tailing: false,
+    goal: s?.goal ?? null,
   }
 }
 
@@ -200,6 +205,12 @@ function sessionCallbacks(hub: Hub) {
       // turn 收尾是收件箱的核心提醒信号（agent 跑完了）
       if (msg.type === 'result') {
         publishInbox({ type: 'done', key: hub.key, ok: msg.is_error !== true })
+        // claude /goal：goal 激活期间 turn 只会因"条件达成"结束（Stop hook 拦截其余收尾），
+        // 所以 result 到达即视为目标完成（用户中断也会到此，chip 随之清除，语义可接受）
+        if (hub.goal) {
+          hub.goal = undefined
+          pushStatus(hub)
+        }
       }
     },
     onApprovalRequest: (req: { requestId: string; toolName: string; input: unknown }) => {
@@ -308,7 +319,7 @@ function rewindConversation(hub: Hub, userMessageId: string, scope: 'conversatio
 function ensureSpawned(
   hub: Hub,
   opts?: Partial<SpawnOptions>,
-  parsedHint?: { cwd: string; resumeSessionId?: string; slug?: string },
+  parsedHint?: ParsedKey,
 ): void {
   // parseKey 会反查 listSessions()（一次文件系统扫描）；调用方已解析过时直接复用
   const parsed = parsedHint ?? parseKey(hub.key)
@@ -319,6 +330,7 @@ function ensureSpawned(
   const spawnOpts: SpawnOptions = {
     cwd: parsed.cwd,
     resumeSessionId: parsed.resumeSessionId,
+    forkFromSessionId: parsed.forkFromSessionId,
     permissionMode: config.permissionPolicy === 'bypass' ? 'bypassPermissions' : undefined,
     ...hub.spawnOpts,
     ...opts,
@@ -426,7 +438,22 @@ function handleClientMessage(hub: Hub, raw: string): void {
       }
       try {
         // sendMode 直通：claude 侧 steer=priority 'now'（中断处理）、queue=服务端排队
-        s.sendUserText(String(data.text ?? ''), sendMode, attachments)
+        const text = String(data.text ?? '')
+        s.sendUserText(text, sendMode, attachments)
+        // /goal 是 claude 的本地斜杠命令（2.1.139+）：goal 状态不进 stream-json，
+        // 这里从出站文本跟踪 chip 状态；result 到达时清除（见 onMessage）
+        const goalMatch = text.match(/^\/goal\s*(.*)$/i)
+        if (goalMatch) {
+          const arg = goalMatch[1].trim()
+          if (!arg) {
+            // /goal 无参 = 查询状态，本地输出，不改变跟踪
+          } else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) {
+            hub.goal = undefined
+          } else {
+            hub.goal = { condition: arg, since: Date.now() }
+          }
+          pushStatus(hub)
+        }
         pushStatus(hub)
       } catch (e) {
         broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
@@ -533,6 +560,25 @@ function handleClientMessage(hub: Hub, raw: string): void {
       }
       break
     }
+    case 'branch': {
+      // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session），
+      // codex 走既有 thread/fork（RewindPicker 的"从此处分叉"）；这里只处理 claude。
+      if (isCodexKey(hub.key)) {
+        broadcast(hub, { kind: 'error', message: 'Codex 请用回滚面板的「从此处分叉」' })
+        return
+      }
+      const parsed = parseKey(hub.key)
+      const srcSid = session()?.sessionId ?? parsed?.resumeSessionId ?? parsed?.forkFromSessionId
+      if (!parsed || !srcSid) {
+        broadcast(hub, { kind: 'error', message: '分叉需要已有会话（先发过至少一条消息）' })
+        return
+      }
+      const branchKey = keyForBranch(parsed.cwd, srcSid)
+      // 预建 Hub 并缓存分叉源：首条 user 消息 ensureSpawned 时经 parseKey 拿到 forkFromSessionId
+      getHub(branchKey)
+      broadcast(hub, { kind: 'forked', targetKey: branchKey, branchOf: srcSid })
+      break
+    }
     case 'rewind_conversation': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
@@ -608,7 +654,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
       break
     }
     case 'btw': {
-      // 侧问：fork 当前会话的一次性问答，不污染主会话
+      // 侧问：借用当前会话上下文的一次性问答，不进主会话历史
       const question = String(data.question ?? '').trim()
       if (isCodexKey(hub.key)) {
         const parsed = codexParseKey(hub.key)
@@ -633,13 +679,31 @@ function handleClientMessage(hub: Hub, raw: string): void {
           )
         return
       }
+      // claude：官方 side_question 控制通道（进程内轻量 fork，共享 prompt cache，
+      // 不产生磁盘 FORK 会话）。无流式增量，应答单次返回。
       const parsed = parseKey(hub.key)
-      const sid = session()?.sessionId ?? parsed?.resumeSessionId
+      const sid = session()?.sessionId ?? parsed?.resumeSessionId ?? parsed?.forkFromSessionId
       if (!question || !parsed || !sid) {
         broadcast(hub, { kind: 'btw_result', ok: false, text: '侧问需要已有会话（先发过至少一条消息）' })
         return
       }
-      runBtw(hub, parsed.cwd, sid, question)
+      let s = session()
+      if (!s || s.exited) {
+        ensureSpawned(hub)
+        s = session()
+      }
+      if (!s || s.exited) return // ensureSpawned 已广播具体错误
+      broadcast(hub, { kind: 'btw_pending', question })
+      s.sideQuestion(question)
+        .then((text) => broadcast(hub, { kind: 'btw_result', ok: true, question, text }))
+        .catch((e) =>
+          broadcast(hub, {
+            kind: 'btw_result',
+            ok: false,
+            question,
+            text: `侧问失败: ${e instanceof Error ? e.message : e}`,
+          }),
+        )
       break
     }
     case 'query': {
@@ -708,11 +772,6 @@ function handleClientMessage(hub: Hub, raw: string): void {
   }
 }
 
-// ---------- /btw 一次性侧问 ----------
-
-import { resolveClaudeCommand } from './backends/claude/processManager'
-import { spawn } from 'bun'
-
 // ---------- 接力（handoff）编排 ----------
 
 /**
@@ -748,10 +807,23 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
       if (!sourceCwd) throw new Error('无法确定源会话目录（thread/read 未返回 cwd）')
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_pending', toBackend })
       // 1. 源会话 fork 自摘要
-      const { text: brief, usage } =
-        fromBackend === 'claude'
-          ? await generateClaudeBrief(sourceCwd, sid, detail)
-          : await generateCodexBrief(sid, detail)
+      //    claude 源在线时走 side_question 控制通道（进程内 fork，零冷启动、不留 FORK 会话）；
+      //    离线才 spawn 一次性 --fork-session --bare 进程
+      const { text: brief, usage } = await (async () => {
+        if (fromBackend === 'claude') {
+          const live = processManager.get(fromKey)
+          if (live && !live.exited) {
+            try {
+              const text = await live.sideQuestion(briefPrompt(detail))
+              if (text.trim()) return { text, usage: undefined }
+            } catch {
+              // side_question 失败回落 fork spawn（如 CLI 版本过旧无此通道）
+            }
+          }
+          return generateClaudeBrief(sourceCwd, sid, detail)
+        }
+        return generateCodexBrief(sid, detail)
+      })()
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_brief', brief })
 
       // 2. 目标会话播种（服务端直接发送首条消息）
@@ -828,81 +900,6 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
     }
   })()
   return undefined
-}
-
-function runBtw(hub: Hub, cwd: string, sessionId: string, question: string): void {
-  const { cmd, prefix } = resolveClaudeCommand()
-  // Claude Code -p 支持 -n/--name：写入 custom-title，列表里可区分 fork 出来的侧问会话
-  const oneLine = question.replace(/\s+/g, ' ').trim()
-  const sessionName = `FORK: ${oneLine.length > 60 ? `${oneLine.slice(0, 57)}…` : oneLine}`
-  let proc: ReturnType<typeof spawn>
-  try {
-    proc = spawn(
-      [
-        cmd,
-        ...prefix,
-        '-p',
-        question,
-        '--fork-session',
-        '--resume',
-        sessionId,
-        '-n',
-        sessionName,
-        '--output-format',
-        'stream-json',
-        '--verbose',
-        '--include-partial-messages',
-      ],
-      { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env } },
-    )
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    broadcast(hub, { kind: 'btw_result', ok: false, question, text: `无法启动 claude CLI: ${message}` })
-    return
-  }
-  broadcast(hub, { kind: 'btw_pending', question })
-
-  // 逐行读 NDJSON：text/thinking 增量转发为 btw_delta，result 收尾
-  const pump = async () => {
-    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    let finalText = ''
-    let ok = true
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      let nl: number
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim()
-        buf = buf.slice(nl + 1)
-        if (!line.startsWith('{')) continue
-        let obj: Record<string, unknown>
-        try {
-          obj = JSON.parse(line)
-        } catch {
-          continue
-        }
-        if (obj.type === 'stream_event') {
-          const ev = obj.event as { type?: string; delta?: { type?: string; text?: string; thinking?: string } } | undefined
-          if (ev?.type === 'content_block_delta') {
-            if (ev.delta?.type === 'text_delta' && ev.delta.text) {
-              broadcast(hub, { kind: 'btw_delta', question, delta: ev.delta.text })
-            } else if (ev.delta?.type === 'thinking_delta' && ev.delta.thinking) {
-              broadcast(hub, { kind: 'btw_delta', question, delta: ev.delta.thinking, thinking: true })
-            }
-          }
-        } else if (obj.type === 'result') {
-          finalText = String(obj.result ?? '')
-          ok = obj.is_error !== true
-        }
-      }
-    }
-    const code = await proc.exited
-    broadcast(hub, { kind: 'btw_result', ok: ok && code === 0, question, text: finalText.trim() })
-  }
-  void pump().catch((e) => broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${e}` }))
 }
 
 // ---------- HTTP ----------

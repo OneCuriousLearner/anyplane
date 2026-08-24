@@ -12,8 +12,8 @@ export type ServerEvent =
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
   | { kind: 'rewound'; userMessageId: string; scope?: 'conversation' | 'both' }
-  /** codex 分叉回滚完成：原线程不动，新线程已生成 */
-  | { kind: 'forked'; targetKey: string; targetSessionId: string; fromTurnId: string }
+  /** codex 分叉回滚完成：原线程不动，新线程已生成；claude 懒分叉：branchOf 为源 sessionId */
+  | { kind: 'forked'; targetKey: string; targetSessionId?: string; fromTurnId?: string; branchOf?: string }
   /** 接力进度：源会话 fork 摘要中 */
   | { kind: 'handoff_pending'; toBackend: 'claude' | 'codex' }
   | { kind: 'handoff_brief'; brief: string }
@@ -75,6 +75,8 @@ export interface SessionState {
   tailing?: boolean
   /** 外部会话 pid 文件的状态（busy/idle/waiting） */
   liveStatus?: string
+  /** 当前目标（claude /goal 跟踪 / codex thread/goal 通知） */
+  goal?: { condition: string; since: number; tokensUsed?: number; timeUsedSeconds?: number } | null
   exited?: boolean
   exitCode?: number
 }
@@ -94,6 +96,7 @@ export type ClientCommand =
   | { kind: 'rewind_conversation'; userMessageId: string }
   | { kind: 'rewind_both'; userMessageId: string }
   | { kind: 'btw'; question: string }
+  | { kind: 'branch' }
   | { kind: 'query'; id: string; query: string }
 
 export class SessionSocket {

@@ -91,6 +91,8 @@ export class CodexSession {
   private totalUsage: Record<string, number> | undefined
   /** turn/start 的覆盖项（model/approvalPolicy/sandbox），未 spawn 时缓存 */
   turnOverrides: Params = {}
+  /** 线程目标（thread/goal/* 通知驱动；objective + 官方统计） */
+  goal: { condition: string; since: number; tokensUsed?: number; timeUsedSeconds?: number } | null = null
 
   constructor(
     key: string,
@@ -186,6 +188,23 @@ export class CodexSession {
     this.runtime.registerThread(this.threadId!, this)
     if (this.opts.effort) this.turnOverrides.effort = this.opts.effort
     this.cb.onMessage({ type: 'system', subtype: 'init', session_id: this.threadId, model: this.opts.model })
+    // 回读线程目标：goal 是 durable 的，重连/换端后 chip 需要恢复
+    void this.runtime
+      .rpcRequest('thread/goal/get', { threadId: this.threadId })
+      .then((r) => {
+        const g = (r as { goal?: { objective?: string; createdAt?: number; tokensUsed?: number; timeUsedSeconds?: number } | null })
+          .goal
+        if (g?.objective) {
+          this.goal = {
+            condition: g.objective,
+            since: (g.createdAt ?? 0) * 1000 || Date.now(),
+            tokensUsed: g.tokensUsed,
+            timeUsedSeconds: g.timeUsedSeconds,
+          }
+          this.cb.onStatusChange?.()
+        }
+      })
+      .catch(() => {}) // 旧版 app-server 无 goal API 时静默降级
     this.cb.onStatusChange?.()
   }
 
@@ -219,6 +238,26 @@ export class CodexSession {
           this.totalUsage = tu.total
           this.cb.onStatusChange?.()
         }
+        break
+      }
+      case 'thread/goal/updated': {
+        const g = params.goal as
+          | { objective?: string; status?: string; tokensUsed?: number; timeUsedSeconds?: number; createdAt?: number }
+          | undefined
+        if (g?.objective) {
+          this.goal = {
+            condition: g.objective,
+            since: (g.createdAt ?? 0) * 1000 || Date.now(),
+            tokensUsed: g.tokensUsed,
+            timeUsedSeconds: g.timeUsedSeconds,
+          }
+          this.cb.onStatusChange?.()
+        }
+        break
+      }
+      case 'thread/goal/cleared': {
+        this.goal = null
+        this.cb.onStatusChange?.()
         break
       }
       case 'item/started': {
@@ -386,6 +425,22 @@ export class CodexSession {
             this.emitError(`压缩失败: ${e instanceof Error ? e.message : e}`)
           })
         }
+        break
+      }
+      case 'set_goal': {
+        // thread/goal/set：objective 即条件文本；tokenBudget 协议支持但 UI 不透传（用户决策）
+        const objective = String(extra.objective ?? '').trim()
+        if (!this.threadId || !objective) break
+        void this.runtime
+          .rpcRequest('thread/goal/set', { threadId: this.threadId, objective })
+          .catch((e) => this.emitError(`设置目标失败: ${e instanceof Error ? e.message : e}`))
+        break
+      }
+      case 'clear_goal': {
+        if (!this.threadId) break
+        void this.runtime
+          .rpcRequest('thread/goal/clear', { threadId: this.threadId })
+          .catch((e) => this.emitError(`清除目标失败: ${e instanceof Error ? e.message : e}`))
         break
       }
       default:

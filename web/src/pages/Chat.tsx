@@ -11,12 +11,14 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 
-const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw']
+const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw', 'branch', 'goal']
 const COMMAND_DESC: Record<string, string> = {
   compact: '压缩上下文',
   context: '查看上下文占用',
   rewind: '回滚到之前的消息',
-  btw: '侧问（临时分支会话）',
+  btw: '侧问（借上下文一次性问答，不进历史）',
+  branch: '分叉当前会话为新分支（原会话不动）',
+  goal: '设定目标，agent 持续工作直到达成（/goal clear 清除）',
 }
 
 interface Approval {
@@ -121,6 +123,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailTitle, setDetailTitle] = useState('')
   const [detailContent, setDetailContent] = useState('加载中…')
+  const [goalOpen, setGoalOpen] = useState(false)
+  const [goalDraft, setGoalDraft] = useState('')
   const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -149,7 +153,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
 
   const isCodex = session.key.startsWith('x|') || session.key.startsWith('xn|')
-  const isExisting = session.key.startsWith('s|') || session.key.startsWith('x|')
+  const isExisting = session.key.startsWith('s|') || session.key.startsWith('x|') || session.key.startsWith('b|')
 
   // codex 模型目录（model/list）：模型/effort 档位/默认值
   useEffect(() => {
@@ -408,6 +412,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         if (c?.type === 'tool_result') {
           pairToolResult(c.tool_use_id, toolResultText(c.content), c.is_error === true)
         } else if (c?.type === 'text' && c.text?.trim()) {
+          // /goal 的评估器反馈（Stop hook）：goal 循环内的中途评估，渲染为系统提示而非用户气泡
+          if (c.text.startsWith('Stop hook feedback:')) {
+            const body = c.text.replace(/^Stop hook feedback:\s*/, '')
+            pushSystem(`◎ 目标评估：${body.slice(0, 300)}`)
+            continue
+          }
           textBlocks.push({ kind: 'text', text: c.text })
         }
       }
@@ -545,13 +555,31 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             )
             break
           case 'forked': {
+            if (ev.branchOf) {
+              // claude 懒分叉：b| key 导航，首条消息才真正 --fork-session；
+              // 历史视图直接读源会话 transcript（分支将原样继承它）
+              pushSystem('⎇ 已创建分支：新会话携带当前全部历史，原会话保持不动')
+              props.onNavigate?.({
+                key: ev.targetKey,
+                slug: session.slug,
+                sessionId: ev.branchOf,
+                cwd: session.cwd,
+                backend: 'claude',
+                mtime: Date.now(),
+                sizeBytes: 0,
+                status: 'idle',
+                managed: { spawned: false, busy: false, clients: 0 },
+              })
+              break
+            }
             // codex 分叉回滚完成：原线程不动，跳到携带截断历史的新线程
             pushSystem('⎇ 已分叉：新会话携带所选消息之前的历史，原会话保持不动')
             setShowRewind(false)
             props.onNavigate?.({
               key: ev.targetKey,
               slug: 'codex',
-              sessionId: ev.targetSessionId,
+              // codex 分叉路径服务端始终携带 targetSessionId（branchOf 不存在时）
+              sessionId: ev.targetSessionId ?? '',
               cwd: session.cwd,
               backend: 'codex',
               mtime: Date.now(),
@@ -713,6 +741,24 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     }
   }
 
+  // ---------- goal 设定/清除：claude 走 /goal 斜杠命令（本地命令，不进模型上下文），codex 走 thread/goal RPC ----------
+  const setGoal = (condition: string) => {
+    if (isCodex) {
+      sockRef.current?.send({ kind: 'control', subtype: 'set_goal', extra: { objective: condition } })
+    } else {
+      sockRef.current?.send({ kind: 'user', text: `/goal ${condition}` })
+    }
+    pushSystem(`◎ 已设定目标：${condition}`)
+  }
+  const clearGoal = () => {
+    if (isCodex) {
+      sockRef.current?.send({ kind: 'control', subtype: 'clear_goal' })
+    } else {
+      sockRef.current?.send({ kind: 'user', text: '/goal clear' })
+    }
+    pushSystem('◎ 已清除目标')
+  }
+
   const send = () => {
     const text = input.trim()
     if ((!text && pendingImages.length === 0) || !sockRef.current) return
@@ -725,6 +771,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       const q = text.slice(4).trim()
       if (q) sockRef.current.send({ kind: 'btw', question: q })
       else pushSystem('用法：/btw <问题>')
+      setInput('')
+      return
+    }
+    if (text === '/branch' || text === '/fork') {
+      // 分叉：携带当前全部历史开一个新分支会话（原会话不动）
+      if (isCodex) pushSystem('Codex 请用「回滚」面板的从此处分叉')
+      else sockRef.current.send({ kind: 'branch' })
       setInput('')
       return
     }
@@ -929,6 +982,35 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 详情
               </button>
             )}
+            {(!isCodex || state.sessionId) && (
+              <button
+                className={`shrink-0 rounded border px-2 py-1 font-mono text-[11px] ${
+                  state.goal
+                    ? 'border-ok/60 text-ok'
+                    : 'border-line text-faint hover:text-muted'
+                }`}
+                title={
+                  state.goal
+                    ? `当前目标：${state.goal.condition}（点击管理）`
+                    : '设定目标：agent 会持续工作直到条件达成（claude /goal · codex thread/goal）'
+                }
+                onClick={() => {
+                  setGoalDraft(state.goal?.condition ?? '')
+                  setGoalOpen((v) => !v)
+                }}
+              >
+                {state.goal ? `◎ ${state.goal.condition.slice(0, 12)}${state.goal.condition.length > 12 ? '…' : ''}` : '◎ 目标'}
+              </button>
+            )}
+            {isExisting && !isCodex && (
+              <button
+                className="shrink-0 rounded border border-line px-2 py-1 font-mono text-[11px] text-faint hover:text-muted"
+                title="分叉当前会话：新分支携带全部历史，原会话保持不动"
+                onClick={() => sockRef.current?.send({ kind: 'branch' })}
+              >
+                ⎇ 分叉
+              </button>
+            )}
             {isExisting && (
               <button
                 className="shrink-0 rounded border border-accent/60 px-2 py-1 font-mono text-[11px] text-accent-soft hover:bg-accent/10 disabled:opacity-40"
@@ -948,6 +1030,62 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           </div>
           {usageLine && (
             <div className="mt-1 font-mono text-[10px] tracking-wide text-faint/80">{usageLine}</div>
+          )}
+          {goalOpen && (
+            <div className="mt-2 rounded border border-line bg-surface2/80 p-2">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="font-mono text-[10px] tracking-wide text-faint">
+                  ◎ 会话目标{state.goal ? '（进行中）' : ''}——agent 会持续工作直到条件达成
+                </span>
+                <button className="font-mono text-[10px] text-faint hover:text-muted" onClick={() => setGoalOpen(false)}>
+                  ✕
+                </button>
+              </div>
+              {state.goal && (
+                <div className="mb-1.5 font-mono text-[11px] leading-relaxed text-ok">
+                  当前：{state.goal.condition}
+                  {state.goal.tokensUsed != null && (
+                    <span className="text-faint"> · {state.goal.tokensUsed} tok</span>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-1.5">
+                <input
+                  className="min-w-0 flex-1 rounded border border-line bg-bg px-2 py-1 font-mono text-[11px] text-ink placeholder:text-faint/60"
+                  placeholder={isCodex ? '如：迁移完所有调用点并通过测试' : '如：test/auth 全部通过且 lint 干净'}
+                  value={goalDraft}
+                  onChange={(e) => setGoalDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && goalDraft.trim()) {
+                      setGoal(goalDraft.trim())
+                      setGoalOpen(false)
+                    }
+                  }}
+                />
+                <button
+                  className="shrink-0 rounded border border-ok/60 px-2 py-1 font-mono text-[11px] text-ok disabled:opacity-40"
+                  disabled={!goalDraft.trim()}
+                  onClick={() => {
+                    if (!goalDraft.trim()) return
+                    setGoal(goalDraft.trim())
+                    setGoalOpen(false)
+                  }}
+                >
+                  设定
+                </button>
+                {state.goal && (
+                  <button
+                    className="shrink-0 rounded border border-danger/60 px-2 py-1 font-mono text-[11px] text-danger"
+                    onClick={() => {
+                      clearGoal()
+                      setGoalOpen(false)
+                    }}
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
 

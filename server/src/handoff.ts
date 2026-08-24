@@ -32,7 +32,7 @@ ${brief}
 请先确认现场（git log --oneline、读关键文件验证简报属实），然后继续接手工作。`
 }
 
-// ---------- Claude 侧简报：fork-session 一次性问答（/btw 同款机制，但不广播） ----------
+// ---------- Claude 侧简报：fork-session 一次性问答（源会话不在线时的路径） ----------
 
 export async function generateClaudeBrief(
   cwd: string,
@@ -56,6 +56,10 @@ export async function generateClaudeBrief(
       '--output-format',
       'stream-json',
       '--verbose',
+      // --bare（2.1.220 实测与 fork-session 兼容）：跳过 hooks/LSP/plugin 同步/CLAUDE.md
+      // 自动发现等，一次性 spawn 提速约 46%（5.6s→3.0s）。简报内容来自对话历史，
+      // CLAUDE.md 缺席对简报质量影响可忽略；用户 hooks 在临时 fork 上本就不该触发。
+      '--bare',
     ],
     { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env } },
   )

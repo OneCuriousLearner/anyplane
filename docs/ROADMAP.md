@@ -1,0 +1,78 @@
+# cc-remote 后续规划（ROADMAP）
+
+> 2026-08-24 立。前置：统一 Agent 控制面 8 阶段计划已全部完成（见 `PLAN-unified-agent-plane.md`）。
+> 本文档收录已讨论定论、待排期的方向；每条附决策依据，避免将来重新论证。
+
+## 定位备忘（为什么做这些）
+
+官方远程能力（Remote Control / claude.ai/code / codex remoteControl）对 **API-key 与 gateway 用户硬性禁用**
+（Remote Control 文档：订阅限定；v2.1.196 起 ANTHROPIC_BASE_URL 指向 gateway 即禁用）。
+cc-remote 是这群用户的控制面：本地优先、provider 中立、双供应商。以下方向都服务于这个定位，
+不追官方云能力（云同步/E2EE/多设备），不与官方 TUI（agent view）赛跑 UI。
+
+## 方向一：推送通知（手机审批闭环的最后一环）
+
+**现状缺口**：inbox 已有跨会话审批/完成汇总 + 页面隐藏时的桌面通知（Notification API），
+但手机锁屏/切后台后浏览器收不到 WS，审批会卡住等用户回来看。
+
+**方案**：VAPID Web Push（不自建推送服务，用浏览器厂商 push service，免费）：
+
+- `web/push`: subscription 对象经 REST 登记到服务端（`~/.cc-remote/push-subscriptions.json`，不自动清理）。
+- 触发点：`publishInbox` 的 approval/done/error 三类事件 → 向全部订阅推送（payload 只放标题+会话 key，详情回连再拉）。
+- 前置条件：HTTPS。Tailscale serve/funnel 证书天然满足；localhost 开发期用 PWA 安装后的通知权限即可自测。
+- 后端选型：Bun 无原生 web-push 库，引 `web-push`（npm 包，纯 JS 无原生依赖）或手写 VAPID JWT + AES-GCM（RFC 8291，~150 行，零依赖）。倾向先引库，验证后视依赖洁癖再决定是否手写。
+- 注意 iOS Safari：Web Push 要求 16.4+ 且 PWA **已添加到主屏幕**，否则权限框都不弹。UI 需要引导文案。
+
+**验收**：手机锁屏状态下收到审批推送，点击直达对应会话并弹出审批卡。
+
+## 方向二：App 壳（Capacitor，不换技术栈）
+
+**定论**：不做 RN 重写（代码翻倍、维护翻倍，happy 的路线不是我们的路线）；
+用 **Capacitor 套壳现有 PWA** 打出 iOS/Android 原生包——日常开发仍是写 React，新增的只是构建链。
+
+**价值**：
+- App Store / Google Play 上架 = 分发实体（项目里程碑性质的目标）
+- 原生推送（APNs/FCM 插件）比 Web Push 更可靠，方向一可以先在壳内落地
+- 分享面板、生物识别锁（可选）等原生能力解锁
+
+**步骤草拟**：
+1. `bun add @capacitor/core @capacitor/cli`，`npx cap init`（构建产物指向 `web/dist`）
+2. 壳内服务器地址配置页（首次启动填 `https://xxx.ts.net` + token；现在 PWA 靠 URL 参数）
+3. 推送插件接入（`@capacitor/push-notifications`），复用方向一的登记端点
+4. iOS 需要 $99/年开发者账号；Android 可直接侧载 APK 先行
+5. 上架材料：隐私声明（本地直连、无遥测——这本身是卖点）
+
+**验收**：Android APK 侧载可用（连接/审批/推送全通）；iOS TestFlight 内测。
+
+## 方向三：公网接入（不自购云服务器）
+
+**定论**：优先级 Tailscale funnel > Cloudflare Tunnel > 家宽 IPv6 直连；都不需要自购 VPS。
+
+| 方案 | 花费 | 第三方可见性 | 备注 |
+|---|---|---|---|
+| Tailscale funnel | 免费 | 边缘节点只转发加密 TCP，TLS 在本机终止 | 已在 README 推荐 serve；funnel 仅多一步 |
+| Cloudflare Tunnel | 免费 | CF 边缘终止 TLS（可见明文），换来 Access 认证层 | 要稳定域名 + WAF 时选 |
+| 家宽 IPv6 + DDNS | 零 | 无第三方 | 国内家宽多有公网 v6；注意运营商入站过滤与自身防火墙 |
+
+**落地工作**：
+- README 补三套配方（funnel 一条命令；cloudflared compose；v6 + Caddy 自动证书）
+- 安全红线复用现有：非回环绑定必须 authToken（启动强制）；文档明确 `/api/fs/list` 的暴露等级
+- 可选加固：funnel/CF 层访问控制（IP 白名单/Access），或服务端 mTLS
+
+**验收**：手机蜂窝网络（非 Wi-Fi）经公网 URL 完成一次审批全链路。
+
+## 已验证但暂不做的（决策记录）
+
+- **daemon socket 深度集成**（agent view supervisor 的 control.sock）：协议 proto 版本锁死，官方明示版本不一致即拒——只能 opportunistic 增强，不当基石。`claude agents --json --all` 是文档化脚本接口，可用于"会话在终端活着"的状态增强（待排期）。
+- **codex token_budget**：thread/goal/set 协议字段已透传，UI 不做——token ≠ 钱，预算心智账户建不起来；等真实无人值守批处理场景出现再点亮。
+- **codex `permissions` named-profile 迁移**：`sandboxPolicy` 未 deprecated，不急；迁移时注意 `sandboxPolicy` 与 `permissions` 互斥不能同发。升级 codex 前跑 `bun run server/scripts/check-codex-schema.ts`。
+- **codex `thread/revert`**：仓库里有（实验性，按 turn id 截断 durable history），0.148 未发布；发布后替代 RewindPicker 的 fork 截断做"真回滚"。
+- **MCP 管理面板**：`mcp_status/mcp_set_servers/mcp_reconnect/mcp_toggle` 都在已支持的 23 个 control subtype 内，纯前端工作，小任务待排期。
+- **`generate_session_title` 控制通道**：官方自动标题（side_question 同款 fire-and-forget），可替换列表页的标题来源，未实测。
+
+## 更远的地平线（只记录，不动手）
+
+两家官方都在建各自的 agent 互联（claude 2.1.224 跨会话 SendMessage/ListAgents；codex remoteControl/pairing），
+但都是围墙花园。cc-remote 同时长在两家协议上，是唯一可能成为**跨供应商 agent 消息路由**的位置。
+handoff 是这个路由的雏形（一次性、单向、带上下文）；成熟形态是双向持续消息总线。
+等两边协议出 research preview 再评估；lineage.json 字段设计不要锁死在"一次性接力"模型上。

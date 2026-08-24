@@ -1,5 +1,6 @@
 // Claude 后端门面：把 discovery / processManager / tailer 收敛为 AgentBackend 形状。
-// sessionKey：已存在会话 `s|<slug>|<sessionId>`；新会话 `n|<encodeURIComponent(cwd)>`。
+// sessionKey：已存在会话 `s|<slug>|<sessionId>`；新会话 `n|<encodeURIComponent(cwd)>`；
+// 分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息才 --fork-session）。
 
 import { config } from '../../config'
 import type { SessionSummary } from '../types'
@@ -20,8 +21,20 @@ export function keyForNew(cwd: string): string {
   return `n|${encodeURIComponent(cwd)}`
 }
 
+export function keyForBranch(cwd: string, sourceSessionId: string): string {
+  return `b|${encodeURIComponent(cwd)}|${sourceSessionId}`
+}
+
+export interface ParsedKey {
+  cwd: string
+  resumeSessionId?: string
+  slug?: string
+  /** b| 分叉：首条消息 spawn 时以此为 --fork-session --resume 的源 */
+  forkFromSessionId?: string
+}
+
 /** parseKey 靠 listSessions() 反查 cwd——slug 目录被删时 key 无法解析（已知限制） */
-export function parseKey(key: string): { cwd: string; resumeSessionId?: string; slug?: string } | null {
+export function parseKey(key: string): ParsedKey | null {
   const parts = key.split('|')
   if (parts[0] === 's' && parts.length === 3) {
     const [, slug, sessionId] = parts
@@ -31,6 +44,9 @@ export function parseKey(key: string): { cwd: string; resumeSessionId?: string; 
   }
   if (parts[0] === 'n' && parts.length === 2) {
     return { cwd: decodeURIComponent(parts[1]) }
+  }
+  if (parts[0] === 'b' && parts.length === 3) {
+    return { cwd: decodeURIComponent(parts[1]), forkFromSessionId: parts[2] }
   }
   return null
 }
@@ -55,6 +71,7 @@ export const claudeBackend = {
   name: 'claude' as const,
   keyFor,
   keyForNew,
+  keyForBranch,
   parseKey,
   listSessions: (): SessionSummary[] => listSessions().map(toSummary),
   readHistory,

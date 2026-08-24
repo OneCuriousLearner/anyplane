@@ -21,6 +21,8 @@ export type ControlRequestSubtype =
   | 'rewind_files'
   | 'mcp_status'
   | 'get_settings'
+  // 进程内侧问（2.1.220 实测可用）：复用对话上下文与 prompt cache，不产生 FORK 会话
+  | 'side_question'
 
 export interface ControlRequestInput {
   type: 'control_request'

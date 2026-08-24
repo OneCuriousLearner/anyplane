@@ -113,8 +113,6 @@ bun run docs:claude
 bun run gateway --insecure   # 仅授信内网；有 authToken 则可去掉 --insecure
 ```
 
-启动时若 80/443 已被**上一份** `scripts/gateway.ts` 占用，会 SIGTERM 替换后继续听；nginx/sshd 等其它进程不会动（`--no-replace` 可关闭替换）。
-
 | 怎么进 | 落到哪 |
 |---|---|
 | `http://cc-remote.devcloud.woa.com/` | 生产 `:7480`（默认，无角标） |

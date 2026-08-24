@@ -27,6 +27,9 @@ export interface SpawnOptions {
   resumeSessionId?: string
   /** 对话回滚：加载到指定消息处截断（配合 resumeSessionId） */
   resumeSessionAt?: string
+  /** 分叉：以 --fork-session --resume 启动，携带源会话全部历史、获得新 sessionId。
+   *  与 resumeSessionId 互斥（fork 即 resume 的一种形态）。 */
+  forkFromSessionId?: string
   model?: string
   effort?: string
   permissionMode?: string
@@ -206,7 +209,11 @@ export class ClaudeSession {
       // 关键：把权限询问外化为 stdout 的 can_use_tool 控制请求（与 --sdk-url 内部行为一致）
       '--permission-prompt-tool', 'stdio',
     ]
-    if (this.opts.resumeSessionId) args.push('--resume', this.opts.resumeSessionId)
+    if (this.opts.forkFromSessionId) {
+      args.push('--fork-session', '--resume', this.opts.forkFromSessionId)
+    } else if (this.opts.resumeSessionId) {
+      args.push('--resume', this.opts.resumeSessionId)
+    }
     if (this.opts.resumeSessionAt) args.push('--resume-session-at', this.opts.resumeSessionAt)
     if (this.opts.model) args.push('--model', this.opts.model)
     if (this.opts.effort) args.push('--effort', this.opts.effort)
@@ -334,6 +341,18 @@ export class ClaudeSession {
 
   sendApproval(requestId: string, decision: ApprovalDecision): void {
     this.write(approvalResponse(requestId, decision))
+  }
+
+  /**
+   * 官方进程内侧问（headless 2.1.220 实测）：CLI 内部 fork 一个无工具的轻量 agent，
+   * 复用主会话的 prompt cache 与对话上下文，不产生磁盘 FORK 会话、不打断进行中的 turn。
+   * 应答是单次的（无流式），一次 API 往返，给足超时。
+   */
+  async sideQuestion(question: string): Promise<string> {
+    const resp = (await this.sendControlAndWait('side_question', { question }, 180_000)) as {
+      response?: string | null
+    }
+    return resp?.response ?? ''
   }
 
   attachClient(): void {
