@@ -9,7 +9,11 @@ import { Markdown } from '../components/Markdown'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
+import { PopupPanel } from '../components/PopupPanel'
 import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+
+const MORE_ITEM =
+  'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface2/60 hover:text-ink'
 
 const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw', 'branch', 'goal']
 const COMMAND_DESC: Record<string, string> = {
@@ -125,6 +129,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [detailContent, setDetailContent] = useState('加载中…')
   const [goalOpen, setGoalOpen] = useState(false)
   const [goalDraft, setGoalDraft] = useState('')
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreBtnRef = useRef<HTMLButtonElement>(null)
   const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -165,6 +171,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   // 接力链：当前会话参与的血缘记录（仅在链上时显示导航条）
   useEffect(() => {
+    setMoreOpen(false)
+    setGoalOpen(false)
+    setDetailOpen(false)
     setLineage(undefined)
     fetchLineage(session.key)
       .then((r) => setLineage(r.records.length > 0 ? r : undefined))
@@ -970,62 +979,116 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
               </div>
             </div>
-            {isExisting && (
-              <button
-                className="shrink-0 rounded border border-line px-2 py-1 font-mono text-[11px] text-faint hover:text-muted"
-                title="会话详情：context 用量 / MCP 状态 / 设置"
-                onClick={() => {
-                  setDetailOpen((v) => !v)
-                  if (!detailOpen) runQuery('get_context_usage', 'context 用量')
-                }}
-              >
-                详情
-              </button>
-            )}
-            {(!isCodex || state.sessionId) && (
-              <button
-                className={`shrink-0 rounded border px-2 py-1 font-mono text-[11px] ${
-                  state.goal
-                    ? 'border-ok/60 text-ok'
-                    : 'border-line text-faint hover:text-muted'
-                }`}
-                title={
-                  state.goal
-                    ? `当前目标：${state.goal.condition}（点击管理）`
-                    : '设定目标：agent 会持续工作直到条件达成（claude /goal · codex thread/goal）'
-                }
-                onClick={() => {
-                  setGoalDraft(state.goal?.condition ?? '')
-                  setGoalOpen((v) => !v)
-                }}
-              >
-                {state.goal ? `◎ ${state.goal.condition.slice(0, 12)}${state.goal.condition.length > 12 ? '…' : ''}` : '◎ 目标'}
-              </button>
-            )}
-            {isExisting && !isCodex && (
-              <button
-                className="shrink-0 rounded border border-line px-2 py-1 font-mono text-[11px] text-faint hover:text-muted"
-                title="分叉当前会话：新分支携带全部历史，原会话保持不动"
-                onClick={() => sockRef.current?.send({ kind: 'branch' })}
-              >
-                ⎇ 分叉
-              </button>
-            )}
-            {isExisting && (
-              <button
-                className="shrink-0 rounded border border-accent/60 px-2 py-1 font-mono text-[11px] text-accent-soft hover:bg-accent/10 disabled:opacity-40"
-                disabled={handoffBusy}
-                title="让另一个 agent 接续本目录的工作（源会话 fork 自写简报，目标会话带简报进场）"
-                onClick={() => {
-                  const toBackend = isCodex ? 'claude' : 'codex'
-                  setHandoffBusy(true)
-                  startHandoff(session.key, toBackend)
-                    .catch((e) => pushSystem(`⚠ 接力失败: ${e instanceof Error ? e.message : e}`, 'error'))
-                    .finally(() => setHandoffBusy(false))
-                }}
-              >
-                {handoffBusy ? '接力中…' : `⇄ 接力给${isCodex ? ' Claude' : ' Codex'}`}
-              </button>
+            {(isExisting || !isCodex || state.sessionId) && (
+              <>
+                <button
+                  ref={moreBtnRef}
+                  type="button"
+                  className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded border text-faint hover:text-muted ${
+                    moreOpen ? 'border-accent/50 text-ink' : 'border-line'
+                  }`}
+                  title="更多"
+                  aria-label="更多"
+                  aria-haspopup="menu"
+                  aria-expanded={moreOpen}
+                  onClick={() => setMoreOpen((v) => !v)}
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    className="h-3.5 w-3.5"
+                    aria-hidden
+                  >
+                    <path d="M2.5 4.25h11" />
+                    <path d="M2.5 8h11" />
+                    <path d="M2.5 11.75h11" />
+                  </svg>
+                  {state.goal && (
+                    <span className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-ok" aria-hidden />
+                  )}
+                </button>
+                <PopupPanel
+                  open={moreOpen}
+                  anchor={moreBtnRef.current}
+                  onClose={() => setMoreOpen(false)}
+                  placement="bottom-end"
+                  offset={6}
+                  className="min-w-44"
+                >
+                  {isExisting && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={MORE_ITEM}
+                      title="会话详情：context 用量 / MCP 状态 / 设置"
+                      onClick={() => {
+                        setMoreOpen(false)
+                        setDetailOpen((v) => !v)
+                        if (!detailOpen) runQuery('get_context_usage', 'context 用量')
+                      }}
+                    >
+                      详情
+                    </button>
+                  )}
+                  {(!isCodex || state.sessionId) && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={`${MORE_ITEM} ${state.goal ? 'text-ok hover:text-ok' : ''}`}
+                      title={
+                        state.goal
+                          ? `当前目标：${state.goal.condition}（点击管理）`
+                          : '设定目标：agent 会持续工作直到条件达成（claude /goal · codex thread/goal）'
+                      }
+                      onClick={() => {
+                        setMoreOpen(false)
+                        setGoalDraft(state.goal?.condition ?? '')
+                        setGoalOpen((v) => !v)
+                      }}
+                    >
+                      {state.goal
+                        ? `◎ ${state.goal.condition.slice(0, 16)}${state.goal.condition.length > 16 ? '…' : ''}`
+                        : '◎ 目标'}
+                    </button>
+                  )}
+                  {isExisting && !isCodex && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={MORE_ITEM}
+                      title="分叉当前会话：新分支携带全部历史，原会话保持不动"
+                      onClick={() => {
+                        setMoreOpen(false)
+                        sockRef.current?.send({ kind: 'branch' })
+                      }}
+                    >
+                      ⎇ 分叉
+                    </button>
+                  )}
+                  {isExisting && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={`${MORE_ITEM} text-accent-soft hover:text-accent-soft disabled:opacity-40`}
+                      disabled={handoffBusy}
+                      title="让另一个 agent 接续本目录的工作（源会话 fork 自写简报，目标会话带简报进场）"
+                      onClick={() => {
+                        setMoreOpen(false)
+                        const toBackend = isCodex ? 'claude' : 'codex'
+                        setHandoffBusy(true)
+                        startHandoff(session.key, toBackend)
+                          .catch((e) => pushSystem(`⚠ 接力失败: ${e instanceof Error ? e.message : e}`, 'error'))
+                          .finally(() => setHandoffBusy(false))
+                      }}
+                    >
+                      {handoffBusy ? '接力中…' : `⇄ 接力给${isCodex ? ' Claude' : ' Codex'}`}
+                    </button>
+                  )}
+                </PopupPanel>
+              </>
             )}
           </div>
           {usageLine && (
