@@ -10,20 +10,22 @@
 cc-remote 是这群用户的控制面：本地优先、provider 中立、双供应商。以下方向都服务于这个定位，
 不追官方云能力（云同步/E2EE/多设备），不与官方 TUI（agent view）赛跑 UI。
 
-## 方向一：推送通知（手机审批闭环的最后一环）
+## 方向一：推送通知（手机审批闭环的最后一环）——✅ 已完成（2026-08-25）
 
-**现状缺口**：inbox 已有跨会话审批/完成汇总 + 页面隐藏时的桌面通知（Notification API），
-但手机锁屏/切后台后浏览器收不到 WS，审批会卡住等用户回来看。
+**已交付**（commit 见 git log）：
+- 服务端 `push.ts`：自实现 VAPID + aes128gcm（不依赖 web-push——其 node:https 假定 TLS）。
+  订阅注册表 `~/.cc-remote/push-subscriptions.json`（per-subscription 能力密钥），VAPID 密钥 `~/.cc-remote/vapid.json`。
+- inbox 事件（approval/done/error）fan-out；审批推送内容详细（工具名 + 命令摘要 + 项目名——锁屏脱敏交给 OS）。
+- **通知直接审批**：能力 URL（`/api/approval-action?k&r&d&s=<secret>`），SW 通知按钮回POST 即裁决，不开页面；
+  绕开 authToken（能力模型），仅对 pending 中的 requestId 有效。
+- 前端：sw.js push/notificationclick、订阅面板（列表页铃铛）、`#s=<key>` 深链。
+- 验证：`server/scripts/e2e-push.ts` 15 项全过（mock push service + 独立实现解密反证加密正确 +
+  能力审批 + 403 拒绝 + 410 清理）。
 
-**方案**：VAPID Web Push（不自建推送服务，用浏览器厂商 push service，免费）：
-
-- `web/push`: subscription 对象经 REST 登记到服务端（`~/.cc-remote/push-subscriptions.json`，不自动清理）。
-- 触发点：`publishInbox` 的 approval/done/error 三类事件 → 向全部订阅推送（payload 只放标题+会话 key，详情回连再拉）。
-- 前置条件：HTTPS。Tailscale serve/funnel 证书天然满足；localhost 开发期用 PWA 安装后的通知权限即可自测。
-- 后端选型：Bun 无原生 web-push 库，引 `web-push`（npm 包，纯 JS 无原生依赖）或手写 VAPID JWT + AES-GCM（RFC 8291，~150 行，零依赖）。倾向先引库，验证后视依赖洁癖再决定是否手写。
-- 注意 iOS Safari：Web Push 要求 16.4+ 且 PWA **已添加到主屏幕**，否则权限框都不弹。UI 需要引导文案。
-
-**验收**：手机锁屏状态下收到审批推送，点击直达对应会话并弹出审批卡。
+**剩余待办（未做）**：
+- ~~webhook 通道（ntfy/Bark/Server酱）~~ → 见下，仍是独立可后补项：国内 Android 无 FCM 环境的出路。
+  分发层已就绪，加通道 = 在 fanoutPush 里多一个 POST 分支 + 配置数组。
+- iOS 实测：需 PWA 加到主屏幕后订阅；图标已备 PNG（icon-192/512）。
 
 ## 方向二：App 壳（Capacitor，不换技术栈）
 

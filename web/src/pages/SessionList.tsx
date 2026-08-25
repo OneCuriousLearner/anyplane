@@ -11,6 +11,8 @@ import {
   type SessionInfo,
 } from '../lib/api'
 import { InboxSocket, type InboxApproval } from '../lib/inbox'
+import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
+import { BellIcon } from '../components/BellIcon'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
 import { ConfirmDialog, PromptDialog } from '../components/Dialogs'
@@ -55,6 +57,10 @@ export function SessionList(props: {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [approvals, setApprovals] = useState<InboxApproval[]>([])
   const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1')
+  /** 推送订阅状态：已订阅时为 push service endpoint */
+  const [pushEndpoint, setPushEndpoint] = useState<string | null>(null)
+  const [pushBusy, setPushBusy] = useState(false)
+  const [notifyMenuOpen, setNotifyMenuOpen] = useState(false)
   const [view, setView] = useState<'active' | 'archived'>('active')
   const [archived, setArchived] = useState<ArchivedEntry[]>([])
   const [collapsed, setCollapsed] = useState(loadCollapsed)
@@ -148,6 +154,33 @@ export function SessionList(props: {
     localStorage.setItem(NOTIFY_KEY, granted ? '1' : '0')
   }
 
+  // 挂载时读取推送订阅现状
+  useEffect(() => {
+    void currentPushEndpoint().then(setPushEndpoint)
+  }, [])
+
+  const togglePush = async () => {
+    if (pushBusy) return
+    setPushBusy(true)
+    try {
+      if (pushEndpoint) {
+        await unsubscribePush()
+        setPushEndpoint(null)
+        showToast('已退订推送', 'ok')
+      } else {
+        const r = await subscribePush()
+        if (r.ok) {
+          setPushEndpoint(await currentPushEndpoint())
+          showToast('推送已订阅：锁屏也能收到审批/完成通知', 'ok')
+        } else {
+          showToast(`订阅失败：${r.error}`, 'err')
+        }
+      }
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
   const refresh = () => {
     fetchSessions()
       .then(setSessions)
@@ -220,20 +253,73 @@ export function SessionList(props: {
             cc-remote
           </h1>
           <div className="flex items-center gap-2">
-            <button
-              className={`relative rounded border px-2 py-1 font-mono text-xs ${
-                notify ? 'border-accent/60 text-accent-soft' : 'border-line text-faint'
-              }`}
-              title={notify ? '桌面通知已开启（页面隐藏时推送）' : '开启桌面通知'}
-              onClick={toggleNotify}
-            >
-              🔔
-              {approvals.length > 0 && (
-                <span className="absolute -right-1.5 -top-1.5 rounded-full bg-danger px-1 text-[9px] leading-4 text-white">
-                  {approvals.length}
-                </span>
-              )}
-            </button>
+            <div>
+              <button
+                className={`relative flex items-center rounded border px-2 py-1 ${
+                  notify || pushEndpoint ? 'border-accent/60 text-accent-soft' : 'border-line text-faint'
+                }`}
+                title="通知设置"
+                onClick={() => setNotifyMenuOpen((v) => !v)}
+              >
+                <BellIcon className="h-3.5 w-3.5" active={notify || !!pushEndpoint} />
+                {approvals.length > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 rounded-full bg-danger px-1 text-[9px] leading-4 text-white">
+                    {approvals.length}
+                  </span>
+                )}
+              </button>
+              {notifyMenuOpen &&
+                // portal 到 body + 从视口左边框起绘：侧栏很窄时绝对定位会探出屏幕左缘
+                createPortal(
+                  <>
+                    {/* 点击空白处关闭 */}
+                    <div className="fixed inset-0 z-40" onClick={() => setNotifyMenuOpen(false)} />
+                    <div className="fixed left-2 right-2 top-2 z-50 mx-auto max-w-sm rounded-md border border-line bg-surface p-2 shadow-xl">
+                    <div className="px-1 pb-1.5 font-mono text-[10px] tracking-widest text-faint uppercase">
+                      通知
+                    </div>
+                    {/* 页内通知：页面隐藏时用 Notification API */}
+                    <button
+                      className="flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left hover:bg-surface2"
+                      onClick={toggleNotify}
+                    >
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${notify ? 'bg-ok' : 'bg-faint'}`} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-mono text-[11px] text-ink">页内通知</span>
+                        <span className="block text-[10px] leading-snug text-faint">页面在后台时弹桌面通知</span>
+                      </span>
+                      <span className="font-mono text-[10px] text-faint">{notify ? '开' : '关'}</span>
+                    </button>
+                    {/* Web Push：SW 离线可达，支持锁屏直接审批 */}
+                    <button
+                      className="flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left hover:bg-surface2 disabled:opacity-50"
+                      onClick={togglePush}
+                      disabled={pushBusy || !pushSupported()}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${pushEndpoint ? 'bg-ok' : 'bg-faint'}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-mono text-[11px] text-ink">
+                          {pushBusy ? '处理中…' : '推送通知'}
+                        </span>
+                        <span className="block text-[10px] leading-snug text-faint">
+                          {pushSupported()
+                            ? pushEndpoint
+                              ? '已订阅：锁屏可达，通知上可直接审批'
+                              : '锁屏/杀掉页面也能收到，通知上可直接审批'
+                            : '当前浏览器不支持（iOS 需先加到主屏幕）'}
+                        </span>
+                      </span>
+                      {pushSupported() && (
+                        <span className="font-mono text-[10px] text-faint">{pushEndpoint ? '退订' : '订阅'}</span>
+                      )}
+                    </button>
+                  </div>
+                  </>,
+                  document.body,
+                )}
+            </div>
             <button
               className="rounded border border-accent/60 px-2.5 py-1 font-mono text-xs text-accent-soft hover:bg-accent/10"
               onClick={() => setPickerOpen(true)}

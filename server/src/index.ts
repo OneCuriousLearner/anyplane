@@ -16,6 +16,15 @@ import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive
 import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 import { resolveUpload } from './uploads'
 import {
+  addSubscription,
+  pushToAll,
+  removeSubscription,
+  subscriptionCount,
+  vapidPublicKey,
+  validSecret,
+  type PushPayload,
+} from './push'
+import {
   appendLineage,
   briefPrompt,
   generateClaudeBrief,
@@ -84,13 +93,76 @@ type InboxEvent =
   | { type: 'error'; key: string; message: string }
 
 function publishInbox(ev: InboxEvent): void {
-  if (inboxClients.size === 0) return
-  const text = JSON.stringify(ev)
-  for (const ws of inboxClients) {
-    try {
-      ws.send(text)
-    } catch {}
+  if (inboxClients.size > 0) {
+    const text = JSON.stringify(ev)
+    for (const ws of inboxClients) {
+      try {
+        ws.send(text)
+      } catch {}
+    }
   }
+  fanoutPush(ev)
+}
+
+// ---------- Web Push 分发（订阅为 0 时零开销） ----------
+
+/** 会话显示名：项目目录 basename（approval 只在 spawn 后发生，spawnOpts.cwd 必有） */
+function sessionNameOf(key: string): string {
+  const hub = hubs.get(key)
+  const cwd = hub?.spawnOpts?.cwd ?? (isCodexKey(key) ? undefined : parseKey(key)?.cwd)
+  return cwd ? (cwd.replace(/\/+$/, '').split('/').pop() ?? cwd) : key.slice(0, 18)
+}
+
+/** 审批输入摘要：Bash 给命令、Edit/Write 给路径，其余给 JSON 截断 */
+function summarizeInput(toolName: string, input: unknown): string {
+  const obj = (input ?? {}) as Record<string, unknown>
+  if (toolName === 'Bash') return String(obj.command ?? '').slice(0, 400)
+  if (obj.file_path) return String(obj.file_path)
+  if (obj.path) return String(obj.path)
+  const json = JSON.stringify(input ?? {})
+  return json.length > 300 ? json.slice(0, 300) + '…' : json
+}
+
+function fanoutPush(ev: InboxEvent): void {
+  if (subscriptionCount() === 0) return
+  if (ev.type === 'approval_resolved') return // 审批已处理，无需推送（通知 tag 替换语义下保留现状即可）
+  const session = sessionNameOf(ev.key)
+  let payload: PushPayload
+  if (ev.type === 'approval') {
+    payload = {
+      type: 'approval',
+      title: `需要审批 · ${ev.toolName}`,
+      body: `${session}｜${summarizeInput(ev.toolName, ev.input)}`,
+      key: ev.key,
+      session,
+      requestId: ev.requestId,
+      // 能力 URL：secret 由 pushToAll 按订阅逐个补全（每个订阅一个能力密钥）
+      actions: {
+        allow: `/api/approval-action?k=${encodeURIComponent(ev.key)}&r=${encodeURIComponent(ev.requestId)}&d=allow&s=`,
+        deny: `/api/approval-action?k=${encodeURIComponent(ev.key)}&r=${encodeURIComponent(ev.requestId)}&d=deny&s=`,
+      },
+      tag: `ccr-a-${ev.requestId}`,
+    }
+  } else if (ev.type === 'done') {
+    payload = {
+      type: 'done',
+      title: `${ev.ok ? '✓ 完成' : '✗ 结束（有错）'} · ${session}`,
+      body: '会话已空闲，点击查看结果',
+      key: ev.key,
+      session,
+      tag: `ccr-d-${ev.key}`,
+    }
+  } else {
+    payload = {
+      type: 'error',
+      title: `⚠ 出错 · ${session}`,
+      body: ev.message.slice(0, 300),
+      key: ev.key,
+      session,
+      tag: `ccr-e-${ev.key}`,
+    }
+  }
+  void pushToAll(payload).catch((e) => console.warn('[push] fanout 异常:', e))
 }
 
 /** inbox 快照：所有 Hub 的待审批与忙闲状态（新连接建立时下发） */
@@ -740,36 +812,42 @@ function handleClientMessage(hub: Hub, raw: string): void {
     }
     case 'approval': {
       const requestId = String(data.requestId)
-      hub.pendingApprovals.delete(requestId)
-      if (isCodexKey(hub.key)) {
-        const s = codexRuntime.get(hub.key)
-        if (s && !s.exited) {
-          try {
-            s.sendApproval(requestId, data.decision as ApprovalDecision)
-          } catch (e) {
-            broadcast(hub, { kind: 'error', message: `审批回复失败: ${e}` })
-          }
-        }
-        broadcast(hub, { kind: 'approval_resolved', requestId })
-        publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
-        pushStatus(hub)
-        return
-      }
-      const s = session()
-      if (s && !s.exited) {
-        try {
-          s.sendApproval(requestId, data.decision as ApprovalDecision)
-        } catch (e) {
-          broadcast(hub, { kind: 'error', message: `审批回复失败: ${e}` })
-        }
-      }
-      broadcast(hub, { kind: 'approval_resolved', requestId })
-      publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
-      pushStatus(hub)
-      s?.notifyExternalGate()
+      resolveApproval(hub, requestId, data.decision as ApprovalDecision)
       break
     }
   }
+}
+
+/**
+ * 审批解析共享路径：WS approval 消息与推送直接审批（/api/approval-action）共用。
+ * 返回 false 表示 requestId 已不在 pending（重复点击/已在别处处理）。
+ */
+function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
+  if (!hub.pendingApprovals.delete(requestId)) return false
+  if (isCodexKey(hub.key)) {
+    const s = codexRuntime.get(hub.key)
+    if (s && !s.exited) {
+      try {
+        s.sendApproval(requestId, decision)
+      } catch (e) {
+        broadcast(hub, { kind: 'error', message: `审批回复失败: ${e}` })
+      }
+    }
+  } else {
+    const s = processManager.get(hub.key)
+    if (s && !s.exited) {
+      try {
+        s.sendApproval(requestId, decision)
+      } catch (e) {
+        broadcast(hub, { kind: 'error', message: `审批回复失败: ${e}` })
+      }
+    }
+    s?.notifyExternalGate()
+  }
+  broadcast(hub, { kind: 'approval_resolved', requestId })
+  publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
+  pushStatus(hub)
+  return true
 }
 
 // ---------- 接力（handoff）编排 ----------
@@ -953,6 +1031,54 @@ if (!hasWindowsSocketFix && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
 }
 
 async function handleApi(req: Request, url: URL): Promise<Response | undefined> {
+  // ---------- Web Push 订阅管理 ----------
+  if (url.pathname === '/api/push/public-key' && req.method === 'GET') {
+    return json({ publicKey: vapidPublicKey(), subscriptions: subscriptionCount() })
+  }
+  if (url.pathname === '/api/push/subscriptions' && req.method === 'POST') {
+    const body = (await req.json().catch(() => ({}))) as {
+      endpoint?: string
+      keys?: { p256dh: string; auth: string }
+    }
+    if (!body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
+      return json({ error: 'endpoint 与 keys.p256dh/auth 必填' }, { status: 400 })
+    }
+    const { secret } = addSubscription(
+      { endpoint: body.endpoint, keys: body.keys },
+      req.headers.get('user-agent') ?? undefined,
+    )
+    console.log(`[push] 新订阅（共 ${subscriptionCount()}）：${body.endpoint.slice(0, 60)}…`)
+    return json({ ok: true, secret })
+  }
+  if (url.pathname === '/api/push/subscriptions' && req.method === 'DELETE') {
+    const body = (await req.json().catch(() => ({}))) as { endpoint?: string }
+    return json({ ok: body.endpoint ? removeSubscription(body.endpoint) : false })
+  }
+  // 推送直接审批（能力 URL：secret 鉴权，不走 authToken——该 URL 只经加密推送投递到订阅设备）
+  if (url.pathname === '/api/approval-action' && req.method === 'POST') {
+    const key = url.searchParams.get('k') ?? ''
+    const requestId = url.searchParams.get('r') ?? ''
+    const decision = url.searchParams.get('d') ?? ''
+    const secret = url.searchParams.get('s') ?? ''
+    if (!validSecret(secret)) return json({ ok: false, error: '无效的能力密钥' }, { status: 403 })
+    if (decision !== 'allow' && decision !== 'deny') {
+      return json({ ok: false, error: 'd 只接受 allow/deny' }, { status: 400 })
+    }
+    const hub = hubs.get(key)
+    if (!hub || !hub.pendingApprovals.has(requestId)) {
+      return json({ ok: false, error: '该审批已处理或不存在' }, { status: 409 })
+    }
+    const pending = hub.pendingApprovals.get(requestId)!
+    const ok = resolveApproval(
+      hub,
+      requestId,
+      decision === 'allow'
+        ? { behavior: 'allow', updatedInput: pending.input }
+        : { behavior: 'deny', message: '用户在推送通知上拒绝了该操作' },
+    )
+    console.log(`[push] 通知直接审批 ${decision}：${sessionNameOf(key)} · ${pending.toolName}`)
+    return json({ ok })
+  }
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     const sessions = listSessions()
     // 项目行 git 分支：按 cwd 各读一次（普通仓库与 worktree 都支持）
@@ -1224,7 +1350,11 @@ try {
       const url = new URL(req.url)
 
       // 数据面/控制面统一鉴权（静态壳不鉴权，JS 中无敏感数据）
-      const guarded = url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')
+      // /api/approval-action 例外：推送直接审批走能力 URL（per-subscription secret），
+      // SW 回POST 没有页面上下文，秘密本身即凭据（且仅对 pending 中的 requestId 有效）
+      const guarded =
+        (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) &&
+        url.pathname !== '/api/approval-action'
       if (guarded && !isAuthorized(req, url)) {
         return json({ error: 'unauthorized' }, { status: 401 })
       }

@@ -27,6 +27,7 @@ bun run server/scripts/e2e-approval.ts   # 权限审批链路
 bun run server/scripts/e2e-slash.ts      # /compact 与 /btw
 bun run server/scripts/e2e-branch-btw-goal.ts  # btw(side_question)/branch(懒分叉)/goal 全链路
 bun run server/scripts/e2e-codex-goal.ts       # codex thread/goal 设置与清除
+bun run server/scripts/e2e-push.ts             # Web Push 全链路（mock push service + RFC 8291 解密 + 能力 URL 审批 + 410 清理）
 bun run server/scripts/e2e-rewind.ts     # rewind_files 与对话回滚
 bun run server/scripts/e2e-codex.ts      # codex app-server 协议探针
 bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现场确认/血缘）
@@ -42,7 +43,8 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 
 ### 服务端（server/src）
 
-- **运行数据目录（约定）**：一切 cc-remote 自产的运行数据都放 `~/.cc-remote/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）。**这些数据目录不做自动清理**，由用户自行管理。
+- **运行数据目录（约定）**：一切 cc-remote 自产的运行数据都放 `~/.cc-remote/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）、`vapid.json` + `push-subscriptions.json`（推送密钥与订阅注册表）。**这些数据目录不做自动清理**，由用户自行管理。
+- **`push.ts`** — Web Push 分发：inbox 事件（approval/done/error）→ 自实现 VAPID（RFC 8292）+ aes128gcm 载荷（RFC 8291/8188，不依赖 web-push 库——其 node:https 发送路径假定 TLS）。审批推送携带**能力 URL**（`/api/approval-action?k&r&d&s=<per-subscription secret>`），SW 通知按钮可直接审批不打开页面；该端点绕开 authToken（秘密只经加密推送投递，且仅对 pending 中的 requestId 有效）。死订阅（404/410）自动摘除。
 - **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（key → clients/pendingApprovals/spawnOpts/pendingEnv），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
 - **认证**：`auth.ts`——配置 `authToken` 后 `/api` 与 `/ws` 一律校验（Bearer 或 `?token=`）；**绑非回环 host 必须配 token，否则拒绝启动**。静态前端壳不鉴权。
 - **sessionKey 编码**：Claude 会话 `s|<slug>|<sessionId>`、新会话 `n|<encodeURIComponent(cwd)>`、分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息 spawn 时才 `--fork-session --resume`）；Codex 线程 `x|<threadId>`、新线程 `xn|<encodeURIComponent(cwd)>`。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）；Codex key 靠 `thread/read` 惰性解析 cwd。
