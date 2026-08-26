@@ -18,7 +18,7 @@ export interface ImageAttachment {
 
 export function uploadsDir(): string {
   const dir = join(homedir(), '.cc-remote', 'uploads')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
   return dir
 }
 

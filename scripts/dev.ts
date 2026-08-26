@@ -1,17 +1,12 @@
 // 纯 Bun 开发启动器。直接启动 server / Vite，避免 Windows 上
 // `bun run --cwd ...` 的多层包装进程吞掉 Ctrl+C。
+import { hasWindowsSocketFix } from '../server/src/util'
+
 export {}
 
 const bun = process.execPath
-const [major = 0, minor = 0, patch = 0] = Bun.version.split(/[.-]/).map(Number)
-const hasWindowsSocketFix =
-  process.platform !== 'win32' ||
-  major > 1 ||
-  minor > 3 ||
-  (minor === 3 && patch >= 15) ||
-  Bun.version.includes('canary')
 
-if (!hasWindowsSocketFix && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
+if (!hasWindowsSocketFix() && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
   console.error(
     `[dev] Bun ${Bun.version} on Windows has a known inherited-listener bug (oven-sh/bun#36936).`,
   )

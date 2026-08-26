@@ -17,6 +17,12 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return r
 }
 
+/** 非 2xx 应答 → Error：优先服务端的 {error} 字段，兜底 HTTP 状态码 */
+async function apiError(r: Response): Promise<Error> {
+  const body = (await r.json().catch(() => null)) as { error?: string } | null
+  return new Error(body?.error ?? `HTTP ${r.status}`)
+}
+
 export interface SessionInfo {
   sessionId: string
   cwd?: string
@@ -153,10 +159,7 @@ export async function renameSession(key: string, title: string): Promise<void> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ key, title }),
   })
-  if (!r.ok) {
-    const body = (await r.json().catch(() => null)) as { error?: string } | null
-    throw new Error(body?.error ?? `HTTP ${r.status}`)
-  }
+  if (!r.ok) throw await apiError(r)
 }
 
 /** 归档（回收站语义，无物理删除）：claude 移入 ~/.cc-remote/trash；codex 走官方 thread/archive */
@@ -166,10 +169,7 @@ export async function archiveSession(key: string): Promise<void> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ key }),
   })
-  if (!r.ok) {
-    const body = (await r.json().catch(() => null)) as { error?: string } | null
-    throw new Error(body?.error ?? `HTTP ${r.status}`)
-  }
+  if (!r.ok) throw await apiError(r)
 }
 
 export async function restoreSession(key: string): Promise<void> {
@@ -178,10 +178,7 @@ export async function restoreSession(key: string): Promise<void> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ key }),
   })
-  if (!r.ok) {
-    const body = (await r.json().catch(() => null)) as { error?: string } | null
-    throw new Error(body?.error ?? `HTTP ${r.status}`)
-  }
+  if (!r.ok) throw await apiError(r)
 }
 
 export interface ArchivedEntry {
@@ -218,10 +215,7 @@ export async function startHandoff(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ fromKey, toBackend, detail }),
   })
-  if (!r.ok) {
-    const body = (await r.json().catch(() => null)) as { error?: string } | null
-    throw new Error(body?.error ?? `HTTP ${r.status}`)
-  }
+  if (!r.ok) throw await apiError(r)
 }
 
 export interface DirEntry {
@@ -239,9 +233,6 @@ export interface DirListResult {
 
 export async function fetchDirList(path: string): Promise<DirListResult> {
   const r = await apiFetch(`/api/fs/list?path=${encodeURIComponent(path)}`)
-  if (!r.ok) {
-    const body = (await r.json().catch(() => null)) as { error?: string } | null
-    throw new Error(body?.error ?? `HTTP ${r.status}`)
-  }
+  if (!r.ok) throw await apiError(r)
   return r.json()
 }

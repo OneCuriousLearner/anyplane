@@ -3,7 +3,7 @@
 // tool_use/tool_result 序列，前端零改动渲染 Codex 会话。
 
 import type { CliMessage } from '../claude/protocol'
-import type { HistoryBlock, HistoryMessage } from '../claude/discovery'
+import type { HistoryBlock, HistoryMessage } from '../types'
 import { resolveUpload } from '../../uploads'
 
 // ---------- 通知 → CliMessage（live 流） ----------
@@ -33,8 +33,6 @@ interface ThreadItem {
 
 /** 每个线程一个：维护 itemId → 合成 message id / 块序号的流式状态 */
 export class ThreadTranslator {
-  constructor(private threadId: string) {}
-
   /** item/started：agentMessage 开头流（message_start + block_start）；工具项发 tool_use */
   itemStarted(item: ThreadItem): CliMessage[] {
     if (!item.id || !item.type) return []
@@ -90,24 +88,13 @@ export class ThreadTranslator {
           { type: 'stream_event', event: { type: 'message_stop' } },
         ]
       }
-      case 'commandExecution': {
-        const failed = item.status === 'failed' || item.status === 'declined' || (typeof item.exitCode === 'number' && item.exitCode !== 0)
-        const out = item.aggregatedOutput ?? (item.status === 'declined' ? '（用户拒绝）' : '')
-        return [toolResultMsg(item.id, out || `（exit ${item.exitCode ?? '?'}）`, failed)]
+      case 'commandExecution':
+      case 'fileChange':
+      case 'mcpToolCall':
+      case 'webSearch': {
+        const r = toolResultFromItem(item)
+        return [toolResultMsg(item.id, r.text, r.isError)]
       }
-      case 'fileChange': {
-        const diff = (item.changes ?? [])
-          .map((c) => `--- ${c.path ?? '?'}\n${c.diff ?? ''}`.trim())
-          .join('\n\n')
-        return [toolResultMsg(item.id, diff || '（无 diff）', item.status === 'failed' || item.status === 'declined')]
-      }
-      case 'mcpToolCall': {
-        const failed = item.status === 'failed' || !!item.error
-        const text = item.error ? JSON.stringify(item.error) : stringifyResult(item.result)
-        return [toolResultMsg(item.id, text, failed)]
-      }
-      case 'webSearch':
-        return [toolResultMsg(item.id, stringifyResult(item.result ?? item.query ?? ''), false)]
       case 'plan':
         return [
           {
@@ -173,6 +160,33 @@ function toolResultMsg(toolUseId: string, text: string, isError: boolean): CliMe
   return {
     type: 'user',
     message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text, is_error: isError }] },
+  }
+}
+
+/** 工具项（commandExecution/fileChange/mcpToolCall/webSearch）的结果文本与失败标记：
+ *  live（item/completed）与历史（itemsToHistory）共用同一计算，避免两侧漂移。 */
+function toolResultFromItem(item: ThreadItem): { text: string; isError: boolean } {
+  switch (item.type) {
+    case 'commandExecution': {
+      const isError =
+        item.status === 'failed' ||
+        item.status === 'declined' ||
+        (typeof item.exitCode === 'number' && item.exitCode !== 0)
+      const out = item.aggregatedOutput ?? (item.status === 'declined' ? '（用户拒绝）' : '')
+      return { text: out || `（exit ${item.exitCode ?? '?'}）`, isError }
+    }
+    case 'fileChange': {
+      const diff = (item.changes ?? [])
+        .map((c) => `--- ${c.path ?? '?'}\n${c.diff ?? ''}`.trim())
+        .join('\n\n')
+      return { text: diff || '（无 diff）', isError: item.status === 'failed' || item.status === 'declined' }
+    }
+    case 'mcpToolCall': {
+      const isError = item.status === 'failed' || !!item.error
+      return { text: item.error ? JSON.stringify(item.error) : stringifyResult(item.result), isError }
+    }
+    default: // webSearch 等：结果即正文，失败态不由 item.status 表达
+      return { text: stringifyResult(item.result ?? item.query ?? ''), isError: false }
   }
 }
 
@@ -256,16 +270,18 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
         out.push({ uuid, role: 'assistant', blocks: [{ kind: 'text', text: item.text ?? '' }] })
         break
       case 'commandExecution': {
+        // tool_use 有意不用 live 的 toolUseBlock：历史卡摘要应显示命令本身，
+        // live 侧的 description(cwd) 会抢占 toolSummary 的首选字段
         out.push({
           uuid,
           role: 'assistant',
           blocks: [{ kind: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command ?? '' } }],
         })
-        const failed = item.status === 'failed' || item.status === 'declined' || (typeof item.exitCode === 'number' && item.exitCode !== 0)
+        const r = toolResultFromItem(item)
         out.push({
           uuid: `${item.id}-r`,
           role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: item.aggregatedOutput ?? '', isError: failed }],
+          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
         })
         break
       }
@@ -276,11 +292,11 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
           role: 'assistant',
           blocks: [{ kind: 'tool_use', id: item.id, name: 'Edit', input: { file_path: paths[0] ?? '', paths } }],
         })
-        const diff = (item.changes ?? []).map((c) => `--- ${c.path ?? '?'}\n${c.diff ?? ''}`.trim()).join('\n\n')
+        const r = toolResultFromItem(item)
         out.push({
           uuid: `${item.id}-r`,
           role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: diff || '（无 diff）', isError: item.status === 'failed' || item.status === 'declined' }],
+          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
         })
         break
       }
@@ -290,10 +306,11 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
           role: 'assistant',
           blocks: [{ kind: 'tool_use', id: item.id, name: `${item.server ?? 'mcp'}:${item.tool ?? '?'}`, input: item.arguments }],
         })
+        const r = toolResultFromItem(item)
         out.push({
           uuid: `${item.id}-r`,
           role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: item.error ? JSON.stringify(item.error) : stringifyResult(item.result), isError: item.status === 'failed' || !!item.error }],
+          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
         })
         break
       }
@@ -303,10 +320,11 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
           role: 'assistant',
           blocks: [{ kind: 'tool_use', id: item.id, name: 'WebSearch', input: { query: item.query ?? '' } }],
         })
+        const r = toolResultFromItem(item)
         out.push({
           uuid: `${item.id}-r`,
           role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: stringifyResult(item.result ?? ''), isError: false }],
+          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
         })
         break
       }

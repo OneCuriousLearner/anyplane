@@ -15,7 +15,7 @@ export interface ReasoningEntry {
 
 function dir(): string {
   const d = join(homedir(), '.cc-remote', 'reasoning')
-  if (!existsSync(d)) mkdirSync(d, { recursive: true })
+  mkdirSync(d, { recursive: true }) // recursive 幂等：已存在不抛错
   return d
 }
 

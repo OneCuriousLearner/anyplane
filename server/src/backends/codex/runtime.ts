@@ -5,6 +5,7 @@
 import type { ApprovalDecision, BackgroundTask, SessionCallbacks } from '../types'
 import type { CliMessage } from '../claude/protocol'
 import { saveUpload } from '../../uploads'
+import { errorMessage } from '../../util'
 import { RpcClient, RpcError } from './rpc'
 import { appendReasoning, readReasoning } from './reasoningStore'
 import {
@@ -184,7 +185,7 @@ export class CodexSession {
       }
       throw e
     }
-    this.translator = new ThreadTranslator(this.threadId!)
+    this.translator = new ThreadTranslator()
     this.runtime.registerThread(this.threadId!, this)
     if (this.opts.effort) this.turnOverrides.effort = this.opts.effort
     this.cb.onMessage({ type: 'system', subtype: 'init', session_id: this.threadId, model: this.opts.model })
@@ -192,17 +193,10 @@ export class CodexSession {
     void this.runtime
       .rpcRequest('thread/goal/get', { threadId: this.threadId })
       .then((r) => {
-        const g = (r as { goal?: { objective?: string; createdAt?: number; tokensUsed?: number; timeUsedSeconds?: number } | null })
-          .goal
-        if (g?.objective) {
-          this.goal = {
-            condition: g.objective,
-            since: (g.createdAt ?? 0) * 1000 || Date.now(),
-            tokensUsed: g.tokensUsed,
-            timeUsedSeconds: g.timeUsedSeconds,
-          }
-          this.cb.onStatusChange?.()
-        }
+        this.applyGoal(
+          (r as { goal?: { objective?: string; createdAt?: number; tokensUsed?: number; timeUsedSeconds?: number } | null })
+            .goal,
+        )
       })
       .catch(() => {}) // 旧版 app-server 无 goal API 时静默降级
     this.cb.onStatusChange?.()
@@ -241,18 +235,11 @@ export class CodexSession {
         break
       }
       case 'thread/goal/updated': {
-        const g = params.goal as
-          | { objective?: string; status?: string; tokensUsed?: number; timeUsedSeconds?: number; createdAt?: number }
-          | undefined
-        if (g?.objective) {
-          this.goal = {
-            condition: g.objective,
-            since: (g.createdAt ?? 0) * 1000 || Date.now(),
-            tokensUsed: g.tokensUsed,
-            timeUsedSeconds: g.timeUsedSeconds,
-          }
-          this.cb.onStatusChange?.()
-        }
+        this.applyGoal(
+          params.goal as
+            | { objective?: string; status?: string; tokensUsed?: number; timeUsedSeconds?: number; createdAt?: number }
+            | undefined,
+        )
         break
       }
       case 'thread/goal/cleared': {
@@ -364,7 +351,7 @@ export class CodexSession {
           input,
           clientUserMessageId: crypto.randomUUID(),
         })
-        .catch((e) => this.emitError(`排队失败: ${e instanceof Error ? e.message : e}`))
+        .catch((e) => this.emitError(`排队失败: ${errorMessage(e)}`))
       return
     }
     if (sendMode === 'steer' && this.currentTurnId) {
@@ -375,7 +362,7 @@ export class CodexSession {
           // 轮刚好结束/不可 steer：回退普通新轮
           void this.runtime
             .rpcRequest('turn/start', { threadId: this.threadId, input, approvalsReviewer: 'user', ...this.turnOverrides })
-            .catch((e) => this.emitError(`发送失败: ${e instanceof Error ? e.message : e}`))
+            .catch((e) => this.emitError(`发送失败: ${errorMessage(e)}`))
         })
       return
     }
@@ -387,7 +374,7 @@ export class CodexSession {
         approvalsReviewer: 'user',
         ...this.turnOverrides,
       })
-      .catch((e) => this.emitError(`发送失败: ${e instanceof Error ? e.message : e}`))
+      .catch((e) => this.emitError(`发送失败: ${errorMessage(e)}`))
   }
 
   sendControl(subtype: string, extra: Record<string, unknown> = {}): string {
@@ -422,7 +409,7 @@ export class CodexSession {
       case 'compact': {
         if (this.threadId) {
           void this.runtime.rpcRequest('thread/compact/start', { threadId: this.threadId }).catch((e) => {
-            this.emitError(`压缩失败: ${e instanceof Error ? e.message : e}`)
+            this.emitError(`压缩失败: ${errorMessage(e)}`)
           })
         }
         break
@@ -433,14 +420,14 @@ export class CodexSession {
         if (!this.threadId || !objective) break
         void this.runtime
           .rpcRequest('thread/goal/set', { threadId: this.threadId, objective })
-          .catch((e) => this.emitError(`设置目标失败: ${e instanceof Error ? e.message : e}`))
+          .catch((e) => this.emitError(`设置目标失败: ${errorMessage(e)}`))
         break
       }
       case 'clear_goal': {
         if (!this.threadId) break
         void this.runtime
           .rpcRequest('thread/goal/clear', { threadId: this.threadId })
-          .catch((e) => this.emitError(`清除目标失败: ${e instanceof Error ? e.message : e}`))
+          .catch((e) => this.emitError(`清除目标失败: ${errorMessage(e)}`))
         break
       }
       case 'review': {
@@ -453,7 +440,7 @@ export class CodexSession {
             target: instructions ? { type: 'custom', instructions } : { type: 'uncommittedChanges' },
             delivery: 'inline',
           })
-          .catch((e) => this.emitError(`审查启动失败: ${e instanceof Error ? e.message : e}`))
+          .catch((e) => this.emitError(`审查启动失败: ${errorMessage(e)}`))
         break
       }
       case 'rename': {
@@ -461,7 +448,7 @@ export class CodexSession {
         if (!this.threadId || !name) break
         void this.runtime
           .rpcRequest('thread/name/set', { threadId: this.threadId, name })
-          .catch((e) => this.emitError(`重命名失败: ${e instanceof Error ? e.message : e}`))
+          .catch((e) => this.emitError(`重命名失败: ${errorMessage(e)}`))
         break
       }
       default:
@@ -530,6 +517,23 @@ export class CodexSession {
   }
 
   // ---------- 内部 ----------
+
+  /** goal API 应答（goal/get、goal/updated 同形）→ 统一形状并置位；objective 为空不动 */
+  private applyGoal(g: {
+    objective?: string
+    createdAt?: number
+    tokensUsed?: number
+    timeUsedSeconds?: number
+  } | null | undefined): void {
+    if (!g?.objective) return
+    this.goal = {
+      condition: g.objective,
+      since: (g.createdAt ?? 0) * 1000 || Date.now(),
+      tokensUsed: g.tokensUsed,
+      timeUsedSeconds: g.timeUsedSeconds,
+    }
+    this.cb.onStatusChange?.()
+  }
 
   private emit(msg: CliMessage): void {
     this.cb.onMessage(msg)

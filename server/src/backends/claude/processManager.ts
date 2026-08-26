@@ -11,6 +11,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type Subprocess } from 'bun'
 import { config } from '../../config'
+import { errorMessage, pumpLines } from '../../util'
+import type { ApprovalDecision, BackgroundTask, SessionCallbacks, SpawnOptions } from '../types'
 import {
   approvalResponse,
   controlRequest,
@@ -22,34 +24,11 @@ import {
   type StdinMessage,
 } from './protocol'
 
-export interface SpawnOptions {
-  cwd: string
-  resumeSessionId?: string
-  /** 对话回滚：加载到指定消息处截断（配合 resumeSessionId） */
-  resumeSessionAt?: string
-  /** 分叉：以 --fork-session --resume 启动，携带源会话全部历史、获得新 sessionId。
-   *  与 resumeSessionId 互斥（fork 即 resume 的一种形态）。 */
-  forkFromSessionId?: string
-  /** 会话自定义标题（-n/--name），写入 custom-title，列表页可区分 */
-  sessionName?: string
-  model?: string
-  effort?: string
-  permissionMode?: string
-}
+// 共享类型正本在 ../types（后端无关抽象层）；此处 re-export 兼容既有 import 路径
+export type { ApprovalDecision, BackgroundTask, SessionCallbacks, SpawnOptions } from '../types'
 
 /** Claude Code session_state_changed 三态 */
 export type SessionRunState = 'idle' | 'running' | 'requires_action'
-
-/** Claude Code SDK system/task_started 暴露的后台任务最小状态。 */
-export interface BackgroundTask {
-  id: string
-  description: string
-  taskType?: string
-  toolUseId?: string
-  startedAt: number
-  lastToolName?: string
-  summary?: string
-}
 
 /** 解析 claude 可执行文件。返回 [cmd, prefixArgs] —— .cmd/.bat 需要 cmd.exe 包装 */
 export function resolveClaudeCommand(): { cmd: string; prefix: string[] } {
@@ -82,26 +61,6 @@ export function resolveClaudeCommand(): { cmd: string; prefix: string[] } {
 function wrapIfBatch(p: string): { cmd: string; prefix: string[] } {
   if (/\.(cmd|bat)$/i.test(p)) return { cmd: 'cmd.exe', prefix: ['/d', '/s', '/c', p] }
   return { cmd: p, prefix: [] }
-}
-
-export type ApprovalDecision =
-  | { behavior: 'allow'; updatedInput?: unknown }
-  | { behavior: 'deny'; message?: string }
-
-export interface SessionCallbacks {
-  /** CLI 推送的任何消息（含 assistant/user/system/stream_event/result…） */
-  onMessage(msg: CliMessage): void
-  /** CLI 主动请求权限（can_use_tool）。应 resolve 审批结果 */
-  onApprovalRequest(req: {
-    requestId: string
-    toolName: string
-    input: unknown
-    toolUseId?: string
-  }): void
-  /** 进程退出（仅当前仍登记在 ProcessManager 中的实例会回调） */
-  onExit(code: number): void
-  /** busy / sessionState 变化时通知宿主广播 status */
-  onStatusChange?(): void
 }
 
 export class ClaudeSession {
@@ -242,7 +201,7 @@ export class ClaudeSession {
       } catch (e) {
         this.exited = true
         this.proc = undefined
-        const detail = e instanceof Error ? e.message : String(e)
+        const detail = errorMessage(e)
         throw new Error(`无法启动 claude CLI (${cmd}): ${detail}`)
       }
     })()
@@ -456,25 +415,11 @@ export class ClaudeSession {
 
   private async pumpStdout(): Promise<void> {
     if (!this.proc) return
-    const reader = (this.proc.stdout as ReadableStream<Uint8Array>).getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        let idx: number
-        while ((idx = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, idx).trim()
-          buf = buf.slice(idx + 1)
-          if (line) this.handleLine(line)
-        }
-      }
-      if (buf.trim()) this.handleLine(buf.trim())
-    } catch (e) {
-      console.error(`[session ${this.key}] stdout 读取异常:`, e)
-    }
+    await pumpLines(
+      this.proc.stdout as ReadableStream<Uint8Array>,
+      (line) => this.handleLine(line),
+      (e) => console.error(`[session ${this.key}] stdout 读取异常:`, e),
+    )
   }
 
   private async pumpStderr(): Promise<void> {

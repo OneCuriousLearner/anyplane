@@ -1,6 +1,6 @@
-// WebSocket 客户端：按 sessionKey 连接，自动重连
+// WebSocket 客户端：按 sessionKey 连接，自动重连（重连骨架见 reconnectingSocket.ts）
 
-import { wsTokenQuery } from './auth'
+import { ReconnectingSocket, wsUrl } from './reconnectingSocket'
 import type { HistoryMessage } from './api'
 
 export type ServerEvent =
@@ -101,53 +101,36 @@ export type ClientCommand =
   | { kind: 'branch' }
   | { kind: 'query'; id: string; query: string }
 
-export class SessionSocket {
-  private ws: WebSocket | undefined
-  private retry = 0
-  private closed = false
+export class SessionSocket extends ReconnectingSocket {
   private queue: ClientCommand[] = []
 
   constructor(
     public key: string,
     private onEvent: (ev: ServerEvent) => void,
-    private onOpenChange?: (open: boolean) => void,
+    private openCb?: (open: boolean) => void,
   ) {
-    this.connect()
+    super()
+    this.start()
   }
 
-  private connect(): void {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(
-      `${proto}://${location.host}/ws/sessions/${encodeURIComponent(this.key)}${wsTokenQuery()}`,
-    )
-    this.ws = ws
-    ws.onopen = () => {
-      this.retry = 0
-      this.onOpenChange?.(true)
-      for (const c of this.queue) ws.send(JSON.stringify(c))
-      this.queue = []
-    }
-    ws.onmessage = (e) => {
-      try {
-        this.onEvent(JSON.parse(e.data))
-      } catch {}
-    }
-    ws.onclose = () => {
-      this.onOpenChange?.(false)
-      if (this.closed) return
-      const delay = Math.min(1000 * 2 ** this.retry++, 15000)
-      setTimeout(() => !this.closed && this.connect(), delay)
-    }
-    ws.onerror = () => ws.close()
+  protected url(): string {
+    return wsUrl(`/ws/sessions/${encodeURIComponent(this.key)}`)
+  }
+
+  protected onMessage(data: unknown): void {
+    this.onEvent(data as ServerEvent)
+  }
+
+  protected onOpenChange(open: boolean): void {
+    this.openCb?.(open)
+  }
+
+  protected onOpen(): void {
+    for (const c of this.queue) this.sendRaw(JSON.stringify(c))
+    this.queue = []
   }
 
   send(cmd: ClientCommand): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(cmd))
-    else this.queue.push(cmd)
-  }
-
-  close(): void {
-    this.closed = true
-    this.ws?.close()
+    if (!this.sendRaw(JSON.stringify(cmd))) this.queue.push(cmd)
   }
 }

@@ -71,3 +71,9 @@ export const config: ServerConfig = {
   ...(process.env.CC_REMOTE_TOKEN ? { authToken: process.env.CC_REMOTE_TOKEN } : {}),
   ...(process.env.CLAUDE_CONFIG_DIR ? { claudeConfigDir: process.env.CLAUDE_CONFIG_DIR } : {}),
 }
+
+/** 默认权限模式：bypass 策略 → claude bypassPermissions（codex 侧经 mapPermissionMode 映射同档）。
+ *  claude/codex 两条 spawn 路径共用，调用方的显式选择（spawnOpts/opts）在其后覆盖。 */
+export function defaultPermissionMode(): string | undefined {
+  return config.permissionPolicy === 'bypass' ? 'bypassPermissions' : undefined
+}

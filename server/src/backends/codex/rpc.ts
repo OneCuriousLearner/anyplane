@@ -2,6 +2,7 @@
 // 与 claude 后端的 pumpStdout 同构：逐行解析、宽松透传、未知字段不校验。
 
 import { spawn, type Subprocess } from 'bun'
+import { pumpLines } from '../../util'
 
 export interface RpcNotification {
   method: string
@@ -145,25 +146,11 @@ export class RpcClient {
   }
 
   private async pumpStdout(): Promise<void> {
-    const reader = (this.proc.stdout as ReadableStream<Uint8Array>).getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        let idx: number
-        while ((idx = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, idx).trim()
-          buf = buf.slice(idx + 1)
-          if (line) this.handleLine(line)
-        }
-      }
-      if (buf.trim()) this.handleLine(buf.trim())
-    } catch (e) {
-      console.error('[codex-rpc] stdout 读取异常:', e)
-    }
+    await pumpLines(
+      this.proc.stdout as ReadableStream<Uint8Array>,
+      (line) => this.handleLine(line),
+      (e) => console.error('[codex-rpc] stdout 读取异常:', e),
+    )
   }
 
   private async pumpStderr(): Promise<void> {

@@ -51,6 +51,13 @@ export function parseKey(key: string): ParsedKey | null {
   return null
 }
 
+/** s|slug|sid 的纯形状解析：不做 listSessions() 反查（零 I/O），只需 slug/sessionId 的场景用 */
+export function splitExistingKey(key: string): { slug: string; sessionId: string } | null {
+  const parts = key.split('|')
+  if (parts[0] !== 's' || parts.length !== 3) return null
+  return { slug: parts[1], sessionId: parts[2] }
+}
+
 function toSummary(s: SessionInfo): SessionSummary {
   return {
     backend: 'claude',

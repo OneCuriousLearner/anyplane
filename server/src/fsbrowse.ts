@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { errorMessage } from './util'
 
 /** 读 git 分支名（普通仓库 .git/HEAD；worktree 的 .git 是 gitdir 指向文件）。非仓库返回 undefined */
 export function readGitBranch(cwd: string): string | undefined {
@@ -54,8 +55,7 @@ function mapError(e: unknown, target: string): FsBrowseError {
   if (code === 'ENOENT') return new FsBrowseError(400, `路径不存在: ${target}`)
   if (code === 'ENOTDIR') return new FsBrowseError(400, `不是目录: ${target}`)
   if (code === 'EPERM' || code === 'EACCES') return new FsBrowseError(403, `无法访问（权限不足）: ${target}`)
-  const msg = e instanceof Error ? e.message : String(e)
-  return new FsBrowseError(500, `读取失败: ${msg}`)
+  return new FsBrowseError(500, `读取失败: ${errorMessage(e)}`)
 }
 
 /** 平台根集合：Windows 为可用盘符，POSIX 为 /；均附带 home 快捷项 */

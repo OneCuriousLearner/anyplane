@@ -10,7 +10,7 @@ import { config } from './config'
 
 function trashRoot(): string {
   const dir = join(homedir(), '.cc-remote', 'trash', 'claude')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
   return dir
 }
 

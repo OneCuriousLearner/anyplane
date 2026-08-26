@@ -5,37 +5,12 @@ import { ClaudeMark } from './components/ClaudeMark'
 import { ModeBadge } from './components/ModeBadge'
 import { getToken, onAuthRequired, setToken } from './lib/auth'
 import { fetchSessions, type SessionInfo } from './lib/api'
+import { sessionFromKey } from './lib/key'
 
 /** 推送通知深链：`/#s=<sessionKey>` 直达会话（SW notificationclick 写入） */
 function deepLinkKey(): string | null {
   const m = location.hash.match(/^#s=(.+)$/)
   return m ? decodeURIComponent(m[1]) : null
-}
-
-/** key 不在会话列表时（b| 分支 / 刚归档等）按 key 自身编码构造最小 SessionInfo */
-function sessionFromKey(key: string): SessionInfo | null {
-  const parts = key.split('|')
-  if (parts[0] === 's' && parts.length === 3) {
-    return {
-      key, slug: parts[1], sessionId: parts[2], mtime: Date.now(), sizeBytes: 0,
-      status: 'offline', backend: 'claude', managed: { spawned: false, busy: false, clients: 0 },
-    }
-  }
-  if (parts[0] === 'x' && parts.length === 2) {
-    return {
-      key, slug: 'codex', sessionId: parts[1], mtime: Date.now(), sizeBytes: 0,
-      status: 'offline', backend: 'codex', managed: { spawned: false, busy: false, clients: 0 },
-    }
-  }
-  if (parts[0] === 'b' && parts.length === 3) {
-    const cwd = decodeURIComponent(parts[1])
-    return {
-      key, slug: cwd.replace(/[^a-zA-Z0-9]/g, '-'), sessionId: parts[2], cwd,
-      mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude',
-      managed: { spawned: false, busy: false, clients: 0 },
-    }
-  }
-  return null
 }
 
 const SIDEBAR_KEY = 'cc-remote-sidebar-width'

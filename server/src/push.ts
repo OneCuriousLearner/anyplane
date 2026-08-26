@@ -51,7 +51,7 @@ export interface PushPayload {
 
 function dataDir(): string {
   const d = join(homedir(), '.cc-remote')
-  if (!existsSync(d)) mkdirSync(d, { recursive: true })
+  mkdirSync(d, { recursive: true }) // recursive 幂等：已存在不抛错
   return d
 }
 
@@ -88,13 +88,20 @@ export function vapidPublicKey(): string {
   return loadVapid().publicKey
 }
 
-/** VAPID 证明：ES256 JWT（JWS 签名为 r‖s 原始拼接，即 ieee-p1363） */
+/** VAPID 证明：ES256 JWT（JWS 签名为 r‖s 原始拼接，即 ieee-p1363）。
+ *  同一 origin 的 JWT 在 12h 有效期内可复用——按 origin 缓存，11h 后重签，
+ *  避免多订阅扇出时每个订阅重复一次 ECDSA 签名。 */
+const jwtCache = new Map<string, { jwt: string; refreshAfter: number }>()
+
 function vapidJwt(audience: string): string {
+  const now = Math.floor(Date.now() / 1000)
+  const hit = jwtCache.get(audience)
+  if (hit && now < hit.refreshAfter) return hit.jwt
   const keys = loadVapid()
   const header = b64url(Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'ES256' })))
   const body = b64url(
     Buffer.from(
-      JSON.stringify({ aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'mailto:cc-remote@localhost' }),
+      JSON.stringify({ aud: audience, exp: now + 12 * 3600, sub: 'mailto:cc-remote@localhost' }),
     ),
   )
   const priv = createPrivateKey({
@@ -112,7 +119,9 @@ function vapidJwt(audience: string): string {
   const sig = createSign('SHA256')
     .update(`${header}.${body}`)
     .sign({ key: priv, dsaEncoding: 'ieee-p1363' })
-  return `${header}.${body}.${b64url(sig)}`
+  const jwt = `${header}.${body}.${b64url(sig)}`
+  jwtCache.set(audience, { jwt, refreshAfter: now + 11 * 3600 })
+  return jwt
 }
 
 // ---------- 载荷加密（RFC 8291：ECDH + auth secret；RFC 8188：aes128gcm 单 record） ----------

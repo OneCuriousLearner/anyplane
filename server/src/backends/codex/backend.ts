@@ -29,6 +29,12 @@ export function isCodexKey(key: string): boolean {
   return key.startsWith('x|') || key.startsWith('xn|')
 }
 
+/** x|threadId 的纯形状解析（xn| 新线程无 threadId，返回 undefined） */
+export function splitThreadId(key: string): string | undefined {
+  const parts = key.split('|')
+  return parts[0] === 'x' && parts.length === 2 ? parts[1] : undefined
+}
+
 interface ThreadRow {
   id?: string
   preview?: string

@@ -4,14 +4,14 @@ import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { isAuthorized, isLoopbackHost } from './auth'
-import { keyFor, keyForBranch, parseKey, type ParsedKey } from './backends/claude/backend'
+import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
 import { TranscriptTailer } from './backends/claude/tailer'
-import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as codexParseKey } from './backends/codex/backend'
+import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as codexParseKey, splitThreadId } from './backends/codex/backend'
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
-import { config } from './config'
+import { config, defaultPermissionMode } from './config'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
 import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 import { resolveUpload } from './uploads'
@@ -32,8 +32,8 @@ import {
   lineageFor,
   seedMessage,
   type HandoffDetail,
-  type LineageRecord,
 } from './handoff'
+import { errorMessage, hasWindowsSocketFix } from './util'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -82,10 +82,6 @@ const hubs = new Map<string, Hub>()
 
 // ---------- 全局收件箱（/ws/inbox）：跨会话审批/完成/错误汇总 ----------
 
-interface InboxData {
-  inbox: true
-}
-
 const inboxClients = new Set<import('bun').ServerWebSocket<WSDataInbox>>()
 
 type InboxEvent =
@@ -108,11 +104,21 @@ function publishInbox(ev: InboxEvent): void {
 
 // ---------- Web Push 分发（订阅为 0 时零开销） ----------
 
-/** 会话显示名：项目目录 basename（approval 只在 spawn 后发生，spawnOpts.cwd 必有） */
+/** 会话显示名：项目目录 basename（approval 只在 spawn 后发生，spawnOpts.cwd 必有）。
+ *  未 spawn 的兜底从 key 自身推导（slug 末段 / b|·xn| 内嵌 cwd），
+ *  不走 parseKey——它会对每个推送事件做一次 listSessions() 全盘扫描。 */
 function sessionNameOf(key: string): string {
   const hub = hubs.get(key)
-  const cwd = hub?.spawnOpts?.cwd ?? (isCodexKey(key) ? undefined : parseKey(key)?.cwd)
-  return cwd ? (cwd.replace(/\/+$/, '').split('/').pop() ?? cwd) : key.slice(0, 18)
+  const cwd = hub?.spawnOpts?.cwd
+  if (cwd) return cwd.replace(/\/+$/, '').split('/').pop() ?? cwd
+  const parts = key.split('|')
+  if ((parts[0] === 'b' || parts[0] === 'n' || parts[0] === 'xn') && parts[1]) {
+    const embedded = decodeURIComponent(parts[1]).replace(/\/+$/, '')
+    return embedded.split('/').pop() ?? key.slice(0, 18)
+  }
+  // s| 的 slug 是 sanitizePath(cwd)：末段即目录名（近似足够，仅推送显示用）
+  if (parts[0] === 's' && parts[1]) return parts[1].split('-').pop() ?? key.slice(0, 18)
+  return key.slice(0, 18)
 }
 
 /** 审批输入摘要：Bash 给命令、Edit/Write 给路径，其余给 JSON 截断 */
@@ -205,7 +211,13 @@ function broadcast(hub: Hub, payload: unknown): void {
   }
 }
 
-function statusOf(key: string): Record<string, unknown> {
+function broadcastError(hub: Hub, message: string): void {
+  broadcast(hub, { kind: 'error', message })
+}
+
+/** liveHint：调用方（/api/sessions）刚做过 pid 扫描时传入复用，避免每行各扫一次；
+ *  显式 null 表示"已知不在线"（跳过扫描），undefined 才现扫 */
+function statusOf(key: string, liveHint?: { status: string; pid: number } | null): Record<string, unknown> {
   if (isCodexKey(key)) return codexStatusOf(key)
   const s = processManager.get(key)
   const hub = hubs.get(key)
@@ -213,8 +225,8 @@ function statusOf(key: string): Record<string, unknown> {
   // 未被本服务 spawn 的会话：读 pid 文件，把外部 CLI 的实时状态反映到 busy/waiting
   let live: { status: string; pid: number } | undefined
   if (!s || s.exited) {
-    const parts = key.split('|')
-    if (parts[0] === 's' && parts.length === 3) live = liveSessionInfo(parts[2])
+    const ek = splitExistingKey(key)
+    if (ek) live = liveHint === undefined ? liveSessionInfo(ek.sessionId) : (liveHint ?? undefined)
   }
   const waiting = (s?.waiting ?? false) || pending > 0 || live?.status === 'waiting'
   // 审批等待也算 busy，防止误回收
@@ -341,13 +353,13 @@ function sessionCallbacks(hub: Hub) {
 async function ensureCodexSession(hub: Hub, opts?: Partial<SpawnOptions>): Promise<CodexSession | undefined> {
   const parsed = codexParseKey(hub.key)
   if (!parsed) {
-    broadcast(hub, { kind: 'error', message: '无法解析 codex 会话 key' })
+    broadcastError(hub, '无法解析 codex 会话 key')
     return undefined
   }
   const spawnOpts = {
     cwd: parsed.cwd,
     resumeThreadId: parsed.resumeThreadId,
-    permissionMode: config.permissionPolicy === 'bypass' ? 'bypassPermissions' : undefined,
+    permissionMode: defaultPermissionMode(),
     ...hub.spawnOpts,
     ...opts,
   }
@@ -357,7 +369,7 @@ async function ensureCodexSession(hub: Hub, opts?: Partial<SpawnOptions>): Promi
   try {
     await s.start()
   } catch (e) {
-    broadcast(hub, { kind: 'error', message: e instanceof Error ? e.message : String(e) })
+    broadcastError(hub, errorMessage(e))
     pushStatus(hub)
     return undefined
   }
@@ -381,10 +393,10 @@ function throttledTailStatus(hub: Hub): void {
 
 function startTailer(hub: Hub, from?: number): void {
   if (hub.tailer) return
-  const parts = hub.key.split('|')
-  if (parts[0] !== 's' || parts.length !== 3) return // 新会话还没有 transcript
+  const ek = splitExistingKey(hub.key)
+  if (!ek) return // 新会话还没有 transcript
   if (processManager.get(hub.key)) return // 已 spawn：live 流覆盖，无需 tail
-  const path = join(config.claudeConfigDir, 'projects', parts[1], `${parts[2]}.jsonl`)
+  const path = join(config.claudeConfigDir, 'projects', ek.slug, `${ek.sessionId}.jsonl`)
   hub.tailer = new TranscriptTailer(path, from, {
     onMessage: (msg) => {
       broadcast(hub, { kind: 'tail', msg })
@@ -406,7 +418,7 @@ function rewindConversation(hub: Hub, userMessageId: string, scope: 'conversatio
   const parsed = parseKey(hub.key)
   const sid = current?.sessionId ?? parsed?.resumeSessionId
   if (!parsed || !sid) {
-    broadcast(hub, { kind: 'error', message: '无法回滚：未知会话 ID' })
+    broadcastError(hub, '无法回滚：未知会话 ID')
     return
   }
   // 先从 map 摘掉再 kill，避免旧 onExit 污染新会话。
@@ -429,14 +441,14 @@ function ensureSpawned(
   // parseKey 会反查 listSessions()（一次文件系统扫描）；调用方已解析过时直接复用
   const parsed = parsedHint ?? parseKey(hub.key)
   if (!parsed) {
-    broadcast(hub, { kind: 'error', message: '无法解析会话（项目目录不存在？）' })
+    broadcastError(hub, '无法解析会话（项目目录不存在？）')
     return
   }
   const spawnOpts: SpawnOptions = {
     cwd: parsed.cwd,
     resumeSessionId: parsed.resumeSessionId,
     forkFromSessionId: parsed.forkFromSessionId,
-    permissionMode: config.permissionPolicy === 'bypass' ? 'bypassPermissions' : undefined,
+    permissionMode: defaultPermissionMode(),
     ...hub.spawnOpts,
     ...opts,
   }
@@ -453,15 +465,25 @@ function ensureSpawned(
       hub.pendingEnv = undefined
     }
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
+    const message = errorMessage(e)
     console.error(`[session ${hub.key}] spawn 失败:`, message)
-    broadcast(hub, { kind: 'error', message })
+    broadcastError(hub, message)
   }
   // resumeSessionAt 是一次性 spawn 参数（命令行 args 已在 spawn() 内同步生成）。
   // 无论本次成败都不能留在 hub.spawnOpts 里，否则之后空闲回收后的普通 respawn
   // 会带着它再次截断同一条消息，静默丢弃回滚之后的新对话。
   if (hub.spawnOpts) delete hub.spawnOpts.resumeSessionAt
   pushStatus(hub)
+}
+
+/** claude 会话的就绪检查：未运行则触发懒 spawn；仍未就绪返回 undefined（ensureSpawned 已广播具体错误） */
+function ensureClaudeSession(hub: Hub): ReturnType<typeof processManager.get> {
+  let s = processManager.get(hub.key)
+  if (!s || s.exited) {
+    ensureSpawned(hub)
+    s = processManager.get(hub.key)
+  }
+  return s && !s.exited ? s : undefined
 }
 
 function handleClientMessage(hub: Hub, raw: string): void {
@@ -503,7 +525,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
     }
     case 'user': {
       if (hub.rewindPending) {
-        broadcast(hub, { kind: 'error', message: '正在恢复文件，请等待回滚完成后再发送消息' })
+        broadcastError(hub, '正在恢复文件，请等待回滚完成后再发送消息')
         return
       }
       const sendMode = data.sendMode === 'steer' || data.sendMode === 'queue' ? data.sendMode : undefined
@@ -526,21 +548,14 @@ function handleClientMessage(hub: Hub, raw: string): void {
             s.sendUserText(String(data.text ?? ''), sendMode, attachments)
             pushStatus(hub)
           } catch (e) {
-            broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
+            broadcastError(hub, `发送失败: ${errorMessage(e)}`)
             pushStatus(hub)
           }
         })()
         return
       }
-      let s = session()
-      if (!s || s.exited) {
-        ensureSpawned(hub)
-        s = session()
-      }
-      if (!s || s.exited) {
-        // ensureSpawned 已广播具体错误
-        return
-      }
+      const s = ensureClaudeSession(hub)
+      if (!s) return // ensureSpawned 已广播具体错误
       try {
         // sendMode 直通：claude 侧 steer=priority 'now'（中断处理）、queue=服务端排队
         const text = String(data.text ?? '')
@@ -561,7 +576,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
         }
         pushStatus(hub)
       } catch (e) {
-        broadcast(hub, { kind: 'error', message: `发送失败: ${e}` })
+        broadcastError(hub, `发送失败: ${errorMessage(e)}`)
         pushStatus(hub)
       }
       break
@@ -571,17 +586,19 @@ function handleClientMessage(hub: Hub, raw: string): void {
       const extra = (data.extra as Record<string, unknown>) ?? {}
       // 组合回滚等待期间，通用控制路径不得再发 rewind_files 与之竞争
       if (hub.rewindPending && subtype === 'rewind_files') {
-        broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
+        broadcastError(hub, '已有回滚操作正在进行')
         return
+      }
+      // model/mode 都有等价启动参数：先缓存最终选择（未 spawn 时首条消息应用），
+      // 已 spawn 时再发运行时控制。两个后端同此序。
+      if (subtype === 'set_model' && extra.model) {
+        hub.spawnOpts = { ...hub.spawnOpts, model: String(extra.model) }
+      }
+      if (subtype === 'set_permission_mode' && extra.mode) {
+        hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
       }
       // codex：interrupt/set_model/set_permission_mode/compact 直接翻译；其余控制请求暂无对应物
       if (isCodexKey(hub.key)) {
-        if (subtype === 'set_model' && extra.model) {
-          hub.spawnOpts = { ...hub.spawnOpts, model: String(extra.model) }
-        }
-        if (subtype === 'set_permission_mode' && extra.mode) {
-          hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
-        }
         const s = codexRuntime.get(hub.key)
         if (s && !s.exited) {
           s.sendControl(subtype, extra)
@@ -596,19 +613,11 @@ function handleClientMessage(hub: Hub, raw: string): void {
           try {
             s.sendControl(subtype, extra)
           } catch (e) {
-            broadcast(hub, { kind: 'error', message: `中断失败: ${e}` })
+            broadcastError(hub, `中断失败: ${errorMessage(e)}`)
           }
           pushStatus(hub)
         }
         return
-      }
-      // model/mode 都有等价 CLI 启动参数。未 spawn 时只缓存最终选择，
-      // 等首条 user 消息触发 ensureSpawned；已 spawn 时才发送运行时控制。
-      if (subtype === 'set_model' && extra.model) {
-        hub.spawnOpts = { ...hub.spawnOpts, model: String(extra.model) }
-      }
-      if (subtype === 'set_permission_mode' && extra.mode) {
-        hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
       }
       let s = session()
       if (!s || s.exited) {
@@ -625,7 +634,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
         s.sendControl(subtype, extra)
         pushStatus(hub)
       } catch (e) {
-        broadcast(hub, { kind: 'error', message: `控制请求失败: ${e}` })
+        broadcastError(hub, `控制请求失败: ${errorMessage(e)}`)
         pushStatus(hub)
       }
       break
@@ -660,7 +669,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
         s.write({ type: 'update_environment_variables', variables })
         pushStatus(hub)
       } catch (e) {
-        broadcast(hub, { kind: 'error', message: `更新环境变量失败: ${e}` })
+        broadcastError(hub, `更新环境变量失败: ${errorMessage(e)}`)
         pushStatus(hub)
       }
       break
@@ -669,13 +678,13 @@ function handleClientMessage(hub: Hub, raw: string): void {
       // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session），
       // codex 走既有 thread/fork（RewindPicker 的"从此处分叉"）；这里只处理 claude。
       if (isCodexKey(hub.key)) {
-        broadcast(hub, { kind: 'error', message: 'Codex 请用回滚面板的「从此处分叉」' })
+        broadcastError(hub, 'Codex 请用回滚面板的「从此处分叉」')
         return
       }
       const parsed = parseKey(hub.key)
       const srcSid = session()?.sessionId ?? parsed?.resumeSessionId ?? parsed?.forkFromSessionId
       if (!parsed || !srcSid) {
-        broadcast(hub, { kind: 'error', message: '分叉需要已有会话（先发过至少一条消息）' })
+        broadcastError(hub, '分叉需要已有会话（先发过至少一条消息）')
         return
       }
       const branchKey = keyForBranch(parsed.cwd, srcSid)
@@ -695,7 +704,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
         // 原线程不动。userMessageId 即历史的轮首 userMessage 的 turnId。
         const tid = codexRuntime.get(hub.key)?.sessionId ?? codexParseKey(hub.key)?.resumeThreadId
         if (!tid) {
-          broadcast(hub, { kind: 'error', message: 'codex 会话未就绪，无法分叉' })
+          broadcastError(hub, 'codex 会话未就绪，无法分叉')
           return
         }
         void codexRuntime
@@ -708,13 +717,11 @@ function handleClientMessage(hub: Hub, raw: string): void {
               fromTurnId: at,
             })
           })
-          .catch((e) =>
-            broadcast(hub, { kind: 'error', message: `分叉失败: ${e instanceof Error ? e.message : e}` }),
-          )
+          .catch((e) => broadcastError(hub, `分叉失败: ${errorMessage(e)}`))
         return
       }
       if (hub.rewindPending) {
-        broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
+        broadcastError(hub, '已有回滚操作正在进行')
         return
       }
       rewindConversation(hub, at, 'conversation')
@@ -724,19 +731,15 @@ function handleClientMessage(hub: Hub, raw: string): void {
       const at = String(data.userMessageId ?? '')
       if (!at) return
       if (isCodexKey(hub.key)) {
-        broadcast(hub, { kind: 'error', message: 'Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）' })
+        broadcastError(hub, 'Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）')
         return
       }
       if (hub.rewindPending) {
-        broadcast(hub, { kind: 'error', message: '已有回滚操作正在进行' })
+        broadcastError(hub, '已有回滚操作正在进行')
         return
       }
-      let s = session()
-      if (!s || s.exited) {
-        ensureSpawned(hub)
-        s = session()
-      }
-      if (!s || s.exited) return
+      const s = ensureClaudeSession(hub)
+      if (!s) return
 
       // 官方 TUI 的“恢复代码和对话”也是两个动作。这里必须先收到文件
       // checkpoint 成功响应，才允许销毁旧进程并以 resume-session-at 截断对话。
@@ -746,14 +749,13 @@ function handleClientMessage(hub: Hub, raw: string): void {
       void s.sendControlAndWait('rewind_files', { user_message_id: at }, 120_000)
         .then(() => {
           if (processManager.get(hub.key) !== s || s.exited) {
-            broadcast(hub, { kind: 'error', message: '恢复文件后会话已变化，未回滚对话' })
+            broadcastError(hub, '恢复文件后会话已变化，未回滚对话')
             return
           }
           rewindConversation(hub, at, 'both')
         })
         .catch((error) => {
-          const detail = error instanceof Error ? error.message : String(error)
-          broadcast(hub, { kind: 'error', message: `回滚文件失败，未回滚对话：${detail}` })
+          broadcastError(hub, `回滚文件失败，未回滚对话：${errorMessage(error)}`)
         })
         .finally(() => {
           hub.rewindPending = false
@@ -778,12 +780,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
           })
           .then((r) => broadcast(hub, { kind: 'btw_result', ok: true, question, text: r.text }))
           .catch((e) =>
-            broadcast(hub, {
-              kind: 'btw_result',
-              ok: false,
-              question,
-              text: `侧问失败: ${e instanceof Error ? e.message : e}`,
-            }),
+            broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${errorMessage(e)}` }),
           )
         return
       }
@@ -795,22 +792,13 @@ function handleClientMessage(hub: Hub, raw: string): void {
         broadcast(hub, { kind: 'btw_result', ok: false, text: '侧问需要已有会话（先发过至少一条消息）' })
         return
       }
-      let s = session()
-      if (!s || s.exited) {
-        ensureSpawned(hub)
-        s = session()
-      }
-      if (!s || s.exited) return // ensureSpawned 已广播具体错误
+      const s = ensureClaudeSession(hub)
+      if (!s) return // ensureSpawned 已广播具体错误
       broadcast(hub, { kind: 'btw_pending', question })
       s.sideQuestion(question)
         .then((text) => broadcast(hub, { kind: 'btw_result', ok: true, question, text }))
         .catch((e) =>
-          broadcast(hub, {
-            kind: 'btw_result',
-            ok: false,
-            question,
-            text: `侧问失败: ${e instanceof Error ? e.message : e}`,
-          }),
+          broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${errorMessage(e)}` }),
         )
       break
     }
@@ -829,21 +817,17 @@ function handleClientMessage(hub: Hub, raw: string): void {
         void codexRuntime
           .rpcRequest('mcpServerStatus/list', {})
           .then((d) => reply({ ok: true, data: d }))
-          .catch((e) => reply({ ok: false, error: e instanceof Error ? e.message : String(e) }))
+          .catch((e) => reply({ ok: false, error: errorMessage(e) }))
         return
       }
-      let s = session()
-      if (!s || s.exited) {
-        ensureSpawned(hub)
-        s = session()
-      }
-      if (!s || s.exited) {
+      const s = ensureClaudeSession(hub)
+      if (!s) {
         reply({ ok: false, error: '进程未运行' })
         return
       }
       s.sendControlAndWait(query, {}, 15_000)
         .then((d) => reply({ ok: true, data: d }))
-        .catch((e) => reply({ ok: false, error: e instanceof Error ? e.message : String(e) }))
+        .catch((e) => reply({ ok: false, error: errorMessage(e) }))
       break
     }
     case 'approval': {
@@ -866,7 +850,7 @@ function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision
       try {
         s.sendApproval(requestId, decision)
       } catch (e) {
-        broadcast(hub, { kind: 'error', message: `审批回复失败: ${e}` })
+        broadcastError(hub, `审批回复失败: ${errorMessage(e)}`)
       }
     }
   } else {
@@ -875,7 +859,7 @@ function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision
       try {
         s.sendApproval(requestId, decision)
       } catch (e) {
-        broadcast(hub, { kind: 'error', message: `审批回复失败: ${e}` })
+        broadcastError(hub, `审批回复失败: ${errorMessage(e)}`)
       }
     }
     s?.notifyExternalGate()
@@ -941,7 +925,7 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_brief', brief })
 
       // 2. 目标会话播种（服务端直接发送首条消息）
-      const targetKey = toBackend === 'codex' ? codexKeyForNew(sourceCwd) : `n|${encodeURIComponent(sourceCwd)}`
+      const targetKey = toBackend === 'codex' ? codexKeyForNew(sourceCwd) : keyForNew(sourceCwd)
       const targetHub = getHub(targetKey)
       const seed = seedMessage(sourceCwd, fromBackend, brief)
       let targetSessionId: string | undefined
@@ -972,13 +956,13 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
             ? `x|${targetSessionId}`
             : undefined
           : targetSessionId
-            ? `s|${sanitizePath(sourceCwd)}|${targetSessionId}`
+            ? keyFor(sanitizePath(sourceCwd), targetSessionId)
             : undefined
       const fromResolvedKey = (() => {
         if (fromBackend === 'claude') {
           if (fromKey.startsWith('s|')) return fromKey
           const sidNow = processManager.get(fromKey)?.sessionId
-          return sidNow ? `s|${sanitizePath(sourceCwd)}|${sidNow}` : undefined
+          return sidNow ? keyFor(sanitizePath(sourceCwd), sidNow) : undefined
         }
         if (fromKey.startsWith('x|')) return fromKey
         const tidNow = codexRuntime.get(fromKey)?.sessionId
@@ -1009,7 +993,7 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
           brief,
         })
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = errorMessage(e)
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_error', message })
     }
   })()
@@ -1023,6 +1007,11 @@ function json(data: unknown, init?: ResponseInit): Response {
     ...init,
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
   })
+}
+
+/** POST JSON body：解析失败按 {} 处理（各 handler 自行做字段校验） */
+async function readJsonBody<T>(req: Request): Promise<T> {
+  return (await req.json().catch(() => ({}))) as T
 }
 
 function logWindowsPortState(stage: string, port: number): void {
@@ -1050,15 +1039,7 @@ function logWindowsPortState(stage: string, port: number): void {
 
 const distDir = resolve(import.meta.dir, '../../web/dist')
 
-const [bunMajor = 0, bunMinor = 0, bunPatch = 0] = Bun.version.split(/[.-]/).map(Number)
-const hasWindowsSocketFix =
-  process.platform !== 'win32' ||
-  bunMajor > 1 ||
-  bunMinor > 3 ||
-  (bunMinor === 3 && bunPatch >= 15) ||
-  Bun.version.includes('canary')
-
-if (!hasWindowsSocketFix && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
+if (!hasWindowsSocketFix() && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
   console.error(
     `[cc-remote] Bun ${Bun.version} on Windows has the inherited-listener bug oven-sh/bun#36936.`,
   )
@@ -1072,10 +1053,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     return json({ publicKey: vapidPublicKey(), subscriptions: subscriptionCount() })
   }
   if (url.pathname === '/api/push/subscriptions' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as {
-      endpoint?: string
-      keys?: { p256dh: string; auth: string }
-    }
+    const body = await readJsonBody<{ endpoint?: string; keys?: { p256dh: string; auth: string } }>(req)
     if (!body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
       return json({ error: 'endpoint 与 keys.p256dh/auth 必填' }, { status: 400 })
     }
@@ -1087,7 +1065,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     return json({ ok: true, secret })
   }
   if (url.pathname === '/api/push/subscriptions' && req.method === 'DELETE') {
-    const body = (await req.json().catch(() => ({}))) as { endpoint?: string }
+    const body = await readJsonBody<{ endpoint?: string }>(req)
     return json({ ok: body.endpoint ? removeSubscription(body.endpoint) : false })
   }
   // 推送直接审批（能力 URL：secret 鉴权，不走 authToken——该 URL 只经加密推送投递到订阅设备）
@@ -1129,7 +1107,11 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       backend: 'claude' as const,
       gitBranch: branchOf(s.cwd),
       key: keyFor(s.slug, s.sessionId),
-      managed: statusOf(keyFor(s.slug, s.sessionId)),
+      // listSessions 已扫过 pid 文件，复用其结果，不为每行再扫一次（null = 已知不在线）
+      managed: statusOf(
+        keyFor(s.slug, s.sessionId),
+        s.live ? { status: s.status, pid: s.live.pid } : null,
+      ),
     }))
     // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
     let codexRows: Record<string, unknown>[] = []
@@ -1155,12 +1137,12 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     return json([...codexRows, ...claudeRows])
   }
   if (url.pathname === '/api/sessions' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { cwd?: string; backend?: string }
+    const body = await readJsonBody<{ cwd?: string; backend?: string }>(req)
     if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
     if (body.backend === 'codex') {
       return json({ key: codexKeyForNew(body.cwd), slug: 'codex', backend: 'codex' })
     }
-    return json({ key: `n|${encodeURIComponent(body.cwd)}`, slug: sanitizePath(body.cwd), backend: 'claude' })
+    return json({ key: keyForNew(body.cwd), slug: sanitizePath(body.cwd), backend: 'claude' })
   }
   if (url.pathname === '/api/fs/list' && req.method === 'GET') {
     // searchParams.get 已完成 URL 解码，禁止再 decodeURIComponent（含 % 的路径会被二次解码破坏）
@@ -1169,48 +1151,46 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       return json(listDirectories(target))
     } catch (e) {
       if (e instanceof FsBrowseError) return json({ error: e.message }, { status: e.status })
-      const message = e instanceof Error ? e.message : String(e)
-      return json({ error: message }, { status: 500 })
+      return json({ error: errorMessage(e) }, { status: 500 })
     }
   }
   if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { key?: string }
+    const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
     try {
       if (isCodexKey(body.key)) {
-        const threadId = body.key.split('|')[1]
+        const threadId = splitThreadId(body.key)
         if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
         await codexRuntime.rpcRequest('thread/archive', { threadId })
         return json({ ok: true })
       }
-      const parts = body.key.split('|')
-      if (parts[0] !== 's' || parts.length !== 3) return json({ error: '仅支持已有会话' }, { status: 400 })
-      const [, slug, sessionId] = parts
-      if (processManager.get(body.key) || liveSessionInfo(sessionId)) {
+      const ek = splitExistingKey(body.key)
+      if (!ek) return json({ error: '仅支持已有会话' }, { status: 400 })
+      if (processManager.get(body.key) || liveSessionInfo(ek.sessionId)) {
         return json({ error: '会话正在运行，无法归档' }, { status: 409 })
       }
-      archiveClaudeSession(slug, sessionId)
+      archiveClaudeSession(ek.slug, ek.sessionId)
       return json({ ok: true })
     } catch (e) {
-      return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+      return json({ error: errorMessage(e) }, { status: 500 })
     }
   }
   if (url.pathname === '/api/sessions/restore' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { key?: string }
+    const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
     try {
       if (isCodexKey(body.key)) {
-        const threadId = body.key.split('|')[1]
+        const threadId = splitThreadId(body.key)
         if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
         await codexRuntime.rpcRequest('thread/unarchive', { threadId })
         return json({ ok: true })
       }
-      const parts = body.key.split('|')
-      if (parts[0] !== 's' || parts.length !== 3) return json({ error: '仅支持 claude 会话恢复' }, { status: 400 })
-      restoreClaudeSession(parts[1], parts[2])
+      const ek = splitExistingKey(body.key)
+      if (!ek) return json({ error: '仅支持 claude 会话恢复' }, { status: 400 })
+      restoreClaudeSession(ek.slug, ek.sessionId)
       return json({ ok: true })
     } catch (e) {
-      return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+      return json({ error: errorMessage(e) }, { status: 500 })
     }
   }
   // 归档/回收站列表：codex archived + claude trash 合并
@@ -1244,24 +1224,24 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     return json({ entries: [...codexArchived, ...claudeTrash] })
   }
   if (url.pathname === '/api/sessions/rename' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { key?: string; title?: string }
+    const body = await readJsonBody<{ key?: string; title?: string }>(req)
     const title = body.title?.trim()
     if (!body.key || !title) return json({ error: '缺少 key 或 title' }, { status: 400 })
     // codex：官方 API，loaded/stored thread 均可
     if (isCodexKey(body.key)) {
-      const threadId = body.key.split('|')[1]
+      const threadId = splitThreadId(body.key)
       if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
       try {
         await codexRuntime.rpcRequest('thread/name/set', { threadId, name: title })
         return json({ ok: true })
       } catch (e) {
-        return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+        return json({ error: errorMessage(e) }, { status: 500 })
       }
     }
     // claude：仅离线会话（在线会话的 transcript 由 CLI 持有，改名走其内部路径）
-    const parts = body.key.split('|')
-    if (parts[0] !== 's' || parts.length !== 3) return json({ error: '仅支持已有 claude 会话' }, { status: 400 })
-    const [, slug, sessionId] = parts
+    const ek = splitExistingKey(body.key)
+    if (!ek) return json({ error: '仅支持已有 claude 会话' }, { status: 400 })
+    const { slug, sessionId } = ek
     if (processManager.get(body.key) || liveSessionInfo(sessionId)) {
       return json({ error: '会话正在运行，请在 CLI 退出后改名' }, { status: 409 })
     }
@@ -1272,15 +1252,11 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       appendFileSync(file, JSON.stringify({ type: 'custom-title', sessionId, customTitle: title }) + '\n')
       return json({ ok: true })
     } catch (e) {
-      return json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+      return json({ error: errorMessage(e) }, { status: 500 })
     }
   }
   if (url.pathname === '/api/handoff' && req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as {
-      fromKey?: string
-      toBackend?: string
-      detail?: HandoffDetail
-    }
+    const body = await readJsonBody<{ fromKey?: string; toBackend?: string; detail?: HandoffDetail }>(req)
     if (!body.fromKey) return json({ error: '缺少 fromKey' }, { status: 400 })
     if (body.toBackend !== 'claude' && body.toBackend !== 'codex') {
       return json({ error: 'toBackend 必须是 claude 或 codex' }, { status: 400 })
@@ -1343,8 +1319,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       const messages = await codexBackend.readHistory(codexHistMatch[1])
       return json({ messages, fileBytes: 0 })
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      return json({ error: message }, { status: 500 })
+      return json({ error: errorMessage(e) }, { status: 500 })
     }
   }
   // codex 模型目录（model/list）：模型 id/显示名/effort 列表/默认 effort
@@ -1353,8 +1328,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       const models = await codexRuntime.listModels()
       return json({ models })
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      return json({ error: message }, { status: 500 })
+      return json({ error: errorMessage(e) }, { status: 500 })
     }
   }
   if (url.pathname === '/api/config' && req.method === 'GET') {
@@ -1446,7 +1420,7 @@ try {
         try {
           handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString())
         } catch (e) {
-          const message = e instanceof Error ? e.message : String(e)
+          const message = errorMessage(e)
           console.error(`[ws ${hub.key}] 处理消息异常:`, message)
           try {
             ws.send(JSON.stringify({ kind: 'error', message }))
@@ -1492,7 +1466,7 @@ try {
     },
   })
 } catch (e) {
-  const msg = e instanceof Error ? e.message : String(e)
+  const msg = errorMessage(e)
   console.error(
     `[cc-remote] bind failed port=${config.port} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}: ${msg}`,
   )

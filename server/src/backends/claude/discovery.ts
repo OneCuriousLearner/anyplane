@@ -190,8 +190,9 @@ export function listSessions(): SessionInfo[] {
     }
   }
   // 活跃的 PID 会话若尚无 jsonl（刚开始），也列出来
+  const seen = new Set(out.map((s) => s.sessionId))
   for (const [sessionId, pid] of live) {
-    if (!out.some((s) => s.sessionId === sessionId)) {
+    if (!seen.has(sessionId)) {
       out.push({
         sessionId,
         cwd: pid.cwd,
@@ -210,35 +211,9 @@ export function listSessions(): SessionInfo[] {
 
 // ---------- 历史消息（供 UI 首次加载） ----------
 
-/** 结构化内容块：前端按块渲染（markdown 文本 / 思考 / 工具调用 / 工具结果 / 图片） */
-export interface HistoryBlock {
-  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image'
-  text?: string
-  /** tool_use：工具名；tool_result：无 */
-  name?: string
-  /** tool_use 的 id / tool_result 的 tool_use_id（用于配对） */
-  id?: string
-  /** tool_use 的参数 */
-  input?: unknown
-  /** tool_result 是否失败 */
-  isError?: boolean
-  /** image 块的展示地址（/api/uploads/<hash>.<ext>，hash 命名去重落盘） */
-  src?: string
-}
-
-export interface HistoryMessage {
-  uuid?: string
-  role: 'user' | 'assistant' | 'system'
-  /** system 消息的子类型（如 compact_boundary） */
-  subtype?: string
-  blocks: HistoryBlock[]
-  /** compact_boundary 的元数据 */
-  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number }
-  timestamp?: string
-  isMeta?: boolean
-  /** 是否可作为 rewind 目标（compact 边界之前的消息在逻辑上已不存在，无法回滚到） */
-  rewindable?: boolean
-}
+// 共享类型正本在 ../types（后端无关抽象层）；此处 import 自用 + re-export 兼容既有 import 路径
+import type { HistoryBlock, HistoryMessage } from '../types'
+export type { HistoryBlock, HistoryMessage } from '../types'
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
 function toolResultText(rc: unknown): string {

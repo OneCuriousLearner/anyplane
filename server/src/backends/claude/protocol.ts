@@ -127,14 +127,6 @@ export function isInitMessage(m: CliMessage): boolean {
   return m.type === 'system' && m.subtype === 'init'
 }
 
-export function isResultMessage(m: CliMessage): boolean {
-  return m.type === 'result'
-}
-
-export function isSessionStateChanged(m: CliMessage): boolean {
-  return m.type === 'system' && m.subtype === 'session_state_changed'
-}
-
 /**
  * Claude Code 有少数内部事件以 type:user 写入 transcript/stream：最典型是
  * 后台 Agent 的 <task-notification>。它们不是浏览器用户输入，不应进入主抄本

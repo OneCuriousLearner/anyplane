@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createSession, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type LineageResponse, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { createSession, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -11,6 +11,7 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import { isCodexKey, isExistingKey } from '../lib/key'
 
 const MORE_ITEM =
   'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface2/60 hover:text-ink'
@@ -57,8 +58,10 @@ const PHASE_LABEL: Record<string, string> = {
 /**
  * 历史加载与 tail 实时追加共用的消息归并：
  * tool_use ↔ tool_result 跨消息配对成卡，孤立结果降级为系统提示。
+ * toolIdx：批量加载时由调用方持有的 toolUseId → 位置索引（O(1) 配对，免 O(n²) 回扫）；
+ * 缺省（tail 单条追加）时线性回扫，并做不可变更新（out 与旧 state 共享 blocks 数组）。
  */
-function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage): void {
+function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage, toolIdx?: Map<string, { mi: number; bi: number }>): void {
   if (h.isMeta) return
   if (h.role === 'system' && h.subtype === 'compact_boundary') {
     out.push({ id: h.uuid ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: h.compactMeta, blocks: [] })
@@ -66,15 +69,23 @@ function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage): void {
   }
   const pair = (toolUseId: string | undefined, text: string, isError: boolean): boolean => {
     if (!toolUseId) return false
+    if (toolIdx) {
+      const at = toolIdx.get(toolUseId)
+      const b = at ? out[at.mi]?.blocks[at.bi] : undefined
+      if (!at || !b || b.kind !== 'tool') return false
+      out[at.mi].blocks[at.bi] = { ...b, resultText: text, resultError: isError, pending: false }
+      return true
+    }
     for (let mi = out.length - 1; mi >= 0; mi--) {
-      const blocks = out[mi].blocks
-      for (let bi = blocks.length - 1; bi >= 0; bi--) {
-        const b = blocks[bi]
-        if (b.kind === 'tool' && b.id === toolUseId) {
-          blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-          return true
-        }
+      const bi = out[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
+      if (bi < 0) continue
+      const blocks = [...out[mi].blocks]
+      const b = blocks[bi]
+      if (b.kind === 'tool') {
+        blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
+        out[mi] = { ...out[mi], blocks }
       }
+      return true
     }
     return false
   }
@@ -82,7 +93,9 @@ function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage): void {
   const stray: { text: string; isError: boolean }[] = []
   for (const hb of h.blocks) {
     if (hb.kind === 'tool_use') {
-      blocks.push({ kind: 'tool', id: hb.id ?? nextId(), name: hb.name ?? '?', input: hb.input })
+      const id = hb.id ?? nextId()
+      blocks.push({ kind: 'tool', id, name: hb.name ?? '?', input: hb.input })
+      toolIdx?.set(id, { mi: out.length, bi: blocks.length - 1 })
     } else if (hb.kind === 'tool_result') {
       if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
     } else if (hb.kind === 'image' && hb.src) {
@@ -122,9 +135,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [lineage, setLineage] = useState<LineageResponse>()
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [sendMode, setSendMode] = useState<'steer' | 'queue'>('steer')
-  /** 待发送的图片附件（预览用 dataURL 与传输用 base64 分离） */
+  /** 待发送的图片附件（预览 src 由 mediaType+dataBase64 派生，不单独存储） */
   const [pendingImages, setPendingImages] = useState<
-    Array<{ name: string; mediaType: string; dataBase64: string; previewUrl: string }>
+    Array<{ name: string; mediaType: string; dataBase64: string }>
   >([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [detailOpen, setDetailOpen] = useState(false)
@@ -161,8 +174,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const pushSystem = (text: string, kind: 'info' | 'error' = 'info') =>
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
 
-  const isCodex = session.key.startsWith('x|') || session.key.startsWith('xn|')
-  const isExisting = session.key.startsWith('s|') || session.key.startsWith('x|') || session.key.startsWith('b|')
+  const isCodex = isCodexKey(session.key)
+  const isExisting = isExistingKey(session.key)
 
   // codex 模型目录（model/list）：模型/effort 档位/默认值
   useEffect(() => {
@@ -214,6 +227,18 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     models: (codexModels ?? []).map((m) => m.id),
   }
 
+  /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset 重载共用） */
+  const applyHistory = (resp: HistoryResponse) => {
+    historyOffsetRef.current = resp.fileBytes
+    const out: ChatMsg[] = []
+    const toolIdx = new Map<string, { mi: number; bi: number }>()
+    for (const h of resp.messages) appendHistoryMsg(out, h, toolIdx)
+    setMsgs(() => out)
+    // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队
+    // codex 的实时流走 app-server 订阅（attach 即 resume），无 tailer
+    if (!isCodex) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
+  }
+
   // ---------- 历史加载（切换会话时取消过期请求，避免「卡住不出对话」） ----------
   useEffect(() => {
     let cancelled = false
@@ -235,13 +260,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     loader
       .then((resp) => {
         if (cancelled) return
-        historyOffsetRef.current = resp.fileBytes
-        const out: ChatMsg[] = []
-        for (const h of resp.messages) appendHistoryMsg(out, h)
-        setMsgs(() => out)
-        // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队
-        // codex 的实时流走 app-server 订阅（attach 即 resume），无 tailer
-        if (!isCodex) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
+        applyHistory(resp)
       })
       .catch((e) => {
         if (!cancelled) pushSystem(`⚠ 加载历史失败: ${e}`, 'error')
@@ -688,13 +707,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             setDraftBoth(null)
             pendingResultsRef.current.clear()
             fetchHistory(session.slug, session.sessionId)
-              .then((resp) => {
-                historyOffsetRef.current = resp.fileBytes
-                const out: ChatMsg[] = []
-                for (const h of resp.messages) appendHistoryMsg(out, h)
-                setMsgs(() => out)
-                sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
-              })
+              .then((resp) => applyHistory(resp))
               .catch(() => {})
             break
           }
@@ -765,12 +778,16 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         if (comma < 0) return
         setPendingImages((prev) => [
           ...prev,
-          { name: f.name, mediaType: f.type, dataBase64: url.slice(comma + 1), previewUrl: url },
+          { name: f.name, mediaType: f.type, dataBase64: url.slice(comma + 1) },
         ])
       }
       reader.readAsDataURL(f)
     }
   }
+
+  /** 预览 src：dataURL 与传输用 base64 本是一份数据，渲染时派生 */
+  const imgPreviewSrc = (img: { mediaType: string; dataBase64: string }) =>
+    `data:${img.mediaType};base64,${img.dataBase64}`
 
   // ---------- goal 设定/清除：claude 走 /goal 斜杠命令（本地命令，不进模型上下文），codex 走 thread/goal RPC ----------
   const setGoal = (condition: string) => {
@@ -788,6 +805,16 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       sockRef.current?.send({ kind: 'user', text: '/goal clear' })
     }
     pushSystem('◎ 已清除目标')
+  }
+
+  // ---------- StatusPill 共享处理器（claude/codex 两个胶囊的 mode/effort 同构；model 因本地回显差异分开） ----------
+  const handleSetMode = (m: string) => {
+    setPermMode(m)
+    sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
+  }
+  const handleSetEffort = (e: string) => {
+    setEffort(e)
+    sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
   }
 
   const send = () => {
@@ -896,7 +923,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     }
     const attachments = pendingImages.map(({ name, mediaType, dataBase64 }) => ({ name, mediaType, dataBase64 }))
     const echoBlocks: Block[] = [
-      ...pendingImages.map((img) => ({ kind: 'image' as const, src: img.previewUrl })),
+      ...pendingImages.map((img) => ({ kind: 'image' as const, src: imgPreviewSrc(img) })),
       ...(text ? [{ kind: 'text' as const, text }] : []),
     ]
     pushMsg({ id: nextId(), role: 'user', blocks: echoBlocks })
@@ -1281,14 +1308,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               setInitInfo((prev) => ({ ...prev, model: m }))
               sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
             }}
-            onSetMode={(m) => {
-              setPermMode(m)
-              sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
-            }}
-            onSetEffort={(e) => {
-              setEffort(e)
-              sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
-            }}
+            onSetMode={handleSetMode}
+            onSetEffort={handleSetEffort}
           />
         )}
 
@@ -1302,14 +1323,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             onSetModel={(m) => {
               sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
             }}
-            onSetMode={(m) => {
-              setPermMode(m)
-              sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
-            }}
-            onSetEffort={(e) => {
-              setEffort(e)
-              sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
-            }}
+            onSetMode={handleSetMode}
+            onSetEffort={handleSetEffort}
           />
         )}
 
@@ -1498,7 +1513,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             <div className="mb-1.5 flex flex-wrap gap-2">
               {pendingImages.map((img, i) => (
                 <span key={i} className="relative">
-                  <img src={img.previewUrl} alt={img.name} className="h-14 w-14 rounded border border-line object-cover" />
+                  <img src={imgPreviewSrc(img)} alt={img.name} className="h-14 w-14 rounded border border-line object-cover" />
                   <button
                     className="absolute -right-1.5 -top-1.5 rounded-full bg-danger px-1 text-[10px] leading-4 text-white"
                     onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}

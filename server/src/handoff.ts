@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { codexRuntime } from './backends/codex/runtime'
 import type { BackendName } from './backends/types'
+import { pumpLines } from './util'
 
 export type HandoffDetail = 'brief' | 'standard' | 'detailed'
 
@@ -73,33 +74,28 @@ export async function generateClaudeBrief(
     let finalText = ''
     let isError = false
     let usage: Record<string, number> | undefined
-    let buf = ''
-    const decoder = new TextDecoder()
-    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
     void (async () => {
       try {
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += decoder.decode(value, { stream: true })
-          let nl: number
-          while ((nl = buf.indexOf('\n')) >= 0) {
-            const line = buf.slice(0, nl).trim()
-            buf = buf.slice(nl + 1)
-            if (!line.startsWith('{')) continue
+        await pumpLines(
+          proc.stdout as ReadableStream<Uint8Array>,
+          (line) => {
+            if (!line.startsWith('{')) return
             let obj: Record<string, unknown>
             try {
               obj = JSON.parse(line)
             } catch {
-              continue
+              return
             }
             if (obj.type === 'result') {
               finalText = String(obj.result ?? '')
               isError = obj.is_error === true
               usage = (obj.usage as Record<string, number> | undefined) ?? undefined
             }
-          }
-        }
+          },
+          (e) => {
+            throw e // 交外层 catch 统一 reject
+          },
+        )
         const code = await proc.exited
         clearTimeout(timer)
         if (isError || code !== 0 || !finalText.trim()) {
@@ -144,7 +140,7 @@ export interface LineageRecord {
 
 function lineageDir(): string {
   const dir = join(homedir(), '.cc-remote')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
   return dir
 }
 
