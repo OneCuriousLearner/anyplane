@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type LineageResponse, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { createSession, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type LineageResponse, type ServerConfigInfo, type SessionInfo } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -15,7 +15,7 @@ import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from 
 const MORE_ITEM =
   'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface2/60 hover:text-ink'
 
-const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw', 'branch', 'goal']
+const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw', 'branch', 'goal', 'review', 'rename', 'new']
 const COMMAND_DESC: Record<string, string> = {
   compact: '压缩上下文',
   context: '查看上下文占用',
@@ -23,6 +23,9 @@ const COMMAND_DESC: Record<string, string> = {
   btw: '侧问（借上下文一次性问答，不进历史）',
   branch: '分叉当前会话为新分支（原会话不动）',
   goal: '设定目标，agent 持续工作直到达成（/goal clear 清除）',
+  review: '审查当前改动',
+  rename: '重命名会话',
+  new: '新开会话（当前会话保留）',
 }
 
 interface Approval {
@@ -663,6 +666,23 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             })
             break
           }
+          case 'moved': {
+            // /clear 对话重置：进程已换新 sessionId 续跑，Hub 重键完毕——跳到新会话页
+            //（旧 transcript 在磁盘原样保留，列表页可见）
+            const parts = ev.targetKey.split('|')
+            props.onNavigate?.({
+              key: ev.targetKey,
+              slug: parts[1] ?? session.slug,
+              sessionId: ev.targetSessionId ?? 'new',
+              cwd: session.cwd,
+              backend: 'claude',
+              mtime: Date.now(),
+              sizeBytes: 0,
+              status: 'idle',
+              managed: { spawned: true, busy: false, clients: 0 },
+            })
+            break
+          }
           case 'tail_reset': {
             // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
             setDraftBoth(null)
@@ -828,6 +848,49 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       if (!arg) pushSystem(state.goal ? `◎ 当前目标：${state.goal.condition}` : '用法：/goal <条件>，/goal clear 清除')
       else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) clearGoal()
       else setGoal(arg)
+      setInput('')
+      return
+    }
+    if (isCodex && /^\/review(\s|$)/.test(text)) {
+      // codex review/start：无参审未提交改动，带参按自定义说明审（inline 在本线程跑）
+      const instructions = text.slice(7).trim()
+      sockRef.current.send({ kind: 'control', subtype: 'review', ...(instructions ? { extra: { instructions } } : {}) })
+      pushSystem(instructions ? `🔍 审查中：${instructions}` : '🔍 审查未提交的改动中…')
+      setInput('')
+      return
+    }
+    if (isCodex && /^\/rename(\s|$)/.test(text)) {
+      const name = text.slice(7).trim()
+      if (!name) {
+        pushSystem('用法：/rename <新名字>')
+        setInput('')
+        return
+      }
+      sockRef.current.send({ kind: 'control', subtype: 'rename', extra: { name } })
+      pushSystem(`✎ 重命名线程为「${name}」`)
+      setInput('')
+      return
+    }
+    if (isCodex && (text === '/new' || text === '/clear')) {
+      // codex /new 与 /clear 同为 thread/start 新线程：导航到 xn| 新会话页（懒启动）
+      const cwd = session.cwd
+      if (cwd) {
+        void createSession(cwd, 'codex').then(({ key }) =>
+          props.onNavigate?.({
+            key,
+            slug: 'codex',
+            sessionId: 'new',
+            cwd,
+            backend: 'codex',
+            mtime: Date.now(),
+            sizeBytes: 0,
+            status: 'offline',
+            managed: { spawned: false, busy: false, clients: 0 },
+          }),
+        )
+      } else {
+        pushSystem('⚠ 未知当前目录，无法新建线程', 'error')
+      }
       setInput('')
       return
     }

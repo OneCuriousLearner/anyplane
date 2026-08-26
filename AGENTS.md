@@ -67,9 +67,14 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 
 ### /btw 侧问、分支与 rewind 的服务端实现（index.ts）
 
+> 斜杠命令全景（内建分类/重合核对/codex 对应物）见 `docs/audits/2026-08-slash-commands.md`。
+
 - **btw**：Claude 走官方 `side_question` 控制通道（2.1.220 实测可用；进程内轻量 fork，共享主会话 prompt cache 与上下文，无流式增量、单次应答，不产生磁盘 FORK 会话）；Codex 走 `thread/fork ephemeral:true` 一次性问答（`btw_delta` 流式转发）。
-- **branch（分叉）**：`b|` key 懒分叉——导航即建 Hub，首条 user 消息 spawn 时带 `--fork-session --resume <sourceSid>`，fork 获得新 sessionId 并继承全部历史；分叉前历史视图直接读源会话 transcript。
+- **branch（分叉）**：`b|` key 懒分叉——导航即建 Hub，首条 user 消息 spawn 时带 `--fork-session --resume <sourceSid>`（`/branch <名字>` 透传为 `-n`）；fork 获得新 sessionId 并继承全部历史；分叉前历史视图直接读源会话 transcript。
 - **goal**：Claude `/goal`（2.1.139+，本地命令，从出站文本跟踪，result 到达即清除——goal 激活时 turn 只会因条件达成结束）；Codex `thread/goal/set|get|clear`（`thread/goal/updated|cleared` 通知驱动 status.goal，含 tokensUsed 统计；tokenBudget 协议支持但 UI 不透传）。goal 评估器反馈以 "Stop hook feedback" user 消息上流，前端渲染为目标评估系统卡。
+- **/clear（/reset /new）**：不拦截——CLI 发 `conversation_reset` 后以新 sessionId 续跑；服务端做 **Hub + ProcessManager + WS data.key 三层重键**（少一层都会出双进程或消息黑洞），`moved` 事件驱动前端导航到新会话页，旧 transcript 原样保留。
+- **/exit /quit 拦截**：headless 下会真杀 CLI 进程，web 场景多为误触，拦下并提示归档。
+- **codex 斜杠（app-server 无斜杠解析，全部需前端拦截）**：/compact → `thread/compact/start`；/goal → `thread/goal/*`；/review [说明] → `review/start`（inline，无参=uncommittedChanges、有参=custom）；/rename → `thread/name/set`；/new /clear → 前端导航 xn|；/context → 本地用量摘要。
 - **rewind_conversation**：先 `processManager.dispose()` 再带 `--resume-session-at` 重新 spawn（先摘 map 再 kill，避免旧 onExit 污染新会话）。`rewind_both` 先等待 `rewind_files` 成功应答，再走此路径；绝不能先截断对话。
 
 ## Windows 平台注意事项
@@ -88,3 +93,5 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 ## 文档
 
 `docs/claude-code/` 是官方 Claude Code 文档的本地 Markdown 镜像（gitignore，不进仓库），**协议/CLI/SDK 相关改动的重要开发参考**。用 `bun run docs:claude` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `en/**/*.md`。
+
+**长文本文档（审计报告/调研记录/规划）放 `docs/` 目录**（如 `docs/audits/2026-08-slash-commands.md` 斜杠命令全景审计、`ROADMAP.md` 后续规划），AGENTS.md 只保留最关键结论并引用路径。

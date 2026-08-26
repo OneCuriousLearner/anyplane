@@ -105,7 +105,8 @@ export interface SessionCallbacks {
 }
 
 export class ClaudeSession {
-  readonly key: string
+  /** 会话 key；/clear 对话重置时由 ProcessManager.rekey 改写（进程不换，键跟随新 sessionId） */
+  key: string
   readonly opts: SpawnOptions
   sessionId: string | undefined
   exited = false
@@ -651,6 +652,17 @@ export class ProcessManager {
     if (!s) return
     this.sessions.delete(key)
     s.dispose()
+  }
+
+  /** /clear 对话重置后的重键：会话进程不换，map 键跟随新 sessionId。
+   *  不迁的话 hub 按新 key 查不到进程会再起一个（双进程同 transcript）。 */
+  rekey(oldKey: string, newKey: string): boolean {
+    const s = this.sessions.get(oldKey)
+    if (!s) return false
+    this.sessions.delete(oldKey)
+    s.key = newKey
+    this.sessions.set(newKey, s)
+    return true
   }
 
   disposeAll(): void {

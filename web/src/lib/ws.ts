@@ -25,6 +25,8 @@ export type ServerEvent =
   | { kind: 'tail'; msg: HistoryMessage }
   /** 外部会话 transcript 被截断/重建（rewind、clear），客户端应重载历史并重新订阅 */
   | { kind: 'tail_reset' }
+  /** /clear 等触发的对话重置：进程以新 sessionId 续跑，Hub 已重键——前端应导航到新会话页 */
+  | { kind: 'moved'; targetKey: string; targetSessionId?: string; reason?: string }
   | { kind: 'error'; message: string }
 
 export interface CliMsg {

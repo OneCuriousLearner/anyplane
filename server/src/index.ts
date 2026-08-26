@@ -74,6 +74,8 @@ interface Hub {
   tailStatusAt?: number
   /** 当前目标（claude /goal 由出站消息解析跟踪；codex 由 thread/goal/* 通知驱动） */
   goal?: { condition: string; since: number }
+  /** /clear 触发的对话重置：conversation_reset 到达后置位，紧随的 init 完成 Hub 重键 */
+  pendingRekey?: boolean
 }
 
 const hubs = new Map<string, Hub>()
@@ -273,6 +275,37 @@ function sessionCallbacks(hub: Hub) {
       // 生命周期本身已由 ProcessManager 消费为 system/task_notification；
       // 不再把原始内部载荷广播进主聊天或 rewind 历史。
       if (isInternalUserMessage(msg)) return
+      // /clear（别名 /reset /new）：CLI 发 conversation_reset 并以新 session_id 续跑。
+      // Hub 随之重键到 s|slug|<newSid>——新会话页承载后续对话，旧 transcript 原样留存。
+      if (msg.type === 'conversation_reset') {
+        hub.pendingRekey = true
+        return // 原始事件不进主抄本，迁移以 moved 事件表达
+      }
+      if (hub.pendingRekey && msg.type === 'system' && msg.subtype === 'init') {
+        hub.pendingRekey = false
+        const newSid = String(msg.session_id ?? '')
+        const cwd = hub.spawnOpts?.cwd ?? parseKey(hub.key)?.cwd
+        if (newSid && cwd) {
+          const newKey = keyFor(sanitizePath(cwd), newSid)
+          const oldKey = hub.key
+          hubs.delete(oldKey)
+          hub.goal = undefined // 上下文已清，goal 与待审批随之失效
+          hub.pendingApprovals.clear()
+          hub.key = newKey
+          hubs.set(newKey, hub)
+          // 进程 map 同步重键：否则按新 key 查不到进程会再 spawn 一个（双进程同 transcript）
+          processManager.rekey(oldKey, newKey)
+          // 重键后同步改写存活连接的 data.key：message 路由（getHub(ws.data.key)）依赖它，
+          // 否则旧 key 上的后续消息会新建空 Hub（消息黑洞）
+          for (const ws of hub.clients) {
+            if (!ws.data.inbox) ws.data.key = newKey
+          }
+          // 已知限制：新 transcript 文件尚未落盘时 parseKey 无法反查 cwd（进程存活期间无影响，
+          // spawnOpts 持有 cwd；空闲回收后若文件仍未写则报"无法解析会话"）
+          broadcast(hub, { kind: 'moved', targetKey: newKey, targetSessionId: newSid, reason: 'clear' })
+          pushStatus(hub)
+        }
+      }
       broadcast(hub, { kind: 'cli', msg })
       // turn 收尾是收件箱的核心提醒信号（agent 跑完了）
       if (msg.type === 'result') {
@@ -1425,25 +1458,35 @@ try {
           inboxClients.delete(ws as import('bun').ServerWebSocket<WSDataInbox>)
           return
         }
-        const hub = hubs.get(ws.data.key)
+        let hub = hubs.get(ws.data.key)
+        if (!hub) {
+          // 会话可能因 /clear 重键（hub.key 已换成新 s| key）：按客户端成员资格找回
+          for (const h of hubs.values()) {
+            if (h.clients.has(ws)) {
+              hub = h
+              break
+            }
+          }
+        }
         if (!hub) return
         hub.clients.delete(ws)
         // 不变量：任何后端的会话句柄存活期间，其 Hub 必须存活——
         // 否则重连时复用旧会话，其回调会把事件广播进已删除的 Hub（消息黑洞）。
-        const alive = isCodexKey(ws.data.key)
+        // 用 hub.key 而非 ws.data.key：重键后进程注册在新 key 下
+        const alive = isCodexKey(hub.key)
           ? (() => {
-              const s = codexRuntime.get(ws.data.key)
+              const s = codexRuntime.get(hub.key)
               s?.detachClient()
               return !!s && !s.exited
             })()
           : (() => {
-              const s = processManager.get(ws.data.key)
+              const s = processManager.get(hub.key)
               s?.detachClient()
               return !!s
             })()
         if (hub.clients.size === 0) {
           stopTailer(hub)
-          if (!alive) hubs.delete(ws.data.key)
+          if (!alive) hubs.delete(hub.key)
         }
       },
     },

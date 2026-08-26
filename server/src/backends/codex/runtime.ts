@@ -443,6 +443,27 @@ export class CodexSession {
           .catch((e) => this.emitError(`清除目标失败: ${e instanceof Error ? e.message : e}`))
         break
       }
+      case 'review': {
+        // codex /review：inline 在本线程跑一轮审查（uncommittedChanges 或自定义说明）
+        if (!this.threadId) break
+        const instructions = String(extra.instructions ?? '').trim()
+        void this.runtime
+          .rpcRequest('review/start', {
+            threadId: this.threadId,
+            target: instructions ? { type: 'custom', instructions } : { type: 'uncommittedChanges' },
+            delivery: 'inline',
+          })
+          .catch((e) => this.emitError(`审查启动失败: ${e instanceof Error ? e.message : e}`))
+        break
+      }
+      case 'rename': {
+        const name = String(extra.name ?? '').trim()
+        if (!this.threadId || !name) break
+        void this.runtime
+          .rpcRequest('thread/name/set', { threadId: this.threadId, name })
+          .catch((e) => this.emitError(`重命名失败: ${e instanceof Error ? e.message : e}`))
+        break
+      }
       default:
         console.log(`[codex ${this.key}] 不支持的控制请求 ${subtype}（忽略）`)
     }
