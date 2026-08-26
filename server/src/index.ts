@@ -647,8 +647,11 @@ function handleClientMessage(hub: Hub, raw: string): void {
       }
       const branchKey = keyForBranch(parsed.cwd, srcSid)
       // 预建 Hub 并缓存分叉源：首条 user 消息 ensureSpawned 时经 parseKey 拿到 forkFromSessionId
-      getHub(branchKey)
-      broadcast(hub, { kind: 'forked', targetKey: branchKey, branchOf: srcSid })
+      const branchHub = getHub(branchKey)
+      // /branch <名字>：透传给分叉 spawn 的 -n（列表页可区分分支用途）
+      const branchName = String(data.name ?? '').trim()
+      if (branchName) branchHub.spawnOpts = { ...branchHub.spawnOpts, sessionName: branchName }
+      broadcast(hub, { kind: 'forked', targetKey: branchKey, branchOf: srcSid, ...(branchName ? { name: branchName } : {}) })
       break
     }
     case 'rewind_conversation': {

@@ -12,8 +12,8 @@ export type ServerEvent =
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
   | { kind: 'rewound'; userMessageId: string; scope?: 'conversation' | 'both' }
-  /** codex 分叉回滚完成：原线程不动，新线程已生成；claude 懒分叉：branchOf 为源 sessionId */
-  | { kind: 'forked'; targetKey: string; targetSessionId?: string; fromTurnId?: string; branchOf?: string }
+  /** codex 分叉回滚完成：原线程不动，新线程已生成；claude 懒分叉：branchOf 为源 sessionId，name 为可选分支名 */
+  | { kind: 'forked'; targetKey: string; targetSessionId?: string; fromTurnId?: string; branchOf?: string; name?: string }
   /** 接力进度：源会话 fork 摘要中 */
   | { kind: 'handoff_pending'; toBackend: 'claude' | 'codex' }
   | { kind: 'handoff_brief'; brief: string }

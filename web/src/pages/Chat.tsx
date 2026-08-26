@@ -567,7 +567,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             if (ev.branchOf) {
               // claude 懒分叉：b| key 导航，首条消息才真正 --fork-session；
               // 历史视图直接读源会话 transcript（分支将原样继承它）
-              pushSystem('⎇ 已创建分支：新会话携带当前全部历史，原会话保持不动')
+              pushSystem(
+                `⎇ 已创建分支${ev.name ? `「${ev.name}」` : ''}：新会话携带当前全部历史，原会话保持不动`,
+              )
               props.onNavigate?.({
                 key: ev.targetKey,
                 slug: session.slug,
@@ -776,23 +778,56 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       setInput('')
       return
     }
-    if (text.startsWith('/btw')) {
+    if (/^\/btw(\s|$)/.test(text)) {
       const q = text.slice(4).trim()
       if (q) sockRef.current.send({ kind: 'btw', question: q })
       else pushSystem('用法：/btw <问题>')
       setInput('')
       return
     }
-    if (text === '/branch' || text === '/fork') {
-      // 分叉：携带当前全部历史开一个新分支会话（原会话不动）
+    // 内建 /branch（有参时）会在 headless 下写孤立 fork 会话文件却不切换（context.resume 缺席），
+    // 必须全形拦截（含参数）；名字透传给分叉 spawn 的 -n
+    const branchMatch = text.match(/^\/(branch|fork)(?:\s+(.*))?$/)
+    if (branchMatch) {
       if (isCodex) pushSystem('Codex 请用「回滚」面板的从此处分叉')
-      else sockRef.current.send({ kind: 'branch' })
+      else sockRef.current.send({ kind: 'branch', ...(branchMatch[2]?.trim() ? { name: branchMatch[2].trim() } : {}) })
       setInput('')
       return
     }
-    // codex 的 /compact 走控制请求（thread/compact/start），不作为文本发给模型
+    // /exit /quit headless 下会真的杀掉 CLI 进程——web 场景下多半是误触，拦下给替代指引
+    if (text === '/exit' || text === '/quit') {
+      pushSystem('此命令会终止 CLI 进程。要结束会话请回列表页归档（⌄ 按钮），进程回收由服务端空闲策略处理')
+      setInput('')
+      return
+    }
+    // /rewind 的官方别名
+    if (text === '/checkpoint' || text === '/undo') {
+      setShowRewind(true)
+      setInput('')
+      return
+    }
+    // codex 的斜杠命令不会被 app-server 解释（原样进模型上下文），有对应物的必须前端拦截
     if (isCodex && text === '/compact') {
       sockRef.current.send({ kind: 'control', subtype: 'compact' })
+      setInput('')
+      return
+    }
+    if (isCodex && text === '/context') {
+      // codex 无 get_context_usage 对应物；用状态里的累计 token 用量顶一句
+      const u = state.usage
+      pushSystem(
+        u
+          ? `◈ 线程累计：in ${u.inputTokens} / out ${u.outputTokens}${u.reasoningTokens ? ` / reasoning ${u.reasoningTokens}` : ''}（窗口占用明细请开「详情」）`
+          : '◈ 暂无用量数据（先跑一轮）',
+      )
+      setInput('')
+      return
+    }
+    if (isCodex && /^\/goal(\s|$)/.test(text)) {
+      const arg = text.slice(5).trim()
+      if (!arg) pushSystem(state.goal ? `◎ 当前目标：${state.goal.condition}` : '用法：/goal <条件>，/goal clear 清除')
+      else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) clearGoal()
+      else setGoal(arg)
       setInput('')
       return
     }
@@ -833,10 +868,30 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         name: n,
         desc: COMMAND_DESC[n],
       }))
+  // cc-remote 自有命令置顶（中文描述优先于 CLI 同名命令），其后是 CLI 报告的完整清单
+  const customEntries = FALLBACK_COMMANDS.map((n) => ({ name: n, desc: COMMAND_DESC[n] }))
+  const allEntries = [...customEntries, ...cmdEntries.filter((c) => !FALLBACK_COMMANDS.includes(c.name))]
   const slashHints =
     input.startsWith('/') && !input.includes(' ')
-      ? cmdEntries.filter((c) => `/${c.name}`.startsWith(input.trim())).slice(0, 6)
+      ? allEntries.filter((c) => `/${c.name}`.startsWith(input.trim()))
       : []
+  // 键盘导航：↑↓ 移动，Tab/Enter 采纳，Esc 关闭（索引随清单变化钳位）
+  const [slashIdx, setSlashIdx] = useState(0)
+  const slashActive = slashHints.length > 0 ? Math.min(slashIdx, slashHints.length - 1) : 0
+  /** 面板滚动容器：键盘导航时保证高亮行在视口内 */
+  const slashScrollRef = useRef<HTMLDivElement>(null)
+
+  // 高亮行跟随滚动：只滚面板容器（getBoundingClientRect 相对数学），不动页面滚动条
+  useEffect(() => {
+    const c = slashScrollRef.current
+    if (!c || slashHints.length === 0) return
+    const row = c.querySelectorAll('button')[slashActive]
+    if (!row) return
+    const cRect = c.getBoundingClientRect()
+    const rRect = row.getBoundingClientRect()
+    if (rRect.top < cRect.top) c.scrollTop -= cRect.top - rRect.top
+    else if (rRect.bottom > cRect.bottom) c.scrollTop += rRect.bottom - cRect.bottom
+  }, [slashActive, slashHints.length])
 
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
@@ -1027,7 +1082,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                       onClick={() => {
                         setMoreOpen(false)
                         setDetailOpen((v) => !v)
-                        if (!detailOpen) runQuery('get_context_usage', 'context 用量')
+                        // codex 无 get_context_usage 对应物，默认落在 MCP 状态上
+                        if (!detailOpen) runQuery(isCodex ? 'mcp_status' : 'get_context_usage', isCodex ? 'MCP 状态' : 'context 用量')
                       }}
                     >
                       详情
@@ -1264,7 +1320,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           <div className="border-t border-line/60 px-3 py-2">
             <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px]">
               <span className="text-muted">{detailTitle}</span>
-              {(['get_context_usage', 'mcp_status', 'get_settings'] as const).map((q) => (
+              {/* codex 只有 mcp_status 有对应物（mcpServerStatus/list）；context/设置是 claude 控制请求 */}
+              {(isCodex ? (['mcp_status'] as const) : (['get_context_usage', 'mcp_status', 'get_settings'] as const)).map((q) => (
                 <button
                   key={q}
                   className="rounded border border-line px-1.5 py-0.5 text-[10px] text-faint hover:text-muted"
@@ -1323,16 +1380,30 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         <div className="mx-auto max-w-3xl">
           {slashHints.length > 0 && (
             <div className="mb-2 rounded border border-line bg-surface2/60 p-1">
-              {slashHints.map((c) => (
-                <button
-                  key={c.name}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface2"
-                  onClick={() => setInput(`/${c.name} `)}
-                >
-                  <span className="font-mono text-[12px] text-accent-soft">/{c.name}</span>
-                  {c.desc && <span className="truncate text-xs text-faint">{c.desc}</span>}
-                </button>
-              ))}
+              {/* 完整清单可滚动（CLI initialize 握手报告多少就列多少），自有命令置顶；键盘导航时高亮行跟随滚动 */}
+              <div ref={slashScrollRef} className="max-h-60 overflow-y-auto">
+                {slashHints.map((c, i) => (
+                  <button
+                    key={c.name}
+                    className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left ${
+                      i === slashActive ? 'bg-surface2' : 'hover:bg-surface2'
+                    }`}
+                    onMouseEnter={() => setSlashIdx(i)}
+                    onClick={() => {
+                      setInput(`/${c.name} `)
+                      setSlashIdx(0)
+                      inputRef.current?.focus()
+                    }}
+                  >
+                    <span className="font-mono text-[12px] text-accent-soft">/{c.name}</span>
+                    {c.desc && <span className="truncate text-xs text-faint">{c.desc}</span>}
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-line/60 px-2 py-1 font-mono text-[9px] tracking-wide text-faint">
+                {slashHints.length} 个命令 · ↑↓ 移动 · Tab 补全
+                {input.trim() === '/' && ' · 继续输入可过滤'}
+              </div>
             </div>
           )}
           {/* busy 时发送方式：插队（steer，下一边界被模型看到）/ 排队（queue，当前轮结束后） */}
@@ -1419,10 +1490,46 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 rows={1}
                 placeholder={busy ? '工作中…' : ''}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value)
+                  setSlashIdx(0)
+                }}
                 onKeyDown={(e) => {
+                  // 斜杠命令面板打开时的键盘导航
+                  if (slashHints.length > 0) {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      setSlashIdx((i) => Math.min(i + 1, slashHints.length - 1))
+                      return
+                    }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      setSlashIdx((i) => Math.max(i - 1, 0))
+                      return
+                    }
+                    if (e.key === 'Tab') {
+                      e.preventDefault()
+                      setInput(`/${slashHints[slashActive].name} `)
+                      setSlashIdx(0)
+                      return
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setInput('')
+                      setSlashIdx(0)
+                      return
+                    }
+                  }
                   if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault()
+                    // 输入还是高亮命令的真前缀时先补全不发送；完整命令名（如 /compact）才直接发送
+                    const trimmed = input.trim()
+                    const active = slashHints[slashActive]
+                    if (slashHints.length > 0 && active && `/${active.name}` !== trimmed) {
+                      setInput(`/${active.name} `)
+                      setSlashIdx(0)
+                      return
+                    }
                     send()
                   }
                 }}

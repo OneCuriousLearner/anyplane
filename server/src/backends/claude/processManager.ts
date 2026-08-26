@@ -30,6 +30,8 @@ export interface SpawnOptions {
   /** 分叉：以 --fork-session --resume 启动，携带源会话全部历史、获得新 sessionId。
    *  与 resumeSessionId 互斥（fork 即 resume 的一种形态）。 */
   forkFromSessionId?: string
+  /** 会话自定义标题（-n/--name），写入 custom-title，列表页可区分 */
+  sessionName?: string
   model?: string
   effort?: string
   permissionMode?: string
@@ -217,6 +219,7 @@ export class ClaudeSession {
     if (this.opts.resumeSessionAt) args.push('--resume-session-at', this.opts.resumeSessionAt)
     if (this.opts.model) args.push('--model', this.opts.model)
     if (this.opts.effort) args.push('--effort', this.opts.effort)
+    if (this.opts.sessionName) args.push('-n', this.opts.sessionName)
     if (this.opts.permissionMode) args.push('--permission-mode', this.opts.permissionMode)
 
     console.log(`[session ${this.key}] spawn: ${cmd} ${args.join(' ')}`)
