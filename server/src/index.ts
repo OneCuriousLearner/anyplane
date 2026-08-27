@@ -12,6 +12,7 @@ import { TranscriptTailer } from './backends/claude/tailer'
 import { isCodexKey, keyForNew as codexKeyForNew, listSessions as listCodexSessions, parseKey as codexParseKey, readHistory as readCodexHistory, splitThreadId } from './backends/codex/backend'
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
 import { config, defaultPermissionMode } from './config'
+import { isOwnServerProcess, takeoverStaleListeners } from './portTakeover'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
 import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 import { resolveUpload } from './uploads'
@@ -51,11 +52,14 @@ interface PendingApproval {
 interface WSDataSession {
   key: string
   inbox?: never
+  /** 下行保活定时器（见 websocket handler 注释） */
+  keepalive?: ReturnType<typeof setInterval>
 }
 
 interface WSDataInbox {
   inbox: true
   key?: never
+  keepalive?: ReturnType<typeof setInterval>
 }
 
 type WSData = WSDataSession | WSDataInbox
@@ -1492,8 +1496,8 @@ if (!isLoopbackHost(config.host) && !config.authToken) {
   process.exit(1)
 }
 
-try {
-  server = Bun.serve<WSData>({
+function createServer(): ReturnType<typeof Bun.serve<WSData>> {
+  return Bun.serve<WSData>({
     port: config.port,
     hostname: config.host,
     async fetch(req, srv) {
@@ -1557,7 +1561,15 @@ try {
       return new Response('cc-remote server (web 未构建，请用 vite dev 或 bun run build)', { status: 200 })
     },
     websocket: {
+      // 30s 协议层下行 ping：前端 ReconnectingSocket 没有应用层心跳，空闲会话的 /ws 长连接
+      // 可能数分钟无任何消息——Bun.serve 默认 idleTimeout=120s 会把它静默掐断（前端重连虽无感，
+      // 但审批/事件推送会落在重连窗口里）；经 gateway 访问时也能为后端腿持续制造下行流量。
       open(ws) {
+        ws.data.keepalive = setInterval(() => {
+          try {
+            ws.ping()
+          } catch {}
+        }, 30_000)
         if (ws.data.inbox) {
           inboxClients.add(ws as import('bun').ServerWebSocket<WSDataInbox>)
           ws.send(JSON.stringify(inboxSnapshot()))
@@ -1585,6 +1597,7 @@ try {
         }
       },
       close(ws) {
+        if (ws.data.keepalive) clearInterval(ws.data.keepalive)
         if (ws.data.inbox) {
           inboxClients.delete(ws as import('bun').ServerWebSocket<WSDataInbox>)
           return
@@ -1622,6 +1635,25 @@ try {
       },
     },
   })
+}
+
+// EADDRINUSE 且占用者是本仓库残留 server → 接管后重试一次；外来进程占用则原样报错
+async function bindServer(): Promise<ReturnType<typeof Bun.serve<WSData>>> {
+  try {
+    return createServer()
+  } catch (e) {
+    const msg = errorMessage(e)
+    const addrInUse = msg.includes('EADDRINUSE') || (e as { code?: string }).code === 'EADDRINUSE'
+    if (!addrInUse) throw e
+    console.error(`[cc-remote] :${config.port} 已被占用，尝试接管本仓库残留进程…`)
+    if ((await takeoverStaleListeners(config.port, isOwnServerProcess)) !== 'freed') throw e
+    console.log(`[cc-remote] :${config.port} 残留已清理，重新绑定`)
+    return createServer()
+  }
+}
+
+try {
+  server = await bindServer()
 } catch (e) {
   const msg = errorMessage(e)
   console.error(

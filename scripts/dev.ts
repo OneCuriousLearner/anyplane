@@ -1,6 +1,7 @@
 // 纯 Bun 开发启动器。直接启动 server / Vite，避免 Windows 上
 // `bun run --cwd ...` 的多层包装进程吞掉 Ctrl+C。
 import { hasWindowsSocketFix } from '../server/src/util'
+import { isOwnServerProcess, isOwnViteProcess, takeoverStaleListeners } from '../server/src/portTakeover'
 
 export {}
 
@@ -12,6 +13,19 @@ if (!hasWindowsSocketFix() && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
   )
   console.error('[dev] Run `bun upgrade --canary`, restart the terminal, then run `bun run dev` again.')
   console.error('[dev] Refusing to start because another forced exit can create an unrecoverable stale port.')
+  process.exit(1)
+}
+
+// 端口残留接管：只杀"自己人"（cmdline+cwd 双校验，见 portTakeover.ts），外来占用直接退出，
+// 避免旧版"server 悄悄起不来 / Vite 静默换端口而 gateway 还代理旧实例"的半截环境。
+//（server 自身在 bind 失败时也会接管重试，这里是提前给出清晰反馈；Windows 不支持探测时静默跳过）
+const serverPort = Number(process.env.CC_REMOTE_PORT) || 7480
+const [tServer, tWeb] = await Promise.all([
+  takeoverStaleListeners(serverPort, isOwnServerProcess),
+  takeoverStaleListeners(5173, isOwnViteProcess),
+])
+if (tServer === 'refused' || tWeb === 'refused') {
+  console.error('[dev] 端口被外来进程占用，未启动。')
   process.exit(1)
 }
 

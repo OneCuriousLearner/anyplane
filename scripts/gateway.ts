@@ -29,8 +29,12 @@ type GatewayCfg = {
 
 type WSProxyData = {
   dest: string
+  /** 浏览器 upgrade 请求里的 Sec-WebSocket-Protocol，原样转发给后端（vite 无子协议不完成握手） */
+  protocols?: string | string[]
   backend?: WebSocket
   queue: Array<string | ArrayBuffer | Uint8Array>
+  /** 下行保活定时器（见 wsHandler 注释） */
+  keepalive?: ReturnType<typeof setInterval>
 }
 
 const HOP = new Set([
@@ -261,7 +265,10 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
 
     if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
       const dest = `${target.replace(/^http/, 'ws')}${url.pathname}${url.search}`
-      if (srv.upgrade(req, { data: { dest, queue: [] } })) return undefined
+      // 子协议必须随 data 带进 open()：Vite 6 的 HMR 只认 vite-hmr / vite-ping 子协议，
+      // 缺了它后端握手永远挂起，Bun WS 客户端 120s 超时断连 → 前端整页刷新（本 bug 根因）。
+      const protocols = req.headers.get('sec-websocket-protocol') ?? undefined
+      if (srv.upgrade(req, { data: { dest, protocols, queue: [] } })) return undefined
       return new Response('WebSocket upgrade failed', { status: 400 })
     }
 
@@ -277,8 +284,15 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
 }
 
 const wsHandler: import('bun').WebSocketHandler<WSProxyData> = {
+  // 30s 协议层下行 ping：对应用透明的死连接探测，并在链路上持续制造下行流量，
+  // 压住按"下行静默"掐连接的中间代理（nginx proxy_read_timeout 类）。
   open(ws) {
-    const backend = new WebSocket(ws.data.dest)
+    ws.data.keepalive = setInterval(() => {
+      try {
+        ws.ping()
+      } catch {}
+    }, 30_000)
+    const backend = new WebSocket(ws.data.dest, ws.data.protocols)
     ws.data.backend = backend
     backend.binaryType = 'arraybuffer'
     backend.addEventListener('open', () => {
@@ -311,6 +325,7 @@ const wsHandler: import('bun').WebSocketHandler<WSProxyData> = {
     b.send(payload)
   },
   close(ws) {
+    if (ws.data.keepalive) clearInterval(ws.data.keepalive)
     try {
       ws.data.backend?.close()
     } catch {}
