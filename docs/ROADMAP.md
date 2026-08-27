@@ -23,8 +23,10 @@ cc-remote 是这群用户的控制面：本地优先、provider 中立、双供�
   能力审批 + 403 拒绝 + 410 清理）。
 
 **剩余待办（未做）**：
-- ~~webhook 通道（ntfy/Bark/Server酱）~~ → 见下，仍是独立可后补项：国内 Android 无 FCM 环境的出路。
-  分发层已就绪，加通道 = 在 fanoutPush 里多一个 POST 分支 + 配置数组。
+- ~~webhook 通道（ntfy/Bark/Server酱）~~ → ✅ 已完成（2026-08-27）：配置项 `pushWebhooks` + `publicUrl`；
+  ntfy http action 真一键审批，Bark/Server酱 落 `GET /api/approval-page` 确认页（防预览误触）；
+  webhook 能力密钥 = HMAC(vapid 私钥, 渠道标识) 派生，不落新状态。验证：`server/src/push.test.ts`
+  webhook 段 7 项单测 + 真实服务端 mock 渠道活体全链路（审批 fanout/按钮 POST/确认页/done 扇出）。
 - iOS 实测：需 PWA 加到主屏幕后订阅；图标已备 PNG（icon-192/512）。
 
 ## 方向二：App 壳（Capacitor，不换技术栈）
@@ -46,22 +48,17 @@ cc-remote 是这群用户的控制面：本地优先、provider 中立、双供�
 
 **验收**：Android APK 侧载可用（连接/审批/推送全通）；iOS TestFlight 内测。
 
-## 方向三：公网接入（不自购云服务器）
+## 方向三：公网接入（不自购云服务器）——✅ 配方已落地（2026-08-27）
 
 **定论**：优先级 Tailscale funnel > Cloudflare Tunnel > 家宽 IPv6 直连；都不需要自购 VPS。
+三套配方 + 安全红线 + 手机蜂窝验收清单已写入 [`docs/public-access.md`](public-access.md)。
+剩余：由用户在真实手机上完成验收清单（蜂窝网络审批全链路 + 锁屏推送直接审批）。
 
 | 方案 | 花费 | 第三方可见性 | 备注 |
 |---|---|---|---|
-| Tailscale funnel | 免费 | 边缘节点只转发加密 TCP，TLS 在本机终止 | 已在 README 推荐 serve；funnel 仅多一步 |
+| Tailscale funnel | 免费 | 边缘节点只转发加密 TCP，TLS 在本机终止 | 一条命令，首选 |
 | Cloudflare Tunnel | 免费 | CF 边缘终止 TLS（可见明文），换来 Access 认证层 | 要稳定域名 + WAF 时选 |
 | 家宽 IPv6 + DDNS | 零 | 无第三方 | 国内家宽多有公网 v6；注意运营商入站过滤与自身防火墙 |
-
-**落地工作**：
-- README 补三套配方（funnel 一条命令；cloudflared compose；v6 + Caddy 自动证书）
-- 安全红线复用现有：非回环绑定必须 authToken（启动强制）；文档明确 `/api/fs/list` 的暴露等级
-- 可选加固：funnel/CF 层访问控制（IP 白名单/Access），或服务端 mTLS
-
-**验收**：手机蜂窝网络（非 Wi-Fi）经公网 URL 完成一次审批全链路。
 
 ## 已验证但暂不做的（决策记录）
 
@@ -70,7 +67,9 @@ cc-remote 是这群用户的控制面：本地优先、provider 中立、双供�
 - **codex `permissions` named-profile 迁移**：`sandboxPolicy` 未 deprecated，不急；迁移时注意 `sandboxPolicy` 与 `permissions` 互斥不能同发。升级 codex 前跑 `bun run server/scripts/check-codex-schema.ts`。
 - **codex `thread/revert`**：仓库里有（实验性，按 turn id 截断 durable history），0.148 未发布；发布后替代 RewindPicker 的 fork 截断做"真回滚"。
 - **MCP 管理面板**：`mcp_status/mcp_set_servers/mcp_reconnect/mcp_toggle` 都在已支持的 23 个 control subtype 内，纯前端工作，小任务待排期。
-- **`generate_session_title` 控制通道**：官方自动标题（side_question 同款 fire-and-forget），可替换列表页的标题来源，未实测。
+- **~~`generate_session_title` 控制通道~~** ✅ 已接入（2026-08-27）：首条真实 user 消息 × 首个 init 双条件触发
+  （`maybeGenerateTitle`，按 sessionId 去重，/clear 后新会话再生成）；CLI persist 写 ai-title 进 transcript，
+  discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，无需 cc-remote 侧落状态。实测 4 项全过。
 
 ## 更远的地平线（只记录，不动手）
 

@@ -12,22 +12,10 @@ import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 import { isCodexKey, isExistingKey } from '../lib/key'
+import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
 const MORE_ITEM =
   'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface2/60 hover:text-ink'
-
-const FALLBACK_COMMANDS = ['compact', 'context', 'rewind', 'btw', 'branch', 'goal', 'review', 'rename', 'new']
-const COMMAND_DESC: Record<string, string> = {
-  compact: '压缩上下文',
-  context: '查看上下文占用',
-  rewind: '回滚到之前的消息',
-  btw: '侧问（借上下文一次性问答，不进历史）',
-  branch: '分叉当前会话为新分支（原会话不动）',
-  goal: '设定目标，agent 持续工作直到达成（/goal clear 清除）',
-  review: '审查当前改动',
-  rename: '重命名会话',
-  new: '新开会话（当前会话保留）',
-}
 
 interface Approval {
   requestId: string
@@ -956,20 +944,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       })
   }, [showRewind, messages])
 
-  // 优先 initialize 握手返回的命令（含描述），其次 init 消息的命令名，最后静态兜底
-  const cmdEntries: Array<{ name: string; desc?: string }> = state.slashCommands?.length
+  // 优先 initialize 握手返回的命令（含描述），其次 init 消息的命令名，最后空清单（合并层用自有命令兜底）
+  const cliEntries: SlashEntry[] = state.slashCommands?.length
     ? state.slashCommands.map((c) => ({ name: c.name, desc: c.description }))
-    : (initInfo.slashCommands?.length ? initInfo.slashCommands : FALLBACK_COMMANDS).map((n) => ({
-        name: n,
-        desc: COMMAND_DESC[n],
-      }))
+    : (initInfo.slashCommands ?? []).map((n) => ({ name: n, desc: COMMAND_DESC[n] }))
   // cc-remote 自有命令置顶（中文描述优先于 CLI 同名命令），其后是 CLI 报告的完整清单
-  const customEntries = FALLBACK_COMMANDS.map((n) => ({ name: n, desc: COMMAND_DESC[n] }))
-  const allEntries = [...customEntries, ...cmdEntries.filter((c) => !FALLBACK_COMMANDS.includes(c.name))]
-  const slashHints =
-    input.startsWith('/') && !input.includes(' ')
-      ? allEntries.filter((c) => `/${c.name}`.startsWith(input.trim()))
-      : []
+  const allEntries = mergeSlashCommands(cliEntries)
+  const slashHints = filterSlashHints(input, allEntries)
   // 键盘导航：↑↓ 移动，Tab/Enter 采纳，Esc 关闭（索引随清单变化钳位）
   const [slashIdx, setSlashIdx] = useState(0)
   const slashActive = slashHints.length > 0 ? Math.min(slashIdx, slashHints.length - 1) : 0

@@ -18,10 +18,12 @@ import { resolveUpload } from './uploads'
 import {
   addSubscription,
   pushToAll,
+  pushWebhooksToAll,
   removeSubscription,
   subscriptionCount,
   vapidPublicKey,
   validSecret,
+  webhookCount,
   type PushPayload,
 } from './push'
 import {
@@ -76,6 +78,12 @@ interface Hub {
   goal?: { condition: string; since: number }
   /** /clear 触发的对话重置：conversation_reset 到达后置位，紧随的 init 完成 Hub 重键 */
   pendingRekey?: boolean
+  /** 当前会话的 sessionId（每次 system/init 更新；/clear 重键后是新值） */
+  sessionId?: string
+  /** 已为哪个 sessionId 生成过 AI 标题（按会话去重，/clear 后的新会话自然再触发一次） */
+  titleGeneratedFor?: string
+  /** 首条 user 消息原文（标题素材）：init 未到时先记账，maybeGenerateTitle 两路触发 */
+  pendingTitleText?: string
   /** sessionNameOf 的 s| key cwd 缓存：parseKey 反查 listSessions 至多一次（'' = 已查过、未知） */
   nameCwd?: string
 }
@@ -142,8 +150,75 @@ function summarizeInput(toolName: string, input: unknown): string {
   return json.length > 300 ? json.slice(0, 300) + '…' : json
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+/**
+ * webhook 审批确认页（GET /api/approval-page 的 HTML）。
+ * 故意零依赖零外链（微信内置浏览器可达性）；k/r/s 由页面 JS 从自身 URL 读取，
+ * 服务端只注入已转义的工具名与摘要，不把 secret 写进 HTML。
+ */
+function approvalPageHtml(key: string, pending?: PendingApproval): string {
+  const session = escapeHtml(sessionNameOf(key))
+  const tool = pending ? escapeHtml(pending.toolName) : ''
+  const summary = pending ? escapeHtml(summarizeInput(pending.toolName, pending.input)) : ''
+  const inner = pending
+    ? `<p class="meta">${session}</p>
+  <h1>需要审批 · ${tool}</h1>
+  <pre>${summary}</pre>
+  <div class="row">
+    <button class="ok" onclick="act('allow')">允许</button>
+    <button class="no" onclick="act('deny')">拒绝</button>
+  </div>
+  <p id="st" class="meta"></p>`
+    : `<h1>审批已处理</h1>
+  <p class="meta">${session} · 该请求已被裁决或不存在，无需操作</p>`
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>审批 · cc-remote</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#16130f;color:#e8e2d9;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .card{box-sizing:border-box;width:100%;max-width:26rem;margin:1rem;padding:1.25rem;border:1px solid #3a332a;border-radius:.5rem;background:#1e1a15}
+  h1{font-size:1rem;margin:.25rem 0 .75rem}
+  .meta{color:#8a8175;font-size:.75rem;word-break:break-all}
+  pre{white-space:pre-wrap;word-break:break-all;background:#16130f;border:1px solid #3a332a;border-radius:.375rem;padding:.625rem;font-size:.75rem;max-height:40vh;overflow:auto}
+  .row{display:flex;gap:.625rem;margin-top:1rem}
+  button{flex:1;padding:.75rem;border-radius:.375rem;border:1px solid;font-size:.875rem;cursor:pointer;background:transparent;color:inherit}
+  button:disabled{opacity:.4;cursor:default}
+  .ok{border-color:#6f9f6f;color:#9fce9f}
+  .no{border-color:#9f6f6f;color:#ce9f9f}
+</style>
+</head>
+<body>
+<div class="card">${inner}</div>
+<script>
+async function act(d){
+  document.querySelectorAll('button').forEach(function(b){b.disabled=true})
+  var st=document.getElementById('st')
+  st.textContent='提交中…'
+  var p=new URL(location.href).searchParams
+  try{
+    var resp=await fetch('/api/approval-action?k='+encodeURIComponent(p.get('k')||'')+'&r='+encodeURIComponent(p.get('r')||'')+'&d='+d+'&s='+encodeURIComponent(p.get('s')||''),{method:'POST'})
+    var j=await resp.json()
+    st.textContent=j.ok?(d==='allow'?'✓ 已允许':'✓ 已拒绝'):('失败：'+(j.error||resp.status))
+    if(!j.ok)document.querySelectorAll('button').forEach(function(b){b.disabled=false})
+  }catch(e){
+    st.textContent='网络错误，请重试'
+    document.querySelectorAll('button').forEach(function(b){b.disabled=false})
+  }
+}
+</script>
+</body>
+</html>`
+}
+
 function fanoutPush(ev: InboxEvent): void {
-  if (subscriptionCount() === 0) return
+  if (subscriptionCount() === 0 && webhookCount() === 0) return
   if (ev.type === 'approval_resolved') return // 审批已处理，无需推送（通知 tag 替换语义下保留现状即可）
   const session = sessionNameOf(ev.key)
   let payload: PushPayload
@@ -182,6 +257,7 @@ function fanoutPush(ev: InboxEvent): void {
     }
   }
   void pushToAll(payload).catch((e) => console.warn('[push] fanout 异常:', e))
+  void pushWebhooksToAll(payload).catch((e) => console.warn('[push] webhook fanout 异常:', e))
 }
 
 /** inbox 快照：所有 Hub 的待审批与忙闲状态（新连接建立时下发） */
@@ -290,6 +366,28 @@ function codexStatusOf(key: string): Record<string, unknown> {
   }
 }
 
+/**
+ * 官方 AI 标题（generate_session_title）：首条真实 user 消息 × 首个 init 双条件齐备即触发。
+ * 两路调用——user 消息时（sessionId 已知）与 init 到达时（消息已记账）；按 sessionId 去重，
+ * /clear 重键后的新会话自然再生成一次。CLI persist 把 ai-title 写进 transcript，
+ * discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，列表轮询内出现。
+ */
+function maybeGenerateTitle(hub: Hub): void {
+  const sid = hub.sessionId
+  const text = hub.pendingTitleText
+  if (!sid || !text || hub.titleGeneratedFor === sid) return
+  hub.titleGeneratedFor = sid
+  hub.pendingTitleText = undefined
+  const s = processManager.get(hub.key)
+  if (!s) return
+  void s
+    .generateSessionTitle(text)
+    .then((title) => {
+      if (title) console.log(`[title] ${sessionNameOf(hub.key)} → ${title}`)
+    })
+    .catch(() => {}) // 标题失败无害：列表回退首条消息摘要
+}
+
 /** 两个后端共用的会话回调：CLI/翻译层消息广播、审批入 Hub 表、状态推动 */
 function sessionCallbacks(hub: Hub) {
   return {
@@ -314,6 +412,7 @@ function sessionCallbacks(hub: Hub) {
           hubs.delete(oldKey)
           hub.goal = undefined // 上下文已清，goal 与待审批随之失效
           hub.pendingApprovals.clear()
+          hub.pendingTitleText = undefined // 旧会话的标题素材不带给新会话
           hub.key = newKey
           hubs.set(newKey, hub)
           // 进程 map 同步重键：否则按新 key 查不到进程会再 spawn 一个（双进程同 transcript）
@@ -328,6 +427,11 @@ function sessionCallbacks(hub: Hub) {
           broadcast(hub, { kind: 'moved', targetKey: newKey, targetSessionId: newSid, reason: 'clear' })
           pushStatus(hub)
         }
+      }
+      // 每个 init 都更新会话身份（首次 spawn 与 /clear 重键共用；rekey 分支不落 return，会走到这里）
+      if (msg.type === 'system' && msg.subtype === 'init') {
+        hub.sessionId = String(msg.session_id ?? '') || undefined
+        maybeGenerateTitle(hub) // 首条消息可能已记账在等 sessionId
       }
       broadcast(hub, { kind: 'cli', msg })
       // turn 收尾是收件箱的核心提醒信号（agent 跑完了）
@@ -583,6 +687,13 @@ function handleClientMessage(hub: Hub, raw: string): void {
             hub.goal = { condition: arg, since: Date.now() }
           }
           pushStatus(hub)
+        }
+        // 记录首条真实 user 消息作为标题素材（斜杠首消息不算会话主题，跳过）；
+        // 实际触发在 maybeGenerateTitle——需要 sessionId（init 可能尚未到达）。
+        // 条件显式写：titleGeneratedFor 与 sessionId 同 undefined 时也必须放行（全新 Hub）
+        if (text.trim() && !text.startsWith('/') && !(hub.titleGeneratedFor && hub.titleGeneratedFor === hub.sessionId)) {
+          hub.pendingTitleText ??= text
+          maybeGenerateTitle(hub)
         }
         pushStatus(hub)
       } catch (e) {
@@ -1056,7 +1167,7 @@ if (!hasWindowsSocketFix() && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
 async function handleApi(req: Request, url: URL): Promise<Response | undefined> {
   // ---------- Web Push 订阅管理 ----------
   if (url.pathname === '/api/push/public-key' && req.method === 'GET') {
-    return json({ publicKey: vapidPublicKey(), subscriptions: subscriptionCount() })
+    return json({ publicKey: vapidPublicKey(), subscriptions: subscriptionCount(), webhooks: webhookCount() })
   }
   if (url.pathname === '/api/push/subscriptions' && req.method === 'POST') {
     const body = await readJsonBody<{ endpoint?: string; keys?: { p256dh: string; auth: string } }>(req)
@@ -1103,6 +1214,18 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     )
     console.log(`[push] 通知直接审批 ${decision}：${sessionNameOf(key)} · ${pending.toolName}`)
     return json({ ok })
+  }
+  // webhook 通知的审批确认页（Bark/Server酱 无原生按钮：点链接进此页，按钮再 POST 到 approval-action）。
+  // GET 只渲染不执行——通知链接被预览/抓取也不会误触审批。能力 URL 模型同 approval-action。
+  if (url.pathname === '/api/approval-page' && req.method === 'GET') {
+    const key = url.searchParams.get('k') ?? ''
+    const requestId = url.searchParams.get('r') ?? ''
+    const secret = url.searchParams.get('s') ?? ''
+    if (!validSecret(secret)) return new Response('无效的能力密钥', { status: 403 })
+    const pending = hubs.get(key)?.pendingApprovals.get(requestId)
+    return new Response(approvalPageHtml(key, pending), {
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    })
   }
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     const sessions = listSessions()
@@ -1377,11 +1500,13 @@ try {
       const url = new URL(req.url)
 
       // 数据面/控制面统一鉴权（静态壳不鉴权，JS 中无敏感数据）
-      // /api/approval-action 例外：推送直接审批走能力 URL（per-subscription secret），
-      // SW 回POST 没有页面上下文，秘密本身即凭据（且仅对 pending 中的 requestId 有效）
+      // /api/approval-action 与 /api/approval-page 例外：推送直接审批走能力 URL（per-subscription/webhook
+      // secret），SW 回POST与微信/Bark 内打开确认页都没有页面登录态，秘密本身即凭据
+      //（且仅对 pending 中的 requestId 有效）
       const guarded =
         (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) &&
-        url.pathname !== '/api/approval-action'
+        url.pathname !== '/api/approval-action' &&
+        url.pathname !== '/api/approval-page'
       if (guarded && !isAuthorized(req, url)) {
         return json({ error: 'unauthorized' }, { status: 401 })
       }

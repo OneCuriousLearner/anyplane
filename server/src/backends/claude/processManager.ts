@@ -318,6 +318,21 @@ export class ClaudeSession {
     return resp?.response ?? ''
   }
 
+  /**
+   * 官方 AI 会话标题（Haiku 单次往返，CLI 侧 fire-and-forget 不阻塞 stdin 循环）。
+   * persist:true 让 CLI 把 {type:'ai-title'} 追加进 transcript——discovery 的标题链
+   * （custom-title > ai-title > summary > 首条消息）会自动接住，无需 cc-remote 侧落任何状态。
+   * 失败/超时返回 null（Haiku 不可用、响应不可解析均为 null），调用方静默忽略即可。
+   */
+  async generateSessionTitle(description: string): Promise<string | null> {
+    const resp = (await this.sendControlAndWait(
+      'generate_session_title',
+      { description: description.slice(0, 500), persist: true },
+      60_000,
+    )) as { title?: string | null } | undefined
+    return resp?.title ?? null
+  }
+
   attachClient(): void {
     this.clientCount++
     this.cancelRecycle()

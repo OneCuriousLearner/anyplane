@@ -1,4 +1,4 @@
-// 推送分发层：inbox 事件 → Web Push fan-out。
+// 推送分发层：inbox 事件 → Web Push fan-out + webhook 通道（ntfy/Bark/Server酱）。
 // 自实现 VAPID（RFC 8292）+ aes128gcm 载荷加密（RFC 8291/8188）——不引 web-push 库：
 // 其发送路径走 node:https 且假定 TLS（本地 mock/非标端点直接 WRONG_VERSION_NUMBER），
 // 而 Bun fetch + node:crypto 的组合在双运行时下行为完全可控。配方由 e2e-push.ts 解密反向验证。
@@ -7,7 +7,7 @@
 //   vapid.json                  VAPID P-256 密钥对（首次启动生成，mode 600）
 //   push-subscriptions.json     浏览器订阅注册表，每行带 per-subscription secret（能力密钥）
 //
-// 能力模型：直接审批 URL 只经端到端加密的推送投递到订阅设备，
+// 能力模型：直接审批 URL 只经端到端加密的推送（或受信的 webhook 渠道）投递到设备，
 // 「持有有效 secret + requestId 处于 pending」即充分条件，不依赖页面登录态。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -24,7 +24,7 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isLoopbackHostname } from './auth'
-import { config } from './config'
+import { config, type PushWebhookConfig } from './config'
 
 export interface PushSubscriptionRow {
   endpoint: string
@@ -257,10 +257,11 @@ export function subscriptionCount(): number {
   return loadSubs().length
 }
 
-/** 能力校验：secret 属于某个存活订阅 */
+/** 能力校验：secret 属于某个存活订阅或某个配置的 webhook 通道 */
 export function validSecret(secret: string): boolean {
   if (!secret) return false
-  return loadSubs().some((r) => r.secret === secret)
+  if (loadSubs().some((r) => r.secret === secret)) return true
+  return (config.pushWebhooks ?? []).some((wh) => webhookSecret(wh) === secret)
 }
 
 // ---------- 投递 ----------
@@ -314,4 +315,164 @@ export async function pushToAll(payload: PushPayload): Promise<{ sent: number; p
     }),
   )
   return { sent, pruned }
+}
+
+// ---------- webhook 通道（ntfy / Bark / Server酱 Turbo） ----------
+// 国内 Android 无 FCM 的出路：通知经 ntfy app / Bark / 微信（Server酱）触达。
+// 配置即信任（配置文件作者 = 服务端管理员，无浏览器注册面），故不需要 endpoint 白名单；
+// 代价是渠道方能读通知全文（Web Push 是端到端加密，webhook 不是）——见 config.ts 注释。
+//
+// 能力密钥不落新状态：secret = HMAC(vapid 私钥, 'webhook:'+渠道标识) 派生，
+// 与订阅 secret 同强度（伪造需读取 600 权限的 vapid.json，那时服务端已失守），
+// 且配置改动（换 topic/key）自然作废旧 URL。
+//
+// 直接审批分级保真：
+//   ntfy  —— http action 按钮真 POST，app 内一键裁决不打开页面（clear:true 点完即收）
+//   Bark/Server酱 —— 无原生按钮，链接落 GET /api/approval-page 确认页（按钮再 POST），
+//                    不做直出 GET 审批链接：链接被预览/抓取即误触。
+
+/** 渠道标识：唯一定位一条配置的字符串（secret 派生输入，也用于日志） */
+function webhookId(wh: PushWebhookConfig): string {
+  switch (wh.type) {
+    case 'ntfy':
+      return `ntfy:${wh.server ?? 'https://ntfy.sh'}/${wh.topic}`
+    case 'bark':
+      return `bark:${wh.url}`
+    case 'sct':
+      return `sct:${wh.sendkey}`
+  }
+}
+
+/** 从 vapid 私钥派生的 per-webhook 能力密钥（18 字节 → 24 字符，与订阅 secret 同长） */
+function webhookSecret(wh: PushWebhookConfig): string {
+  return hmac(Buffer.from(loadVapid().privateKey, 'base64url'), Buffer.from(`webhook:${webhookId(wh)}`))
+    .subarray(0, 18)
+    .toString('base64url')
+}
+
+export function webhookCount(): number {
+  return config.pushWebhooks?.length ?? 0
+}
+
+/** 绝对 URL：webhook 的深链与审批按钮不在本站上下文，必须有公网基准；未配置则降级纯文本 */
+function absoluteUrl(path: string): string | undefined {
+  const base = config.publicUrl?.replace(/\/+$/, '')
+  return base ? base + path : undefined
+}
+
+/** 会话深链（App.tsx 的 #s=<key> 格式） */
+function sessionLink(key: string): string | undefined {
+  return absoluteUrl(`/#s=${encodeURIComponent(key)}`)
+}
+
+/** webhook 审批确认页（Bark/Server酱 的链接落点；GET 只渲染，POST 才执行） */
+function approvalPageLink(wh: PushWebhookConfig, payload: PushPayload): string | undefined {
+  if (!payload.requestId) return undefined
+  return absoluteUrl(
+    `/api/approval-page?k=${encodeURIComponent(payload.key)}&r=${encodeURIComponent(payload.requestId)}&s=${webhookSecret(wh)}`,
+  )
+}
+
+/** ntfy JSON publish（https://docs.ntfy.sh/publish/#publish-as-json，避开 header 非 ASCII 编码问题） */
+async function sendNtfy(
+  wh: { type: 'ntfy'; topic: string; server?: string; token?: string },
+  payload: PushPayload,
+): Promise<number> {
+  const server = (wh.server ?? 'https://ntfy.sh').replace(/\/+$/, '')
+  const body: Record<string, unknown> = {
+    topic: wh.topic,
+    title: payload.title,
+    message: payload.body,
+    priority: payload.type === 'done' ? 3 : 4,
+  }
+  const click = sessionLink(payload.key)
+  if (click) body.click = click
+  if (payload.actions) {
+    const secret = webhookSecret(wh)
+    const allow = absoluteUrl(payload.actions.allow + secret)
+    const deny = absoluteUrl(payload.actions.deny + secret)
+    if (allow && deny) {
+      body.actions = [
+        { action: 'http', label: '允许', url: allow, method: 'POST', clear: true },
+        { action: 'http', label: '拒绝', url: deny, method: 'POST', clear: true },
+      ]
+    }
+  }
+  const resp = await fetch(`${server}/`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: {
+      'content-type': 'application/json',
+      ...(wh.token ? { authorization: `Bearer ${wh.token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  return resp.status
+}
+
+/** Bark：POST JSON 到完整推送 URL（api.day.app/<key> 或自建 bark-server） */
+async function sendBark(wh: { type: 'bark'; url: string }, payload: PushPayload): Promise<number> {
+  const body: Record<string, unknown> = {
+    title: payload.title,
+    body: payload.body,
+    group: 'cc-remote',
+    level: payload.type === 'done' ? 'active' : 'timeSensitive',
+  }
+  const link = payload.type === 'approval' ? approvalPageLink(wh, payload) : sessionLink(payload.key)
+  if (link) body.url = link
+  const resp = await fetch(wh.url, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return resp.status
+}
+
+/** Server酱 Turbo：form POST，desp 走 markdown（审批链接/深链以 markdown 链接呈现） */
+async function sendSct(wh: { type: 'sct'; sendkey: string }, payload: PushPayload): Promise<number> {
+  const lines = [payload.body]
+  if (payload.type === 'approval') {
+    const page = approvalPageLink(wh, payload)
+    if (page) lines.push('', `[👉 前往审批（允许 / 拒绝）](${page})`)
+  } else {
+    const click = sessionLink(payload.key)
+    if (click) lines.push('', `[查看会话](${click})`)
+  }
+  const form = new URLSearchParams()
+  form.set('title', payload.title.slice(0, 32)) // Server酱标题上限 32 字符
+  form.set('desp', lines.join('\n'))
+  const resp = await fetch(`https://sctapi.ftqq.com/${wh.sendkey}.send`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  })
+  return resp.status
+}
+
+/** fan-out 到全部 webhook 通道；单通道失败只记日志，不影响其他通道与 Web Push */
+export async function pushWebhooksToAll(payload: PushPayload): Promise<{ sent: number }> {
+  const hooks = config.pushWebhooks ?? []
+  let sent = 0
+  await Promise.allSettled(
+    hooks.map(async (wh) => {
+      try {
+        const status =
+          wh.type === 'ntfy'
+            ? await sendNtfy(wh, payload)
+            : wh.type === 'bark'
+              ? await sendBark(wh, payload)
+              : await sendSct(wh, payload)
+        if (status >= 200 && status < 300) {
+          sent++
+        } else {
+          console.warn(`[push] webhook ${webhookId(wh)} 投递失败 (HTTP ${status})`)
+        }
+      } catch (e) {
+        console.warn(`[push] webhook ${webhookId(wh)} 投递失败:`, e instanceof Error ? e.message : e)
+      }
+    }),
+  )
+  return { sent }
 }

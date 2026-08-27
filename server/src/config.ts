@@ -5,6 +5,20 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+/**
+ * webhook 推送通道（ntfy / Bark / Server酱 Turbo），与 Web Push 订阅并列 fan-out。
+ * 配置即信任：配置文件作者 = 服务端管理员，没有浏览器注册面，因此不需要 endpoint 白名单。
+ * 注意渠道凭证即通知保密边界：ntfy topic 要用不可猜的长随机串（或配 token），
+ * Bark key / Server酱 SendKey 同理——持有者能读通知全文（含审批能力 URL）。
+ */
+export type PushWebhookConfig =
+  /** ntfy：server 缺省 https://ntfy.sh（自建写自己的根地址）；topic 受保护时配 token */
+  | { type: 'ntfy'; topic: string; server?: string; token?: string }
+  /** Bark：完整推送 URL（https://api.day.app/<key> 或自建 bark-server 的 /<key>） */
+  | { type: 'bark'; url: string }
+  /** Server酱 Turbo：SendKey（推送到微信） */
+  | { type: 'sct'; sendkey: string }
+
 export interface ServerConfig {
   port: number
   /** 监听地址。默认仅回环；绑非回环地址必须同时配置 authToken */
@@ -35,6 +49,14 @@ export interface ServerConfig {
    * （FCM/Mozilla/Apple/WNS + 回环 mock）；自托管推送在此追加域名；['*'] = 任意 https。
    */
   pushAllowHosts?: string[]
+  /**
+   * cc-remote 的公网基准 URL（如 https://cc-remote.example.com，不带尾斜杠）。
+   * webhook 通知里的深链与直接审批按钮需要绝对 URL（ntfy app/微信/Bark 不在本站上下文），
+   * 不配置则 webhook 只发纯文本（标题+摘要仍可达）。
+   */
+  publicUrl?: string
+  /** webhook 推送通道（见 PushWebhookConfig），与 Web Push 订阅同时接收 inbox 事件 */
+  pushWebhooks?: PushWebhookConfig[]
 }
 
 const DEFAULTS: ServerConfig = {
@@ -82,3 +104,5 @@ export const config: ServerConfig = {
 export function defaultPermissionMode(): string | undefined {
   return config.permissionPolicy === 'bypass' ? 'bypassPermissions' : undefined
 }
+
+

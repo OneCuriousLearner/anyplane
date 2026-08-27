@@ -23,6 +23,8 @@ export type ControlRequestSubtype =
   | 'get_settings'
   // 进程内侧问（2.1.220 实测可用）：复用对话上下文与 prompt cache，不产生 FORK 会话
   | 'side_question'
+  // AI 会话标题（Haiku）：{description, persist} → {title|null}，persist 时 CLI 自写 ai-title 进 transcript
+  | 'generate_session_title'
 
 export interface ControlRequestInput {
   type: 'control_request'

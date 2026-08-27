@@ -24,7 +24,7 @@ Claude 侧 stdin/stdout 走双向 NDJSON（user 消息 + control_request/respons
 - **目标（goal）**：设定完成条件，agent 持续工作直到达成（Claude `/goal` Stop hook / Codex `thread/goal`），顶栏 chip 显示进度与 token 统计
 - **项目工作台**：会话按项目目录分组（git 分支 + 各后端计数）
 - **Token 计量**：只计 token 不计费用，分后端分桶（input/output/cache/reasoning），不跨后端合并
-- **会话列表**：扫描 `~/.claude/projects/**/*.jsonl` + `thread/list`，展示标题/最近活动/状态徽标（busy/idle/waiting/offline）
+- **会话列表**：扫描 `~/.claude/projects/**/*.jsonl` + `thread/list`，展示标题/最近活动/状态徽标（busy/idle/waiting/offline）；新会话首条消息后自动生成 **AI 标题**（官方 `generate_session_title` 通道，persist 进 transcript）
 - **接续对话**：按目录 + session id 精准 `--resume`；Codex 按 `thread/resume`
 - **流式输出**：`--include-partial-messages` 增量渲染，草稿气泡实时过 Markdown；assistant 块快照按 `message.id`+块序号归并定稿，不与增量重复
 - **Markdown 渲染**：react-markdown + GFM（表格/任务列表/删除线），代码块等宽底色
@@ -34,7 +34,7 @@ Claude 侧 stdin/stdout 走双向 NDJSON（user 消息 + control_request/respons
 - **状态利用**：`system/init` 提供模型/权限模式徽标；initialize 握手返回斜杠命令清单（含描述）驱动命令面板；`result` 生成回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
 - **运行时切换**：模型（set_model）、权限模式（set_permission_mode，Codex 侧近似映射 approvalPolicy+sandbox）、effort、中断（interrupt）、/compact
 - **权限审批**：`can_use_tool` / `requestApproval` 统一推到 UI 审批卡片；Codex 侧强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；或配置 `permissionPolicy: "bypass"` 全自动
-- **推送通知**：Web Push（VAPID）——锁屏/关掉页面也能收到审批/完成/错误通知；审批通知带**允许/拒绝按钮，不打开页面直接裁决**；点击通知深链直达会话
+- **推送通知**：Web Push（VAPID）——锁屏/关掉页面也能收到审批/完成/错误通知；审批通知带**允许/拒绝按钮，不打开页面直接裁决**；点击通知深链直达会话。另有 **webhook 通道**（ntfy / Bark / Server酱）——国内 Android 无 FCM 环境的出路，Server酱可直达微信；ntfy 保留通知内一键审批，Bark/Server酱 点链接进确认页裁决
 - **会话详情抽屉**：context 分类用量 / MCP 状态 / 设置（只读控制查询）
 - **斜杠命令面板**：输入 `/` 弹出全量可滚动清单（自有命令置顶，键盘导航）；claude 命令尽量透传，codex 有对应物的命令前端拦截映射（app-server 无斜杠解析）
 - **回滚（rewind）**：消息选择器——仅回滚文件（文件检查点）、仅回滚对话、对话+文件（先确认检查点恢复成功再截断对话）；Codex 无文件检查点，提供"从此处分叉"（原线程不动）
@@ -90,7 +90,24 @@ bun run gateway      # 对外 80/443 网关（见下方「域名访问」）
 - 环境变量覆盖：`CC_REMOTE_PORT`、`CC_REMOTE_HOST`、`CC_REMOTE_TOKEN`、`CLAUDE_CONFIG_DIR`
 - **运行数据目录**：一切 cc-remote 自产数据都在 `~/.cc-remote/`（图片附件、会话回收站、接力血缘、codex 思考侧车、推送密钥与订阅），不自动清理，由用户自行管理
 - **推送通知（Web Push）**：在列表页铃铛面板订阅；需 HTTPS（Tailscale serve/funnel 或自有反代）或 localhost；iOS 需先把站点**添加到主屏幕**再从主屏图标打开订阅（Safari 页签内不提供推送）。Android 国内无 FCM 环境不可达（已知边界）
-- 跨网段访问**不自建公网穿透**：推荐 Tailscale serve/funnel 或自有反代 + TLS，配合 `authToken` 使用
+- **推送 webhook 通道（ntfy / Bark / Server酱）**：与 Web Push 订阅并列接收同一份通知，配置文件管理：
+
+  ```json
+  {
+    "publicUrl": "https://cc-remote.example.com",
+    "pushWebhooks": [
+      { "type": "ntfy", "topic": "换成长随机串", "server": "https://ntfy.sh", "token": "可选" },
+      { "type": "bark", "url": "https://api.day.app/你的Key" },
+      { "type": "sct", "sendkey": "SCT开头的SendKey" }
+    ]
+  }
+  ```
+
+  - `publicUrl` 是 cc-remote 的公网基准地址（不带尾斜杠）。webhook 通知里的深链和审批按钮需要绝对 URL——不配也能发，但只有纯文本（标题+摘要）。
+  - 直接审批分级：**ntfy** 通知内按钮一键允许/拒绝（app 内 POST，不打开页面）；**Bark/Server酱** 点链接进确认页（两个按钮，避免链接被预览抓取误触发审批）。
+  - 渠道凭证 = 通知保密边界：ntfy topic 要用不可猜的长随机串（或配 token），Bark key / SendKey 同理。与 Web Push 不同，webhook 渠道方（ntfy.sh/Apple/腾讯）能读通知全文。
+  - 手动验证：配置后重启服务端，让某会话触发一次审批（如让它写文件），观察 ntfy app / Bark / 微信是否收到并能否一键裁决；铃铛面板会显示已配置的通道数。
+- 跨网段访问**不自建公网穿透**：三套免 VPS 配方（Tailscale funnel / Cloudflare Tunnel / 家宽 IPv6+DDNS）见 [`docs/public-access.md`](docs/public-access.md)，含安全红线与手机蜂窝网络验收清单
 - spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号
 - Windows 请使用 Bun 1.3.15+。Bun 1.3.14 及更早版本存在监听 socket 被子进程继承的问题
   ([oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936))；1.3.15 发布前可用

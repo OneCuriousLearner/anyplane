@@ -59,6 +59,7 @@ bun test web/            # 仅前端测试
 
 - **运行数据目录（约定）**：一切 cc-remote 自产的运行数据都放 `~/.cc-remote/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）、`vapid.json` + `push-subscriptions.json`（推送密钥与订阅注册表）。**这些数据目录不做自动清理**，由用户自行管理。
 - **`push.ts`** — Web Push 分发：inbox 事件（approval/done/error）→ 自实现 VAPID（RFC 8292）+ aes128gcm 载荷（RFC 8291/8188，不依赖 web-push 库——其 node:https 发送路径假定 TLS）。审批推送携带**能力 URL**（`/api/approval-action?k&r&d&s=<per-subscription secret>`），SW 通知按钮可直接审批不打开页面；该端点绕开 authToken（秘密只经加密推送投递，且仅对 pending 中的 requestId 有效）。死订阅（404/410）自动摘除。**订阅 endpoint 白名单**（防注册 SSRF/通知窃听——inbox 事件扇出给全部订阅）：缺省主流推送服务（FCM/Mozilla/Apple/WNS）+ 回环 mock；自托管推送在配置的 `pushAllowHosts` 追加域名（`['*']` = 任意 https）；投递不跟随重定向。
+  **webhook 通道**（ntfy/Bark/Server酱，配置 `pushWebhooks` + `publicUrl`）：与订阅并列 fan-out，配置即信任（无注册面无白名单），渠道方可读通知全文（非端到端加密）。能力密钥 = HMAC(vapid 私钥, 渠道标识) 派生不落状态；直接审批分级——ntfy http action 真一键 POST，Bark/Server酱 落 `GET /api/approval-page` 确认页（GET 只渲染，防预览抓取误触）。
 - **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（WS 客户端、待审批、启动偏好与 goal/重键等会话级状态），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
 - **认证**：`auth.ts`——配置 `authToken` 后 `/api` 与 `/ws` 一律校验（Bearer 或 `?token=`）；**绑非回环 host 必须配 token，否则拒绝启动**。静态前端壳不鉴权。**无 token 模式的两道跨源防护**（WS 无 SOP、text/plain 简单请求免 preflight，恶意网页可经浏览器打回环服务）：`Origin` 与 `Host` 须一致或同为回环（缺失放行=非浏览器客户端，`null` 拒绝=file:// 沙箱页）；非 GET `/api` 强制 `content-type: application/json`。配了 token 则两道检查不生效（token 即防线，行为与旧版一致）。
 - **sessionKey 编码**：Claude 会话 `s|<slug>|<sessionId>`、新会话 `n|<encodeURIComponent(cwd)>`、分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息 spawn 时才 `--fork-session --resume`）；Codex 线程 `x|<threadId>`、新线程 `xn|<encodeURIComponent(cwd)>`。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）；Codex key 靠 `thread/read` 惰性解析 cwd。
@@ -70,6 +71,7 @@ bun test web/            # 仅前端测试
   - **busy 语义（重要）**：Claude 优先信任 `system/session_state_changed`；Codex 用 `thread/status/changed`（active/idle）+ 审批等待合成 requires_action。**running / requires_action 时绝不回收。**
 - **Codex 关键实现点**：审批 `requestApproval` → 统一审批卡（accept/acceptForSession/decline/cancel），`turn/start` 强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；权限模式近似映射 approvalPolicy+sandbox；**wire 枚举双轨**：`thread/start` 的 `sandbox` 是 kebab-case，`turn/start` 的 `sandboxPolicy` 是 camelCase（0.147.0 实测）；线程被其他进程持有时 resume 报 -32600（UI 显示"被占用"）；不 kill 线程进程，断开订阅后 app-server 30 分钟自动卸载。
 - **`handoff.ts`** — 接力编排：源会话自摘要（Claude 源在线时走 `side_question` 控制通道，离线才 spawn `--fork-session --resume --bare` 一次性问答 / Codex `thread/fork ephemeral:true`）→ 目标会话播种首条消息（简报 + 现场确认指令）→ 血缘写 `~/.cc-remote/lineage.json`。进度事件推源 Hub。
+- **AI 会话标题**：首条真实 user 消息 × 首个 init 双条件齐备才触发 `generate_session_title`（`maybeGenerateTitle` 两路调用——懒 spawn 下首条消息常先于 init 到达，只挂一路会漏）；按 sessionId 去重，/clear 重键后自然再生成。CLI `persist:true` 自写 ai-title 进 transcript，discovery 标题链自动接住，**cc-remote 侧不落任何标题状态**。
 - **`config.ts`** — 项目根目录 `cc-remote.config.json`、`~/.cc-remote/config.json`（均可选，但不允许放 `~/.config/`），`CC_REMOTE_PORT` / `CC_REMOTE_HOST` / `CC_REMOTE_TOKEN` / `CLAUDE_CONFIG_DIR` 环境变量覆盖。
 
 ### 前端（web/src）
@@ -101,7 +103,7 @@ bun test web/            # 仅前端测试
 - compact 边界之前的消息不能作为 rewind 目标；`rewind_files` 只能回滚到有检查点的消息（spawn 时设了 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`）；effort 运行时切换依赖 `update_environment_variables`，旧版 CLI 可能需重开会话。
 - Codex 侧：无文件检查点（不支持 rewind_both）；rollout 不持久化 reasoning（cc-remote 侧车落盘 `~/.cc-remote/reasoning/<threadId>.jsonl` 并在历史读取时按 turn 时间窗回插）。
 - 认证已实现（authToken），但**未配置 token 时严禁绑定非回环地址**。`GET /api/fs/list?path=`（新会话目录选择器用）会暴露本机目录结构，与"任意目录起会话 = 任意命令执行"同级风险。
-- 跨网段不自建公网穿透：推荐 Tailscale serve/funnel 或自有反代 + TLS。
+- 跨网段不自建公网穿透：三套免 VPS 配方（funnel/CF Tunnel/IPv6+DDNS）与安全红线见 `docs/public-access.md`。
 
 ## 文档
 

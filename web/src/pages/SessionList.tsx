@@ -12,6 +12,7 @@ import {
 } from '../lib/api'
 import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
+import { authHeaders } from '../lib/auth'
 import { BellIcon } from '../components/BellIcon'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -59,6 +60,8 @@ export function SessionList(props: {
   const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1')
   /** 推送订阅状态：已订阅时为 push service endpoint */
   const [pushEndpoint, setPushEndpoint] = useState<string | null>(null)
+  /** 服务端配置的 webhook 通道数（ntfy/Bark/Server酱，配置文件管理，只读展示） */
+  const [pushWebhooks, setPushWebhooks] = useState(0)
   const [pushBusy, setPushBusy] = useState(false)
   const [notifyMenuOpen, setNotifyMenuOpen] = useState(false)
   const [view, setView] = useState<'active' | 'archived'>('active')
@@ -154,9 +157,13 @@ export function SessionList(props: {
     localStorage.setItem(NOTIFY_KEY, granted ? '1' : '0')
   }
 
-  // 挂载时读取推送订阅现状
+  // 挂载时读取推送订阅现状与 webhook 通道数
   useEffect(() => {
     void currentPushEndpoint().then(setPushEndpoint)
+    fetch('/api/push/public-key', { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { webhooks?: number } | null) => setPushWebhooks(j?.webhooks ?? 0))
+      .catch(() => {})
   }, [])
 
   const togglePush = async () => {
@@ -315,6 +322,19 @@ export function SessionList(props: {
                         <span className="font-mono text-[10px] text-faint">{pushEndpoint ? '退订' : '订阅'}</span>
                       )}
                     </button>
+                    {/* webhook 通道：配置文件管理（ntfy/Bark/Server酱），只读展示 */}
+                    <div className="flex w-full items-center gap-2 rounded px-1.5 py-1.5">
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${pushWebhooks > 0 ? 'bg-ok' : 'bg-faint'}`} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-mono text-[11px] text-ink">Webhook 通道</span>
+                        <span className="block text-[10px] leading-snug text-faint">
+                          {pushWebhooks > 0
+                            ? `已配置 ${pushWebhooks} 个（ntfy/Bark/Server酱）`
+                            : '国内 Android 无 FCM 的出路，见 README 配置'}
+                        </span>
+                      </span>
+                      <span className="font-mono text-[10px] text-faint">{pushWebhooks > 0 ? `${pushWebhooks}` : ''}</span>
+                    </div>
                   </div>
                   </>,
                   document.body,

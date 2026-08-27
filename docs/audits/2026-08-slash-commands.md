@@ -62,4 +62,4 @@
 - claude `/clear` 透传后 UI 靠 `moved` 事件跳新会话页；新 transcript 未落盘前 parseKey 无法反查 cwd（进程存活期无影响）。
 - claude `/goal` 需要 CLI ≥2.1.139；旧版会回 `Unknown skill`，chip 状态会误置（低频，暂不防）。
 - codex 无命令清单 API：新增 codex 命令支持 = 前端拦截表 + runtime sendControl 映射，两处同步加。
-- 面板测试缺口：FALLBACK 与 CLI 清单的合并/去重/前缀过滤逻辑目前没有单测（在 Chat.tsx 内联，可抽出再测）。
+- ~~面板测试缺口~~ ✅ 已关闭（2026-08-27）：合并/去重/前缀过滤抽为 `web/src/lib/slashCommands.ts` 纯函数，单测 `slashCommands.test.ts` 11 项。
