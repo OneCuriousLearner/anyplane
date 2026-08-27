@@ -3,7 +3,7 @@
 // - claude：官方无归档概念——把 transcript 移入 ~/.cc-remote/trash/claude/<slug>/（含 subagents 目录），
 //   恢复时移回。仅离线会话可操作（与改名同一边界：进程活着的会话绝不碰）。
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { config } from './config'
@@ -12,6 +12,17 @@ function trashRoot(): string {
   const dir = join(homedir(), '.cc-remote', 'trash', 'claude')
   mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
   return dir
+}
+
+/** rename 的跨文件系统兜底：CLAUDE_CONFIG_DIR 可指到与 ~/.cc-remote 不同的挂载点（EXDEV） */
+function move(src: string, dest: string): void {
+  try {
+    renameSync(src, dest)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== 'EXDEV') throw e
+    cpSync(src, dest, { recursive: true })
+    rmSync(src, { recursive: true, force: true })
+  }
 }
 
 function transcriptPath(slug: string, sessionId: string): string {
@@ -35,11 +46,11 @@ export function archiveClaudeSession(slug: string, sessionId: string): void {
   mkdirSync(destDir, { recursive: true })
   const dest = join(destDir, `${sessionId}.jsonl`)
   if (existsSync(dest)) throw new Error('回收站已有同名会话（先恢复或手动清理）')
-  renameSync(src, dest)
+  move(src, dest)
   // 同名 subagents 目录（subagent transcript）一并移走
   const sideDir = join(config.claudeConfigDir, 'projects', slug, sessionId)
   if (existsSync(sideDir)) {
-    renameSync(sideDir, join(destDir, sessionId))
+    move(sideDir, join(destDir, sessionId))
   }
   // 元信息（恢复依据 + 列表展示）
   writeFileSync(join(destDir, `${sessionId}.meta.json`), JSON.stringify({ trashedAt: new Date().toISOString() }))
@@ -54,11 +65,11 @@ export function restoreClaudeSession(slug: string, sessionId: string): void {
   if (existsSync(dest)) throw new Error('原位置已有同名 transcript')
   const projectDir = join(config.claudeConfigDir, 'projects', slug)
   mkdirSync(projectDir, { recursive: true })
-  renameSync(src, dest)
+  move(src, dest)
   const sideDir = join(destDir, sessionId)
-  if (existsSync(sideDir)) renameSync(sideDir, join(projectDir, sessionId))
+  if (existsSync(sideDir)) move(sideDir, join(projectDir, sessionId))
   const meta = join(destDir, `${sessionId}.meta.json`)
-  if (existsSync(meta)) renameSync(meta, join(destDir, `${sessionId}.meta.json.bak`))
+  if (existsSync(meta)) move(meta, join(destDir, `${sessionId}.meta.json.bak`))
 }
 
 /** 回收站列表（claude 部分） */

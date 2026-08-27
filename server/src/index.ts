@@ -3,7 +3,7 @@
 import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
-import { isAuthorized, isLoopbackHost } from './auth'
+import { isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
 import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
@@ -1356,46 +1356,11 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
 
 let server: ReturnType<typeof Bun.serve<WSData>>
 
-// ---------- 跨源防护（无 token 回环部署的浏览器攻击面） ----------
+// 跨源防护的实现已移至 auth.ts（可单测）；此处仅保留启动守卫说明：
 // WebSocket 不受同源策略约束、text/plain 简单请求不触发 preflight——
 // 默认无 token 时恶意网页可经受害者浏览器直连回环服务（CSWSH/CSRF → RCE）。
 // 浏览器在 WS 握手与跨源 POST 时必定携带 Origin；非浏览器客户端（e2e 脚本/curl）不带。
-// 配置 authToken 后 token 即防线，以下检查不生效（行为与旧版完全一致）。
-
-/** Host 头去端口（兼容 [::1]:7480 形态） */
-function hostNameOf(hostHeader: string): string {
-  if (hostHeader.startsWith('[')) return hostHeader.slice(1, hostHeader.indexOf(']'))
-  const i = hostHeader.lastIndexOf(':')
-  return i > 0 ? hostHeader.slice(0, i) : hostHeader
-}
-
-function isLoopbackHostname(h: string): boolean {
-  return h === 'localhost' || h === '::1' || h.startsWith('127.')
-}
-
-/** Origin 与 Host 同 host，或同为回环（dev 模式 Vite :5173 代理到 server :7480 的端口差） */
-function originAllowed(req: Request): boolean {
-  const origin = req.headers.get('origin')
-  if (!origin) return true // 非浏览器客户端；浏览器必带 Origin
-  if (origin === 'null') return false // 沙箱 iframe / file:// 页面（浏览器特征）
-  const host = req.headers.get('host') ?? ''
-  let o: URL
-  try {
-    o = new URL(origin)
-  } catch {
-    return false
-  }
-  if (o.host === host) return true
-  return isLoopbackHostname(o.hostname) && isLoopbackHostname(hostNameOf(host))
-}
-
-/** 状态变更 /api 请求必须是 application/json——text/plain 是 preflight 豁免的 CSRF 通道 */
-function jsonContentTypeRequired(req: Request, url: URL): boolean {
-  if (req.method === 'GET' || req.method === 'HEAD') return true
-  if (!url.pathname.startsWith('/api/')) return true
-  const ct = req.headers.get('content-type')?.split(';')[0].trim()
-  return ct === 'application/json'
-}
+// 配置 authToken 后 token 即防线，这些检查不生效（行为与旧版完全一致）。
 
 // 绑定非回环地址却不配置 token = 把"任意目录起会话 + 任意命令执行"裸奔到网络上，拒绝启动
 if (!isLoopbackHost(config.host) && !config.authToken) {

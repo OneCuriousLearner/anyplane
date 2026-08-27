@@ -15,3 +15,46 @@ export function isAuthorized(req: Request, url: URL): boolean {
   if (url.searchParams.get('token') === config.authToken) return true
   return false
 }
+
+// ---------- 跨源防护（无 token 回环部署的浏览器攻击面） ----------
+// WebSocket 不受同源策略约束、text/plain 简单请求不触发 preflight——
+// 默认无 token 时恶意网页可经受害者浏览器直连回环服务（CSWSH/CSRF → RCE）。
+// 浏览器在 WS 握手与跨源 POST 时必定携带 Origin；非浏览器客户端（e2e 脚本/curl）不带。
+// 配置 authToken 后 token 即防线，以下检查不生效（行为与旧版完全一致）。
+
+/** Host 头去端口（兼容 [::1]:7480 形态） */
+export function hostNameOf(hostHeader: string): string {
+  if (hostHeader.startsWith('[')) return hostHeader.slice(1, hostHeader.indexOf(']'))
+  const i = hostHeader.lastIndexOf(':')
+  return i > 0 ? hostHeader.slice(0, i) : hostHeader
+}
+
+export function isLoopbackHostname(h: string): boolean {
+  // WHATWG URL 的 IPv6 hostname 保留方括号（http://[::1]:9001 → "[::1]"）
+  const n = h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h
+  return n === 'localhost' || n === '::1' || n.startsWith('127.')
+}
+
+/** Origin 与 Host 同 host，或同为回环（dev 模式 Vite :5173 代理到 server :7480 的端口差） */
+export function originAllowed(req: Request): boolean {
+  const origin = req.headers.get('origin')
+  if (!origin) return true // 非浏览器客户端；浏览器必带 Origin
+  if (origin === 'null') return false // 沙箱 iframe / file:// 页面（浏览器特征）
+  const host = req.headers.get('host') ?? ''
+  let o: URL
+  try {
+    o = new URL(origin)
+  } catch {
+    return false
+  }
+  if (o.host === host) return true
+  return isLoopbackHostname(o.hostname) && isLoopbackHostname(hostNameOf(host))
+}
+
+/** 状态变更 /api 请求必须是 application/json——text/plain 是 preflight 豁免的 CSRF 通道 */
+export function jsonContentTypeRequired(req: Request, url: URL): boolean {
+  if (req.method === 'GET' || req.method === 'HEAD') return true
+  if (!url.pathname.startsWith('/api/')) return true
+  const ct = req.headers.get('content-type')?.split(';')[0].trim()
+  return ct === 'application/json'
+}
