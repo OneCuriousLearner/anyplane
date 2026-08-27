@@ -33,29 +33,38 @@ export interface ParsedKey {
   forkFromSessionId?: string
 }
 
-/** parseKey 靠 listSessions() 反查 cwd——slug 目录被删时 key 无法解析（已知限制） */
+/** parseKey 靠 listSessions() 反查 cwd——slug 目录被删时 key 无法解析（已知限制）。
+ *  编码段损坏（非法 % 转义）按"无法解析"处理：返回 null，由调用方走既有的错误播报路径 */
 export function parseKey(key: string): ParsedKey | null {
-  const parts = key.split('|')
-  if (parts[0] === 's' && parts.length === 3) {
-    const [, slug, sessionId] = parts
-    const info = listSessions().find((s) => s.slug === slug && s.sessionId === sessionId)
-    if (!info?.cwd) return null
-    return { cwd: info.cwd, resumeSessionId: sessionId, slug }
+  try {
+    const parts = key.split('|')
+    if (parts[0] === 's' && parts.length === 3) {
+      const [, slug, sessionId] = parts
+      const info = listSessions().find((s) => s.slug === slug && s.sessionId === sessionId)
+      if (!info?.cwd) return null
+      return { cwd: info.cwd, resumeSessionId: sessionId, slug }
+    }
+    if (parts[0] === 'n' && parts.length === 2) {
+      return { cwd: decodeURIComponent(parts[1]) }
+    }
+    if (parts[0] === 'b' && parts.length === 3) {
+      return { cwd: decodeURIComponent(parts[1]), forkFromSessionId: parts[2] }
+    }
+    return null
+  } catch {
+    return null
   }
-  if (parts[0] === 'n' && parts.length === 2) {
-    return { cwd: decodeURIComponent(parts[1]) }
-  }
-  if (parts[0] === 'b' && parts.length === 3) {
-    return { cwd: decodeURIComponent(parts[1]), forkFromSessionId: parts[2] }
-  }
-  return null
 }
 
-/** s|slug|sid 的纯形状解析：不做 listSessions() 反查（零 I/O），只需 slug/sessionId 的场景用 */
+/** s|slug|sid 的纯形状解析：不做 listSessions() 反查（零 I/O），只需 slug/sessionId 的场景用。
+ *  安全闸：slug 是 sanitizePath 产物（仅 [a-zA-Z0-9-]），sessionId 同理限定——
+ *  两段都会被拼进 ~/.claude/projects/ 下的文件路径，必须拒绝 `..` / 分隔符（路径遍历）。 */
 export function splitExistingKey(key: string): { slug: string; sessionId: string } | null {
   const parts = key.split('|')
   if (parts[0] !== 's' || parts.length !== 3) return null
-  return { slug: parts[1], sessionId: parts[2] }
+  const [, slug, sessionId] = parts
+  if (!/^[a-zA-Z0-9-]+$/.test(slug) || !/^[a-zA-Z0-9-]+$/.test(sessionId)) return null
+  return { slug, sessionId }
 }
 
 function toSummary(s: SessionInfo): SessionSummary {

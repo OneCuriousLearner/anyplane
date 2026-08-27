@@ -118,6 +118,11 @@ export interface SessionCallbacks {
 /**
  * WS/Hub 层对会话句柄的全部需求。ClaudeSession 结构化满足本接口；
  * Codex 后端以 app-server 连接实现同形接口（部分方法翻译或无操作）。
+ *
+ * 注意（两后端的实际差异，调用方须知）：
+ * - sendUserText 的 sendMode/images 为可选增强；codex 的 images 元素需要 name 字段。
+ * - write 接受任意 StdinMessage，但 codex 只响应 update_environment_variables
+ *   （CLAUDE_CODE_EFFORT_LEVEL → reasoning effort），其余形状按设计忽略。
  */
 export interface AgentSession {
   readonly key: string
@@ -133,7 +138,11 @@ export interface AgentSession {
   attachClient(): void
   detachClient(): void
   notifyExternalGate(): void
-  sendUserText(text: string): void
+  sendUserText(
+    text: string,
+    sendMode?: 'steer' | 'queue',
+    images?: Array<{ name?: string; mediaType: string; dataBase64: string }>,
+  ): void
   sendControl(subtype: string, extra?: Record<string, unknown>): string
   sendControlAndWait(
     subtype: string,
@@ -145,16 +154,21 @@ export interface AgentSession {
   dispose(): void
 }
 
-/** 后端门面：WS/Hub 层经由注册表按 key 分发到具体后端 */
+/** 后端门面：WS/Hub 层经由注册表按 key 分发到具体后端。
+ *  parseKey 返回两后端的并集形状（claude: cwd 必有 + resumeSessionId/slug；
+ *  codex: cwd 可能缺席需惰性解析 + resumeThreadId）。
+ *  readHistory：claude 传 (slug, sessionId)；codex 只传 (threadId)。 */
 export interface AgentBackend {
   name: BackendName
   /** 已存在会话 key（claude: s|slug|sid；codex: x|threadId） */
   keyFor(...args: string[]): string
   /** 新会话 key（claude: n|cwd；codex: xn|cwd） */
   keyForNew(cwd: string): string
-  parseKey(key: string): { cwd: string; resumeSessionId?: string; slug?: string } | null
+  parseKey(
+    key: string,
+  ): { cwd?: string; resumeSessionId?: string; resumeThreadId?: string; slug?: string } | null
   listSessions(): SessionSummary[] | Promise<SessionSummary[]>
-  readHistory(slug: string, sessionId: string): HistoryPage | Promise<HistoryPage>
+  readHistory(idOrSlug: string, sessionId?: string): HistoryPage | Promise<HistoryPage>
   ensure(key: string, opts: SpawnOptions, cb: SessionCallbacks): AgentSession
   get(key: string): AgentSession | undefined
   dispose(key: string): void

@@ -706,8 +706,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
             setDraftBoth(null)
             pendingResultsRef.current.clear()
+            const keyAtFetch = session.key
             fetchHistory(session.slug, session.sessionId)
-              .then((resp) => applyHistory(resp))
+              .then((resp) => {
+                // 异步返回时用户可能已切走：socket 已换成新会话的，弃掉过期结果
+                if (sockRef.current?.key !== keyAtFetch) return
+                applyHistory(resp)
+              })
               .catch(() => {})
             break
           }

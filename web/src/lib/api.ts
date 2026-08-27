@@ -17,10 +17,10 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return r
 }
 
-/** 非 2xx 应答 → Error：优先服务端的 {error} 字段，兜底 HTTP 状态码 */
+/** 非 2xx 应答 → Error：优先服务端的 {error} 字段（空串视同缺失），兜底 HTTP 状态码 */
 async function apiError(r: Response): Promise<Error> {
   const body = (await r.json().catch(() => null)) as { error?: string } | null
-  return new Error(body?.error ?? `HTTP ${r.status}`)
+  return new Error(body?.error || `HTTP ${r.status}`)
 }
 
 export interface SessionInfo {

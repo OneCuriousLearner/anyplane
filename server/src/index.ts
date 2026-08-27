@@ -76,6 +76,8 @@ interface Hub {
   goal?: { condition: string; since: number }
   /** /clear 触发的对话重置：conversation_reset 到达后置位，紧随的 init 完成 Hub 重键 */
   pendingRekey?: boolean
+  /** sessionNameOf 的 s| key cwd 缓存：parseKey 反查 listSessions 至多一次（'' = 已查过、未知） */
+  nameCwd?: string
 }
 
 const hubs = new Map<string, Hub>()
@@ -105,19 +107,28 @@ function publishInbox(ev: InboxEvent): void {
 // ---------- Web Push 分发（订阅为 0 时零开销） ----------
 
 /** 会话显示名：项目目录 basename（approval 只在 spawn 后发生，spawnOpts.cwd 必有）。
- *  未 spawn 的兜底从 key 自身推导（slug 末段 / b|·xn| 内嵌 cwd），
- *  不走 parseKey——它会对每个推送事件做一次 listSessions() 全盘扫描。 */
+ *  s| 未 spawn 时经 parseKey 反查真实 cwd——每 Hub 至多一次（缓存在 hub.nameCwd，
+ *  避免推送事件触发反复 listSessions 全盘扫描）；b|/n|/xn| 的 cwd 内嵌在 key 里直接取。
+ *  parseKey 也查不到（slug 目录已删）时以 slug 末段近似。 */
 function sessionNameOf(key: string): string {
+  const base = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() ?? cwd
   const hub = hubs.get(key)
-  const cwd = hub?.spawnOpts?.cwd
-  if (cwd) return cwd.replace(/\/+$/, '').split('/').pop() ?? cwd
+  if (hub?.spawnOpts?.cwd) return base(hub.spawnOpts.cwd)
   const parts = key.split('|')
-  if ((parts[0] === 'b' || parts[0] === 'n' || parts[0] === 'xn') && parts[1]) {
-    const embedded = decodeURIComponent(parts[1]).replace(/\/+$/, '')
-    return embedded.split('/').pop() ?? key.slice(0, 18)
+  try {
+    if ((parts[0] === 'b' || parts[0] === 'n' || parts[0] === 'xn') && parts[1]) {
+      return base(decodeURIComponent(parts[1]))
+    }
+  } catch {
+    // key 内嵌 cwd 不是合法 URI 编码（状态损坏/构造输入）：落 key 截断，不影响推送分发
+    return key.slice(0, 18)
   }
-  // s| 的 slug 是 sanitizePath(cwd)：末段即目录名（近似足够，仅推送显示用）
-  if (parts[0] === 's' && parts[1]) return parts[1].split('-').pop() ?? key.slice(0, 18)
+  if (parts[0] === 's') {
+    if (hub && hub.nameCwd === undefined) hub.nameCwd = parseKey(key)?.cwd ?? ''
+    if (hub?.nameCwd) return base(hub.nameCwd)
+    // slug 是 sanitizePath(cwd)：末段即目录名（近似，仅推送显示用）
+    if (parts[1]) return parts[1].split('-').pop() ?? key.slice(0, 18)
+  }
   return key.slice(0, 18)
 }
 
@@ -465,9 +476,8 @@ function ensureSpawned(
       hub.pendingEnv = undefined
     }
   } catch (e) {
-    const message = errorMessage(e)
-    console.error(`[session ${hub.key}] spawn 失败:`, message)
-    broadcastError(hub, message)
+    console.error(`[session ${hub.key}] spawn 失败:`, e) // 原对象打日志保留堆栈
+    broadcastError(hub, errorMessage(e))
   }
   // resumeSessionAt 是一次性 spawn 参数（命令行 args 已在 spawn() 内同步生成）。
   // 无论本次成败都不能留在 hub.spawnOpts 里，否则之后空闲回收后的普通 respawn
@@ -844,26 +854,18 @@ function handleClientMessage(hub: Hub, raw: string): void {
  */
 function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
   if (!hub.pendingApprovals.delete(requestId)) return false
-  if (isCodexKey(hub.key)) {
-    const s = codexRuntime.get(hub.key)
-    if (s && !s.exited) {
-      try {
-        s.sendApproval(requestId, decision)
-      } catch (e) {
-        broadcastError(hub, `审批回复失败: ${errorMessage(e)}`)
-      }
+  const s = isCodexKey(hub.key) ? codexRuntime.get(hub.key) : processManager.get(hub.key)
+  if (s && !s.exited) {
+    try {
+      s.sendApproval(requestId, decision)
+    } catch (e) {
+      broadcastError(hub, `审批回复失败: ${errorMessage(e)}`)
     }
   } else {
-    const s = processManager.get(hub.key)
-    if (s && !s.exited) {
-      try {
-        s.sendApproval(requestId, decision)
-      } catch (e) {
-        broadcastError(hub, `审批回复失败: ${errorMessage(e)}`)
-      }
-    }
-    s?.notifyExternalGate()
+    // 会话已退出/未就绪：决定无处投递（上游请求将自行超时），本地照常解析并告知用户
+    broadcastError(hub, '会话未在运行，审批未能送达（该请求会在上游自行超时）')
   }
+  if (!isCodexKey(hub.key)) s?.notifyExternalGate()
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   pushStatus(hub)
@@ -943,12 +945,16 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
       }
       // claude 的 sessionId 在 init 时才就绪：短轮询等待，随后回填真实 key（血缘导航用）
       if (toBackend === 'claude' && !targetSessionId) {
-        const s = processManager.get(targetKey)
         const deadline = Date.now() + 30_000
-        while (s && !s.sessionId && !s.exited && Date.now() < deadline) {
+        // 每轮重新取句柄：等待期间旧进程可能退出并被重生，旧引用拿不到新 sessionId
+        for (;;) {
+          const cur = processManager.get(targetKey)
+          if (!cur || cur.sessionId || cur.exited || Date.now() >= deadline) {
+            targetSessionId = cur?.sessionId
+            break
+          }
           await Bun.sleep(500)
         }
-        targetSessionId = s?.sessionId
       }
       const toResolvedKey =
         toBackend === 'codex'
@@ -1371,7 +1377,12 @@ try {
 
       const wsMatch = url.pathname.match(/^\/ws\/sessions\/(.+)$/)
       if (wsMatch) {
-        const key = decodeURIComponent(wsMatch[1])
+        let key: string
+        try {
+          key = decodeURIComponent(wsMatch[1])
+        } catch {
+          return json({ error: 'bad session key encoding' }, { status: 400 })
+        }
         if (srv.upgrade(req, { data: { key } })) return undefined
         return new Response('WebSocket upgrade failed', { status: 400 })
       }
@@ -1420,10 +1431,9 @@ try {
         try {
           handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString())
         } catch (e) {
-          const message = errorMessage(e)
-          console.error(`[ws ${hub.key}] 处理消息异常:`, message)
+          console.error(`[ws ${hub.key}] 处理消息异常:`, e) // 原对象打日志保留堆栈
           try {
-            ws.send(JSON.stringify({ kind: 'error', message }))
+            ws.send(JSON.stringify({ kind: 'error', message: errorMessage(e) }))
           } catch {}
         }
       },

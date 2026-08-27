@@ -13,16 +13,21 @@ export function keyForNew(cwd: string): string {
   return `xn|${encodeURIComponent(cwd)}`
 }
 
-/** codex key → spawn 参数。cwd 对新线程来自 key；已有线程由 thread/read 惰性解析 */
+/** codex key → spawn 参数。cwd 对新线程来自 key；已有线程由 thread/read 惰性解析。
+ *  编码段损坏（非法 % 转义）按"无法解析"处理：返回 null */
 export function parseKey(key: string): { cwd?: string; resumeThreadId?: string } | null {
-  const parts = key.split('|')
-  if (parts[0] === 'x' && parts.length === 2) {
-    return { resumeThreadId: parts[1] }
+  try {
+    const parts = key.split('|')
+    if (parts[0] === 'x' && parts.length === 2) {
+      return { resumeThreadId: parts[1] }
+    }
+    if (parts[0] === 'xn' && parts.length === 2) {
+      return { cwd: decodeURIComponent(parts[1]) }
+    }
+    return null
+  } catch {
+    return null
   }
-  if (parts[0] === 'xn' && parts.length === 2) {
-    return { cwd: decodeURIComponent(parts[1]) }
-  }
-  return null
 }
 
 export function isCodexKey(key: string): boolean {

@@ -21,19 +21,24 @@ export function slugOf(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-')
 }
 
-/** key 不在会话列表时（b| 分支 / 刚归档 / 深链直达）按 key 自身编码构造最小 SessionInfo */
+/** key 不在会话列表时（b| 分支 / 刚归档 / 深链直达）按 key 自身编码构造最小 SessionInfo。
+ *  编码段损坏（非法 % 转义）时返回 null，不让深链解析炸掉整个导航 */
 export function sessionFromKey(key: string): SessionInfo | null {
-  const managed = { spawned: false, busy: false, clients: 0 }
-  const parts = key.split('|')
-  if (parts[0] === 's' && parts.length === 3) {
-    return { key, slug: parts[1], sessionId: parts[2], mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+  try {
+    const managed = { spawned: false, busy: false, clients: 0 }
+    const parts = key.split('|')
+    if (parts[0] === 's' && parts.length === 3) {
+      return { key, slug: parts[1], sessionId: parts[2], mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+    }
+    if (parts[0] === 'x' && parts.length === 2) {
+      return { key, slug: 'codex', sessionId: parts[1], mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'codex', managed }
+    }
+    if (parts[0] === 'b' && parts.length === 3) {
+      const cwd = decodeURIComponent(parts[1])
+      return { key, slug: slugOf(cwd), sessionId: parts[2], cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+    }
+    return null
+  } catch {
+    return null
   }
-  if (parts[0] === 'x' && parts.length === 2) {
-    return { key, slug: 'codex', sessionId: parts[1], mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'codex', managed }
-  }
-  if (parts[0] === 'b' && parts.length === 3) {
-    const cwd = decodeURIComponent(parts[1])
-    return { key, slug: slugOf(cwd), sessionId: parts[2], cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
-  }
-  return null
 }
