@@ -16,6 +16,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const BASE = process.env.CC_REMOTE_BASE ?? 'http://127.0.0.1:7480'
+const WS_BASE = BASE.replace(/^http/, 'ws')
 const TOKEN_Q = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
 const results: string[] = []
 function note(ok: boolean, label: string, detail = '') {
@@ -115,7 +116,7 @@ try {
 
   // 2. 起 claude 会话，触发真实审批
   const key = `n|${encodeURIComponent('/tmp')}`
-  const ws = new WebSocket(`ws://127.0.0.1:7480/ws/sessions/${encodeURIComponent(key)}${TOKEN_Q}`)
+  const ws = new WebSocket(`${WS_BASE}/ws/sessions/${encodeURIComponent(key)}${TOKEN_Q}`)
   let resolved = false
   let sawResolvedEvent = false
   ws.onmessage = (e) => {

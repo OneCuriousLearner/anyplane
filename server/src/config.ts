@@ -30,6 +30,11 @@ export interface ServerConfig {
   detachRecycleMs: number
   /** claude 配置目录，默认 ~/.claude */
   claudeConfigDir: string
+  /**
+   * 推送 endpoint 白名单（防订阅注册 SSRF/通知窃听）。缺省用内置主流推送服务列表
+   * （FCM/Mozilla/Apple/WNS + 回环 mock）；自托管推送在此追加域名；['*'] = 任意 https。
+   */
+  pushAllowHosts?: string[]
 }
 
 const DEFAULTS: ServerConfig = {

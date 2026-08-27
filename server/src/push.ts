@@ -23,6 +23,7 @@ import {
 } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { config } from './config'
 
 export interface PushSubscriptionRow {
   endpoint: string
@@ -190,6 +191,9 @@ export function addSubscription(
   sub: { endpoint: string; keys: { p256dh: string; auth: string } },
   userAgent?: string,
 ): { secret: string } {
+  if (!endpointAllowed(sub.endpoint)) {
+    throw new Error('endpoint 不在允许的推送服务列表（可在配置的 pushAllowHosts 追加）')
+  }
   const all = loadSubs()
   const existing = all.find((r) => r.endpoint === sub.endpoint)
   if (existing) {
@@ -220,6 +224,37 @@ export function removeSubscription(endpoint: string): boolean {
   return true
 }
 
+// ---------- endpoint 白名单（订阅注册 SSRF / 通知窃听防护） ----------
+// inbox 事件会扇出给全部订阅（含审批命令摘要与能力 URL），任意 endpoint 注册 =
+// 窃听全部会话通知 + 向内网盲 POST。缺省仅主流推送服务 + 回环 mock（e2e/自托管调试）。
+
+const DEFAULT_PUSH_HOSTS = [
+  'fcm.googleapis.com',
+  'push.services.mozilla.com',
+  'updates.push.services.mozilla.com',
+  'web.push.apple.com',
+  'notify.windows.com',
+]
+
+function isLoopbackHostname(h: string): boolean {
+  return h === 'localhost' || h === '::1' || h.startsWith('127.')
+}
+
+export function endpointAllowed(endpoint: string): boolean {
+  let u: URL
+  try {
+    u = new URL(endpoint)
+  } catch {
+    return false
+  }
+  const allow = config.pushAllowHosts ?? DEFAULT_PUSH_HOSTS
+  if (allow.includes('*')) return u.protocol === 'https:'
+  // 本地 mock 推送服务（e2e-push/自托管调试）：回环不限协议
+  if (isLoopbackHostname(u.hostname)) return true
+  if (u.protocol !== 'https:') return false
+  return allow.some((h) => u.hostname === h || u.hostname.endsWith(`.${h}`))
+}
+
 export function subscriptionCount(): number {
   return loadSubs().length
 }
@@ -243,6 +278,8 @@ async function sendOne(row: PushSubscriptionRow, payload: PushPayload): Promise<
   const origin = new URL(row.endpoint).origin
   const resp = await fetch(row.endpoint, {
     method: 'POST',
+    // 不跟随重定向：302 可把请求带去白名单外的目标
+    redirect: 'manual',
     headers: {
       'content-type': 'application/octet-stream',
       'content-encoding': 'aes128gcm',

@@ -98,7 +98,8 @@ export function controlRequest(
   subtype: ControlRequestSubtype,
   extra: Record<string, unknown> = {},
 ): ControlRequestInput {
-  return { type: 'control_request', request_id: nextRequestId(), request: { subtype, ...extra } }
+  // subtype 在后：extra 是参数包，绝不允许覆盖调度字段（防 extra.subtype 注入绕过服务端守卫）
+  return { type: 'control_request', request_id: nextRequestId(), request: { ...extra, subtype } }
 }
 
 export function approvalResponse(
