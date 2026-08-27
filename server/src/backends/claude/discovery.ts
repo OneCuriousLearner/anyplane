@@ -213,7 +213,7 @@ export function listSessions(): SessionInfo[] {
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 import 自用 + re-export 兼容既有 import 路径
 import type { HistoryBlock, HistoryMessage } from '../types'
-export type { HistoryBlock, HistoryMessage } from '../types'
+export type { HistoryMessage } from '../types'
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
 function toolResultText(rc: unknown): string {

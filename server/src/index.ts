@@ -9,7 +9,7 @@ import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionI
 import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
 import { TranscriptTailer } from './backends/claude/tailer'
-import { codexBackend, isCodexKey, keyForNew as codexKeyForNew, parseKey as codexParseKey, splitThreadId } from './backends/codex/backend'
+import { isCodexKey, keyForNew as codexKeyForNew, listSessions as listCodexSessions, parseKey as codexParseKey, readHistory as readCodexHistory, splitThreadId } from './backends/codex/backend'
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
 import { config, defaultPermissionMode } from './config'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
@@ -1127,7 +1127,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
     let codexRows: Record<string, unknown>[] = []
     try {
-      const threads = await codexBackend.listSessions()
+      const threads = await listCodexSessions()
       codexRows = threads.map((t) => ({
         sessionId: t.id,
         cwd: t.cwd,
@@ -1327,7 +1327,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   const codexHistMatch = url.pathname.match(/^\/api\/codex\/history\/([^/]+)$/)
   if (codexHistMatch && req.method === 'GET') {
     try {
-      const messages = await codexBackend.readHistory(codexHistMatch[1])
+      const messages = await readCodexHistory(codexHistMatch[1])
       return json({ messages, fileBytes: 0 })
     } catch (e) {
       return json({ error: errorMessage(e) }, { status: 500 })

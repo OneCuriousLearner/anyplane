@@ -1,5 +1,5 @@
 // CodexRuntime：单个 codex app-server 进程托管全部 Codex 线程。
-// CodexSession 实现与 ClaudeSession 同形的会话句柄（见 backends/types.ts 的 AgentSession），
+// CodexSession 实现与 ClaudeSession 同形的会话句柄（契约见 backends/types.ts 末尾注释），
 // 事件经 ThreadTranslator 翻译成 claude stream-json 形状后走统一回调。
 
 import type { ApprovalDecision, BackgroundTask, SessionCallbacks } from '../types'
@@ -331,7 +331,7 @@ export class CodexSession {
     this.cb.onApprovalRequest({ requestId, toolName, input, toolUseId: String(params.itemId ?? '') })
   }
 
-  // ---------- AgentSession 同形接口 ----------
+  // ---------- 与 ClaudeSession 同形的句柄接口 ----------
 
   /** sendMode：steer=插队（turn/steer 追加进当前轮）；queue=排队（thread/queue/add，idle 后自动开始）；缺省普通新轮。
    *  images：浏览器上传的 base64 图片——实测 data URL 在部分 provider 下不可见，统一落盘后走 localImage。 */

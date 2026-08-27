@@ -1,9 +1,9 @@
-// Codex 后端门面：AgentBackend 形状。
+// Codex 后端的 sessionKey 编解码与会话列表/历史门面。
 // sessionKey：已存在线程 `x|<threadId>`；新线程 `xn|<encodeURIComponent(cwd)>`。
 // threadId 全局唯一且 thread/read 可反查 cwd，不受 claude slug 删除问题影响。
 
-import type { SessionSummary } from '../types'
-import { codexRuntime, type CodexSpawnOpts } from './runtime'
+import type { SessionSummary, HistoryMessage } from '../types'
+import { codexRuntime } from './runtime'
 
 export function keyFor(threadId: string): string {
   return `x|${threadId}`
@@ -64,20 +64,11 @@ function toSummary(t: ThreadRow): SessionSummary {
   }
 }
 
-export const codexBackend = {
-  name: 'codex' as const,
-  keyFor,
-  keyForNew,
-  parseKey,
-  isCodexKey,
-  listSessions: async (): Promise<SessionSummary[]> => {
-    const threads = await codexRuntime.listThreads()
-    return threads.map((t) => toSummary(t as ThreadRow))
-  },
-  readHistory: (threadId: string) => codexRuntime.readHistory(threadId),
-  ensure: (key: string, opts: CodexSpawnOpts, cb: Parameters<typeof codexRuntime.ensure>[2]) =>
-    codexRuntime.ensure(key, opts, cb),
-  get: (key: string) => codexRuntime.get(key),
-  dispose: (key: string) => codexRuntime.dispose(key),
-  disposeAll: () => codexRuntime.disposeAll(),
+export async function listSessions(): Promise<SessionSummary[]> {
+  const threads = await codexRuntime.listThreads()
+  return threads.map((t) => toSummary(t as ThreadRow))
+}
+
+export function readHistory(threadId: string): Promise<HistoryMessage[]> {
+  return codexRuntime.readHistory(threadId)
 }

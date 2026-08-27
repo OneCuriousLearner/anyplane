@@ -364,4 +364,4 @@ function userInputBlocks(content: unknown): HistoryBlock[] {
   return [...blocks, ...images]
 }
 
-export type { HistoryBlock, HistoryMessage }
+export type { HistoryMessage }

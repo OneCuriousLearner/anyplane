@@ -1,17 +1,8 @@
-// Claude 后端门面：把 discovery / processManager / tailer 收敛为 AgentBackend 形状。
+// Claude 后端的 sessionKey 编解码与纯形状解析。
 // sessionKey：已存在会话 `s|<slug>|<sessionId>`；新会话 `n|<encodeURIComponent(cwd)>`；
 // 分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息才 --fork-session）。
 
-import { config } from '../../config'
-import type { SessionSummary } from '../types'
-import {
-  listSessions,
-  liveSessionInfo,
-  readHistory,
-  sanitizePath,
-  type SessionInfo,
-} from './discovery'
-import { processManager } from './processManager'
+import { listSessions } from './discovery'
 
 export function keyFor(slug: string, sessionId: string): string {
   return `s|${slug}|${sessionId}`
@@ -66,38 +57,3 @@ export function splitExistingKey(key: string): { slug: string; sessionId: string
   if (!/^[a-zA-Z0-9-]+$/.test(slug) || !/^[a-zA-Z0-9-]+$/.test(sessionId)) return null
   return { slug, sessionId }
 }
-
-function toSummary(s: SessionInfo): SessionSummary {
-  return {
-    backend: 'claude',
-    key: keyFor(s.slug, s.sessionId),
-    id: s.sessionId,
-    slug: s.slug,
-    cwd: s.cwd,
-    title: s.title,
-    lastPrompt: s.lastPrompt,
-    mtime: s.mtime,
-    sizeBytes: s.sizeBytes,
-    status: s.status,
-    live: s.live,
-  }
-}
-
-export const claudeBackend = {
-  name: 'claude' as const,
-  keyFor,
-  keyForNew,
-  keyForBranch,
-  parseKey,
-  listSessions: (): SessionSummary[] => listSessions().map(toSummary),
-  readHistory,
-  liveSessionInfo,
-  sanitizePath,
-  ensure: (key: string, opts: Parameters<typeof processManager.ensure>[1], cb: Parameters<typeof processManager.ensure>[2]) =>
-    processManager.ensure(key, opts, cb),
-  get: (key: string) => processManager.get(key),
-  dispose: (key: string) => processManager.dispose(key),
-  disposeAll: () => processManager.disposeAll(),
-}
-
-export { config }
