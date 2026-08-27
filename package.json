@@ -13,7 +13,7 @@
     "start": "bun run --cwd server start",
     "gateway": "bun scripts/gateway.ts",
     "docs:claude": "bun scripts/fetch-claude-docs.ts",
-    "test": "bun test server/ scripts/"
+    "test": "bun test"
   },
   "workspaces": [
     "server",

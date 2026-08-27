@@ -1,39 +1,47 @@
 # cc-remote
 
-Claude Code 远程工作管理工具：在手机（或桌面）浏览器中管理运行在本机/容器上的官方 Claude Code 会话。
+Claude Code / Codex 远程工作管理工具：在手机（或桌面）浏览器中管理运行在本机/容器上的官方 Claude Code 与 Codex 会话。
 
 ## 原理
 
-不修改官方 Claude Code。服务端以子进程方式驱动官方 CLI 的 headless 协议：
+不修改官方 CLI。服务端以子进程方式驱动两家 CLI 的 headless 协议：
 
 ```
 claude --print --verbose --input-format stream-json --output-format stream-json \
        --include-partial-messages --allow-dangerously-skip-permissions \
        --permission-prompt-tool stdio [--resume <session-id>]
+
+codex app-server --stdio   # JSON-RPC 2.0 over NDJSON，单进程托管全部线程
 ```
 
-stdin/stdout 走双向 NDJSON（user 消息 + control_request/response），与官方 claude.ai/code 网页版桥接本地 CLI 用的是同一套本地协议。
+Claude 侧 stdin/stdout 走双向 NDJSON（user 消息 + control_request/response），与官方 claude.ai/code 网页版桥接本地 CLI 用的是同一套本地协议；Codex 事件在服务端翻译为同一消息形状，前端与 WS 协议零分叉。
 
 ## 功能
 
 - **双后端**：Claude Code（stream-json 子进程）与 **Codex**（`codex app-server` JSON-RPC）统一接入，同一 UI 管理两个 agent 的会话；Codex 事件在服务端翻译为统一消息形状，前端零分叉
-- **接力（handoff）**：一键让另一个 agent 接续本目录工作——源会话 fork 自写交接简报（Claude fork-session / Codex ephemeral fork），目标会话带简报进场先确认现场再继续；血缘落盘 `~/.config/cc-remote/lineage.json`
-- **项目工作台**：会话按项目目录分组（git 分支 + 各后端计数），Chat 顶栏同目录兄弟会话快捷切换
+- **接力（handoff）**：一键让另一个 agent 接续本目录工作——源会话自写交接简报（Claude 在线走 side_question / 离线 fork-session；Codex ephemeral fork），目标会话带简报进场先确认现场再继续；血缘落盘 `~/.cc-remote/lineage.json`
+- **分叉（branch）**：当前会话一键开分支（`--fork-session` 懒启动，首条消息才真正分叉），携带全部历史，原会话不动
+- **目标（goal）**：设定完成条件，agent 持续工作直到达成（Claude `/goal` Stop hook / Codex `thread/goal`），顶栏 chip 显示进度与 token 统计
+- **项目工作台**：会话按项目目录分组（git 分支 + 各后端计数）
 - **Token 计量**：只计 token 不计费用，分后端分桶（input/output/cache/reasoning），不跨后端合并
 - **会话列表**：扫描 `~/.claude/projects/**/*.jsonl` + `thread/list`，展示标题/最近活动/状态徽标（busy/idle/waiting/offline）
 - **接续对话**：按目录 + session id 精准 `--resume`；Codex 按 `thread/resume`
 - **流式输出**：`--include-partial-messages` 增量渲染，草稿气泡实时过 Markdown；assistant 块快照按 `message.id`+块序号归并定稿，不与增量重复
 - **Markdown 渲染**：react-markdown + GFM（表格/任务列表/删除线），代码块等宽底色
 - **工具卡片**：tool_use 与 tool_result 按 id 配对成一张卡（名称+摘要一行 trace，展开看参数与结果，失败染红）；思考块默认折叠
+- **图片附件**：粘贴/选择图片发送（Claude content blocks / Codex localImage 落 `~/.cc-remote/uploads/`），历史图片默认展示
 - **消息标签**：斜杠命令回显（`<command-name>`）渲染为命令 chip，本地命令输出剥 ANSI 折叠，`<system-reminder>`/isMeta 不进主抄本，子代理 sidechain 消息不入主流
-- **状态利用**：`system/init` 提供模型/权限模式徽标；initialize 握手拿 42+ 斜杠命令（含描述）驱动补全；`result` 生成回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
+- **状态利用**：`system/init` 提供模型/权限模式徽标；initialize 握手返回斜杠命令清单（含描述）驱动命令面板；`result` 生成回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
 - **运行时切换**：模型（set_model）、权限模式（set_permission_mode，Codex 侧近似映射 approvalPolicy+sandbox）、effort、中断（interrupt）、/compact
 - **权限审批**：`can_use_tool` / `requestApproval` 统一推到 UI 审批卡片；Codex 侧强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；或配置 `permissionPolicy: "bypass"` 全自动
+- **推送通知**：Web Push（VAPID）——锁屏/关掉页面也能收到审批/完成/错误通知；审批通知带**允许/拒绝按钮，不打开页面直接裁决**；点击通知深链直达会话
 - **会话详情抽屉**：context 分类用量 / MCP 状态 / 设置（只读控制查询）
-- **斜杠命令**：`/compact`、`/context` 原生透传；`/rewind`（消息选择器，支持仅回滚文件、仅回滚对话、回滚对话+文件；组合操作先确认文件检查点恢复成功再截断对话）；`/btw <问题>`（fork 侧问，不污染主会话）；其他命令原样发给 CLI 处理
+- **斜杠命令面板**：输入 `/` 弹出全量可滚动清单（自有命令置顶，键盘导航）；claude 命令尽量透传，codex 有对应物的命令前端拦截映射（app-server 无斜杠解析）
+- **回滚（rewind）**：消息选择器——仅回滚文件（文件检查点）、仅回滚对话、对话+文件（先确认检查点恢复成功再截断对话）；Codex 无文件检查点，提供"从此处分叉"（原线程不动）
 - **后台任务**：task_started → task_notification 活动任务芯片，可 `stop_task` 手动停止
-- **会话改名**：Claude 离线会话追加 custom-title（官方 /rename 同形）；Codex `thread/name/set`
-- **收件箱 + 通知**：`/ws/inbox` 跨会话审批/完成/错误汇总；桌面通知（页面隐藏时推送）；标题角标；PWA 可添加到手机主屏
+- **会话改名**：Claude 离线会话追加 custom-title（官方 /rename 同形）；Codex `thread/name/set`（会话内 `/rename <名>` 亦可）
+- **归档与回收站**：归档只移入 `~/.cc-remote/trash/`（不物理删除），回收站可恢复；物理删除留给用户自行处理
+- **收件箱**：`/ws/inbox` 跨会话审批/完成/错误汇总；桌面通知（页面隐藏时）；标题角标；PWA 可添加到手机主屏
 
 ## 运行
 
@@ -58,7 +66,7 @@ bun run gateway      # 对外 80/443 网关（见下方「域名访问」）
 
 ## 配置
 
-项目根目录 `cc-remote.config.json` 或 `~/.config/cc-remote/config.json`（均可选）。
+项目根目录 `cc-remote.config.json`、`~/.cc-remote/config.json`（均可选）。
 根目录的配置文件**已被 gitignore**（机器相关路径不应入库），可复制 `cc-remote.config.example.json` 后按需修改：
 
 ```json
@@ -80,6 +88,8 @@ bun run gateway      # 对外 80/443 网关（见下方「域名访问」）
 - `detachRecycleMs`: 已收到 Claude `session_state_changed` 时，客户端全断、主会话 `idle` 且无 Claude 后台任务后多久回收子进程（默认 5 分钟）；`running` / `requires_action` / 后台 Agent、workflow、shell 任务期间绝不回收
 - `idleTimeoutMs`: 无权威状态事件时的回退回收延迟（默认 30 分钟）
 - 环境变量覆盖：`CC_REMOTE_PORT`、`CC_REMOTE_HOST`、`CC_REMOTE_TOKEN`、`CLAUDE_CONFIG_DIR`
+- **运行数据目录**：一切 cc-remote 自产数据都在 `~/.cc-remote/`（图片附件、会话回收站、接力血缘、codex 思考侧车、推送密钥与订阅），不自动清理，由用户自行管理
+- **推送通知（Web Push）**：在列表页铃铛面板订阅；需 HTTPS（Tailscale serve/funnel 或自有反代）或 localhost；iOS 需先把站点**添加到主屏幕**再从主屏图标打开订阅（Safari 页签内不提供推送）。Android 国内无 FCM 环境不可达（已知边界）
 - 跨网段访问**不自建公网穿透**：推荐 Tailscale serve/funnel 或自有反代 + TLS，配合 `authToken` 使用
 - spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号
 - Windows 请使用 Bun 1.3.15+。Bun 1.3.14 及更早版本存在监听 socket 被子进程继承的问题
@@ -125,7 +135,7 @@ bun run gateway --insecure   # 仅授信内网；有 authToken 则可去掉 --in
 
 ## 部署到远程容器
 
-在容器内 `bun run build && bun run start`，把 7480 端口通过你的域名暴露即可。认证暂未实现（代码中已留好入口，勿直接暴露到不受信网络）。
+在容器内 `bun run build && bun run start`，配置 `authToken` 后把 7480 端口通过你的域名暴露即可（未配置 token 时严禁绑定非回环地址——服务端会拒绝启动）。
 
 ## 测试脚本
 
@@ -141,7 +151,8 @@ bun run server/scripts/e2e-rewind.ts     # rewind_files 与对话回滚
 
 ## 已知限制
 
-- `/rename` 不支持（headless 无此命令，直接改 jsonl 有并发写风险），标题只读展示
 - compact 边界之前的消息无法作为 rewind 目标（逻辑上已不存在），UI 会自动过滤
-- `rewind_files` 只能回滚到发生过文件变更、存在检查点的消息
+- `rewind_files` 只能回滚到发生过文件变更、存在检查点的消息（spawn 时已设 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`）
+- `side_question` 与 `/goal` 需要 Claude CLI ≥ 2.1.139；旧版会回 `Unknown skill`
+- Codex 无文件检查点（不支持文件回滚）；rollout 不持久化 reasoning（cc-remote 侧车落盘 `~/.cc-remote/reasoning/` 并在读历史时回插）
 - effort 的运行时切换依赖 `update_environment_variables`，若所用 CLI 版本不支持则需重开会话（spawn 时 `--effort` 一定有效）

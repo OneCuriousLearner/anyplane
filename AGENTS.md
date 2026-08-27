@@ -1,8 +1,12 @@
 # AGENTS.md
 
+AGENTS.md 只放读代码读不出的东西——设计哲学与决策原因；代码现状速查一律不写（保质期短且必然腐烂）。
+
 ## 项目定位
 
-cc-remote：在手机/桌面浏览器中管理本机运行的官方 Claude Code 会话。**不修改官方 CLI**——服务端以子进程方式驱动其 headless 协议（`claude --print --input-format stream-json --output-format stream-json --permission-prompt-tool stdio`），stdin/stdout 走双向 NDJSON，与 claude.ai/code 网页版桥接本地 CLI 用的是同一套本地协议。
+cc-remote：在手机/桌面浏览器中管理本机运行的官方 Claude Code 与 Codex 会话。
+**不修改官方 CLI**——服务端以子进程方式驱动两家 CLI 的 headless 协议（Claude 走 stream-json NDJSON，Codex 走 app-server JSON-RPC），并统一翻译为 Claude stream-json 形状，前端与 WS 协议因此不分叉。
+与 claude.ai/code 网页版桥接本地 CLI 用的是同一套本地协议。
 
 ## 常用命令
 
@@ -35,7 +39,17 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 
 服务端配置了 `authToken` 时，e2e 脚本需要 `CC_REMOTE_TOKEN` 环境变量才能连上 WS。
 
-仓库目前没有单元测试（`bun test` 无测试可跑）；验证改动主要靠上述 e2e 脚本。
+单元测试使用 Bun Test：
+
+```bash
+bun test                 # 跑全量（server/ + scripts/ + web/）
+bun test server/         # 仅服务端测试
+bun test web/            # 仅前端测试
+```
+
+- 测试文件统一命名为 `*.test.ts`，按目录分布：`server/src/backends/claude/`、`scripts/`、`web/src/`。
+- `bun run build` 使用 Vite，只打包生产依赖图，测试文件不会进入 `web/dist`。
+- 仓库仍有大量逻辑依赖 e2e 脚本验证；新增纯函数/工具优先补 `*.test.ts`，涉及真实 CLI 行为的链路改 e2e 脚本。
 
 ## 架构
 
@@ -45,7 +59,7 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 
 - **运行数据目录（约定）**：一切 cc-remote 自产的运行数据都放 `~/.cc-remote/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）、`vapid.json` + `push-subscriptions.json`（推送密钥与订阅注册表）。**这些数据目录不做自动清理**，由用户自行管理。
 - **`push.ts`** — Web Push 分发：inbox 事件（approval/done/error）→ 自实现 VAPID（RFC 8292）+ aes128gcm 载荷（RFC 8291/8188，不依赖 web-push 库——其 node:https 发送路径假定 TLS）。审批推送携带**能力 URL**（`/api/approval-action?k&r&d&s=<per-subscription secret>`），SW 通知按钮可直接审批不打开页面；该端点绕开 authToken（秘密只经加密推送投递，且仅对 pending 中的 requestId 有效）。死订阅（404/410）自动摘除。
-- **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（key → clients/pendingApprovals/spawnOpts/pendingEnv），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
+- **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（WS 客户端、待审批、启动偏好与 goal/重键等会话级状态），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
 - **认证**：`auth.ts`——配置 `authToken` 后 `/api` 与 `/ws` 一律校验（Bearer 或 `?token=`）；**绑非回环 host 必须配 token，否则拒绝启动**。静态前端壳不鉴权。
 - **sessionKey 编码**：Claude 会话 `s|<slug>|<sessionId>`、新会话 `n|<encodeURIComponent(cwd)>`、分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息 spawn 时才 `--fork-session --resume`）；Codex 线程 `x|<threadId>`、新线程 `xn|<encodeURIComponent(cwd)>`。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）；Codex key 靠 `thread/read` 惰性解析 cwd。
 - **Hub 生命周期不变量（重要）**：任何后端的会话句柄存活期间，其 Hub 不得删除——否则重连复用旧会话时事件会广播进已删 Hub（消息黑洞）。WS close 处理器按后端判定存活（`processManager.get` / `codexRuntime.get`）。
@@ -61,21 +75,20 @@ bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现
 ### 前端（web/src）
 
 - `pages/SessionList.tsx`（会话列表）+ `pages/Chat.tsx`（聊天主界面，大部分交互逻辑在这）；`App.tsx` 只是双栏布局。
+- 其他前端子系统索引：斜杠命令面板与拦截表（`Chat.tsx`）、推送订阅设置（`SessionList.tsx` + `lib/push.ts`）、推送深链 `#s=<key>`（`App.tsx`）。
 - `lib/ws.ts` — WS 客户端（按 sessionKey 连接、自动重连），`ServerEvent` 联合类型即服务端广播的全部事件种类。
 - `lib/blocks.ts` — 消息块模型：**live 流与历史加载共用同一套块归并逻辑**。增量（stream_event delta）与 assistant 块快照按 `message.id`+块序号归并定稿，不重复渲染。tool_use/tool_result 按 id 配对成一张卡。
 - 过滤规则：`<system-reminder>`/isMeta 不进主抄本，sidechain（子代理）消息不入主流；`compact_boundary` 渲染为分隔线。
 
-### /btw 侧问、分支与 rewind 的服务端实现（index.ts）
+### 斜杠命令
 
-> 斜杠命令全景（内建分类/重合核对/codex 对应物）见 `docs/audits/2026-08-slash-commands.md`。
+> 全景审计（内建分类/别名表/codex 对应物）在 `docs/audits/2026-08-slash-commands.md`。命令清单与拦截映射以代码为准（`Chat.tsx` 的面板与拦截表、`index.ts` 与 codex `runtime.ts` 的服务端映射），本节只记决策原因。
 
-- **btw**：Claude 走官方 `side_question` 控制通道（2.1.220 实测可用；进程内轻量 fork，共享主会话 prompt cache 与上下文，无流式增量、单次应答，不产生磁盘 FORK 会话）；Codex 走 `thread/fork ephemeral:true` 一次性问答（`btw_delta` 流式转发）。
-- **branch（分叉）**：`b|` key 懒分叉——导航即建 Hub，首条 user 消息 spawn 时带 `--fork-session --resume <sourceSid>`（`/branch <名字>` 透传为 `-n`）；fork 获得新 sessionId 并继承全部历史；分叉前历史视图直接读源会话 transcript。
-- **goal**：Claude `/goal`（2.1.139+，本地命令，从出站文本跟踪，result 到达即清除——goal 激活时 turn 只会因条件达成结束）；Codex `thread/goal/set|get|clear`（`thread/goal/updated|cleared` 通知驱动 status.goal，含 tokensUsed 统计；tokenBudget 协议支持但 UI 不透传）。goal 评估器反馈以 "Stop hook feedback" user 消息上流，前端渲染为目标评估系统卡。
-- **/clear（/reset /new）**：不拦截——CLI 发 `conversation_reset` 后以新 sessionId 续跑；服务端做 **Hub + ProcessManager + WS data.key 三层重键**（少一层都会出双进程或消息黑洞），`moved` 事件驱动前端导航到新会话页，旧 transcript 原样保留。
-- **/exit /quit 拦截**：headless 下会真杀 CLI 进程，web 场景多为误触，拦下并提示归档。
-- **codex 斜杠（app-server 无斜杠解析，全部需前端拦截）**：/compact → `thread/compact/start`；/goal → `thread/goal/*`；/review [说明] → `review/start`（inline，无参=uncommittedChanges、有参=custom）；/rename → `thread/name/set`；/new /clear → 前端导航 xn|；/context → 本地用量摘要。
-- **rewind_conversation**：先 `processManager.dispose()` 再带 `--resume-session-at` 重新 spawn（先摘 map 再 kill，避免旧 onExit 污染新会话）。`rewind_both` 先等待 `rewind_files` 成功应答，再走此路径；绝不能先截断对话。
+- **总原则**：claude 尽量透传——CLI 是命令的仲裁者，透传等于自动跟进新版命令；codex app-server 对斜杠文本零解析（原样进模型），凡有 RPC 对应物的命令**必须前端拦截**，这是双后端命令不分叉的代价。
+- **拦截放在 UI 层（send()）而非服务端**：斜杠命令的语义是会话导向的（分叉/重命名/导航新会话），前端拦截才能立即驱动导航与面板反馈；服务端只做能力通道（控制请求 / RPC）。
+- **必须拦的判例**：`/btw` 官方在 headless 是空操作（JSX 被非交互分支置空），故走 `side_question` 控制通道；`/branch` 官方 headless 会写孤立 fork 文件但不切换，必须全形拦截（含参数）；`/exit` `/quit` headless 真杀进程，web 场景多为误触，拦下提示归档。
+- **不拦的判例——`/clear`**：CLI 换 sessionId 续跑正是想要的新会话语义；服务端跟进做三层重键（Hub / 进程 map / 存活 WS 的 data.key，少一层即双进程或消息黑洞），`moved` 事件驱动前端导航。
+- **rewind**：先 `processManager.dispose()` 再 `--resume-session-at` 重 spawn（先摘 map 再 kill，避免旧 onExit 污染新会话）；`rewind_both` 必须先等 `rewind_files` 成功应答，绝不能先截断对话。
 
 ## Windows 平台注意事项
 

@@ -18,5 +18,6 @@ cc-remote.config.json
 .claude/
 .cursor/
 
-## Local mirror of https://code.claude.com/docs (regenerate: bun run docs:claude)
+## Local docs
 docs/claude-code/
+*.local.md
