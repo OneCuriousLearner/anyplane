@@ -1,14 +1,14 @@
-// 后端无关的统一抽象：WS/Hub 层只依赖这里的类型。
-// 当前实现：claude（stream-json 子进程）与 codex（app-server JSON-RPC）。
+// 后端无关的共享类型：WS/Hub 层与两个后端（claude stream-json 子进程 / codex app-server
+// JSON-RPC）之间的公共词汇。
 //
 // 关键设计：后端边界上统一使用 Claude stream-json 形状的消息（CliMessage）。
 // Codex 后端负责把 ThreadItem/审批/状态事件翻译成该形状，前端与 WS 协议不变。
 //
 // 依赖方向：本模块不 import 任何具体后端的实现模块。
-// 唯一的例外是 './claude/protocol' 的 CliMessage/StdinMessage——统一边界格式
+// 唯一的例外是 './claude/protocol' 的 CliMessage——统一边界格式
 // 本身就是 claude stream-json 形状（见上），协议类型以 claude/protocol 为正本。
 
-import type { CliMessage, StdinMessage } from './claude/protocol'
+import type { CliMessage } from './claude/protocol'
 
 export type BackendName = 'claude' | 'codex'
 
@@ -60,13 +60,7 @@ export interface SessionSummary {
   live?: { pid: number; startedAt?: string | number; kind?: string }
 }
 
-export interface HistoryPage {
-  messages: HistoryMessage[]
-  /** claude: transcript 字节偏移（tail 起点）；codex: turns 分页 cursor */
-  cursor?: number | string
-}
-
-// ---------- 会话句柄（AgentSession）相关 ----------
+// ---------- 会话句柄相关 ----------
 
 /** claude headless spawn 参数（codex 用 CodexSpawnOpts，形状近似） */
 export interface SpawnOptions {
@@ -115,64 +109,8 @@ export interface SessionCallbacks {
   onStatusChange?(): void
 }
 
-/**
- * WS/Hub 层对会话句柄的全部需求。ClaudeSession 结构化满足本接口；
- * Codex 后端以 app-server 连接实现同形接口（部分方法翻译或无操作）。
- *
- * 注意（两后端的实际差异，调用方须知）：
- * - sendUserText 的 sendMode/images 为可选增强；codex 的 images 元素需要 name 字段。
- * - write 接受任意 StdinMessage，但 codex 只响应 update_environment_variables
- *   （CLAUDE_CODE_EFFORT_LEVEL → reasoning effort），其余形状按设计忽略。
- */
-export interface AgentSession {
-  readonly key: string
-  sessionId: string | undefined
-  readonly exited: boolean
-  readonly busy: boolean
-  readonly waiting: boolean
-  readonly sessionState: 'idle' | 'running' | 'requires_action'
-  readonly connectedClients: number
-  readonly activeTaskCount: number
-  readonly backgroundTasks: BackgroundTask[]
-  syncClients(count: number): void
-  attachClient(): void
-  detachClient(): void
-  notifyExternalGate(): void
-  sendUserText(
-    text: string,
-    sendMode?: 'steer' | 'queue',
-    images?: Array<{ name?: string; mediaType: string; dataBase64: string }>,
-  ): void
-  sendControl(subtype: string, extra?: Record<string, unknown>): string
-  sendControlAndWait(
-    subtype: string,
-    extra?: Record<string, unknown>,
-    timeoutMs?: number,
-  ): Promise<unknown>
-  sendApproval(requestId: string, decision: ApprovalDecision): void
-  write(msg: StdinMessage): void
-  dispose(): void
-}
-
-/** 后端门面：WS/Hub 层经由注册表按 key 分发到具体后端。
- *  parseKey 返回两后端的并集形状（claude: cwd 必有 + resumeSessionId/slug；
- *  codex: cwd 可能缺席需惰性解析 + resumeThreadId）。
- *  readHistory：claude 传 (slug, sessionId)；codex 只传 (threadId)。 */
-export interface AgentBackend {
-  name: BackendName
-  /** 已存在会话 key（claude: s|slug|sid；codex: x|threadId） */
-  keyFor(...args: string[]): string
-  /** 新会话 key（claude: n|cwd；codex: xn|cwd） */
-  keyForNew(cwd: string): string
-  parseKey(
-    key: string,
-  ): { cwd?: string; resumeSessionId?: string; resumeThreadId?: string; slug?: string } | null
-  listSessions(): SessionSummary[] | Promise<SessionSummary[]>
-  readHistory(idOrSlug: string, sessionId?: string): HistoryPage | Promise<HistoryPage>
-  ensure(key: string, opts: SpawnOptions, cb: SessionCallbacks): AgentSession
-  get(key: string): AgentSession | undefined
-  dispose(key: string): void
-  disposeAll(): void
-}
-
-export type { CliMessage, StdinMessage }
+// 会话句柄契约（文档性约定，无接口强制）：ClaudeSession 与 CodexSession 结构化同形，
+// Hub 层因此不分后端调用。两后端的实际差异（调用方须知）：
+// - sendUserText 的 sendMode/images 为可选增强；codex 的 images 元素需要 name 字段。
+// - write 接受任意 StdinMessage，但 codex 只响应 update_environment_variables
+//   （CLAUDE_CODE_EFFORT_LEVEL → reasoning effort），其余形状按设计忽略。
