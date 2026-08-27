@@ -29,6 +29,8 @@ interface ThreadItem {
   error?: unknown
   query?: string
   durationMs?: number
+  /** enteredReviewMode/exitedReviewMode 的审查说明 */
+  review?: string
 }
 
 /** 每个线程一个：维护 itemId → 合成 message id / 块序号的流式状态 */
@@ -105,9 +107,9 @@ export class ThreadTranslator {
       case 'contextCompaction':
         return [{ type: 'system', subtype: 'compact_boundary' }]
       case 'enteredReviewMode':
-        return [systemText(`进入代码审查：${(item as { review?: string }).review ?? ''}`)]
+        return [systemText(`进入代码审查：${item.review ?? ''}`)]
       case 'exitedReviewMode':
-        return [systemText(`审查完成\n${(item as { review?: string }).review ?? ''}`)]
+        return [systemText(`审查完成\n${item.review ?? ''}`)]
       default:
         return []
     }

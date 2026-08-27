@@ -23,6 +23,7 @@ import {
 } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { isLoopbackHostname } from './auth'
 import { config } from './config'
 
 export interface PushSubscriptionRow {
@@ -236,10 +237,6 @@ const DEFAULT_PUSH_HOSTS = [
   'notify.windows.com',
 ]
 
-function isLoopbackHostname(h: string): boolean {
-  return h === 'localhost' || h === '::1' || h.startsWith('127.')
-}
-
 export function endpointAllowed(endpoint: string): boolean {
   let u: URL
   try {
@@ -247,10 +244,11 @@ export function endpointAllowed(endpoint: string): boolean {
   } catch {
     return false
   }
+  // 本地 mock 推送服务（e2e-push/自托管调试）：回环不限协议。
+  // 必须先于 '*' 判定——否则配了 '*' 的环境反而用不了本地 mock。
+  if (isLoopbackHostname(u.hostname)) return true
   const allow = config.pushAllowHosts ?? DEFAULT_PUSH_HOSTS
   if (allow.includes('*')) return u.protocol === 'https:'
-  // 本地 mock 推送服务（e2e-push/自托管调试）：回环不限协议
-  if (isLoopbackHostname(u.hostname)) return true
   if (u.protocol !== 'https:') return false
   return allow.some((h) => u.hostname === h || u.hostname.endsWith(`.${h}`))
 }
