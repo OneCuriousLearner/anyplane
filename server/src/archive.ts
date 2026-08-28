@@ -4,12 +4,12 @@
 //   恢复时移回。仅离线会话可操作（与改名同一边界：进程活着的会话绝不碰）。
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { config } from './config'
+import { ccDataDir } from './util'
 
 function trashRoot(): string {
-  const dir = join(homedir(), '.cc-remote', 'trash', 'claude')
+  const dir = join(ccDataDir(), 'trash', 'claude')
   mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
   return dir
 }
@@ -80,7 +80,6 @@ export function listTrash(): TrashEntry[] {
     const dir = join(root, slug)
     for (const file of readdirSync(dir)) {
       if (!file.endsWith('.jsonl')) continue
-      if (file.endsWith('.meta.json') || file.endsWith('.bak')) continue
       const sessionId = basename(file, '.jsonl')
       const p = join(dir, file)
       let trashedAt: string | undefined

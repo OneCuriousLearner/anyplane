@@ -1,5 +1,5 @@
 // cc-remote 服务端配置
-// 配置文件：项目根目录或 ~/.config/cc-remote/config.json（均可选，全部有默认值）
+// 配置文件：项目根目录 cc-remote.config.json 或 ~/.cc-remote/config.json（均可选，全部有默认值）
 
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'

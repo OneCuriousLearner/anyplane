@@ -116,6 +116,16 @@ export async function describePid(pid: number): Promise<PidDesc | null> {
 
 export type TakeoverResult = 'noop' | 'freed' | 'refused' | 'unsupported'
 
+/** 在 deadlineMs 内轮询等待端口释放；释放返回 true */
+async function waitForPortFree(port: number, deadlineMs: number): Promise<boolean> {
+  const deadline = Date.now() + deadlineMs
+  while (Date.now() < deadline) {
+    if ((await listListenPids(port))?.length === 0) return true
+    await Bun.sleep(50)
+  }
+  return false
+}
+
 /**
  * 解除 port 上"自己人"残留进程的占用。
  * - 无占用 / 已禁用 → noop
@@ -157,22 +167,14 @@ export async function takeoverStaleListeners(
       process.kill(pid, 'SIGTERM')
     } catch {}
   }
-  const gracefulDeadline = Date.now() + 2000
-  while (Date.now() < gracefulDeadline) {
-    if ((await listListenPids(port))?.length === 0) return 'freed'
-    await Bun.sleep(50)
-  }
+  if (await waitForPortFree(port, 2000)) return 'freed'
   for (const pid of own) {
     try {
       process.kill(pid, 'SIGKILL')
       console.warn(`[port-takeover] pid=${pid} 未退出，已 SIGKILL`)
     } catch {}
   }
-  const forceDeadline = Date.now() + 1000
-  while (Date.now() < forceDeadline) {
-    if ((await listListenPids(port))?.length === 0) return 'freed'
-    await Bun.sleep(50)
-  }
+  if (await waitForPortFree(port, 1000)) return 'freed'
   console.error(`[port-takeover] :${port} SIGKILL 后仍被占用，接管失败`)
   return 'refused'
 }

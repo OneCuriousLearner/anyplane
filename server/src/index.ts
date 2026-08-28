@@ -307,6 +307,35 @@ function broadcastError(hub: Hub, message: string): void {
   broadcast(hub, { kind: 'error', message })
 }
 
+/** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */
+function baseStatusOf(
+  s:
+    | {
+        exited: boolean
+        busy: boolean
+        waiting: boolean
+        sessionState: string
+        sessionId: string | undefined
+        connectedClients: number
+        tokenUsage: unknown
+      }
+    | undefined,
+  hub: Hub | undefined,
+  waiting: boolean,
+): Record<string, unknown> {
+  return {
+    spawned: !!s && !s.exited,
+    busy: (s?.busy ?? false) || waiting,
+    waiting,
+    sessionState: s?.sessionState ?? 'idle',
+    sessionId: s?.sessionId,
+    clients: s?.connectedClients ?? hub?.clients.size ?? 0,
+    usage: s?.tokenUsage,
+    permissionMode: hub?.spawnOpts?.permissionMode,
+    effort: hub?.spawnOpts?.effort,
+  }
+}
+
 /** liveHint：调用方（/api/sessions）刚做过 pid 扫描时传入复用，避免每行各扫一次；
  *  显式 null 表示"已知不在线"（跳过扫描），undefined 才现扫 */
 function statusOf(key: string, liveHint?: { status: string; pid: number } | null): Record<string, unknown> {
@@ -321,24 +350,16 @@ function statusOf(key: string, liveHint?: { status: string; pid: number } | null
     if (ek) live = liveHint === undefined ? liveSessionInfo(ek.sessionId) : (liveHint ?? undefined)
   }
   const waiting = (s?.waiting ?? false) || pending > 0 || live?.status === 'waiting'
-  // 审批等待也算 busy，防止误回收
-  const busy = (s?.busy ?? false) || waiting || live?.status === 'busy'
+  const st = baseStatusOf(s, hub, waiting)
+  if (live?.status === 'busy') st.busy = true // 审批等待与外部进程 busy 都算 busy，防止误回收
   return {
-    spawned: !!s && !s.exited,
-    busy,
-    waiting,
-    sessionState: s?.sessionState ?? 'idle',
-    sessionId: s?.sessionId,
-    clients: s?.connectedClients ?? hub?.clients.size ?? 0,
+    ...st,
     activeTaskCount: s?.activeTaskCount ?? 0,
     activeTasks: s?.backgroundTasks ?? [],
-    usage: s?.tokenUsage,
     slashCommands: s?.slashCommands,
     // spawnOpts.model 是用户显式选择（未 spawn 时的待应用值）；initModel 是进程 init 报告的解析后 ID。
     // 后者让重连 attach 的页面不必等下一轮就能显示模型（StatusPill 再经 modelNames 映射成配置名）
     model: hub?.spawnOpts?.model ?? s?.initModel,
-    permissionMode: hub?.spawnOpts?.permissionMode,
-    effort: hub?.spawnOpts?.effort,
     tailing: !!hub?.tailer,
     liveStatus: live?.status,
     goal: hub?.goal ?? null,
@@ -353,21 +374,12 @@ function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
 function codexStatusOf(key: string): Record<string, unknown> {
   const s = codexRuntime.get(key)
   const hub = hubs.get(key)
-  const pending = hub?.pendingApprovals.size ?? 0
-  const waiting = (s?.waiting ?? false) || pending > 0
+  const waiting = (s?.waiting ?? false) || (hub?.pendingApprovals.size ?? 0) > 0
   return {
-    spawned: !!s && !s.exited,
-    busy: (s?.busy ?? false) || waiting,
-    waiting,
-    sessionState: s?.sessionState ?? 'idle',
-    sessionId: s?.sessionId,
-    clients: s?.connectedClients ?? hub?.clients.size ?? 0,
+    ...baseStatusOf(s, hub, waiting),
     activeTaskCount: 0,
     activeTasks: [],
-    usage: s?.tokenUsage,
     model: hub?.spawnOpts?.model,
-    permissionMode: hub?.spawnOpts?.permissionMode,
-    effort: hub?.spawnOpts?.effort,
     tailing: false,
     goal: s?.goal ?? null,
   }
@@ -593,7 +605,7 @@ function ensureSpawned(
   // resumeSessionAt 是一次性 spawn 参数（命令行 args 已在 spawn() 内同步生成）。
   // 无论本次成败都不能留在 hub.spawnOpts 里，否则之后空闲回收后的普通 respawn
   // 会带着它再次截断同一条消息，静默丢弃回滚之后的新对话。
-  if (hub.spawnOpts) delete hub.spawnOpts.resumeSessionAt
+  delete hub.spawnOpts.resumeSessionAt
   pushStatus(hub)
 }
 
@@ -605,6 +617,13 @@ function ensureClaudeSession(hub: Hub): ReturnType<typeof processManager.get> {
     s = processManager.get(hub.key)
   }
   return s && !s.exited ? s : undefined
+}
+
+/** 回滚进行中拒绝新操作：返回 true 表示已拒绝（错误已广播） */
+function rewindBusy(hub: Hub, message = '已有回滚操作正在进行'): boolean {
+  if (!hub.rewindPending) return false
+  broadcastError(hub, message)
+  return true
 }
 
 function handleClientMessage(hub: Hub, raw: string): void {
@@ -645,10 +664,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
       break
     }
     case 'user': {
-      if (hub.rewindPending) {
-        broadcastError(hub, '正在恢复文件，请等待回滚完成后再发送消息')
-        return
-      }
+      if (rewindBusy(hub, '正在恢复文件，请等待回滚完成后再发送消息')) return
       const sendMode = data.sendMode === 'steer' || data.sendMode === 'queue' ? data.sendMode : undefined
       // 图片附件：服务端统一校验（类型/大小），claude 并 content blocks，codex 落盘走 localImage
       const attachments = (
@@ -848,10 +864,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
           .catch((e) => broadcastError(hub, `分叉失败: ${errorMessage(e)}`))
         return
       }
-      if (hub.rewindPending) {
-        broadcastError(hub, '已有回滚操作正在进行')
-        return
-      }
+      if (rewindBusy(hub)) return
       rewindConversation(hub, at, 'conversation')
       break
     }
@@ -862,10 +875,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
         broadcastError(hub, 'Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）')
         return
       }
-      if (hub.rewindPending) {
-        broadcastError(hub, '已有回滚操作正在进行')
-        return
-      }
+      if (rewindBusy(hub)) return
       const s = ensureClaudeSession(hub)
       if (!s) return
 
@@ -976,7 +986,8 @@ function handleClientMessage(hub: Hub, raw: string): void {
  */
 function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
   if (!hub.pendingApprovals.delete(requestId)) return false
-  const s = isCodexKey(hub.key) ? codexRuntime.get(hub.key) : processManager.get(hub.key)
+  const codex = isCodexKey(hub.key)
+  const s = codex ? codexRuntime.get(hub.key) : processManager.get(hub.key)
   if (s && !s.exited) {
     try {
       s.sendApproval(requestId, decision)
@@ -987,7 +998,7 @@ function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision
     // 会话已退出/未就绪：决定无处投递（上游请求将自行超时），本地照常解析并告知用户
     broadcastError(hub, '会话未在运行，审批未能送达（该请求会在上游自行超时）')
   }
-  if (!isCodexKey(hub.key)) s?.notifyExternalGate()
+  if (!codex) s?.notifyExternalGate()
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   pushStatus(hub)
@@ -1647,17 +1658,10 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         // 不变量：任何后端的会话句柄存活期间，其 Hub 必须存活——
         // 否则重连时复用旧会话，其回调会把事件广播进已删除的 Hub（消息黑洞）。
         // 用 hub.key 而非 ws.data.key：重键后进程注册在新 key 下
-        const alive = isCodexKey(hub.key)
-          ? (() => {
-              const s = codexRuntime.get(hub.key)
-              s?.detachClient()
-              return !!s && !s.exited
-            })()
-          : (() => {
-              const s = processManager.get(hub.key)
-              s?.detachClient()
-              return !!s
-            })()
+        const codex = isCodexKey(hub.key)
+        const s = codex ? codexRuntime.get(hub.key) : processManager.get(hub.key)
+        s?.detachClient()
+        const alive = codex ? !!s && !s.exited : !!s
         if (hub.clients.size === 0) {
           stopTailer(hub)
           if (!alive) hubs.delete(hub.key)
