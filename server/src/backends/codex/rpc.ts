@@ -115,22 +115,19 @@ export class RpcClient {
         if (e instanceof RpcError && e.code === OVERLOADED_CODE && entry.retries < maxRetries) {
           entry.retries++
           const delay = Math.min(200 * 2 ** entry.retries + Math.random() * 100, 3000)
+          // handleLine 派发应答时已把 entry 移出 pending；重试期间必须放回，
+          // 否则重发的应答无人认领（静默丢弃），进程退出时也漏掉对这个请求的 reject。
+          this.pending.set(id, entry)
           setTimeout(() => {
-            // 进程已死时必须 reject：entry 此刻不在 pending 里，exited 的清理扫不到它
-            if (this.dead) {
-              reject(new Error('codex app-server 已退出'))
-              return
-            }
+            // 进程已死：退出清理（dead 置位处）已 reject 全部 pending，无需重复 reject
+            if (this.dead) return
             try {
               this.write({ id, method, params: entry.params })
+              arm() // 重发后重新计时，防止服务端吞掉重试导致永久挂起
             } catch (err) {
+              this.pending.delete(id)
               reject(err instanceof Error ? err : new Error(String(err)))
-              return
             }
-            // 重试发送成功后必须重新注册 + 重新武装超时——handleLine 的应答路径按 id
-            // 查 pending（首次应答时已 delete），缺席会把重试应答静默丢弃、Promise 永久悬挂
-            this.pending.set(id, entry)
-            arm()
           }, delay)
           return
         }
