@@ -72,7 +72,8 @@ function num(v: unknown, fallback: number): number {
 }
 
 function str(v: unknown, fallback: string): string {
-  return typeof v === 'string' && v.trim() ? v.trim() : fallback
+  const s = typeof v === 'string' ? v.trim() : ''
+  return s || fallback
 }
 
 function bool(v: unknown, fallback: boolean): boolean {
@@ -186,25 +187,22 @@ function htmlPage(title: string, body: string): Response {
   )
 }
 
-function filterReqHeaders(req: Request, proto: string): Headers {
+/** 拷贝 headers（剔除 hop-by-hop 头）；请求/响应转发共用 */
+function copyHeaders(src: Headers): Headers {
   const out = new Headers()
-  req.headers.forEach((v, k) => {
+  src.forEach((v, k) => {
     if (HOP.has(k.toLowerCase())) return
     out.set(k, v)
   })
+  return out
+}
+
+function filterReqHeaders(req: Request, proto: string): Headers {
+  const out = copyHeaders(req.headers)
   const host = req.headers.get('host')
   if (host) out.set('x-forwarded-host', host)
   out.set('x-forwarded-proto', proto)
   out.set('x-cc-remote-gateway', '1')
-  return out
-}
-
-function filterResHeaders(res: Headers): Headers {
-  const out = new Headers()
-  res.forEach((v, k) => {
-    if (HOP.has(k.toLowerCase())) return
-    out.set(k, v)
-  })
   return out
 }
 
@@ -222,7 +220,7 @@ async function proxyHttp(req: Request, target: string, proto: string, mode: Mode
   }
   try {
     const upstream = await fetch(dest, init)
-    const headers = filterResHeaders(upstream.headers)
+    const headers = copyHeaders(upstream.headers)
     headers.set('x-cc-remote-mode', mode)
     return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers })
   } catch (e) {
@@ -316,13 +314,12 @@ const wsHandler: import('bun').WebSocketHandler<WSProxyData> = {
     })
   },
   message(ws, raw) {
-    const payload = typeof raw === 'string' ? raw : raw
     const b = ws.data.backend
     if (!b || b.readyState !== WebSocket.OPEN) {
-      ws.data.queue.push(payload)
+      ws.data.queue.push(raw)
       return
     }
-    b.send(payload)
+    b.send(raw)
   },
   close(ws) {
     if (ws.data.keepalive) clearInterval(ws.data.keepalive)

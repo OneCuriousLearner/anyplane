@@ -1,5 +1,5 @@
 // lab-run.ts — spawn 真实 claude CLI，把 stdout NDJSON 逐行落盘 + stderr 单独落盘。
-// 用法: bun run lab-run.ts <scenario名>   (从 D:/Coder/Agents/cc-remote/.tmp/lab 目录运行)
+// 用法: bun run server/scripts/lab-run.ts <scenario名>（输出落 <cwd>/raw/）
 // scenario 定义在下方 SCENARIOS。
 import { spawn } from 'node:child_process'
 import { createWriteStream, mkdirSync } from 'node:fs'

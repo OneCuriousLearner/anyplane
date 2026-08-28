@@ -14,17 +14,13 @@ import {
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { exitWithSummary, makeNote } from './e2e-lib'
 
 const BASE = process.env.CC_REMOTE_BASE ?? 'http://127.0.0.1:7480'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 const TOKEN_Q = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
-const results: string[] = []
-function note(ok: boolean, label: string, detail = '') {
-  results.push(`${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`)
-  console.log(results[results.length - 1])
-}
+const { note, results } = makeNote()
 const b64url = (b: Buffer) => b.toString('base64url')
-
 // ---------- mock push service ----------
 interface Captured {
   path: string
@@ -235,6 +231,4 @@ try {
   mock.stop(true)
 }
 
-console.log('\n—— 汇总 ——')
-console.log(results.join('\n'))
-process.exit(results.some((r) => r.startsWith('✗')) ? 1 : 0)
+exitWithSummary(results)

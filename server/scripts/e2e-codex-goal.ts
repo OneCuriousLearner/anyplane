@@ -1,19 +1,11 @@
 // codex goal 链路验证：新线程 → thread/goal/set → status.goal → clear
-const key = `xn|${encodeURIComponent('/tmp')}`
-const results: string[] = []
-function note(ok: boolean, label: string, detail = '') {
-  results.push(`${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`)
-  console.log(results[results.length - 1])
-}
+import { connect, exitWithSummary, makeNote } from './e2e-lib'
 
-const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}`)
-const handlers: Array<(ev: Record<string, unknown>) => void> = []
-ws.onmessage = (e) => {
-  const ev = JSON.parse(e.data)
-  for (const h of handlers) h(ev)
-}
-const send = (o: unknown) => ws.send(JSON.stringify(o))
-await new Promise<void>((r) => { ws.onopen = () => r() })
+const key = `xn|${encodeURIComponent('/tmp')}`
+const { note, results } = makeNote()
+
+const { on, send, open } = connect(key)
+await open()
 
 const timeout = setTimeout(() => { console.error('TIMEOUT\n' + results.join('\n')); process.exit(1) }, 180_000)
 
@@ -22,7 +14,7 @@ let turnDone = false
 let goalSeen = ''
 let goalCleared = false
 send({ kind: 'attach' })
-handlers.push((ev) => {
+on((ev) => {
   if (ev.kind === 'status') {
     const st = ev.state as { sessionId?: string; goal?: { condition: string } | null }
     if (st.sessionId) threadId = st.sessionId
@@ -45,5 +37,4 @@ for (let i = 0; i < 40 && !goalCleared; i++) await new Promise((r) => setTimeout
 note(goalCleared, 'thread/goal/clear → status.goal 清除')
 
 clearTimeout(timeout)
-console.log('\n' + results.join('\n'))
-process.exit(results.some((r) => r.startsWith('✗')) ? 1 : 0)
+exitWithSummary(results)
