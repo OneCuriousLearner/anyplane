@@ -186,7 +186,7 @@ function htmlPage(title: string, body: string): Response {
   )
 }
 
-function filterReqHeaders(req: Request, proto: string): Headers {
+function filterReqHeaders(req: Request, proto: string, target: string): Headers {
   const out = new Headers()
   req.headers.forEach((v, k) => {
     if (HOP.has(k.toLowerCase())) return
@@ -196,6 +196,11 @@ function filterReqHeaders(req: Request, proto: string): Headers {
   if (host) out.set('x-forwarded-host', host)
   out.set('x-forwarded-proto', proto)
   out.set('x-cc-remote-gateway', '1')
+  // 上游无 token 模式要求 Host 为回环（DNS rebinding 防线）：反代统一改写为上游 authority，
+  // 并剥除浏览器 Origin（公网域名会被上游判成跨源）——网关即信任边界，剥除不削弱防线：
+  // token 模式不查 Origin/Host；无 token 时网关本身需 --insecure 才起得来（已是有意的全暴露）。
+  out.set('host', new URL(target).host)
+  out.delete('origin')
   return out
 }
 
@@ -213,7 +218,7 @@ async function proxyHttp(req: Request, target: string, proto: string, mode: Mode
   const dest = new URL(url.pathname + url.search, target)
   const init: RequestInit = {
     method: req.method,
-    headers: filterReqHeaders(req, proto),
+    headers: filterReqHeaders(req, proto, target),
     redirect: 'manual',
   }
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {

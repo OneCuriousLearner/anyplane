@@ -18,7 +18,8 @@ export function isAuthorized(req: Request, url: URL): boolean {
 
 // ---------- 跨源防护（无 token 回环部署的浏览器攻击面） ----------
 // WebSocket 不受同源策略约束、text/plain 简单请求不触发 preflight——
-// 默认无 token 时恶意网页可经受害者浏览器直连回环服务（CSWSH/CSRF → RCE）。
+// 默认无 token 时恶意网页可经受害者浏览器直连回环服务（CSWSH/CSRF → RCE）；
+// DNS rebinding 则让攻击者域名解析到 127.0.0.1，把跨源变成"同源"（靠 Host 回环白名单封堵）。
 // 浏览器在 WS 握手与跨源 POST 时必定携带 Origin；非浏览器客户端（e2e 脚本/curl）不带。
 // 配置 authToken 后 token 即防线，以下检查不生效（行为与旧版完全一致）。
 
@@ -33,6 +34,18 @@ export function isLoopbackHostname(h: string): boolean {
   // WHATWG URL 的 IPv6 hostname 保留方括号（http://[::1]:9001 → "[::1]"）
   const n = h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h
   return n === 'localhost' || n === '::1' || n.startsWith('127.')
+}
+
+/** Host 头必须是回环地址（无 token 模式的 DNS rebinding 防线）。
+ *  Origin↔Host 一致性挡不住 rebinding：攻击者域名 rebind 到 127.0.0.1 后，浏览器发出的是
+ *  同源请求，Origin 与 Host 同为攻击者域名，恰好命中 originAllowed 的"相同放行"分支。
+ *  Host 是浏览器禁改头（forbidden header），攻击者页面无法让它谎称回环；
+ *  无 token 时启动闸已保证只绑回环，合法浏览器入口（直连/Vite 代理/SSH 转发）Host 必然回环。
+ *  缺 Host 头放行（HTTP/1.0、非浏览器客户端；浏览器必定携带）。 */
+export function hostAllowed(req: Request): boolean {
+  const host = req.headers.get('host')
+  if (!host) return true
+  return isLoopbackHostname(hostNameOf(host))
 }
 
 /** Origin 与 Host 同 host，或同为回环（dev 模式 Vite :5173 代理到 server :7480 的端口差） */
