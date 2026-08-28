@@ -24,7 +24,12 @@ export function isAuthorized(req: Request, url: URL): boolean {
 
 /** Host 头去端口（兼容 [::1]:7480 形态） */
 export function hostNameOf(hostHeader: string): string {
-  if (hostHeader.startsWith('[')) return hostHeader.slice(1, hostHeader.indexOf(']'))
+  if (hostHeader.startsWith('[')) {
+    const close = hostHeader.indexOf(']')
+    // 缺少闭合方括号的 IPv6 Host 头按无效处理，避免 slice(1, -1) 截断后误判为回环
+    if (close === -1) return hostHeader
+    return hostHeader.slice(1, close)
+  }
   const i = hostHeader.lastIndexOf(':')
   return i > 0 ? hostHeader.slice(0, i) : hostHeader
 }
@@ -32,7 +37,12 @@ export function hostNameOf(hostHeader: string): string {
 export function isLoopbackHostname(h: string): boolean {
   // WHATWG URL 的 IPv6 hostname 保留方括号（http://[::1]:9001 → "[::1]"）
   const n = h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h
-  return n === 'localhost' || n === '::1' || n.startsWith('127.')
+  if (n === 'localhost' || n === '::1') return true
+  // 127.0.0.0/8 必须是合法 IPv4 地址，避免 127.evil.com 这类 DNS 名绕过
+  return /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(n) && n.split('.').slice(1).every((octet) => {
+    const v = Number(octet)
+    return v >= 0 && v <= 255
+  })
 }
 
 /** Origin 与 Host 同 host，或同为回环（dev 模式 Vite :5173 代理到 server :7480 的端口差） */
