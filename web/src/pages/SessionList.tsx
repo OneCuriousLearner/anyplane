@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  apiFetch,
   archiveSession,
   createSession,
   fetchArchived,
@@ -12,7 +13,6 @@ import {
 } from '../lib/api'
 import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
-import { authHeaders } from '../lib/auth'
 import { BellIcon } from '../components/BellIcon'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -160,7 +160,7 @@ export function SessionList(props: {
   // 挂载时读取推送订阅现状与 webhook 通道数
   useEffect(() => {
     void currentPushEndpoint().then(setPushEndpoint)
-    fetch('/api/push/public-key', { headers: authHeaders() })
+    apiFetch('/api/push/public-key')
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { webhooks?: number } | null) => setPushWebhooks(j?.webhooks ?? 0))
       .catch(() => {})

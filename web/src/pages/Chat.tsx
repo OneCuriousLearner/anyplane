@@ -10,8 +10,8 @@ import { ClaudeMark } from '../components/ClaudeMark'
 import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
-import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
-import { isCodexKey, isExistingKey } from '../lib/key'
+import { nextId, rewindPreview, shortTokens, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import { isCodexKey, isExistingKey, sessionFromKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
 const MORE_ITEM =
@@ -676,15 +676,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           case 'moved': {
             // /clear 对话重置：进程已换新 sessionId 续跑，Hub 重键完毕——跳到新会话页
             //（旧 transcript 在磁盘原样保留，列表页可见）
-            const parts = ev.targetKey.split('|')
+            const info = sessionFromKey(ev.targetKey)
+            if (!info) break
             props.onNavigate?.({
-              key: ev.targetKey,
-              slug: parts[1] ?? session.slug,
-              sessionId: ev.targetSessionId ?? 'new',
-              cwd: session.cwd,
-              backend: 'claude',
-              mtime: Date.now(),
-              sizeBytes: 0,
+              ...info,
+              cwd: info.cwd ?? session.cwd,
+              sessionId: ev.targetSessionId ?? info.sessionId,
               status: 'idle',
               managed: { spawned: true, busy: false, clients: 0 },
             })
@@ -857,7 +854,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       const u = state.usage
       pushSystem(
         u
-          ? `◈ 线程累计：in ${u.inputTokens} / out ${u.outputTokens}${u.reasoningTokens ? ` / reasoning ${u.reasoningTokens}` : ''}（窗口占用明细请开「详情」）`
+          ? `◈ 线程累计：in ${shortTokens(u.inputTokens)} / out ${shortTokens(u.outputTokens)}${u.reasoningTokens ? ` / reasoning ${shortTokens(u.reasoningTokens)}` : ''}（窗口占用明细请开「详情」）`
           : '◈ 暂无用量数据（先跑一轮）',
       )
       setInput('')
@@ -972,13 +969,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
   const activeTaskCount = state.activeTaskCount ?? 0
-  const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
   const u = state.usage
   const usageLine =
     u && u.inputTokens + u.outputTokens > 0
-      ? `tok ↑${fmtTok(u.inputTokens)} ↓${fmtTok(u.outputTokens)}` +
-        (u.cacheReadTokens ? ` · cache ${fmtTok(u.cacheReadTokens)}` : '') +
-        (u.reasoningTokens ? ` · rs ${fmtTok(u.reasoningTokens)}` : '')
+      ? `tok ↑${shortTokens(u.inputTokens)} ↓${shortTokens(u.outputTokens)}` +
+        (u.cacheReadTokens ? ` · cache ${shortTokens(u.cacheReadTokens)}` : '') +
+        (u.reasoningTokens ? ` · rs ${shortTokens(u.reasoningTokens)}` : '')
       : undefined
   const hasPendingStartConfig =
     !state.spawned && Boolean(state.model || state.permissionMode || state.effort)

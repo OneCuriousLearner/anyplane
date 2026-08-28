@@ -8,6 +8,7 @@ import {
   type AskUserQuestionSelections,
   withAskUserQuestionAnswers,
 } from '../lib/askUserQuestion'
+import { toolDetail } from '../lib/blocks'
 
 export function ApprovalCard(props: {
   approval: { requestId: string; toolName: string; input: unknown }
@@ -17,7 +18,7 @@ export function ApprovalCard(props: {
   const askUserQuestion = approval.toolName === 'AskUserQuestion' ? parseAskUserQuestionInput(approval.input) : null
   if (askUserQuestion) return <AskUserQuestionCard input={askUserQuestion} onDecision={onDecision} />
 
-  const inputStr = JSON.stringify(approval.input, null, 2) ?? ''
+  const inputStr = toolDetail(approval.toolName, approval.input)
 
   return (
     <div className="my-3 rounded-lg border border-busy/50 bg-busy/5">
