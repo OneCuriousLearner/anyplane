@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   archiveSession,
   createSession,
   fetchArchived,
   fetchSessions,
+  makeSessionInfo,
   renameSession,
   restoreSession,
   type ArchivedEntry,
@@ -25,6 +26,20 @@ const STATUS_META: Record<SessionInfo['status'], { cls: string; label: string }>
   idle: { cls: 'bg-ok', label: '空闲' },
   waiting: { cls: 'bg-wait', label: '等待输入' },
   offline: { cls: 'bg-faint', label: '离线' },
+}
+
+/** 通知菜单行内容：状态点 + 标题/描述 + 右侧操作文案（外壳 button/只读 div 由调用方定） */
+function NotifyRow(props: { on: boolean; title: string; desc: string; action?: string }) {
+  return (
+    <>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${props.on ? 'bg-ok' : 'bg-faint'}`} />
+      <span className="min-w-0 flex-1">
+        <span className="block font-mono text-[11px] text-ink">{props.title}</span>
+        <span className="block text-[10px] leading-snug text-faint">{props.desc}</span>
+      </span>
+      {props.action && <span className="font-mono text-[10px] text-faint">{props.action}</span>}
+    </>
+  )
 }
 
 function timeAgo(ms: number): string {
@@ -257,28 +272,23 @@ export function SessionList(props: {
       .catch((err) => showToast(String(err)))
   }
 
-  // 按项目目录分组
-  const groups = new Map<string, SessionInfo[]>()
-  for (const s of sessions) {
-    const g = s.cwd ?? s.slug
-    if (!groups.has(g)) groups.set(g, [])
-    groups.get(g)!.push(s)
-  }
+  // 按项目目录分组（cwd 缺失时回退 slug）；分组时顺带记录该组的 git 分支
+  const groups = useMemo(() => {
+    const m = new Map<string, { list: SessionInfo[]; branch?: string }>()
+    for (const s of sessions) {
+      const g = s.cwd ?? s.slug
+      let e = m.get(g)
+      if (!e) m.set(g, (e = { list: [] }))
+      e.list.push(s)
+      e.branch ??= s.gitBranch
+    }
+    return m
+  }, [sessions])
 
   const startNew = async (cwd: string, backend: 'claude' | 'codex') => {
     const { key, slug } = await createSession(cwd, backend)
     setPickerOpen(false)
-    props.onSelect({
-      key,
-      slug,
-      sessionId: 'new',
-      cwd,
-      backend,
-      mtime: Date.now(),
-      sizeBytes: 0,
-      status: 'offline',
-      managed: { spawned: false, busy: false, clients: 0 },
-    })
+    props.onSelect(makeSessionInfo({ key, slug, sessionId: 'new', cwd, backend, status: 'offline' }))
   }
 
   return (
@@ -321,12 +331,12 @@ export function SessionList(props: {
                       className="flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left hover:bg-surface2"
                       onClick={toggleNotify}
                     >
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${notify ? 'bg-ok' : 'bg-faint'}`} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-mono text-[11px] text-ink">页内通知</span>
-                        <span className="block text-[10px] leading-snug text-faint">页面在后台时弹桌面通知</span>
-                      </span>
-                      <span className="font-mono text-[10px] text-faint">{notify ? '开' : '关'}</span>
+                      <NotifyRow
+                        on={notify}
+                        title="页内通知"
+                        desc="页面在后台时弹桌面通知"
+                        action={notify ? '开' : '关'}
+                      />
                     </button>
                     {/* Web Push：SW 离线可达，支持锁屏直接审批 */}
                     <button
@@ -334,37 +344,31 @@ export function SessionList(props: {
                       onClick={togglePush}
                       disabled={pushBusy || !pushSupported()}
                     >
-                      <span
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${pushEndpoint ? 'bg-ok' : 'bg-faint'}`}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-mono text-[11px] text-ink">
-                          {pushBusy ? '处理中…' : '推送通知'}
-                        </span>
-                        <span className="block text-[10px] leading-snug text-faint">
-                          {pushSupported()
+                      <NotifyRow
+                        on={!!pushEndpoint}
+                        title={pushBusy ? '处理中…' : '推送通知'}
+                        desc={
+                          pushSupported()
                             ? pushEndpoint
                               ? '已订阅：锁屏可达，通知上可直接审批'
                               : '锁屏/杀掉页面也能收到，通知上可直接审批'
-                            : '当前浏览器不支持（iOS 需先加到主屏幕）'}
-                        </span>
-                      </span>
-                      {pushSupported() && (
-                        <span className="font-mono text-[10px] text-faint">{pushEndpoint ? '退订' : '订阅'}</span>
-                      )}
+                            : '当前浏览器不支持（iOS 需先加到主屏幕）'
+                        }
+                        action={pushSupported() ? (pushEndpoint ? '退订' : '订阅') : undefined}
+                      />
                     </button>
                     {/* webhook 通道：配置文件管理（ntfy/Bark/Server酱），只读展示 */}
                     <div className="flex w-full items-center gap-2 rounded px-1.5 py-1.5">
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${pushWebhooks > 0 ? 'bg-ok' : 'bg-faint'}`} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-mono text-[11px] text-ink">Webhook 通道</span>
-                        <span className="block text-[10px] leading-snug text-faint">
-                          {pushWebhooks > 0
+                      <NotifyRow
+                        on={pushWebhooks > 0}
+                        title="Webhook 通道"
+                        desc={
+                          pushWebhooks > 0
                             ? `已配置 ${pushWebhooks} 个（ntfy/Bark/Server酱）`
-                            : '国内 Android 无 FCM 的出路，见 README 配置'}
-                        </span>
-                      </span>
-                      <span className="font-mono text-[10px] text-faint">{pushWebhooks > 0 ? `${pushWebhooks}` : ''}</span>
+                            : '国内 Android 无 FCM 的出路，见 README 配置'
+                        }
+                        action={pushWebhooks > 0 ? `${pushWebhooks}` : undefined}
+                      />
                     </div>
                     {/* 通道自检：一键向全部通道发测试通知 */}
                     <button
@@ -372,12 +376,12 @@ export function SessionList(props: {
                       onClick={sendTestPush}
                       disabled={pushTestBusy}
                     >
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-faint" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-mono text-[11px] text-ink">{pushTestBusy ? '发送中…' : '测试通知'}</span>
-                        <span className="block text-[10px] leading-snug text-faint">向全部订阅与 webhook 通道各发一条</span>
-                      </span>
-                      <span className="font-mono text-[10px] text-faint">发送</span>
+                      <NotifyRow
+                        on={false}
+                        title={pushTestBusy ? '发送中…' : '测试通知'}
+                        desc="向全部订阅与 webhook 通道各发一条"
+                        action="发送"
+                      />
                     </button>
                   </div>
                   </>,
@@ -451,8 +455,7 @@ export function SessionList(props: {
             <p className="mt-1 text-xs text-faint">点「+ 新会话」，从文件系统选择项目目录即可开始。</p>
           </div>
         )}
-        {[...groups.entries()].map(([cwd, list]) => {
-          const branch = list.find((s) => s.gitBranch)?.gitBranch
+        {[...groups.entries()].map(([cwd, group]) => {
           const folded = collapsed.has(cwd)
           return (
           <div key={cwd}>
@@ -473,9 +476,9 @@ export function SessionList(props: {
             >
               <span className="w-3 shrink-0 text-muted">{folded ? '▸' : '▾'}</span>
               <span className="truncate">{cwd}</span>
-              {branch && <span className="ml-auto shrink-0 text-muted">⎇ {branch}</span>}
+              {group.branch && <span className="ml-auto shrink-0 text-muted">⎇ {group.branch}</span>}
             </button>
-            {!folded && list.map((s) => {
+            {!folded && group.list.map((s) => {
               const st =
                 STATUS_META[
                   s.managed.waiting ? 'waiting' : s.managed.busy ? 'busy' : s.managed.spawned ? 'idle' : s.status

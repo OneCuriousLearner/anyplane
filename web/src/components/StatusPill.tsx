@@ -42,7 +42,7 @@ const MODE_META: Record<string, { dot: string; label: string; short: string; des
 }
 
 /** effort 元信息兜底：非 claude 五档时按索引循环 glyph、中性色 */
-const EFFORT_GLYPHS = ['○', '◐', '⬤', '◉', '◈'] as const
+const EFFORT_GLYPH_LIST = Object.values(EFFORT_GLYPH)
 const effortMetaOf = (level: string) =>
   (EFFORT_META as Record<string, (typeof EFFORT_META)[Effort]>)[level] ?? {
     color: 'text-ok',
@@ -51,7 +51,7 @@ const effortMetaOf = (level: string) =>
     desc: '',
   }
 const effortGlyphOf = (level: string, idx: number) =>
-  (EFFORT_GLYPH as Record<string, string>)[level] ?? EFFORT_GLYPHS[idx % EFFORT_GLYPHS.length]
+  (EFFORT_GLYPH as Record<string, string>)[level] ?? EFFORT_GLYPH_LIST[idx % EFFORT_GLYPH_LIST.length]
 
 /** 毛玻璃主面板：半透明底 + blur-md。须 portal 到 body，否则会被带 backdrop-filter 的顶栏截成 backdrop root。
  *  背景特效层见 index.css 的 .cc-panel-fx（CRT 扫描线 / 点阵 / 指针磷光），子面板复用同一层 */
@@ -141,6 +141,7 @@ export function StatusPill(props: {
   const levels = props.effortLevels ?? EFFORT_LEVELS
   const effort: string = props.effort && levels.includes(props.effort) ? props.effort : (levels[Math.min(2, levels.length - 1)] ?? 'high')
   const effortMeta = effortMetaOf(effort)
+  const modelInfo = resolveModel(props.model)
 
   const panel =
     open &&
@@ -198,9 +199,9 @@ export function StatusPill(props: {
           <span className="w-10 font-mono text-[10px] uppercase tracking-widest text-faint">model</span>
           <span
             className="min-w-0 flex-1 truncate font-mono text-xs text-ink"
-            title={resolveModel(props.model).title}
+            title={modelInfo.title}
           >
-            [{resolveModel(props.model).label}]
+            [{modelInfo.label}]
           </span>
           <span className="text-[10px] text-faint">{sub === 'model' ? '▴' : '▾'}</span>
         </button>
@@ -253,8 +254,8 @@ export function StatusPill(props: {
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode.dot}`} />
         <span className="shrink-0">{mode.short}</span>
-        <span className="shrink-0 text-faint" title={resolveModel(props.model).title}>
-          [{resolveModel(props.model).label}]
+        <span className="shrink-0 text-faint" title={modelInfo.title}>
+          [{modelInfo.label}]
         </span>
         <span className={`shrink-0 ${effortMeta.color}`}>{effortMeta.label}</span>
         <span className="shrink-0 text-faint">{open ? '▴' : '▾'}</span>

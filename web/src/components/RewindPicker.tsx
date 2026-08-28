@@ -10,20 +10,20 @@ export interface RewindTarget {
   timestamp?: string
 }
 
-function formatTime(timestamp?: string): string | undefined {
-  if (!timestamp) return undefined
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return undefined
-  // 模块级共享实例，避免每行渲染重复构造 Intl.DateTimeFormat
-  return timeFormatter.format(date)
-}
-
+// 模块级共享实例，避免每行渲染重复构造 Intl.DateTimeFormat
 const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
   month: 'numeric',
   day: 'numeric',
   hour: '2-digit',
   minute: '2-digit',
 })
+
+function formatTime(timestamp?: string): string | undefined {
+  if (!timestamp) return undefined
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return undefined
+  return timeFormatter.format(date)
+}
 
 export function RewindPicker(props: {
   targets: RewindTarget[]

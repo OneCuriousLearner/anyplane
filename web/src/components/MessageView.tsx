@@ -63,6 +63,18 @@ function UserText(props: { text: string }) {
   )
 }
 
+/** 图片附件：侧问卡片 / user 气泡 / assistant 块三处展示共用 */
+function ImageAttachment(props: { src?: string }) {
+  return (
+    <img
+      src={props.src}
+      alt="图片附件"
+      loading="lazy"
+      className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
+    />
+  )
+}
+
 /** 抄本式消息条目：左栏角色符号 + 内容区；compact 表示与上一条同角色（连续块，收紧间距、省略符号） */
 export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   const { msg, compact } = props
@@ -83,16 +95,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
           {msg.blocks.map((b, i) => {
             if (b.kind === 'text') return <Markdown key={i} text={b.text} />
             if (b.kind === 'thinking') return <Thinking key={i} text={b.text} streaming={msg.btwPending} />
-            if (b.kind === 'image')
-              return (
-                <img
-                  key={i}
-                  src={b.src}
-                  alt="图片附件"
-                  loading="lazy"
-                  className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
-                />
-              )
+            if (b.kind === 'image') return <ImageAttachment key={i} src={b.src} />
             return <ToolCard key={b.id} tool={b} />
           })}
         </div>
@@ -138,16 +141,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
         </span>
         <div className="min-w-0 flex-1 rounded-md border border-accent/30 bg-accent/15 px-3 py-2">
           {msg.blocks.map((b, i) => {
-            if (b.kind === 'image')
-              return (
-                <img
-                  key={i}
-                  src={b.src}
-                  alt="图片附件"
-                  loading="lazy"
-                  className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
-                />
-              )
+            if (b.kind === 'image') return <ImageAttachment key={i} src={b.src} />
             if (b.kind === 'text') return <UserText key={i} text={b.text} />
             if (b.kind === 'thinking') return <Thinking key={i} text={b.text} />
             return <ToolCard key={b.id} tool={b} />
@@ -171,12 +165,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
             </span>
             <div className="min-w-0 flex-1">
               {b.kind === 'image' ? (
-                <img
-                  src={b.src}
-                  alt="图片附件"
-                  loading="lazy"
-                  className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
-                />
+                <ImageAttachment src={b.src} />
               ) : b.kind === 'text' ? (
                 <Markdown text={b.text} />
               ) : b.kind === 'thinking' ? (

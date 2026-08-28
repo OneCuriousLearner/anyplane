@@ -1,6 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import { PopupPanel } from './PopupPanel'
 
+/** 弹窗底部按钮行：取消 + 确认（PromptDialog/ConfirmDialog 共用） */
+function DialogButtons(props: {
+  confirmLabel?: string
+  cancelLabel?: string
+  danger?: boolean
+  className?: string
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className={`flex justify-end gap-2 ${props.className ?? ''}`}>
+      <button
+        type="button"
+        className="rounded px-2 py-1 text-xs text-muted transition-colors hover:text-ink"
+        onClick={props.onClose}
+      >
+        {props.cancelLabel ?? '取消'}
+      </button>
+      <button
+        type="button"
+        className={`rounded px-2 py-1 text-xs transition-colors ${
+          props.danger ? 'text-danger hover:text-danger/80' : 'text-accent-soft hover:text-accent'
+        }`}
+        onClick={props.onConfirm}
+      >
+        {props.confirmLabel ?? '确定'}
+      </button>
+    </div>
+  )
+}
+
 /** 文本输入弹窗：替代浏览器 prompt() */
 export function PromptDialog(props: {
   open: boolean
@@ -47,22 +78,13 @@ export function PromptDialog(props: {
           className="w-full rounded border border-line bg-bg px-2 py-1.5 text-xs text-ink outline-none transition-colors focus:border-accent/60"
           placeholder={props.placeholder}
         />
-        <div className="mt-2 flex justify-end gap-2">
-          <button
-            type="button"
-            className="rounded px-2 py-1 text-xs text-muted transition-colors hover:text-ink"
-            onClick={props.onClose}
-          >
-            {props.cancelLabel ?? '取消'}
-          </button>
-          <button
-            type="button"
-            className="rounded px-2 py-1 text-xs text-accent-soft transition-colors hover:text-accent"
-            onClick={() => props.onConfirm(value)}
-          >
-            {props.confirmLabel ?? '确定'}
-          </button>
-        </div>
+        <DialogButtons
+          className="mt-2"
+          confirmLabel={props.confirmLabel}
+          cancelLabel={props.cancelLabel}
+          onConfirm={() => props.onConfirm(value)}
+          onClose={props.onClose}
+        />
       </div>
     </PopupPanel>
   )
@@ -92,24 +114,13 @@ export function ConfirmDialog(props: {
       <div className="px-3 py-2">
         <div className="mb-1 text-xs font-medium text-ink">{props.title}</div>
         <div className="mb-3 whitespace-pre-wrap text-[11px] leading-relaxed text-muted">{props.message}</div>
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            className="rounded px-2 py-1 text-xs text-muted transition-colors hover:text-ink"
-            onClick={props.onClose}
-          >
-            {props.cancelLabel ?? '取消'}
-          </button>
-          <button
-            type="button"
-            className={`rounded px-2 py-1 text-xs transition-colors ${
-              props.danger ? 'text-danger hover:text-danger/80' : 'text-accent-soft hover:text-accent'
-            }`}
-            onClick={props.onConfirm}
-          >
-            {props.confirmLabel ?? '确定'}
-          </button>
-        </div>
+        <DialogButtons
+          confirmLabel={props.confirmLabel}
+          cancelLabel={props.cancelLabel}
+          danger={props.danger}
+          onConfirm={props.onConfirm}
+          onClose={props.onClose}
+        />
       </div>
     </PopupPanel>
   )
