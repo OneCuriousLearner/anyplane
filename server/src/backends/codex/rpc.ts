@@ -115,11 +115,16 @@ export class RpcClient {
         if (e instanceof RpcError && e.code === OVERLOADED_CODE && entry.retries < maxRetries) {
           entry.retries++
           const delay = Math.min(200 * 2 ** entry.retries + Math.random() * 100, 3000)
+          // handleLine 派发应答时已把 entry 移出 pending；重试期间必须放回，
+          // 否则重发的应答无人认领（静默丢弃），进程退出时也漏掉对这个请求的 reject。
+          this.pending.set(id, entry)
           setTimeout(() => {
             if (this.dead) return
             try {
               this.write({ id, method, params: entry.params })
+              arm() // 重发后重新计时，防止服务端吞掉重试导致永久挂起
             } catch (err) {
+              this.pending.delete(id)
               reject(err instanceof Error ? err : new Error(String(err)))
             }
           }, delay)
