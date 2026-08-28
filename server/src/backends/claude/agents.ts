@@ -24,6 +24,8 @@ export interface DaemonAgent {
 /** 后台 agent 是否还在 daemon 手里跑（其余终态都不是"活着") */
 export function backgroundAlive(state?: string): boolean {
   if (!state) return false
+  // 官方 CLI 可能新增终态；未显式列入的终态会被乐观地视为 alive，
+  // 因此当列表中出现无法结束的 background agent 时，应先扩展此集合。
   return !['done', 'error', 'failed', 'killed', 'stopped', 'cancelled'].includes(state)
 }
 
