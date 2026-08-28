@@ -211,10 +211,10 @@ body {
   animation: cc-blink 1.1s steps(1) infinite;
 }
 
-/* Claude 星芒触手：向 viewBox 中心缩放 */
+/* Claude 星芒触手：向 viewBox 圆心 (173.3333, 166.6667) 缩放 */
 .claude-star__ray {
   transform-box: view-box;
-  transform-origin: 66px 65px;
+  transform-origin: 173.3333px 166.6667px;
   transform: scale(1);
   will-change: transform;
 }
