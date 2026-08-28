@@ -21,6 +21,10 @@ export type ControlRequestSubtype =
   | 'rewind_files'
   | 'mcp_status'
   | 'get_settings'
+  | 'get_context_usage'
+  // MCP 管理动作：{serverName} / {serverName, enabled}（toggle 会持久化启用态到 settings）
+  | 'mcp_reconnect'
+  | 'mcp_toggle'
   // 进程内侧问（2.1.220 实测可用）：复用对话上下文与 prompt cache，不产生 FORK 会话
   | 'side_question'
   // AI 会话标题（Haiku）：{description, persist} → {title|null}，persist 时 CLI 自写 ai-title 进 transcript

@@ -51,8 +51,9 @@ cc-remote 是这群用户的控制面：本地优先、provider 中立、双供�
 ## 方向三：公网接入（不自购云服务器）——✅ 配方已落地（2026-08-27）
 
 **定论**：优先级 Tailscale funnel > Cloudflare Tunnel > 家宽 IPv6 直连；都不需要自购 VPS。
-三套配方 + 安全红线 + 手机蜂窝验收清单已写入 [`docs/public-access.md`](public-access.md)。
-剩余：由用户在真实手机上完成验收清单（蜂窝网络审批全链路 + 锁屏推送直接审批）。
+三套配方 + 安全红线 + 手机蜂窝验收清单已写入 [`docs/public-access.md`](public-access.md)
+（含「通知投递 vs 审批回执」双路径模型与故障排查表——"通知到了、按钮点不动"的唯一根因是 publicUrl 入方向不可达）。
+进度：authToken + 手机 ntfy 审批已实测通过；蜂窝验收待 CF Tunnel 落地（命名隧道需域名，临时隧道零费用随时可验）。
 
 | 方案 | 花费 | 第三方可见性 | 备注 |
 |---|---|---|---|
@@ -62,11 +63,16 @@ cc-remote 是这群用户的控制面：本地优先、provider 中立、双供�
 
 ## 已验证但暂不做的（决策记录）
 
-- **daemon socket 深度集成**（agent view supervisor 的 control.sock）：协议 proto 版本锁死，官方明示版本不一致即拒——只能 opportunistic 增强，不当基石。`claude agents --json --all` 是文档化脚本接口，可用于"会话在终端活着"的状态增强（待排期）。
+- **~~daemon socket 深度集成~~（保留结论）+ ~~`claude agents --json --all` 状态增强~~** ✅ 已接入（2026-08-27）：
+  `backends/claude/agents.ts` SWR 轮询（15s TTL + 后台刷新，listSessions 同步热路径零阻塞）；
+  pid 文件优先、daemon 兜底——独有价值是 `kind:background` 后台 agent（无 pid 文件）的存活状态。
+  control.sock 深度集成维持原结论不做：协议 proto 版本锁死，只能 opportunistic 增强，不当基石。
 - **codex token_budget**：thread/goal/set 协议字段已透传，UI 不做——token ≠ 钱，预算心智账户建不起来；等真实无人值守批处理场景出现再点亮。
 - **codex `permissions` named-profile 迁移**：`sandboxPolicy` 未 deprecated，不急；迁移时注意 `sandboxPolicy` 与 `permissions` 互斥不能同发。升级 codex 前跑 `bun run server/scripts/check-codex-schema.ts`。
 - **codex `thread/revert`**：仓库里有（实验性，按 turn id 截断 durable history），0.148 未发布；发布后替代 RewindPicker 的 fork 截断做"真回滚"。
-- **MCP 管理面板**：`mcp_status/mcp_set_servers/mcp_reconnect/mcp_toggle` 都在已支持的 23 个 control subtype 内，纯前端工作，小任务待排期。
+- **~~MCP 管理面板~~** ✅ 已完成（2026-08-27）：claude 详情抽屉 MCP tab 结构化面板（状态/工具数/scope/配置摘要/错误），
+  重连（mcp_reconnect）与启停（mcp_toggle，持久化 settings 与 TUI 同语义）；query 通道加 extra 传参复用为动作通道。
+  codex 侧维持 mcpServerStatus/list 只读直出。浏览器实测重连/禁用/启用全通过。
 - **~~`generate_session_title` 控制通道~~** ✅ 已接入（2026-08-27）：首条真实 user 消息 × 首个 init 双条件触发
   （`maybeGenerateTitle`，按 sessionId 去重，/clear 后新会话再生成）；CLI persist 写 ai-title 进 transcript，
   discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，无需 cc-remote 侧落状态。实测 4 项全过。

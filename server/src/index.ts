@@ -928,10 +928,12 @@ function handleClientMessage(hub: Hub, raw: string): void {
       break
     }
     case 'query': {
-      // 只读控制查询：mcp_status / get_settings / get_context_usage（claude 控制请求直通；
-      // codex 仅 mcp_status 有对应物 mcpServerStatus/list）
+      // 带应答的控制请求通道：只读查询（mcp_status / get_settings / get_context_usage）
+      // 与 MCP 管理动作（mcp_reconnect / mcp_toggle，经 extra 传参）共用；
+      // codex 仅 mcp_status 有对应物 mcpServerStatus/list（动作类一律拒绝）
       const id = String(data.id ?? '')
       const query = String(data.query ?? '')
+      const extra = (data.extra as Record<string, unknown> | undefined) ?? {}
       const reply = (payload: Record<string, unknown>) => broadcast(hub, { kind: 'query_result', id, ...payload })
       if (!id || !query) return
       if (isCodexKey(hub.key)) {
@@ -950,7 +952,9 @@ function handleClientMessage(hub: Hub, raw: string): void {
         reply({ ok: false, error: '进程未运行' })
         return
       }
-      s.sendControlAndWait(query, {}, 15_000)
+      // 重连/启用是完整 MCP 握手，慢于普通查询，给足超时
+      const timeoutMs = query === 'mcp_reconnect' || query === 'mcp_toggle' ? 30_000 : 15_000
+      s.sendControlAndWait(query, extra, timeoutMs)
         .then((d) => reply({ ok: true, data: d }))
         .catch((e) => reply({ ok: false, error: errorMessage(e) }))
       break
@@ -1193,6 +1197,25 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   if (url.pathname === '/api/push/subscriptions' && req.method === 'DELETE') {
     const body = await readJsonBody<{ endpoint?: string }>(req)
     return json({ ok: body.endpoint ? removeSubscription(body.endpoint) : false })
+  }
+  // 推送通道自检：向全部订阅与 webhook 通道 fanout 一条测试通知（不带审批能力，点击落应用首页）
+  if (url.pathname === '/api/push/test' && req.method === 'POST') {
+    const payload: PushPayload = {
+      type: 'done',
+      title: '测试通知 · cc-remote',
+      body: '推送链路可达：全部订阅与 webhook 通道会同时收到这一条。',
+      key: '',
+      session: 'cc-remote',
+      tag: 'ccr-test',
+    }
+    const [push, hooks] = await Promise.all([pushToAll(payload), pushWebhooksToAll(payload)])
+    return json({
+      ok: true,
+      subscriptions: subscriptionCount(),
+      webhooks: webhookCount(),
+      sent: push.sent + hooks.sent,
+      pruned: push.pruned,
+    })
   }
   // 推送直接审批（能力 URL：secret 鉴权，不走 authToken——该 URL 只经加密推送投递到订阅设备）
   if (url.pathname === '/api/approval-action' && req.method === 'POST') {

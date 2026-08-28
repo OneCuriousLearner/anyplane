@@ -62,6 +62,8 @@ export function SessionList(props: {
   const [pushEndpoint, setPushEndpoint] = useState<string | null>(null)
   /** 服务端配置的 webhook 通道数（ntfy/Bark/Server酱，配置文件管理，只读展示） */
   const [pushWebhooks, setPushWebhooks] = useState(0)
+  /** 测试通知发送中 */
+  const [pushTestBusy, setPushTestBusy] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
   const [notifyMenuOpen, setNotifyMenuOpen] = useState(false)
   const [view, setView] = useState<'active' | 'archived'>('active')
@@ -185,6 +187,35 @@ export function SessionList(props: {
       }
     } finally {
       setPushBusy(false)
+    }
+  }
+
+  /** 通道自检：向全部订阅 + webhook 通道发一条测试通知 */
+  const sendTestPush = async () => {
+    if (pushTestBusy) return
+    setPushTestBusy(true)
+    try {
+      const r = await fetch('/api/push/test', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'content-type': 'application/json' },
+        body: '{}',
+      })
+      const j = (await r.json()) as { ok?: boolean; sent?: number; subscriptions?: number; webhooks?: number; error?: string }
+      const total = (j.subscriptions ?? 0) + (j.webhooks ?? 0)
+      if (r.ok && j.ok) {
+        showToast(
+          total === 0
+            ? '尚无推送通道：先订阅或配置 webhook'
+            : `测试通知已送达 ${j.sent}/${total} 个通道（订阅 ${j.subscriptions} · webhook ${j.webhooks}）`,
+          total === 0 ? 'err' : 'ok',
+        )
+      } else {
+        showToast(`发送失败：${j.error ?? r.status}`, 'err')
+      }
+    } catch {
+      showToast('发送失败：网络错误', 'err')
+    } finally {
+      setPushTestBusy(false)
     }
   }
 
@@ -335,6 +366,19 @@ export function SessionList(props: {
                       </span>
                       <span className="font-mono text-[10px] text-faint">{pushWebhooks > 0 ? `${pushWebhooks}` : ''}</span>
                     </div>
+                    {/* 通道自检：一键向全部通道发测试通知 */}
+                    <button
+                      className="flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left hover:bg-surface2 disabled:opacity-50"
+                      onClick={sendTestPush}
+                      disabled={pushTestBusy}
+                    >
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-faint" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-mono text-[11px] text-ink">{pushTestBusy ? '发送中…' : '测试通知'}</span>
+                        <span className="block text-[10px] leading-snug text-faint">向全部订阅与 webhook 通道各发一条</span>
+                      </span>
+                      <span className="font-mono text-[10px] text-faint">发送</span>
+                    </button>
                   </div>
                   </>,
                   document.body,

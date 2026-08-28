@@ -7,10 +7,27 @@
 cc-remote 是单端口服务（7480 同时托管静态前端 + REST + WebSocket），三套方案都只是把
 `127.0.0.1:7480` 安全地暴露出去，服务端本身零改动。
 
+## 先懂两条路：为什么"通知到了、按钮却点不动"
+
+推送链路和审批回执是**两条方向相反、互不相干的路径**：
+
+```
+通知投递：cc-remote →（出方向）→ 推送服务（ntfy.sh/FCM/APNs/微信）→ 手机
+审批回执：手机 →（入方向）→ publicUrl 上的 cc-remote → /api/approval-action
+```
+
+通知能不能**收到**，只取决于服务器出方向能否到达推送服务——这部分在任何网络下都成立。
+而通知上的**允许/拒绝按钮**（ntfy action、Web Push SW 回 POST、Bark/Server酱 确认页）是手机
+直接请求 `publicUrl`——所以 `publicUrl` 必须是**手机当前网络也能到达**的地址。
+
+典型症状与根因：公司内网 PaaS 分配的域名只在办公网可达，内网 Wi-Fi 下一切正常，
+切到蜂窝网络后"能收到通知、点按钮超时"——缺的不是推送配置，而是本文档的公网接入。
+
 ## 方案一：Tailscale funnel（推荐，一条命令）
 
-前提：机器已加入 tailnet（`tailscale up`）。funnel 在多数 tailnet 默认可用，
-少数需要在 ACL 里开 nodeAttrs `funnel`。
+前提：机器已加入 tailnet（`tailscale up`），且**有 `/dev/net/tun`**（`ls /dev/net/tun` 确认）——
+无特权的云容器/沙箱环境通常没有 TUN 设备，Tailscale 整套方案（serve/funnel）都用不了，
+直接看方案二。funnel 在多数 tailnet 默认可用，少数需要在 ACL 里开 nodeAttrs `funnel`。
 
 ```bash
 tailscale funnel --bg 7480
@@ -26,14 +43,18 @@ tailscale funnel --bg 7480
 
 ## 方案二：Cloudflare Tunnel（要稳定域名 + Access 认证层时选）
 
-**临时地址**（零配置、每次重启变域名，适合临时演示）：
+cloudflared 是**纯用户态二进制、出站连接**，无 TUN 的容器/沙箱里也能跑——
+这类环境下它是唯一可行方案。
+
+**临时地址**（零账号、零费用、无需域名，每次重启变域名，适合验证与临时演示）：
 
 ```bash
 cloudflared tunnel --url http://localhost:7480
 # 输出 https://<随机>.trycloudflare.com
 ```
 
-**命名隧道**（稳定域名，需域名已接入 Cloudflare）：
+**命名隧道**（稳定域名，需一个接入 Cloudflare 的域名——域名本身要付费；
+没有支付渠道可尝试 eu.org / pp.ua 等免费二级域名，历史上可接入 CF 免费 DNS 托管）：
 
 ```bash
 cloudflared tunnel login
@@ -86,6 +107,7 @@ cloudflared tunnel run cc-remote   # 或装成系统服务：cloudflared service
 
 - **`authToken` 必须配置且够强**（≥32 随机字符）。三套方案里服务端都可以继续绑回环，
   「非回环绑定强制 token」的启动检查帮不到你——暴露发生在隧道/反代层，token 全靠自觉。
+  同理，公网模式下 `bun run gateway` 不要带 `--insecure`（那是纯内网的用法）。
 - 知道你在暴露什么：`GET /api/fs/list` 会给出本机目录结构，「任意目录起会话 ≈ 任意命令执行」。
   cc-remote 的控制面权限等于本机 shell，token 泄露 = 机器失守。
 - 不要绕过 TLS：不要 `host: 0.0.0.0` + 裸 HTTP 直接暴露 7480。上面每套方案都有 TLS 终止层。
@@ -93,6 +115,22 @@ cloudflared tunnel run cc-remote   # 或装成系统服务：cloudflared service
   它只经端到端加密推送或你配置的 webhook 渠道投递，且仅对 pending 中的 requestId 有效。
   泄露途径 = 推送渠道被窃听（见 README webhook 通道的凭证告诫）。
 - 第二层防线按需叠加：CF Access（方案二自带）、Tailscale ACL（方案一）、Caddy basicauth（方案三）。
+
+## 换公网地址后的两件琐事
+
+- **Web Push 订阅是按 origin 的**：换了公网地址（含临时隧道域名轮换）后，手机要在**新地址**上
+  重新打开铃铛面板订阅一次，否则新 origin 的通知按钮回 POST 仍打到旧地址。
+  旧 origin 的订阅在旧网络里依然有效，两边会同时收到推送，按需退订。
+- **旧通知的链接随之失效**：`publicUrl` 变更前发出的通知，其按钮/深链仍指向旧地址，点不动属正常。
+
+## 故障排查
+
+| 症状 | 根因方向 |
+|---|---|
+| 通知完全收不到 | 出方向：服务器 → 推送服务不通（curl 推送服务地址验证），或 webhook 配置未生效（铃铛面板看通道数） |
+| 通知到了、按钮点不动/超时 | 入方向：`publicUrl` 不是手机当前网络可达的地址（见「先懂两条路」） |
+| 按钮点了显示"已处理或不存在" | 审批已被裁决（其他端先点了），属正常 |
+| 蜂窝下页面能开但推送订阅失败 | Web Push 需 HTTPS（iOS 还需先加到主屏幕从主屏图标打开）；ntfy/webhook 不受此限 |
 
 ## 验收清单（手机蜂窝网络，非 Wi-Fi）
 

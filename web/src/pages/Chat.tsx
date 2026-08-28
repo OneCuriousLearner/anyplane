@@ -23,6 +23,17 @@ interface Approval {
   input: unknown
 }
 
+/** claude mcp_status 应答里的单个服务器（buildMcpServerStatuses 形状） */
+interface McpServerInfo {
+  name: string
+  /** connected / failed / disabled / pending / needs-auth 等（CLI 的 connection.type 直出） */
+  status: string
+  error?: string
+  config?: { type?: string; command?: string; args?: string[]; url?: string }
+  scope?: string
+  tools?: { name: string }[]
+}
+
 /** 流式草稿：一轮 assistant 输出的增量块（按 message.id + block index 归并） */
 interface DraftBlock {
   idx: number
@@ -131,6 +142,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailTitle, setDetailTitle] = useState('')
   const [detailContent, setDetailContent] = useState('加载中…')
+  /** claude MCP 面板：mcp_status 的结构化结果（null = 未加载/加载失败，此时看 detailContent） */
+  const [mcpServers, setMcpServers] = useState<McpServerInfo[] | null>(null)
+  /** MCP 动作进行中：`${serverName}:${action}` */
+  const [mcpBusy, setMcpBusy] = useState<string | null>(null)
+  /** 在途 MCP 动作的 query id（query_result 按 id 辨认动作应答与普通查询应答） */
+  const pendingMcpActionRef = useRef<string | null>(null)
   const [goalOpen, setGoalOpen] = useState(false)
   const [goalDraft, setGoalDraft] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
@@ -638,13 +655,34 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           case 'handoff_error':
             pushSystem(`⚠ 接力失败: ${ev.message}`, 'error')
             break
-          case 'query_result':
-            setDetailContent(
-              ev.ok
-                ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
-                : `⚠ ${ev.error ?? '查询失败'}`,
-            )
+          case 'query_result': {
+            // MCP 管理动作应答（按 query id 辨认）：清忙态、给反馈、成功后刷新清单
+            if (pendingMcpActionRef.current && ev.id === pendingMcpActionRef.current) {
+              pendingMcpActionRef.current = null
+              setMcpBusy(null)
+              if (ev.ok) {
+                pushSystem('✓ MCP 操作完成')
+                runQuery('mcp_status', 'MCP 状态')
+              } else {
+                pushSystem(`⚠ MCP 操作失败: ${ev.error ?? '未知错误'}`, 'error')
+              }
+              break
+            }
+            // claude 的 mcp_status 应答走结构化面板；其余（含 codex）维持 JSON 直出
+            const maybeMcp = ev.ok ? (ev.data as { mcpServers?: McpServerInfo[] } | undefined) : undefined
+            if (!isCodex && ev.ok && Array.isArray(maybeMcp?.mcpServers)) {
+              setMcpServers(maybeMcp.mcpServers ?? [])
+            } else {
+              // 非结构化应答：清掉旧清单（MCP tab 切回时会重新查询拉新）
+              setMcpServers(null)
+              setDetailContent(
+                ev.ok
+                  ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
+                  : `⚠ ${ev.error ?? '查询失败'}`,
+              )
+            }
             break
+          }
           case 'rewound':
             // 回滚会销毁并重生 CLI 进程（dispose 先摘 map 再 kill，onExit 不会触发），
             // 进行中的流式草稿/待配对工具结果/相位指示全部失效，必须一并清理，
@@ -758,6 +796,21 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setDetailTitle(title)
     setDetailContent('加载中…')
     sockRef.current?.send({ kind: 'query', id: `q-${querySeq.current}`, query })
+  }
+
+  /** MCP 管理动作（claude）：reconnect / toggle。复用 query 通道（带 extra 的带应答控制请求） */
+  const mcpAction = (serverName: string, action: 'mcp_reconnect' | 'mcp_toggle', enabled?: boolean) => {
+    if (mcpBusy) return
+    setMcpBusy(`${serverName}:${action}`)
+    querySeq.current += 1
+    const id = `q-${querySeq.current}`
+    pendingMcpActionRef.current = id
+    sockRef.current?.send({
+      kind: 'query',
+      id,
+      query: action,
+      extra: { serverName, ...(enabled === undefined ? {} : { enabled }) },
+    })
   }
 
   const pickImages = (files: FileList | null) => {
@@ -1400,9 +1453,69 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 ✕
               </button>
             </div>
-            <pre className="max-h-56 overflow-auto rounded bg-bg/60 p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
-              {detailContent}
-            </pre>
+            {detailTitle === 'MCP 状态' && !isCodex && mcpServers ? (
+              /* claude MCP 管理面板：状态 + 重连/启停（toggle 持久化到 settings，与 TUI 同语义） */
+              <div className="max-h-56 overflow-auto rounded bg-bg/60 p-2">
+                {mcpServers.length === 0 && (
+                  <div className="py-1 font-mono text-[10px] text-faint">无 MCP 服务器（在 claude 配置里添加后出现）</div>
+                )}
+                {mcpServers.map((srv) => {
+                  const meta =
+                    srv.status === 'connected'
+                      ? { dot: 'bg-ok', label: '已连接' }
+                      : srv.status === 'failed'
+                        ? { dot: 'bg-danger', label: '失败' }
+                        : srv.status === 'disabled'
+                          ? { dot: 'bg-faint', label: '已禁用' }
+                          : { dot: 'bg-wait', label: srv.status }
+                  const configLine = srv.config?.url
+                    ? srv.config.url
+                    : srv.config?.command
+                      ? `${srv.config.command} ${(srv.config.args ?? []).join(' ')}`.trim()
+                      : (srv.config?.type ?? '')
+                  const reconnecting = mcpBusy === `${srv.name}:mcp_reconnect`
+                  const toggling = mcpBusy === `${srv.name}:mcp_toggle`
+                  return (
+                    <div key={srv.name} className="flex items-center gap-2 py-1">
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono text-[11px] text-ink">
+                          {srv.name}
+                          <span className="text-faint">
+                            {' '}
+                            {meta.label}
+                            {srv.status === 'connected' && srv.tools ? ` · ${srv.tools.length} 工具` : ''}
+                            {srv.scope ? ` · ${srv.scope}` : ''}
+                          </span>
+                        </div>
+                        {configLine && <div className="truncate font-mono text-[10px] text-faint">{configLine}</div>}
+                        {srv.error && <div className="truncate font-mono text-[10px] text-danger">{srv.error}</div>}
+                      </div>
+                      <button
+                        className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-faint hover:text-muted disabled:opacity-40"
+                        disabled={!!mcpBusy || srv.status === 'disabled'}
+                        title="重新连接（mcp_reconnect）"
+                        onClick={() => mcpAction(srv.name, 'mcp_reconnect')}
+                      >
+                        {reconnecting ? '…' : '重连'}
+                      </button>
+                      <button
+                        className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-faint hover:text-muted disabled:opacity-40"
+                        disabled={!!mcpBusy}
+                        title={srv.status === 'disabled' ? '启用并连接（写入 settings）' : '禁用并断开（写入 settings）'}
+                        onClick={() => mcpAction(srv.name, 'mcp_toggle', srv.status === 'disabled')}
+                      >
+                        {toggling ? '…' : srv.status === 'disabled' ? '启用' : '禁用'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <pre className="max-h-56 overflow-auto rounded bg-bg/60 p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
+                {detailContent}
+              </pre>
+            )}
           </div>
         )}
       </div>

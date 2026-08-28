@@ -5,6 +5,7 @@ import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, 
 import { basename, join } from 'node:path'
 import { saveUpload } from '../../uploads'
 import { config } from '../../config'
+import { backgroundAlive, daemonAgents } from './agents'
 import { isInternalUserMessage, type CliMessage } from './protocol'
 
 /** 与快照 sanitizePath 一致：非字母数字 → '-'（截断/hash 情形极罕见，此处不实现） */
@@ -155,6 +156,23 @@ function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?:
 export function listSessions(): SessionInfo[] {
   const projectsDir = join(config.claudeConfigDir, 'projects')
   const live = readPidFiles()
+  // daemon 视图（agents --json --all，SWR 缓存）：pid 文件优先，daemon 兜底；
+  // background agent 无 pid 文件，其"活着"状态只有这里能拿到
+  const agents = daemonAgents()
+  /** pid 文件未覆盖时，用 daemon 信息合成 live（background 活着=busy，interactive 按其 status） */
+  const daemonLiveOf = (sessionId: string): SessionInfo['live'] & { status?: SessionStatus } | undefined => {
+    if (live.has(sessionId)) return undefined
+    const a = agents.get(sessionId)
+    if (!a) return undefined
+    if (a.kind === 'background') {
+      return backgroundAlive(a.state) ? { pid: a.pid ?? 0, kind: 'background', status: 'busy' } : undefined
+    }
+    // interactive：daemon 还在跟踪即视为活着（pid 文件刚被清理的竞态兜底）
+    if (a.pid || a.status) {
+      return { pid: a.pid ?? 0, startedAt: a.startedAt ? new Date(a.startedAt).toISOString() : undefined, kind: a.kind, status: normalizeStatus(a.status) }
+    }
+    return undefined
+  }
   const out: SessionInfo[] = []
   if (!existsSync(projectsDir)) return out
 
@@ -175,6 +193,7 @@ export function listSessions(): SessionInfo[] {
         const fst = statSync(full)
         const meta = extractMeta(full)
         const pid = live.get(sessionId)
+        const dl = pid ? undefined : daemonLiveOf(sessionId)
         out.push({
           sessionId,
           cwd: meta.cwd ?? pid?.cwd,
@@ -183,8 +202,8 @@ export function listSessions(): SessionInfo[] {
           lastPrompt: meta.lastPrompt,
           mtime: fst.mtimeMs,
           sizeBytes: fst.size,
-          status: pid ? normalizeStatus(pid.status) : 'offline',
-          live: pid ? { pid: pid.pid, startedAt: pid.startedAt, kind: pid.kind } : undefined,
+          status: pid ? normalizeStatus(pid.status) : dl ? (dl.status ?? 'idle') : 'offline',
+          live: pid ? { pid: pid.pid, startedAt: pid.startedAt, kind: pid.kind } : dl ? { pid: dl.pid, startedAt: dl.startedAt, kind: dl.kind } : undefined,
         })
       } catch {}
     }
@@ -203,7 +222,24 @@ export function listSessions(): SessionInfo[] {
         status: normalizeStatus(pid.status),
         live: { pid: pid.pid, startedAt: pid.startedAt, kind: pid.kind },
       })
+      seen.add(sessionId)
     }
+  }
+  // daemon 跟踪着的会话（如运行中的 background agent）尚无 jsonl 时同样列出
+  for (const [sessionId, a] of agents) {
+    if (seen.has(sessionId)) continue
+    const dl = daemonLiveOf(sessionId)
+    if (!dl) continue
+    out.push({
+      sessionId,
+      cwd: a.cwd,
+      slug: a.cwd ? sanitizePath(a.cwd) : '',
+      title: a.name,
+      mtime: a.startedAt ?? Date.now(),
+      sizeBytes: 0,
+      status: dl.status ?? 'idle',
+      live: { pid: dl.pid, startedAt: dl.startedAt, kind: dl.kind },
+    })
   }
   out.sort((a, b) => b.mtime - a.mtime)
   return out
