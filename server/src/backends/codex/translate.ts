@@ -33,6 +33,23 @@ interface ThreadItem {
   review?: string
 }
 
+/** message_start + content_block_start 开头流（agentMessage 文本 / reasoning 思考共用） */
+function streamStart(id: string, block: Record<string, unknown>): CliMessage[] {
+  return [
+    { type: 'stream_event', event: { type: 'message_start', message: { id, role: 'assistant', content: [] } } },
+    { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: block } },
+  ]
+}
+
+/** assistant 快照 + block/message stop（对齐 claude 真实序：快照合并草稿、stop 提交） */
+function assistantFinal(id: string, block: Record<string, unknown>): CliMessage[] {
+  return [
+    { type: 'assistant', message: { id, role: 'assistant', content: [block] } },
+    { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
+    { type: 'stream_event', event: { type: 'message_stop' } },
+  ]
+}
+
 /** 每个线程一个：维护 itemId → 合成 message id / 块序号的流式状态 */
 export class ThreadTranslator {
   /** item/started：agentMessage 开头流（message_start + block_start）；工具项发 tool_use */
@@ -40,15 +57,9 @@ export class ThreadTranslator {
     if (!item.id || !item.type) return []
     switch (item.type) {
       case 'agentMessage':
-        return [
-          { type: 'stream_event', event: { type: 'message_start', message: { id: item.id, role: 'assistant', content: [] } } },
-          { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } },
-        ]
+        return streamStart(item.id, { type: 'text', text: '' })
       case 'reasoning':
-        return [
-          { type: 'stream_event', event: { type: 'message_start', message: { id: item.id, role: 'assistant', content: [] } } },
-          { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
-        ]
+        return streamStart(item.id, { type: 'thinking', thinking: '' })
       case 'commandExecution':
       case 'fileChange':
       case 'mcpToolCall':
@@ -71,25 +82,9 @@ export class ThreadTranslator {
     if (!item.id || !item.type) return []
     switch (item.type) {
       case 'agentMessage':
-        return [
-          {
-            type: 'assistant',
-            message: { id: item.id, role: 'assistant', content: [{ type: 'text', text: item.text ?? '' }] },
-          },
-          { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
-          { type: 'stream_event', event: { type: 'message_stop' } },
-        ]
-      case 'reasoning': {
-        const text = reasoningText(item.summary, item.content)
-        return [
-          {
-            type: 'assistant',
-            message: { id: item.id, role: 'assistant', content: [{ type: 'thinking', thinking: text }] },
-          },
-          { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },
-          { type: 'stream_event', event: { type: 'message_stop' } },
-        ]
-      }
+        return assistantFinal(item.id, { type: 'text', text: item.text ?? '' })
+      case 'reasoning':
+        return assistantFinal(item.id, { type: 'thinking', thinking: reasoningText(item.summary, item.content) })
       case 'commandExecution':
       case 'fileChange':
       case 'mcpToolCall':
@@ -238,6 +233,22 @@ export function turnCompletedMsg(threadId: string, turn: Params, lastUsage?: Rec
 
 // ---------- 历史（thread.turns）→ HistoryMessage ----------
 
+/** 工具项历史对：tool_use + tool_result 两条消息（live 侧分两次发，历史落一起由前端归并） */
+function pushToolPair(
+  out: HistoryMessage[],
+  uuid: string | undefined,
+  toolUse: HistoryBlock,
+  item: ThreadItem,
+): void {
+  out.push({ uuid, role: 'assistant', blocks: [toolUse] })
+  const r = toolResultFromItem(item)
+  out.push({
+    uuid: `${item.id}-r`,
+    role: 'user',
+    blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
+  })
+}
+
 /** turn.items[] → 历史消息序列（tool_use/tool_result 跨消息配对由前端归并）。
  *  turnId 存在时：该轮首条 userMessage 以 turnId 为 uuid 且 rewindable——
  *  供 /rewind 分叉回滚定位（thread/fork 的 beforeTurnId 目标）。 */
@@ -271,65 +282,22 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
       case 'plan':
         out.push({ uuid, role: 'assistant', blocks: [{ kind: 'text', text: item.text ?? '' }] })
         break
-      case 'commandExecution': {
+      case 'commandExecution':
         // tool_use 有意不用 live 的 toolUseBlock：历史卡摘要应显示命令本身，
         // live 侧的 description(cwd) 会抢占 toolSummary 的首选字段
-        out.push({
-          uuid,
-          role: 'assistant',
-          blocks: [{ kind: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command ?? '' } }],
-        })
-        const r = toolResultFromItem(item)
-        out.push({
-          uuid: `${item.id}-r`,
-          role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
-        })
+        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command ?? '' } }, item)
         break
-      }
       case 'fileChange': {
         const paths = (item.changes ?? []).map((c) => c.path).filter(Boolean)
-        out.push({
-          uuid,
-          role: 'assistant',
-          blocks: [{ kind: 'tool_use', id: item.id, name: 'Edit', input: { file_path: paths[0] ?? '', paths } }],
-        })
-        const r = toolResultFromItem(item)
-        out.push({
-          uuid: `${item.id}-r`,
-          role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
-        })
+        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'Edit', input: { file_path: paths[0] ?? '', paths } }, item)
         break
       }
-      case 'mcpToolCall': {
-        out.push({
-          uuid,
-          role: 'assistant',
-          blocks: [{ kind: 'tool_use', id: item.id, name: `${item.server ?? 'mcp'}:${item.tool ?? '?'}`, input: item.arguments }],
-        })
-        const r = toolResultFromItem(item)
-        out.push({
-          uuid: `${item.id}-r`,
-          role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
-        })
+      case 'mcpToolCall':
+        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: `${item.server ?? 'mcp'}:${item.tool ?? '?'}`, input: item.arguments }, item)
         break
-      }
-      case 'webSearch': {
-        out.push({
-          uuid,
-          role: 'assistant',
-          blocks: [{ kind: 'tool_use', id: item.id, name: 'WebSearch', input: { query: item.query ?? '' } }],
-        })
-        const r = toolResultFromItem(item)
-        out.push({
-          uuid: `${item.id}-r`,
-          role: 'user',
-          blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
-        })
+      case 'webSearch':
+        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'WebSearch', input: { query: item.query ?? '' } }, item)
         break
-      }
       case 'contextCompaction':
         out.push({ uuid, role: 'system', subtype: 'compact_boundary', blocks: [] })
         break

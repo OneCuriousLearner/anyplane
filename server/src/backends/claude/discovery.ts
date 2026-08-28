@@ -82,6 +82,18 @@ function readPidFiles(): Map<string, PidFile> {
   return map
 }
 
+/** message.content（string 或块数组）→ 纯文本（只取 text 块，sep 连接） */
+function textOfContent(content: unknown, sep: string): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter((c): c is { type: string; text?: string } => c?.type === 'text')
+      .map((c) => c.text ?? '')
+      .join(sep)
+  }
+  return ''
+}
+
 /** 从 jsonl 提取标题/首条提示/cwd。只读前 64KB + 末 64KB，避免大文件全量解析 */
 function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?: string } {
   let head: string
@@ -128,21 +140,11 @@ function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?:
         title = obj.summary
       } else if (type === 'user') {
         const content = (obj.message as { content?: unknown } | undefined)?.content
-        const text =
-          typeof content === 'string'
-            ? content
-            : Array.isArray(content)
-              ? content
-                  .filter((c): c is { type: string; text?: string } => c?.type === 'text')
-                  .map((c) => c.text ?? '')
-                  .join(' ')
-              : ''
-        const clean = text.trim()
+        const clean = textOfContent(content, ' ').trim()
         // 跳过 tool_result / isMeta / 斜杠命令回显等系统注入消息
         if (clean && !obj.isMeta && !clean.startsWith('<local-command') && !clean.startsWith('<command-name')) {
           if (!firstPrompt && !isTail) firstPrompt = clean.slice(0, 120)
           if (isTail) lastPrompt = clean.slice(0, 120)
-          else lastPrompt = lastPrompt ?? undefined
         }
       }
     }
@@ -253,9 +255,7 @@ export type { HistoryMessage } from '../types'
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
 function toolResultText(rc: unknown): string {
-  if (typeof rc === 'string') return rc
-  if (Array.isArray(rc)) return rc.map((x) => (x?.type === 'text' ? (x.text ?? '') : '')).join('')
-  return ''
+  return textOfContent(rc, '')
 }
 
 /**
@@ -281,15 +281,7 @@ export function isSelectableRewindTarget(obj: Record<string, unknown>): boolean 
   if (Array.isArray(content)) {
     if ((content[0] as { type?: unknown } | undefined)?.type === 'tool_result') return false
   }
-  const text =
-    typeof content === 'string'
-      ? content
-      : Array.isArray(content)
-        ? content
-            .filter((c): c is { type: string; text?: string } => c?.type === 'text')
-            .map((c) => c.text ?? '')
-            .join(' ')
-        : ''
+  const text = textOfContent(content, ' ')
   return !INTERNAL_TEXT_TAGS.some((tag) => text.includes(tag))
 }
 
