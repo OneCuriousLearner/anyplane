@@ -3,7 +3,7 @@
 import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
-import { isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
+import { hostAllowed, isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
 import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { resolveTierModelNames } from './backends/claude/modelNames'
@@ -1547,7 +1547,12 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
 
       // 跨源防护：仅在无 token 模式生效（此时唯一防线）。approval-action 走能力 URL，
       // SW 回 POST 无页面 Origin 语义，且其鉴权是 per-subscription secret，不在此约束。
+      // hostAllowed 在最前：DNS rebinding 下 Origin 与 Host 同为攻击者域名，
+      // Origin↔Host 一致性天然失效，Host 回环白名单才是不依赖攻击者行为的锚点。
       if (!config.authToken && guarded) {
+        if (!hostAllowed(req)) {
+          return json({ error: 'host not allowed' }, { status: 403 })
+        }
         if (!originAllowed(req)) {
           return json({ error: 'origin not allowed' }, { status: 403 })
         }

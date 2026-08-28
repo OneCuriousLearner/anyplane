@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import {
+  hostAllowed,
   hostNameOf,
   isAuthorized,
   isLoopbackHost,
@@ -107,6 +108,32 @@ describe('originAllowed（无 token 模式的 CSWSH 防线）', () => {
 
   test('非法 Origin URL 拒绝', () => {
     expect(originAllowed(withHeaders({ host: '127.0.0.1:7480', origin: 'not a url' }))).toBe(false)
+  })
+})
+
+describe('hostAllowed（无 token 模式的 DNS rebinding 防线）', () => {
+  const withHost = (host?: string) =>
+    new Request('http://127.0.0.1:7480/api/sessions', host ? { headers: { host } } : undefined)
+
+  test('回环 Host 放行（直连/Vite 代理/SSH 转发）', () => {
+    expect(hostAllowed(withHost('127.0.0.1:7480'))).toBe(true)
+    expect(hostAllowed(withHost('localhost:5173'))).toBe(true)
+    expect(hostAllowed(withHost('[::1]:7480'))).toBe(true)
+    expect(hostAllowed(withHost('127.1.2.3:7480'))).toBe(true)
+  })
+
+  test('缺 Host 头放行（HTTP/1.0/非浏览器客户端；浏览器必定携带）', () => {
+    expect(hostAllowed(withHost())).toBe(true)
+  })
+
+  test('rebinding 场景拒绝：攻击者域名 rebind 到 127.0.0.1 后，浏览器 Host 是攻击者域名', () => {
+    // Origin 与 Host 同名同宿主（originAllowed 的"相同放行"分支救不了这个场景），
+    // Host 是浏览器禁改头，攻击者无法谎称回环
+    expect(hostAllowed(withHost('attacker.com:7480'))).toBe(false)
+    expect(hostAllowed(withHost('cc-remote.devcloud.woa.com'))).toBe(false)
+    expect(hostAllowed(withHost('localhost.evil.com:7480'))).toBe(false)
+    // 内网 IP 也不是回环
+    expect(hostAllowed(withHost('192.168.1.10:7480'))).toBe(false)
   })
 })
 

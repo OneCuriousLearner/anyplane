@@ -7,11 +7,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { config } from './config'
+import { ensurePrivateDir } from './util'
 
 function trashRoot(): string {
-  const dir = join(homedir(), '.cc-remote', 'trash', 'claude')
-  mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
-  return dir
+  return ensurePrivateDir(join(homedir(), '.cc-remote', 'trash', 'claude'))
 }
 
 /** rename 的跨文件系统兜底：CLAUDE_CONFIG_DIR 可指到与 ~/.cc-remote 不同的挂载点（EXDEV） */
