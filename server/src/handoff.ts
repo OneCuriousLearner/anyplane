@@ -2,13 +2,13 @@
 // 已在 handoff-lab 实验验证：两家的"对话内隐藏设计"可经简报无损传递（见 docs/PLAN 附录）。
 
 import { spawn } from 'bun'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { codexRuntime } from './backends/codex/runtime'
 import type { BackendName } from './backends/types'
-import { pumpLines } from './util'
+import { ensurePrivateDir, pumpLines } from './util'
 
 export type HandoffDetail = 'brief' | 'standard' | 'detailed'
 
@@ -139,9 +139,7 @@ export interface LineageRecord {
 }
 
 function lineageDir(): string {
-  const dir = join(homedir(), '.cc-remote')
-  mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
-  return dir
+  return ensurePrivateDir(join(homedir(), '.cc-remote'))
 }
 
 function lineagePath(): string {

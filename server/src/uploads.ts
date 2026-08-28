@@ -2,9 +2,10 @@
 // 用户自行管理（不自动清理）；hash 命名去重，同名同内容不会重复占盘。
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { ensurePrivateDir } from './util'
 
 export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 /** claude API 硬限制：base64 后 5MB（constants/apiLimits.ts） */
@@ -17,9 +18,7 @@ export interface ImageAttachment {
 }
 
 export function uploadsDir(): string {
-  const dir = join(homedir(), '.cc-remote', 'uploads')
-  mkdirSync(dir, { recursive: true }) // recursive 幂等：已存在不抛错
-  return dir
+  return ensurePrivateDir(join(homedir(), '.cc-remote', 'uploads'))
 }
 
 const EXT_OF: Record<string, string> = {

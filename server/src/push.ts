@@ -10,7 +10,7 @@
 // 能力模型：直接审批 URL 只经端到端加密的推送（或受信的 webhook 渠道）投递到设备，
 // 「持有有效 secret + requestId 处于 pending」即充分条件，不依赖页面登录态。
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import {
   createCipheriv,
   createHmac,
@@ -25,6 +25,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isLoopbackHostname } from './auth'
 import { config, type PushWebhookConfig } from './config'
+import { ensurePrivateDir } from './util'
 
 export interface PushSubscriptionRow {
   endpoint: string
@@ -52,9 +53,7 @@ export interface PushPayload {
 }
 
 function dataDir(): string {
-  const d = join(homedir(), '.cc-remote')
-  mkdirSync(d, { recursive: true }) // recursive 幂等：已存在不抛错
-  return d
+  return ensurePrivateDir(join(homedir(), '.cc-remote'))
 }
 
 const b64url = (b: Buffer) => b.toString('base64url')

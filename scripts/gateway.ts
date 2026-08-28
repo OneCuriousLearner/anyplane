@@ -9,10 +9,11 @@
 //          http://cc-remote-dev.devcloud.woa.com/       永远开发（需在 DevCloud 再挂一个域名）
 //   https:// 同源分流（自签证书；平台若在边缘终结 TLS，则只会打到明文 80）
 
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { detectProtocol, isOwnGatewayCmd, modeCookie, parseSsListenPids, pickMode, type Mode } from './gateway-lib'
+import { ensurePrivateDir } from '../server/src/util'
 
 type GatewayCfg = {
   httpPort: number
@@ -120,8 +121,8 @@ function certSan(cfg: GatewayCfg): string {
 }
 
 async function ensureCerts(cfg: GatewayCfg): Promise<{ cert: string; key: string }> {
-  const dir = join(homedir(), '.cc-remote', 'certs')
-  mkdirSync(dir, { recursive: true })
+  // TLS 私钥落 ~/.cc-remote/certs：目录收紧 700（ensurePrivateDir）
+  const dir = ensurePrivateDir(join(homedir(), '.cc-remote', 'certs'))
   const certPath = join(dir, 'gateway.crt')
   const keyPath = join(dir, 'gateway.key')
   if (existsSync(certPath) && existsSync(keyPath)) {

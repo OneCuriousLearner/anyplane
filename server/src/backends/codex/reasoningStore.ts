@@ -2,9 +2,10 @@
 // full 视图实测只有 userMessage+agentMessage），cc-remote 自行落盘并在历史读取时按
 // turn 时间窗回插，让"思考"在重进会话后仍可见。
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { ensurePrivateDir } from '../../util'
 
 export interface ReasoningEntry {
   /** Unix ms */
@@ -14,9 +15,7 @@ export interface ReasoningEntry {
 }
 
 function dir(): string {
-  const d = join(homedir(), '.cc-remote', 'reasoning')
-  mkdirSync(d, { recursive: true }) // recursive 幂等：已存在不抛错
-  return d
+  return ensurePrivateDir(join(homedir(), '.cc-remote', 'reasoning'))
 }
 
 function pathOf(threadId: string): string {
