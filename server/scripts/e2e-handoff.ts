@@ -86,6 +86,9 @@ async function waitTargetFirstTurn(targetKey: string, targetSessionId: string | 
 
 let pass = true
 
+/** 简报质量探针：实验项目的关键词应出现在简报里（两个方向共用） */
+const PROJECT_KEYWORDS = /notebox|搜索|export|简报/i
+
 // 方向 1：claude → codex
 {
   const r = await handoff(CLAUDE_KEY, 'codex', 'cc→cx')
@@ -93,8 +96,9 @@ let pass = true
     console.log(`[cc→cx] FAIL: ${r.error}`)
     pass = false
   } else {
-    console.log(`[cc→cx] 简报 ${r.brief!.length} 字，含项目关键词=${/notebox|搜索|export|简报/i.test(r.brief!)}`)
-    if (!/notebox|搜索|export|简报/i.test(r.brief!)) pass = false
+    const hasKeywords = PROJECT_KEYWORDS.test(r.brief!)
+    console.log(`[cc→cx] 简报 ${r.brief!.length} 字，含项目关键词=${hasKeywords}`)
+    if (!hasKeywords) pass = false
     if (!(await waitTargetFirstTurn(r.targetKey!, r.targetSessionId, 'cc→cx'))) pass = false
   }
 }
@@ -106,8 +110,9 @@ let pass = true
     console.log(`[cx→cc] FAIL: ${r.error}`)
     pass = false
   } else {
-    console.log(`[cx→cc] 简报 ${r.brief!.length} 字，含项目关键词=${/notebox|搜索|export|简报/i.test(r.brief!)}`)
-    if (!/notebox|搜索|export|简报/i.test(r.brief!)) pass = false
+    const hasKeywords = PROJECT_KEYWORDS.test(r.brief!)
+    console.log(`[cx→cc] 简报 ${r.brief!.length} 字，含项目关键词=${hasKeywords}`)
+    if (!hasKeywords) pass = false
   }
 }
 

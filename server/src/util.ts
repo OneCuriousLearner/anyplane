@@ -1,6 +1,22 @@
 // 服务端通用小助手：错误文案归一化、NDJSON 行泵、平台版本闸。
 
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+/** cc-remote 运行数据根目录（~/.cc-remote/，约定见 AGENTS.md）；权限收紧由 ensurePrivateDir 完成 */
+export function ccDataDir(): string {
+  return ensurePrivateDir(join(homedir(), '.cc-remote'))
+}
+
+/** 读 JSON 文件；不存在或解析失败返回 undefined（调用方决定回退值） */
+export function readJsonFile<T>(path: string): T | undefined {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as T
+  } catch {
+    return undefined
+  }
+}
 
 /** unknown 错误 → 单行文案（broadcast/json 响应用；console.* 请直接传原对象保留堆栈） */
 export function errorMessage(e: unknown): string {

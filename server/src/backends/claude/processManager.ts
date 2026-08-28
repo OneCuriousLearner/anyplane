@@ -185,29 +185,27 @@ export class ClaudeSession {
     if (this.opts.permissionMode) args.push('--permission-mode', this.opts.permissionMode)
 
     console.log(`[session ${this.key}] spawn: ${cmd} ${args.join(' ')}`)
-    const proc = (() => {
-      try {
-        return spawn([cmd, ...args], {
-          cwd: this.opts.cwd,
-          stdin: 'pipe',
-          stdout: 'pipe',
-          stderr: 'pipe', // 吞掉 stderr，避免干扰；需要诊断时可改为 inherit
-          env: {
-            ...process.env,
-            // headless/SDK 模式下文件检查点默认关闭，rewind_files 需要它
-            CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
-            // 启用权威 idle/running/requires_action 事件（Claude Code sessionState.ts）
-            CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
-          },
-        })
-      } catch (e) {
-        this.exited = true
-        this.proc = undefined
-        const detail = errorMessage(e)
-        throw new Error(`无法启动 claude CLI (${cmd}): ${detail}`)
-      }
-    })()
-    this.proc = proc
+    try {
+      this.proc = spawn([cmd, ...args], {
+        cwd: this.opts.cwd,
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe', // 吞掉 stderr，避免干扰；需要诊断时可改为 inherit
+        env: {
+          ...process.env,
+          // headless/SDK 模式下文件检查点默认关闭，rewind_files 需要它
+          CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
+          // 启用权威 idle/running/requires_action 事件（Claude Code sessionState.ts）
+          CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
+        },
+      })
+    } catch (e) {
+      this.exited = true
+      this.proc = undefined
+      const detail = errorMessage(e)
+      throw new Error(`无法启动 claude CLI (${cmd}): ${detail}`)
+    }
+    const proc = this.proc
     console.log(`[session ${this.key}] spawned pid=${proc.pid} parent=${process.pid}`)
     this.exited = false
     this.exitEmitted = false
@@ -528,10 +526,13 @@ export class ClaudeSession {
     // token 用量累计：result.usage（费用字段不进累加器、不进 UI）
     if (msg.type === 'result' && msg.usage && typeof msg.usage === 'object') {
       const u = msg.usage as Record<string, unknown>
-      this.usageAcc.inputTokens += Number(u.input_tokens ?? 0) || 0
-      this.usageAcc.outputTokens += Number(u.output_tokens ?? 0) || 0
-      this.usageAcc.cacheReadTokens += Number(u.cache_read_input_tokens ?? 0) || 0
-      this.usageAcc.cacheWriteTokens += Number(u.cache_creation_input_tokens ?? 0) || 0
+      const acc = (field: keyof typeof this.usageAcc, v: unknown) => {
+        this.usageAcc[field] += Number(v ?? 0) || 0
+      }
+      acc('inputTokens', u.input_tokens)
+      acc('outputTokens', u.output_tokens)
+      acc('cacheReadTokens', u.cache_read_input_tokens)
+      acc('cacheWriteTokens', u.cache_creation_input_tokens)
       this.cb.onStatusChange?.()
     }
 

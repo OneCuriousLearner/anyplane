@@ -21,11 +21,10 @@ import {
   generateKeyPairSync,
   randomBytes,
 } from 'node:crypto'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isLoopbackHostname } from './auth'
 import { config, type PushWebhookConfig } from './config'
-import { ensurePrivateDir } from './util'
+import { ccDataDir } from './util'
 
 export interface PushSubscriptionRow {
   endpoint: string
@@ -52,10 +51,6 @@ export interface PushPayload {
   tag?: string
 }
 
-function dataDir(): string {
-  return ensurePrivateDir(join(homedir(), '.cc-remote'))
-}
-
 const b64url = (b: Buffer) => b.toString('base64url')
 const hmac = (key: Buffer, data: Buffer) => createHmac('sha256', key).update(data).digest()
 /** HKDF-Expand 单块（输出 ≤32 字节，本协议全部派生都满足） */
@@ -68,7 +63,7 @@ let vapid: VapidKeys | undefined
 
 function loadVapid(): VapidKeys {
   if (!vapid) {
-    const path = join(dataDir(), 'vapid.json')
+    const path = join(ccDataDir(), 'vapid.json')
     if (existsSync(path)) {
       vapid = JSON.parse(readFileSync(path, 'utf8')) as VapidKeys
     } else {
@@ -105,15 +100,14 @@ function vapidJwt(audience: string): string {
       JSON.stringify({ aud: audience, exp: now + 12 * 3600, sub: 'mailto:cc-remote@localhost' }),
     ),
   )
+  const pubRaw = Buffer.from(keys.publicKey, 'base64url')
   const priv = createPrivateKey({
     key: {
       kty: 'EC',
       crv: 'P-256',
       d: keys.privateKey,
-      ...((): { x: string; y: string } => {
-        const raw = Buffer.from(keys.publicKey, 'base64url')
-        return { x: b64url(raw.subarray(1, 33)), y: b64url(raw.subarray(33, 65)) }
-      })(),
+      x: b64url(pubRaw.subarray(1, 33)),
+      y: b64url(pubRaw.subarray(33, 65)),
     },
     format: 'jwk',
   })
@@ -172,7 +166,7 @@ function encryptPayload(plaintext: Buffer, sub: PushSubscriptionRow): Buffer {
 let subs: PushSubscriptionRow[] | undefined
 
 function subsPath(): string {
-  return join(dataDir(), 'push-subscriptions.json')
+  return join(ccDataDir(), 'push-subscriptions.json')
 }
 
 function loadSubs(): PushSubscriptionRow[] {

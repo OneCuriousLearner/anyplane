@@ -40,21 +40,16 @@ export interface CodexSpawnOpts {
 export function mapPermissionMode(mode?: string): { approvalPolicy?: string; sandbox?: string } {
   switch (mode) {
     case 'readOnly':
+    case 'plan': // claude 名称的近似映射（spawnOpts 缓存/接力默认值可能带过来）
       return { approvalPolicy: 'on-request', sandbox: 'read-only' }
     case 'workspaceAuto':
-      return { approvalPolicy: 'never', sandbox: 'workspace-write' }
-    case 'fullAccess':
-      return { approvalPolicy: 'never', sandbox: 'danger-full-access' }
-    case 'workspace':
-      return { approvalPolicy: 'on-request', sandbox: 'workspace-write' }
-    // claude 名称的近似映射（spawnOpts 缓存/接力默认值可能带过来）
-    case 'bypassPermissions':
-      return { approvalPolicy: 'never', sandbox: 'danger-full-access' }
     case 'acceptEdits':
     case 'auto':
       return { approvalPolicy: 'never', sandbox: 'workspace-write' }
-    case 'plan':
-      return { approvalPolicy: 'on-request', sandbox: 'read-only' }
+    case 'fullAccess':
+    case 'bypassPermissions':
+      return { approvalPolicy: 'never', sandbox: 'danger-full-access' }
+    case 'workspace':
     case 'default':
     default:
       return { approvalPolicy: 'on-request', sandbox: 'workspace-write' }
@@ -358,19 +353,18 @@ export class CodexSession {
       const turnId = this.currentTurnId
       void this.runtime
         .rpcRequest('turn/steer', { threadId: this.threadId, input, expectedTurnId: turnId })
-        .catch(() => {
-          // 轮刚好结束/不可 steer：回退普通新轮
-          void this.runtime
-            .rpcRequest('turn/start', { threadId: this.threadId, input, approvalsReviewer: 'user', ...this.turnOverrides })
-            .catch((e) => this.emitError(`发送失败: ${errorMessage(e)}`))
-        })
+        .catch(() => this.startTurn(input)) // 轮刚好结束/不可 steer：回退普通新轮
       return
     }
+    this.startTurn(input)
+  }
+
+  /** 普通新轮：审批一律路由给远程用户（cc-remote 的存在意义），覆盖用户配置里的 auto_review */
+  private startTurn(input: unknown[]): void {
     void this.runtime
       .rpcRequest('turn/start', {
         threadId: this.threadId,
         input,
-        // 审批必须路由给远程用户（cc-remote 的存在意义），覆盖用户配置里的 auto_review
         approvalsReviewer: 'user',
         ...this.turnOverrides,
       })
@@ -744,6 +738,22 @@ export class CodexRuntime {
     this.rpc = undefined
   }
 
+  /** 分页拉取：cursor 翻页直到无 nextCursor 或达到 limitPages */
+  private async paginate(method: string, baseParams: Params, limitPages = 3): Promise<Params[]> {
+    const out: Params[] = []
+    let cursor: string | null = null
+    for (let page = 0; page < limitPages; page++) {
+      const res = (await this.rpcRequest(method, { ...baseParams, cursor, limit: 100 })) as {
+        data?: Params[]
+        nextCursor?: string | null
+      }
+      out.push(...(res.data ?? []))
+      cursor = res.nextCursor ?? null
+      if (!cursor) break
+    }
+    return out
+  }
+
   /** 模型目录：model/list 分页拉全（含每个模型支持的 effort 列表与默认 effort） */
   async listModels(): Promise<
     Array<{
@@ -755,17 +765,7 @@ export class CodexRuntime {
       isDefault: boolean
     }>
   > {
-    const out: Array<Record<string, unknown>> = []
-    let cursor: string | null = null
-    for (let page = 0; page < 3; page++) {
-      const res = (await this.rpcRequest('model/list', { cursor, limit: 100 })) as {
-        data?: Array<Record<string, unknown>>
-        nextCursor?: string | null
-      }
-      out.push(...(res.data ?? []))
-      cursor = res.nextCursor ?? null
-      if (!cursor) break
-    }
+    const out = await this.paginate('model/list', {})
     return out
       .filter((m) => m.hidden !== true)
       .map((m) => ({
@@ -785,20 +785,11 @@ export class CodexRuntime {
 
   /** 会话发现：thread/list 分页拉全（含 cli/exec/appServer 来源） */
   async listThreads(limitPages = 3): Promise<Params[]> {
-    const out: Params[] = []
-    let cursor: string | null = null
-    for (let page = 0; page < limitPages; page++) {
-      const res = (await this.rpcRequest('thread/list', {
-        cursor,
-        limit: 100,
-        sortKey: 'updated_at',
-        sourceKinds: ['cli', 'vscode', 'exec', 'appServer'],
-      })) as { data?: Params[]; nextCursor?: string | null }
-      out.push(...(res.data ?? []))
-      cursor = res.nextCursor ?? null
-      if (!cursor) break
-    }
-    return out
+    return this.paginate(
+      'thread/list',
+      { sortKey: 'updated_at', sourceKinds: ['cli', 'vscode', 'exec', 'appServer'] },
+      limitPages,
+    )
   }
 
   /** 历史：thread/read includeTurns（只读，不加载不订阅）+ 侧车 reasoning 按 turn 时间窗回插 */

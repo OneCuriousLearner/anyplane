@@ -4,12 +4,9 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { exitWithSummary, makeNote } from './e2e-lib'
 
-const results: string[] = []
-function note(ok: boolean, label: string, detail = '') {
-  results.push(`${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`)
-  console.log(results[results.length - 1])
-}
+const { note, results } = makeNote()
 
 const dir = mkdtempSync(join(tmpdir(), 'ccr-clear-'))
 const key = `n|${encodeURIComponent(dir)}`
@@ -83,6 +80,4 @@ for (const e of events) console.log(`  ${((e.at - events[0].at) / 1000).toFixed(
 ws.close()
 rmSync(dir, { recursive: true, force: true })
 clearTimeout(timeout)
-console.log('\n—— 汇总 ——')
-console.log(results.join('\n'))
-process.exit(results.some((r) => r.startsWith('✗')) ? 1 : 0)
+exitWithSummary(results)

@@ -1,11 +1,9 @@
 // E2E：codex /review（review/start）与 /rename（thread/name/set）
 // 用法：bun run server/scripts/e2e-codex-cmds.ts（需服务端已启动）
 // 注：claude /clear 的覆盖在 e2e-clear.ts（本文件的 claude 段曾因共享 n|/tmp key 被跨测试残留污染，已拆出重写）
-const results: string[] = []
-function note(ok: boolean, label: string, detail = '') {
-  results.push(`${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`)
-  console.log(results[results.length - 1])
-}
+import { exitWithSummary, makeNote } from './e2e-lib'
+
+const { note, results } = makeNote()
 
 const timeout = setTimeout(() => {
   console.error('TIMEOUT\n' + results.join('\n'))
@@ -49,6 +47,4 @@ const timeout = setTimeout(() => {
 }
 
 clearTimeout(timeout)
-console.log('\n—— 汇总 ——')
-console.log(results.join('\n'))
-process.exit(results.some((r) => r.startsWith('✗')) ? 1 : 0)
+exitWithSummary(results)

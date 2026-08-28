@@ -23,6 +23,15 @@ async function apiError(r: Response): Promise<Error> {
   return new Error(body?.error || `HTTP ${r.status}`)
 }
 
+/** POST JSON 小封装：统一 method/headers/序列化（错误检查由调用方按需补） */
+async function postJson(path: string, body: unknown): Promise<Response> {
+  return apiFetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 export interface SessionInfo {
   sessionId: string
   cwd?: string
@@ -48,6 +57,22 @@ export interface SessionInfo {
     model?: string
     permissionMode?: string
     effort?: string
+  }
+}
+
+/**
+ * 构造本地导航用的会话条目（fork / handoff / moved / 新建共用缺省值）。
+ * 刚导航过去的会话尚无权威状态，占位字段随后由 WS status 覆盖。
+ */
+export function makeSessionInfo(
+  p: Pick<SessionInfo, 'key' | 'slug' | 'sessionId' | 'backend'> & Partial<SessionInfo>,
+): SessionInfo {
+  return {
+    mtime: Date.now(),
+    sizeBytes: 0,
+    status: 'idle',
+    managed: { spawned: false, busy: false, clients: 0 },
+    ...p,
   }
 }
 
@@ -103,11 +128,7 @@ export async function fetchCodexHistory(threadId: string): Promise<HistoryRespon
 }
 
 export async function createSession(cwd: string, backend?: 'claude' | 'codex'): Promise<{ key: string; slug: string }> {
-  const r = await apiFetch('/api/sessions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ cwd, backend }),
-  })
+  const r = await postJson('/api/sessions', { cwd, backend })
   return r.json()
 }
 
@@ -154,30 +175,18 @@ export async function fetchLineage(key: string): Promise<LineageResponse> {
 
 /** 改名：claude 离线会话追加 custom-title；codex 走 thread/name/set */
 export async function renameSession(key: string, title: string): Promise<void> {
-  const r = await apiFetch('/api/sessions/rename', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ key, title }),
-  })
+  const r = await postJson('/api/sessions/rename', { key, title })
   if (!r.ok) throw await apiError(r)
 }
 
 /** 归档（回收站语义，无物理删除）：claude 移入 ~/.cc-remote/trash；codex 走官方 thread/archive */
 export async function archiveSession(key: string): Promise<void> {
-  const r = await apiFetch('/api/sessions/archive', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ key }),
-  })
+  const r = await postJson('/api/sessions/archive', { key })
   if (!r.ok) throw await apiError(r)
 }
 
 export async function restoreSession(key: string): Promise<void> {
-  const r = await apiFetch('/api/sessions/restore', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ key }),
-  })
+  const r = await postJson('/api/sessions/restore', { key })
   if (!r.ok) throw await apiError(r)
 }
 
@@ -222,11 +231,7 @@ export async function startHandoff(
   toBackend: 'claude' | 'codex',
   detail: 'brief' | 'standard' | 'detailed' = 'standard',
 ): Promise<void> {
-  const r = await apiFetch('/api/handoff', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ fromKey, toBackend, detail }),
-  })
+  const r = await postJson('/api/handoff', { fromKey, toBackend, detail })
   if (!r.ok) throw await apiError(r)
 }
 

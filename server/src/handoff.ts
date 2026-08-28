@@ -2,13 +2,12 @@
 // 已在 handoff-lab 实验验证：两家的"对话内隐藏设计"可经简报无损传递（见 docs/PLAN 附录）。
 
 import { spawn } from 'bun'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { codexRuntime } from './backends/codex/runtime'
 import type { BackendName } from './backends/types'
-import { ensurePrivateDir, pumpLines } from './util'
+import { ccDataDir, pumpLines, readJsonFile } from './util'
 
 export type HandoffDetail = 'brief' | 'standard' | 'detailed'
 
@@ -138,41 +137,24 @@ export interface LineageRecord {
   briefUsage?: Record<string, number>
 }
 
-function lineageDir(): string {
-  return ensurePrivateDir(join(homedir(), '.cc-remote'))
-}
-
 function lineagePath(): string {
-  return join(lineageDir(), 'lineage.json')
+  return join(ccDataDir(), 'lineage.json')
 }
 
 export function appendLineage(rec: LineageRecord): void {
   const path = lineagePath()
-  let all: LineageRecord[] = []
-  if (existsSync(path)) {
-    try {
-      all = JSON.parse(readFileSync(path, 'utf8')) as LineageRecord[]
-    } catch {
-      all = []
-    }
-  }
+  const all = readJsonFile<LineageRecord[]>(path) ?? []
   all.push(rec)
   writeFileSync(path, JSON.stringify(all, null, 2))
 }
 
 export function lineageFor(key: string): LineageRecord[] {
-  const path = lineagePath()
-  if (!existsSync(path)) return []
-  try {
-    const all = JSON.parse(readFileSync(path, 'utf8')) as LineageRecord[]
-    return all.filter(
-      (r) =>
-        r.fromKey === key ||
-        r.toKey === key ||
-        r.fromResolvedKey === key ||
-        r.toResolvedKey === key,
-    )
-  } catch {
-    return []
-  }
+  const all = readJsonFile<LineageRecord[]>(lineagePath()) ?? []
+  return all.filter(
+    (r) =>
+      r.fromKey === key ||
+      r.toKey === key ||
+      r.fromResolvedKey === key ||
+      r.toResolvedKey === key,
+  )
 }

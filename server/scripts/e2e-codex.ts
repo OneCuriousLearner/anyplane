@@ -98,7 +98,7 @@ async function pump(): Promise<void> {
 }
 
 void pump()
-proc.stderr && void new Response(proc.stderr as ReadableStream<Uint8Array>).text().then((t) => {
+void new Response(proc.stderr as ReadableStream<Uint8Array>).text().then((t) => {
   if (t.trim()) console.error('[stderr]', t.slice(0, 800))
 })
 

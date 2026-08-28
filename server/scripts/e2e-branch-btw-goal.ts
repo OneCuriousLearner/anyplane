@@ -1,27 +1,10 @@
 // 验证链路：btw(side_question) → branch(懒分叉) → /goal 状态跟踪
 // 用法：bun run server/scripts/e2e-branch-btw-goal.ts
+import { connect, exitWithSummary, makeNote } from './e2e-lib'
+
 const cwd = '/tmp'
 const nKey = `n|${encodeURIComponent(cwd)}`
-const results: string[] = []
-function note(ok: boolean, label: string, detail = '') {
-  results.push(`${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`)
-  console.log(results[results.length - 1])
-}
-
-function connect(key: string) {
-  const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}`)
-  const handlers: Array<(ev: Record<string, unknown>) => void> = []
-  ws.onmessage = (e) => {
-    const ev = JSON.parse(e.data)
-    for (const h of handlers) h(ev)
-  }
-  return {
-    ws,
-    on: (h: (ev: Record<string, unknown>) => void) => handlers.push(h),
-    send: (o: unknown) => ws.send(JSON.stringify(o)),
-    open: () => new Promise<void>((r) => { ws.onopen = () => r() }),
-  }
-}
+const { note, results } = makeNote()
 
 const timeout = setTimeout(() => {
   console.error('TIMEOUT\n' + results.join('\n'))
@@ -114,7 +97,4 @@ for (let i = 0; i < 150 && !goalCleared; i++) await new Promise((r) => setTimeou
 note(goalCleared, 'goal 完成后 status.goal 清除')
 
 clearTimeout(timeout)
-console.log('\n—— 汇总 ——')
-console.log(results.join('\n'))
-const failed = results.filter((r) => r.startsWith('✗')).length
-process.exit(failed ? 1 : 0)
+exitWithSummary(results)

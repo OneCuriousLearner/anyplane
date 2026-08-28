@@ -52,6 +52,27 @@ export function ApprovalCard(props: {
   )
 }
 
+/** 选项按钮：预设选项与「其他」共用的单/多选条目 */
+function OptionButton(props: { pressed: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={props.pressed}
+      className={`w-full rounded border px-2.5 py-2 text-left transition-colors ${
+        props.pressed
+          ? 'border-accent bg-accent/15 text-ink'
+          : 'border-line bg-surface/50 text-muted hover:border-accent/50 hover:bg-surface2'
+      }`}
+      onClick={props.onClick}
+    >
+      <span className="flex gap-2">
+        <span className="font-mono text-xs text-accent-soft">{props.pressed ? '●' : '○'}</span>
+        {props.children}
+      </span>
+    </button>
+  )
+}
+
 function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (d: ApprovalDecision) => void }) {
   const { input, onDecision } = props
   const [selections, setSelections] = useState<AskUserQuestionSelections>(() =>
@@ -93,45 +114,24 @@ function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (
               </div>
               <p className="text-sm font-medium text-ink">{question.question}</p>
               <div className="mt-2 space-y-1.5">
-                {question.options.map((option) => {
-                  const isSelected = selected.includes(option.label)
-                  return (
-                    <button
-                      key={option.label}
-                      type="button"
-                      aria-pressed={isSelected}
-                      className={`w-full rounded border px-2.5 py-2 text-left transition-colors ${
-                        isSelected
-                          ? 'border-accent bg-accent/15 text-ink'
-                          : 'border-line bg-surface/50 text-muted hover:border-accent/50 hover:bg-surface2'
-                      }`}
-                      onClick={() => toggleOption(question.question, option.label, question.multiSelect)}
-                    >
-                      <span className="flex gap-2">
-                        <span className="font-mono text-xs text-accent-soft">{isSelected ? '●' : '○'}</span>
-                        <span>
-                          <span className="block text-sm font-medium">{option.label}</span>
-                          <span className="block text-xs leading-relaxed text-faint">{option.description}</span>
-                        </span>
-                      </span>
-                    </button>
-                  )
-                })}
-                <button
-                  type="button"
-                  aria-pressed={otherSelected}
-                  className={`w-full rounded border px-2.5 py-2 text-left transition-colors ${
-                    otherSelected
-                      ? 'border-accent bg-accent/15 text-ink'
-                      : 'border-line bg-surface/50 text-muted hover:border-accent/50 hover:bg-surface2'
-                  }`}
+                {question.options.map((option) => (
+                  <OptionButton
+                    key={option.label}
+                    pressed={selected.includes(option.label)}
+                    onClick={() => toggleOption(question.question, option.label, question.multiSelect)}
+                  >
+                    <span>
+                      <span className="block text-sm font-medium">{option.label}</span>
+                      <span className="block text-xs leading-relaxed text-faint">{option.description}</span>
+                    </span>
+                  </OptionButton>
+                ))}
+                <OptionButton
+                  pressed={otherSelected}
                   onClick={() => toggleOption(question.question, '__other__', question.multiSelect)}
                 >
-                  <span className="flex gap-2">
-                    <span className="font-mono text-xs text-accent-soft">{otherSelected ? '●' : '○'}</span>
-                    <span className="text-sm font-medium">其他</span>
-                  </span>
-                </button>
+                  <span className="text-sm font-medium">其他</span>
+                </OptionButton>
                 {otherSelected && (
                   <textarea
                     autoFocus

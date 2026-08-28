@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
+import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type HistoryMessage, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -173,7 +173,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const moreBtnRef = useRef<HTMLButtonElement>(null)
   const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [atBottom, setAtBottom] = useState(true)
@@ -216,7 +215,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setDetailOpen(false)
     setLineage(undefined)
     fetchLineage(session.key)
-      .then((r) => setLineage(r.records.length > 0 ? r : undefined))
+      // 记录按时间排序一次到位（渲染期不再重复排序）
+      .then((r) =>
+        setLineage(
+          r.records.length > 0
+            ? { ...r, records: [...r.records].sort((a, b) => a.at.localeCompare(b.at)) }
+            : undefined,
+        ),
+      )
       .catch(() => {})
   }, [session.key])
 
@@ -623,34 +629,31 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               pushSystem(
                 `⎇ 已创建分支${ev.name ? `「${ev.name}」` : ''}：新会话携带当前全部历史，原会话保持不动`,
               )
-              props.onNavigate?.({
-                key: ev.targetKey,
-                slug: session.slug,
-                sessionId: ev.branchOf,
-                cwd: session.cwd,
-                backend: 'claude',
-                mtime: Date.now(),
-                sizeBytes: 0,
-                status: 'idle',
-                managed: { spawned: false, busy: false, clients: 0 },
-              })
+              props.onNavigate?.(
+                makeSessionInfo({
+                  key: ev.targetKey,
+                  slug: session.slug,
+                  sessionId: ev.branchOf,
+                  cwd: session.cwd,
+                  backend: 'claude',
+                }),
+              )
               break
             }
             // codex 分叉回滚完成：原线程不动，跳到携带截断历史的新线程
             pushSystem('⎇ 已分叉：新会话携带所选消息之前的历史，原会话保持不动')
             setShowRewind(false)
-            props.onNavigate?.({
-              key: ev.targetKey,
-              slug: 'codex',
-              // codex 分叉路径服务端始终携带 targetSessionId（branchOf 不存在时）
-              sessionId: ev.targetSessionId ?? '',
-              cwd: session.cwd,
-              backend: 'codex',
-              mtime: Date.now(),
-              sizeBytes: 0,
-              status: 'idle',
-              managed: { spawned: true, busy: false, clients: 0 },
-            })
+            props.onNavigate?.(
+              makeSessionInfo({
+                key: ev.targetKey,
+                slug: 'codex',
+                // codex 分叉路径服务端始终携带 targetSessionId（branchOf 不存在时）
+                sessionId: ev.targetSessionId ?? '',
+                cwd: session.cwd,
+                backend: 'codex',
+                managed: { spawned: true, busy: false, clients: 0 },
+              }),
+            )
             break
           }
           case 'handoff_pending':
@@ -665,17 +668,17 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               systemKind: 'info',
               blocks: [{ kind: 'text', text: `⇄ 接力简报（已播种给 ${ev.toBackend === 'codex' ? 'Codex' : 'Claude'} 新会话）：\n\n${ev.brief}` }],
             })
-            props.onNavigate?.({
-              key: ev.targetKey,
-              slug: ev.toBackend === 'codex' ? 'codex' : session.slug,
-              sessionId: 'new',
-              cwd: session.cwd,
-              backend: ev.toBackend,
-              mtime: Date.now(),
-              sizeBytes: 0,
-              status: 'busy',
-              managed: { spawned: true, busy: true, clients: 0 },
-            })
+            props.onNavigate?.(
+              makeSessionInfo({
+                key: ev.targetKey,
+                slug: ev.toBackend === 'codex' ? 'codex' : session.slug,
+                sessionId: 'new',
+                cwd: session.cwd,
+                backend: ev.toBackend,
+                status: 'busy',
+                managed: { spawned: true, busy: true, clients: 0 },
+              }),
+            )
             break
           }
           case 'handoff_error':
@@ -743,17 +746,16 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             // /clear 对话重置：进程已换新 sessionId 续跑，Hub 重键完毕——跳到新会话页
             //（旧 transcript 在磁盘原样保留，列表页可见）
             const parts = ev.targetKey.split('|')
-            props.onNavigate?.({
-              key: ev.targetKey,
-              slug: parts[1] ?? session.slug,
-              sessionId: ev.targetSessionId ?? 'new',
-              cwd: session.cwd,
-              backend: 'claude',
-              mtime: Date.now(),
-              sizeBytes: 0,
-              status: 'idle',
-              managed: { spawned: true, busy: false, clients: 0 },
-            })
+            props.onNavigate?.(
+              makeSessionInfo({
+                key: ev.targetKey,
+                slug: parts[1] ?? session.slug,
+                sessionId: ev.targetSessionId ?? 'new',
+                cwd: session.cwd,
+                backend: 'claude',
+                managed: { spawned: true, busy: false, clients: 0 },
+              }),
+            )
             break
           }
           case 'tail_reset': {
@@ -874,21 +876,17 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     `data:${img.mediaType};base64,${img.dataBase64}`
 
   // ---------- goal 设定/清除：claude 走 /goal 斜杠命令（本地命令，不进模型上下文），codex 走 thread/goal RPC ----------
-  const setGoal = (condition: string) => {
+  const sendGoal = (condition?: string) => {
     if (isCodex) {
-      sockRef.current?.send({ kind: 'control', subtype: 'set_goal', extra: { objective: condition } })
+      sockRef.current?.send(
+        condition
+          ? { kind: 'control', subtype: 'set_goal', extra: { objective: condition } }
+          : { kind: 'control', subtype: 'clear_goal' },
+      )
     } else {
-      sockRef.current?.send({ kind: 'user', text: `/goal ${condition}` })
+      sockRef.current?.send({ kind: 'user', text: condition ? `/goal ${condition}` : '/goal clear' })
     }
-    pushSystem(`◎ 已设定目标：${condition}`)
-  }
-  const clearGoal = () => {
-    if (isCodex) {
-      sockRef.current?.send({ kind: 'control', subtype: 'clear_goal' })
-    } else {
-      sockRef.current?.send({ kind: 'user', text: '/goal clear' })
-    }
-    pushSystem('◎ 已清除目标')
+    pushSystem(condition ? `◎ 已设定目标：${condition}` : '◎ 已清除目标')
   }
 
   // ---------- StatusPill 共享处理器（claude/codex 两个胶囊的 mode/effort 同构；model 因本地回显差异分开） ----------
@@ -904,7 +902,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const send = () => {
     const text = input.trim()
     if ((!text && pendingImages.length === 0) || !sockRef.current) return
-    if (text === '/rewind') {
+    // /rewind 及其官方别名 /checkpoint /undo
+    if (text === '/rewind' || text === '/checkpoint' || text === '/undo') {
       setShowRewind(true)
       setInput('')
       return
@@ -931,12 +930,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       setInput('')
       return
     }
-    // /rewind 的官方别名
-    if (text === '/checkpoint' || text === '/undo') {
-      setShowRewind(true)
-      setInput('')
-      return
-    }
     // codex 的斜杠命令不会被 app-server 解释（原样进模型上下文），有对应物的必须前端拦截
     if (isCodex && text === '/compact') {
       sockRef.current.send({ kind: 'control', subtype: 'compact' })
@@ -957,8 +950,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     if (isCodex && /^\/goal(\s|$)/.test(text)) {
       const arg = text.slice(5).trim()
       if (!arg) pushSystem(state.goal ? `◎ 当前目标：${state.goal.condition}` : '用法：/goal <条件>，/goal clear 清除')
-      else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) clearGoal()
-      else setGoal(arg)
+      else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) sendGoal()
+      else sendGoal(arg)
       setInput('')
       return
     }
@@ -987,17 +980,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       const cwd = session.cwd
       if (cwd) {
         void createSession(cwd, 'codex').then(({ key }) =>
-          props.onNavigate?.({
-            key,
-            slug: 'codex',
-            sessionId: 'new',
-            cwd,
-            backend: 'codex',
-            mtime: Date.now(),
-            sizeBytes: 0,
-            status: 'offline',
-            managed: { spawned: false, busy: false, clients: 0 },
-          }),
+          props.onNavigate?.(
+            makeSessionInfo({ key, slug: 'codex', sessionId: 'new', cwd, backend: 'codex', status: 'offline' }),
+          ),
         )
       } else {
         pushSystem('⚠ 未知当前目录，无法新建线程', 'error')
@@ -1180,7 +1165,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               <ClaudeStar active={busy || Boolean(draft) || Boolean(phase)} size={28} />
             )}
           </div>
-          <div ref={bottomRef} />
         </div>
       </div>
 
@@ -1343,7 +1327,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   onChange={(e) => setGoalDraft(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && goalDraft.trim()) {
-                      setGoal(goalDraft.trim())
+                      sendGoal(goalDraft.trim())
                       setGoalOpen(false)
                     }
                   }}
@@ -1353,7 +1337,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   disabled={!goalDraft.trim()}
                   onClick={() => {
                     if (!goalDraft.trim()) return
-                    setGoal(goalDraft.trim())
+                    sendGoal(goalDraft.trim())
                     setGoalOpen(false)
                   }}
                 >
@@ -1363,7 +1347,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   <button
                     className="shrink-0 rounded border border-danger/60 px-2 py-1 font-mono text-[11px] text-danger"
                     onClick={() => {
-                      clearGoal()
+                      sendGoal()
                       setGoalOpen(false)
                     }}
                   >
@@ -1412,8 +1396,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           <div className="flex items-center gap-1.5 overflow-x-auto border-t border-line/60 px-3 py-1.5 font-mono text-[10px]">
             <span className="shrink-0 text-faint">⇄ 接力链:</span>
             {lineage.records
-              .slice()
-              .sort((a, b) => a.at.localeCompare(b.at))
               .map((r) => {
                 const fromKey = r.fromResolvedKey ?? r.fromKey
                 const toKey = r.toResolvedKey ?? r.toKey

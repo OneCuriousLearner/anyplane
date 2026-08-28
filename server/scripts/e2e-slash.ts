@@ -36,7 +36,7 @@ ws.onmessage = (e) => {
   } else if (ev.kind === 'btw_result') {
     console.log(`<< btw_result ok=${ev.ok}:`, ev.text.slice(0, 300))
     clearTimeout(timeout)
-    process.exit(ev.ok && compactDone ? 0 : compactDone ? 0 : 1)
+    process.exit(compactDone ? 0 : 1)
   } else if (ev.kind === 'error') {
     console.log('<< error:', ev.message)
   }

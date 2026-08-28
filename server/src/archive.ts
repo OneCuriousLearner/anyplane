@@ -4,13 +4,12 @@
 //   恢复时移回。仅离线会话可操作（与改名同一边界：进程活着的会话绝不碰）。
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { config } from './config'
-import { ensurePrivateDir } from './util'
+import { ccDataDir, ensurePrivateDir } from './util'
 
 function trashRoot(): string {
-  return ensurePrivateDir(join(homedir(), '.cc-remote', 'trash', 'claude'))
+  return ensurePrivateDir(join(ccDataDir(), 'trash', 'claude'))
 }
 
 /** rename 的跨文件系统兜底：CLAUDE_CONFIG_DIR 可指到与 ~/.cc-remote 不同的挂载点（EXDEV） */
@@ -79,7 +78,6 @@ export function listTrash(): TrashEntry[] {
     const dir = join(root, slug)
     for (const file of readdirSync(dir)) {
       if (!file.endsWith('.jsonl')) continue
-      if (file.endsWith('.meta.json') || file.endsWith('.bak')) continue
       const sessionId = basename(file, '.jsonl')
       const p = join(dir, file)
       let trashedAt: string | undefined
