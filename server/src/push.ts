@@ -25,6 +25,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isLoopbackHostname } from './auth'
 import { config, type PushWebhookConfig } from './config'
+import { errorMessage } from './util'
 
 export interface PushSubscriptionRow {
   endpoint: string
@@ -310,7 +311,7 @@ export async function pushToAll(payload: PushPayload): Promise<{ sent: number; p
           console.warn(`[push] 投递失败 (HTTP ${status})：${row.endpoint.slice(0, 60)}`)
         }
       } catch (e) {
-        console.warn(`[push] 投递失败 (network):`, e instanceof Error ? e.message : e)
+        console.warn(`[push] 投递失败 (network):`, errorMessage(e))
       }
     }),
   )
@@ -470,7 +471,7 @@ export async function pushWebhooksToAll(payload: PushPayload): Promise<{ sent: n
           console.warn(`[push] webhook ${webhookId(wh)} 投递失败 (HTTP ${status})`)
         }
       } catch (e) {
-        console.warn(`[push] webhook ${webhookId(wh)} 投递失败:`, e instanceof Error ? e.message : e)
+        console.warn(`[push] webhook ${webhookId(wh)} 投递失败:`, errorMessage(e))
       }
     }),
   )

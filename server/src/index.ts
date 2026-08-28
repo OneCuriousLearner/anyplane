@@ -2,7 +2,7 @@
 
 import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
 import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
@@ -123,13 +123,12 @@ function publishInbox(ev: InboxEvent): void {
  *  避免推送事件触发反复 listSessions 全盘扫描）；b|/n|/xn| 的 cwd 内嵌在 key 里直接取。
  *  parseKey 也查不到（slug 目录已删）时以 slug 末段近似。 */
 function sessionNameOf(key: string): string {
-  const base = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() ?? cwd
   const hub = hubs.get(key)
-  if (hub?.spawnOpts?.cwd) return base(hub.spawnOpts.cwd)
+  if (hub?.spawnOpts?.cwd) return basename(hub.spawnOpts.cwd)
   const parts = key.split('|')
   try {
     if ((parts[0] === 'b' || parts[0] === 'n' || parts[0] === 'xn') && parts[1]) {
-      return base(decodeURIComponent(parts[1]))
+      return basename(decodeURIComponent(parts[1]))
     }
   } catch {
     // key 内嵌 cwd 不是合法 URI 编码（状态损坏/构造输入）：落 key 截断，不影响推送分发
@@ -137,7 +136,7 @@ function sessionNameOf(key: string): string {
   }
   if (parts[0] === 's') {
     if (hub && hub.nameCwd === undefined) hub.nameCwd = parseKey(key)?.cwd ?? ''
-    if (hub?.nameCwd) return base(hub.nameCwd)
+    if (hub?.nameCwd) return basename(hub.nameCwd)
     // slug 是 sanitizePath(cwd)：末段即目录名（近似，仅推送显示用）
     if (parts[1]) return parts[1].split('-').pop() ?? key.slice(0, 18)
   }
@@ -618,7 +617,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
       // 若客户端显式传 warm:true，则预热 resume（用于主动续聊）。
       // codex：x| 会话 attach 即 resume（订阅实时事件）；xn| 新会话保持懒启动。
       if (isCodexKey(hub.key)) {
-        if (data.warm === true || data.opts || hub.key.startsWith('x|')) {
+        if (data.warm === true || data.opts || splitThreadId(hub.key)) {
           void ensureCodexSession(hub, data.opts as Partial<SpawnOptions> | undefined)
         } else {
           pushStatus(hub)
@@ -1081,11 +1080,13 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
             : undefined
       const fromResolvedKey = (() => {
         if (fromBackend === 'claude') {
-          if (fromKey.startsWith('s|')) return fromKey
+          const existing = splitExistingKey(fromKey)
+          if (existing) return keyFor(existing.slug, existing.sessionId)
           const sidNow = processManager.get(fromKey)?.sessionId
           return sidNow ? keyFor(sanitizePath(sourceCwd), sidNow) : undefined
         }
-        if (fromKey.startsWith('x|')) return fromKey
+        const threadId = splitThreadId(fromKey)
+        if (threadId) return keyFor(threadId)
         const tidNow = codexRuntime.get(fromKey)?.sessionId
         return tidNow ? `x|${tidNow}` : undefined
       })()
@@ -1270,7 +1271,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         managed: codexStatusOf(t.key),
       }))
     } catch (e) {
-      console.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
+      console.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', errorMessage(e))
     }
     return json([...codexRows, ...claudeRows])
   }
@@ -1357,7 +1358,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         mtime: Number(t.updatedAt ?? t.createdAt ?? 0) * 1000,
       }))
     } catch (e) {
-      console.warn('[api] codex archived 列表失败:', e instanceof Error ? e.message : e)
+      console.warn('[api] codex archived 列表失败:', errorMessage(e))
     }
     return json({ entries: [...codexArchived, ...claudeTrash] })
   }
@@ -1413,19 +1414,30 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     for (const r of records) {
       for (const k of [r.fromKey, r.toKey, r.fromResolvedKey, r.toResolvedKey]) {
         if (!k || nodes[k]) continue
-        const parts = k.split('|')
-        if (parts[0] === 's' && parts.length === 3) {
-          nodes[k] = { key: k, backend: 'claude', slug: parts[1], sessionId: parts[2], cwd: r.cwd }
-        } else if (parts[0] === 'x' && parts.length === 2) {
-          nodes[k] = { key: k, backend: 'codex', slug: 'codex', sessionId: parts[1], cwd: r.cwd }
-        } else if (parts[0] === 'n' || parts[0] === 'xn') {
+        const existing = splitExistingKey(k)
+        if (existing) {
+          nodes[k] = { key: k, backend: 'claude', slug: existing.slug, sessionId: existing.sessionId, cwd: r.cwd }
+          continue
+        }
+        const threadId = splitThreadId(k)
+        if (threadId) {
+          nodes[k] = { key: k, backend: 'codex', slug: 'codex', sessionId: threadId, cwd: r.cwd }
+          continue
+        }
+        const claudeParsed = parseKey(k)
+        if (claudeParsed?.cwd) {
           nodes[k] = {
             key: k,
-            backend: parts[0] === 'xn' ? 'codex' : 'claude',
-            slug: parts[0] === 'xn' ? 'codex' : sanitizePath(decodeURIComponent(parts[1] ?? '')),
-            sessionId: 'new',
+            backend: 'claude',
+            slug: sanitizePath(claudeParsed.cwd),
+            sessionId: claudeParsed.forkFromSessionId ?? 'new',
             cwd: r.cwd,
           }
+          continue
+        }
+        const codexParsed = codexParseKey(k)
+        if (codexParsed?.cwd) {
+          nodes[k] = { key: k, backend: 'codex', slug: 'codex', sessionId: 'new', cwd: r.cwd }
         }
       }
     }

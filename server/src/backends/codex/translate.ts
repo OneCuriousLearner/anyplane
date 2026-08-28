@@ -5,6 +5,7 @@
 import type { CliMessage } from '../claude/protocol'
 import type { HistoryBlock, HistoryMessage } from '../types'
 import { resolveUpload } from '../../uploads'
+import { basename } from 'node:path'
 
 // ---------- 通知 → CliMessage（live 流） ----------
 
@@ -350,7 +351,7 @@ function userInputBlocks(content: unknown): HistoryBlock[] {
     if (c.type === 'text' && typeof c.text === 'string') {
       texts.push(c.text)
     } else if (c.type === 'image' || c.type === 'localImage') {
-      const base = typeof c.path === 'string' ? (c.path.split('/').pop() ?? '') : ''
+      const base = typeof c.path === 'string' ? basename(c.path) : ''
       if (base && resolveUpload(base)) images.push({ kind: 'image', src: `/api/uploads/${base}` })
       else texts.push('[图片]')
     } else if (c.type === 'audio' || c.type === 'localAudio') {
