@@ -45,13 +45,13 @@ ws.onmessage = (e) => {
 }
 await new Promise<void>((r) => (ws.onopen = () => r()))
 ws.send(JSON.stringify({ kind: 'attach' }))
-await new Promise((r) => setTimeout(r, 400))
+await Bun.sleep(400)
 
 // 等 result 的稳健助手
 async function awaitResult(fromIndex: number, ms: number): Promise<boolean> {
   for (let i = 0; i < ms / 500; i++) {
     if (events.slice(fromIndex).some((e) => e.kind === 'result')) return true
-    await new Promise((r) => setTimeout(r, 500))
+    await Bun.sleep(500)
   }
   return false
 }
@@ -64,7 +64,7 @@ note(await awaitResult(idx, 150_000), 'clear 前：上下文建立')
 // 2. /clear
 idx = events.length
 ws.send(JSON.stringify({ kind: 'user', text: '/clear' }))
-for (let i = 0; i < 60 && !movedKey; i++) await new Promise((r) => setTimeout(r, 500))
+for (let i = 0; i < 60 && !movedKey; i++) await Bun.sleep(500)
 note(movedKey.startsWith('s|'), 'clear 触发 moved（Hub 重键）', movedKey.split('|').pop()?.slice(0, 8))
 // clear 自身的 result（空回合）收掉
 await awaitResult(idx, 30_000)

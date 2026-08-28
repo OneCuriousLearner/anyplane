@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { detectProtocol, isOwnGatewayCmd, modeCookie, parseSsListenPids, pickMode, type Mode } from './gateway-lib'
+import { errorMessage } from '../server/src/util'
 
 type GatewayCfg = {
   httpPort: number
@@ -226,7 +227,7 @@ async function proxyHttp(req: Request, target: string, proto: string, mode: Mode
     headers.set('x-cc-remote-mode', mode)
     return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = errorMessage(e)
     const isDev = mode === 'dev'
     return htmlPage(
       '502 后端未就绪',
@@ -522,7 +523,7 @@ function startMux(
     },
   })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = errorMessage(e)
     console.error(`[gateway] 监听 0.0.0.0:${publicPort} 失败：${msg}`)
     if (msg.includes('EADDRINUSE') || msg.includes('Failed to listen')) {
       console.error('[gateway] 端口仍被占用。默认会替换上一份 scripts/gateway.ts；其它进程请用 --no-replace 查看后手动处理。')

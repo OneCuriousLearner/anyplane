@@ -163,7 +163,7 @@ function sendMsg(m: Record<string, unknown>) {
 async function run() {
   for (const step of steps) {
     if ('wait_ms' in step) {
-      await new Promise((r) => setTimeout(r, step.wait_ms))
+      await Bun.sleep(step.wait_ms)
     } else if ('send' in step) {
       sendMsg(step.send)
     } else if ('wait_for' in step) {
@@ -178,7 +178,7 @@ async function run() {
     }
   }
   // 等 result 后稍等收尾再退出
-  await new Promise((r) => setTimeout(r, 1500))
+  await Bun.sleep(1500)
   child.stdin!.end()
   setTimeout(() => child.kill(), 3000)
 }

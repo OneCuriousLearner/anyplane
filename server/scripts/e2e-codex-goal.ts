@@ -33,15 +33,15 @@ handlers.push((ev) => {
 })
 
 send({ kind: 'user', text: '只回复「就绪」两个字。' })
-for (let i = 0; i < 120 && !turnDone; i++) await new Promise((r) => setTimeout(r, 1000))
+for (let i = 0; i < 120 && !turnDone; i++) await Bun.sleep(1000)
 note(turnDone && !!threadId, 'codex 线程就绪', threadId.slice(0, 8))
 
 send({ kind: 'control', subtype: 'set_goal', extra: { objective: '验证目标：回复一次「好」即达成' } })
-for (let i = 0; i < 40 && !goalSeen; i++) await new Promise((r) => setTimeout(r, 500))
+for (let i = 0; i < 40 && !goalSeen; i++) await Bun.sleep(500)
 note(goalSeen.includes('验证目标'), 'thread/goal/set → status.goal', goalSeen.slice(0, 20))
 
 send({ kind: 'control', subtype: 'clear_goal' })
-for (let i = 0; i < 40 && !goalCleared; i++) await new Promise((r) => setTimeout(r, 500))
+for (let i = 0; i < 40 && !goalCleared; i++) await Bun.sleep(500)
 note(goalCleared, 'thread/goal/clear → status.goal 清除')
 
 clearTimeout(timeout)

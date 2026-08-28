@@ -41,7 +41,7 @@ a.on((ev) => {
   if (ev.kind === 'cli' && (ev.msg as { type?: string }).type === 'result') turnDone = true
 })
 a.send({ kind: 'user', text: '记住暗号「星河战舰」，只回复「收到」两个字。' })
-for (let i = 0; i < 120 && !turnDone; i++) await new Promise((r) => setTimeout(r, 1000))
+for (let i = 0; i < 120 && !turnDone; i++) await Bun.sleep(1000)
 note(turnDone && !!sessionId, '源会话建立上下文', `sessionId=${sessionId.slice(0, 8)}`)
 
 // ---------- 2. btw：side_question 通道 ----------
@@ -57,7 +57,7 @@ a.on((ev) => {
   }
 })
 a.send({ kind: 'btw', question: '我刚才给你的暗号是什么？只回答暗号本身。' })
-for (let i = 0; i < 90 && !btwText; i++) await new Promise((r) => setTimeout(r, 1000))
+for (let i = 0; i < 90 && !btwText; i++) await Bun.sleep(1000)
 note(btwOk && btwText.includes('星河战舰'), 'btw 侧问（side_question）', `${btwAt}ms, 答=${btwText.slice(0, 30)}`)
 
 // ---------- 3. branch：懒分叉 ----------
@@ -68,7 +68,7 @@ a.on((ev) => {
   }
 })
 a.send({ kind: 'branch' })
-for (let i = 0; i < 10 && !branchKey; i++) await new Promise((r) => setTimeout(r, 500))
+for (let i = 0; i < 10 && !branchKey; i++) await Bun.sleep(500)
 note(branchKey.startsWith('b|'), 'branch 创建 b| key', branchKey ? decodeURIComponent(branchKey.split('|')[1]) + '|…' : '无')
 
 // 分支会话发消息：应触发 --fork-session spawn，且继承暗号上下文
@@ -91,7 +91,7 @@ b.on((ev) => {
   }
 })
 b.send({ kind: 'user', text: '源会话里我给的暗号是什么？只回答暗号。' })
-for (let i = 0; i < 120 && !bDone; i++) await new Promise((r) => setTimeout(r, 1000))
+for (let i = 0; i < 120 && !bDone; i++) await Bun.sleep(1000)
 const forkedNewId = bSessionId && bSessionId !== sessionId
 note(bDone && forkedNewId && bAnswer.includes('星河战舰'), '分支 fork 启动且继承上下文', `新 sid=${bSessionId.slice(0, 8)} 答=${bAnswer.slice(-30)}`)
 
@@ -106,11 +106,11 @@ a.on((ev) => {
   }
 })
 a.send({ kind: 'user', text: '/goal 测试目标：只回复一次「达成」即完成' })
-for (let i = 0; i < 30 && !goalSeen; i++) await new Promise((r) => setTimeout(r, 500))
+for (let i = 0; i < 30 && !goalSeen; i++) await Bun.sleep(500)
 note(goalSeen, '/goal 状态进入 status.goal')
 // goal 循环跑完（result 到达）后 chip 应清除
 turnDone = false
-for (let i = 0; i < 150 && !goalCleared; i++) await new Promise((r) => setTimeout(r, 1000))
+for (let i = 0; i < 150 && !goalCleared; i++) await Bun.sleep(1000)
 note(goalCleared, 'goal 完成后 status.goal 清除')
 
 clearTimeout(timeout)

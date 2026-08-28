@@ -125,7 +125,7 @@ try {
   }
   await new Promise<void>((r) => (ws.onopen = () => r()))
   ws.send(JSON.stringify({ kind: 'attach' }))
-  await new Promise((r) => setTimeout(r, 500))
+  await Bun.sleep(500)
   ws.send(
     JSON.stringify({
       kind: 'user',
@@ -136,7 +136,7 @@ try {
   // 3. 等推送到达 mock（审批事件 → fanout）
   let push: Captured | undefined
   for (let i = 0; i < 120 && !push; i++) {
-    await new Promise((r) => setTimeout(r, 1000))
+    await Bun.sleep(1000)
     push = captured.get('/push/A')
   }
   note(!!push, '审批事件触发推送到 mock push service')
@@ -184,7 +184,7 @@ try {
   const allowResp = await fetch(`${BASE}${payload.actions!.allow}`, { method: 'POST' })
   const allowJson = (await allowResp.json()) as { ok: boolean; error?: string }
   note(allowResp.ok && allowJson.ok, '能力 URL 直接审批生效', `HTTP ${allowResp.status}`)
-  for (let i = 0; i < 10 && !sawResolvedEvent; i++) await new Promise((r) => setTimeout(r, 500))
+  for (let i = 0; i < 10 && !sawResolvedEvent; i++) await Bun.sleep(500)
   note(sawResolvedEvent, 'WS 侧收到 approval_resolved（审批卡同步消失）')
   resolved = true
 
@@ -206,7 +206,7 @@ try {
   ws.send(JSON.stringify({ kind: 'user', text: '再用 Write 把文件 /tmp/ccr-push-test2.txt 内容写成 push-ok2。只做这一件事。' }))
   let pushB: Captured | undefined
   for (let i = 0; i < 120 && !pushB; i++) {
-    await new Promise((r) => setTimeout(r, 1000))
+    await Bun.sleep(1000)
     pushB = captured.get('/push/B')
   }
   note(!!pushB, '第二次审批推送也发到 B（投递了但收到 410）')
@@ -216,7 +216,7 @@ try {
     const p2 = JSON.parse(decryptPush(push2.body, uaPrivJwk, uaPubRaw, auth)) as { actions?: { allow: string } }
     if (p2.actions) await fetch(`${BASE}${p2.actions.allow}`, { method: 'POST' })
   }
-  await new Promise((r) => setTimeout(r, 1500))
+  await Bun.sleep(1500)
   const countAfter = ((await (await fetch(`${BASE}/api/push/public-key`)).json()) as { subscriptions: number }).subscriptions
   note(countAfter === countBefore - 1, '410 死订阅自动摘除', `${countBefore} → ${countAfter}`)
 

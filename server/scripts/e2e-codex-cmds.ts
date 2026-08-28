@@ -29,21 +29,21 @@ const timeout = setTimeout(() => {
   }
   await new Promise<void>((r) => (ws.onopen = () => r()))
   ws.send(JSON.stringify({ kind: 'attach' }))
-  await new Promise((r) => setTimeout(r, 400))
+  await Bun.sleep(400)
   ws.send(JSON.stringify({ kind: 'user', text: '只回复「就绪」两个字。' }))
-  for (let i = 0; i < 120 && !turnDone; i++) await new Promise((r) => setTimeout(r, 1000))
+  for (let i = 0; i < 120 && !turnDone; i++) await Bun.sleep(1000)
   note(turnDone && !!threadId, 'codex 线程就绪', threadId.slice(0, 8))
 
   // rename
   ws.send(JSON.stringify({ kind: 'control', subtype: 'rename', extra: { name: 'e2e-命令测试线程' } }))
-  await new Promise((r) => setTimeout(r, 2000))
+  await Bun.sleep(2000)
   note(!errors.some((e) => e.includes('重命名')), 'codex /rename（thread/name/set）无报错')
 
   // review（custom 目标：/tmp 不是 git 仓库，uncommittedChanges 会报错）
   errors = []
   turnDone = false
   ws.send(JSON.stringify({ kind: 'control', subtype: 'review', extra: { instructions: '检查 /tmp/ccr-push-test.txt 是否存在并评价这个测试文件的用途（一句话）' } }))
-  for (let i = 0; i < 150 && !turnDone; i++) await new Promise((r) => setTimeout(r, 1000))
+  for (let i = 0; i < 150 && !turnDone; i++) await Bun.sleep(1000)
   note(turnDone && !errors.some((e) => e.includes('审查')), 'codex /review（review/start custom inline）完成一轮', errors[0]?.slice(0, 60) ?? '')
   ws.close()
 }

@@ -5,6 +5,7 @@
  */
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
+import { errorMessage } from '../server/src/util'
 
 const BASE = 'https://code.claude.com/docs'
 const OUT = join(import.meta.dir, '..', 'docs', 'claude-code')
@@ -47,7 +48,7 @@ async function mapPool<T>(
         await fn(items[i]!, i)
         ok++
       } catch (e) {
-        fail.push({ item: items[i]!, err: e instanceof Error ? e.message : String(e) })
+        fail.push({ item: items[i]!, err: errorMessage(e) })
       }
     }
   }
