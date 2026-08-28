@@ -53,7 +53,6 @@ function loadFileConfig(): { authToken?: string; gateway?: Record<string, unknow
     join(process.cwd(), 'cc-remote.config.json'),
     join(import.meta.dir, '..', 'cc-remote.config.json'),
     join(homedir(), '.cc-remote', 'config.json'),
-    join(homedir(), '.config', 'cc-remote', 'config.json'),
   ]
   for (const p of candidates) {
     if (!existsSync(p)) continue

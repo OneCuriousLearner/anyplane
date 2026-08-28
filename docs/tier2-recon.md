@@ -11,7 +11,7 @@
 | codex | `turn/start` input 加 `{type:'localImage', path}` | ✅ 实测通过（模型答"红"）。注意：`{type:'image', url:'data:...'}` 在 DeepSeek provider 下模型声称看不到图（供应商/通道不支持），**codex 侧一律走 localImage**：浏览器上传 → 服务端写临时文件 → 传路径 |
 
 实现要点：
-- WS `user` 消息扩展 `attachments: [{name, mediaType, dataBase64}]`；claude 直接并进 content blocks；codex 服务端写 `~/.config/cc-remote/uploads/<uuid>.<ext>` 后用 localImage，引用计数/定期清理
+- WS `user` 消息扩展 `attachments: [{name, mediaType, dataBase64}]`；claude 直接并进 content blocks；codex 服务端写 `~/.cc-remote/uploads/<uuid>.<ext>` 后用 localImage，引用计数/定期清理
 - 前端：输入区加附件按钮（手机相册/拍照），消息块渲染图片缩略（HistoryBlock 加 image 类型；历史里 claude 有 base64 原文、codex 只有路径——缩略图渲染要分别处理，v1 历史里显示 `[图片]` 占位即可）
 - 模型能力检测：codex `model/list` 的 `inputModalities` 有 image 时才显示按钮（deepseek-v4-flash 标称支持但 dataURL 实测失效，localImage 兜底）
 

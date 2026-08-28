@@ -92,7 +92,7 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
 - `POST /api/handoff { fromKey, toBackend, detail: 'brief'|'standard'|'detailed' }`:
   1. 源后端 fork 摘要：Claude 用现有 `/btw` 机制（`--fork-session --resume` 一次性问答）;Codex 用 `thread/fork ephemeral:true` + `turn/start`。提示词要求输出：项目目标/进度/对话内决策/文件清单/下一步。
   2. 创建目标会话：首条 user 消息 = 简报 + "你在 \<cwd\> 接替另一个 agent，先用 git status/diff 和关键文件确认现场再动手"。(Claude 也可叠加 `--append-system-prompt-file`;Codex 可叠加 `developer_instructions`，首消息方案为最通用实现。)
-  3. 血缘写 `~/.config/cc-remote/lineage.json`（源 key→目标 key、时间、简报、源 token 统计）。
+  3. 血缘写 `~/.cc-remote/lineage.json`（源 key→目标 key、时间、简报、源 token 统计）。
 - UI：会话页"接力"按钮（可选简报详细度）；接力链渲染为虚拟时间线，段间用 compact_boundary 同款分隔线（"⚡ 接力 Claude→Codex · 简报 N tokens")；双向互链。
 - 提示文案诚实标注：目标 agent 首轮需重建上下文（读现场），给出源会话 token 统计供参考。
 - 验收：`server/scripts/e2e-handoff.ts` 双向各一次，断言目标会话产出了与"对话内隐藏设计"一致的行为（复刻本次实验）。

@@ -1,5 +1,5 @@
 // cc-remote 服务端配置
-// 配置文件：项目根目录或 ~/.config/cc-remote/config.json（均可选，全部有默认值）
+// 配置文件：项目根目录 cc-remote.config.json 或 ~/.cc-remote/config.json（均可选，全部有默认值）
 
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -75,8 +75,6 @@ function loadFileConfig(): Partial<ServerConfig> {
     join(process.cwd(), 'cc-remote.config.json'),
     projectRootConfig,
     join(homedir(), '.cc-remote', 'config.json'),
-    // 旧路径兜底（不再推荐；新装请用 ~/.cc-remote/）
-    join(homedir(), '.config', 'cc-remote', 'config.json'),
   ]
   for (const p of candidates) {
     if (existsSync(p)) {
