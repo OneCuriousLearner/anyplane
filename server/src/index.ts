@@ -395,10 +395,10 @@ function maybeGenerateTitle(hub: Hub): void {
   const sid = hub.sessionId
   const text = hub.pendingTitleText
   if (!sid || !text || hub.titleGeneratedFor === sid) return
-  hub.titleGeneratedFor = sid
-  hub.pendingTitleText = undefined
   const s = processManager.get(hub.key)
   if (!s) return
+  hub.titleGeneratedFor = sid
+  hub.pendingTitleText = undefined
   void s
     .generateSessionTitle(text)
     .then((title) => {

@@ -270,7 +270,14 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
       const dest = `${target.replace(/^http/, 'ws')}${url.pathname}${url.search}`
       // 子协议必须随 data 带进 open()：Vite 6 的 HMR 只认 vite-hmr / vite-ping 子协议，
       // 缺了它后端握手永远挂起，Bun WS 客户端 120s 超时断连 → 前端整页刷新（本 bug 根因）。
-      const protocols = req.headers.get('sec-websocket-protocol') ?? undefined
+      // 多个子协议按 RFC 以逗号分隔，必须拆成数组后传，否则会被视为一个组合协议名而握手失败。
+      const rawProtocols = req.headers.get('sec-websocket-protocol')
+      const protocols = rawProtocols
+        ? rawProtocols
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined
       if (srv.upgrade(req, { data: { dest, protocols, queue: [] } })) return undefined
       return new Response('WebSocket upgrade failed', { status: 400 })
     }

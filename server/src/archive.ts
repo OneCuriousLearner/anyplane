@@ -12,13 +12,24 @@ function trashRoot(): string {
   return ensurePrivateDir(join(ccDataDir(), 'trash', 'claude'))
 }
 
-/** rename 的跨文件系统兜底：CLAUDE_CONFIG_DIR 可指到与 ~/.cc-remote 不同的挂载点（EXDEV） */
+/** rename 的跨文件系统兜底：CLAUDE_CONFIG_DIR 可指到与 ~/.cc-remote 不同的挂载点（EXDEV）。
+ *  非原子：cpSync 成功后、rmSync 前崩溃会留下双份；调用方/用户需手动清理回收站。
+ */
 function move(src: string, dest: string): void {
   try {
     renameSync(src, dest)
   } catch (e) {
     if ((e as NodeJS.ErrnoException)?.code !== 'EXDEV') throw e
     cpSync(src, dest, { recursive: true })
+    // 简单一致性校验（仅文件）：复制失败通常已抛错；这里避免 rmSync 掉尚未成功复制的源
+    if (
+      existsSync(src) &&
+      existsSync(dest) &&
+      statSync(src).isFile() &&
+      statSync(src).size !== statSync(dest).size
+    ) {
+      throw new Error(`EXDEV 复制大小不一致: ${src} -> ${dest}`)
+    }
     rmSync(src, { recursive: true, force: true })
   }
 }

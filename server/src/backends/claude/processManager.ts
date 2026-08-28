@@ -328,7 +328,7 @@ export class ClaudeSession {
     const resp = (await this.sendControlAndWait(
       'generate_session_title',
       { description: description.slice(0, 500), persist: true },
-      60_000,
+      15_000,
     )) as { title?: string | null } | undefined
     return resp?.title ?? null
   }

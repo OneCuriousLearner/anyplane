@@ -254,7 +254,21 @@ export function subscriptionCount(): number {
 export function validSecret(secret: string): boolean {
   if (!secret) return false
   if (loadSubs().some((r) => r.secret === secret)) return true
-  return (config.pushWebhooks ?? []).some((wh) => webhookSecret(wh) === secret)
+  let keys: VapidKeys
+  try {
+    keys = loadVapid()
+  } catch {
+    // vapid 私钥无法加载时（权限/损坏），webhook secret 派生不可信，整体拒绝
+    return false
+  }
+  return (config.pushWebhooks ?? []).some((wh) => webhookSecretWithKey(wh, keys) === secret)
+}
+
+/** 从指定 vapid 私钥派生的 per-webhook 能力密钥（测试/预计算用） */
+function webhookSecretWithKey(wh: PushWebhookConfig, keys: VapidKeys): string {
+  return hmac(Buffer.from(keys.privateKey, 'base64url'), Buffer.from(`webhook:${webhookId(wh)}`))
+    .subarray(0, 18)
+    .toString('base64url')
 }
 
 // ---------- 投递 ----------
@@ -324,11 +338,14 @@ export async function pushToAll(payload: PushPayload): Promise<{ sent: number; p
 //   Bark/Server酱 —— 无原生按钮，链接落 GET /api/approval-page 确认页（按钮再 POST），
 //                    不做直出 GET 审批链接：链接被预览/抓取即误触。
 
-/** 渠道标识：唯一定位一条配置的字符串（secret 派生输入，也用于日志） */
+/** 渠道标识：唯一定位一条配置的字符串（secret 派生输入，也用于日志）
+ *  ntfy server 必须规范化（去掉末尾斜杠），否则 https://ntfy.sh/ 与 https://ntfy.sh
+ *  会派生不同 secret，导致改配置后旧审批 URL 失效。
+ */
 function webhookId(wh: PushWebhookConfig): string {
   switch (wh.type) {
     case 'ntfy':
-      return `ntfy:${wh.server ?? 'https://ntfy.sh'}/${wh.topic}`
+      return `ntfy:${(wh.server ?? 'https://ntfy.sh').replace(/\/+$/, '')}/${wh.topic}`
     case 'bark':
       return `bark:${wh.url}`
     case 'sct':
@@ -338,9 +355,7 @@ function webhookId(wh: PushWebhookConfig): string {
 
 /** 从 vapid 私钥派生的 per-webhook 能力密钥（18 字节 → 24 字符，与订阅 secret 同长） */
 function webhookSecret(wh: PushWebhookConfig): string {
-  return hmac(Buffer.from(loadVapid().privateKey, 'base64url'), Buffer.from(`webhook:${webhookId(wh)}`))
-    .subarray(0, 18)
-    .toString('base64url')
+  return webhookSecretWithKey(wh, loadVapid())
 }
 
 export function webhookCount(): number {
@@ -444,6 +459,20 @@ async function sendSct(wh: { type: 'sct'; sendkey: string }, payload: PushPayloa
   return resp.status
 }
 
+/** 单 webhook 投递；未知类型返回 undefined，由调用方记日志 */
+async function sendWebhook(wh: PushWebhookConfig, payload: PushPayload): Promise<number | undefined> {
+  switch (wh.type) {
+    case 'ntfy':
+      return sendNtfy(wh, payload)
+    case 'bark':
+      return sendBark(wh, payload)
+    case 'sct':
+      return sendSct(wh, payload)
+    default:
+      return undefined
+  }
+}
+
 /** fan-out 到全部 webhook 通道；单通道失败只记日志，不影响其他通道与 Web Push */
 export async function pushWebhooksToAll(payload: PushPayload): Promise<{ sent: number }> {
   const hooks = config.pushWebhooks ?? []
@@ -451,12 +480,11 @@ export async function pushWebhooksToAll(payload: PushPayload): Promise<{ sent: n
   await Promise.allSettled(
     hooks.map(async (wh) => {
       try {
-        const status =
-          wh.type === 'ntfy'
-            ? await sendNtfy(wh, payload)
-            : wh.type === 'bark'
-              ? await sendBark(wh, payload)
-              : await sendSct(wh, payload)
+        const status = await sendWebhook(wh, payload)
+        if (status === undefined) {
+          console.warn(`[push] webhook ${webhookId(wh)} 类型未知，跳过`)
+          return
+        }
         if (status >= 200 && status < 300) {
           sent++
         } else {

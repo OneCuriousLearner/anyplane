@@ -116,12 +116,21 @@ export class RpcClient {
           entry.retries++
           const delay = Math.min(200 * 2 ** entry.retries + Math.random() * 100, 3000)
           setTimeout(() => {
-            if (this.dead) return
+            // 进程已死时必须 reject：entry 此刻不在 pending 里，exited 的清理扫不到它
+            if (this.dead) {
+              reject(new Error('codex app-server 已退出'))
+              return
+            }
             try {
               this.write({ id, method, params: entry.params })
             } catch (err) {
               reject(err instanceof Error ? err : new Error(String(err)))
+              return
             }
+            // 重试发送成功后必须重新注册 + 重新武装超时——handleLine 的应答路径按 id
+            // 查 pending（首次应答时已 delete），缺席会把重试应答静默丢弃、Promise 永久悬挂
+            this.pending.set(id, entry)
+            arm()
           }, delay)
           return
         }
