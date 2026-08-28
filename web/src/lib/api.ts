@@ -204,6 +204,18 @@ export async function fetchConfig(): Promise<ServerConfigInfo> {
   return r.json()
 }
 
+export interface TierModelName {
+  /** 显示名（_MODEL_NAME 优先，缺省回退模型 ID） */
+  name: string
+  id?: string
+}
+
+/** 各档实际配置的模型名（haiku/sonnet/opus/fable → 网关真实名）；未配置的档缺席，前端降级 tier 名 */
+export async function fetchClaudeModelNames(cwd?: string): Promise<Record<string, TierModelName>> {
+  const r = await apiFetch(`/api/claude/model-names${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`)
+  return ((await r.json()) as { models?: Record<string, TierModelName> }).models ?? {}
+}
+
 /** 发起接力：进度经源会话 WS 推送（handoff_pending/done/error） */
 export async function startHandoff(
   fromKey: string,

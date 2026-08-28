@@ -68,6 +68,8 @@ export class ClaudeSession {
   key: string
   readonly opts: SpawnOptions
   sessionId: string | undefined
+  /** init 报告的解析后模型 ID（重连 attach 时经 statusOf 回放，前端不必等下一轮） */
+  initModel: string | undefined
   exited = false
   /** 是否已收到过 session_state_changed（权威信号） */
   private sawStateEvents = false
@@ -458,7 +460,11 @@ export class ClaudeSession {
     }
     if (isInitMessage(msg)) {
       this.sessionId = msg.session_id
+      // 记录 init 报告的模型 ID（当前档位解析后的真实值），供 statusOf 在重连/attach 时回放给前端
+      if (typeof msg.model === 'string') this.initModel = msg.model
       console.log(`[session ${this.key}] init session_id=${this.sessionId}`)
+      // initModel/sessionId 入库即回放：先于 init 到达的 attach 拿到的状态里 model 还是空的
+      this.cb.onStatusChange?.()
     }
 
     // 权威状态：system/session_state_changed

@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
 import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
+import { resolveTierModelNames } from './backends/claude/modelNames'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
 import { TranscriptTailer } from './backends/claude/tailer'
@@ -333,7 +334,9 @@ function statusOf(key: string, liveHint?: { status: string; pid: number } | null
     activeTasks: s?.backgroundTasks ?? [],
     usage: s?.tokenUsage,
     slashCommands: s?.slashCommands,
-    model: hub?.spawnOpts?.model,
+    // spawnOpts.model 是用户显式选择（未 spawn 时的待应用值）；initModel 是进程 init 报告的解析后 ID。
+    // 后者让重连 attach 的页面不必等下一轮就能显示模型（StatusPill 再经 modelNames 映射成配置名）
+    model: hub?.spawnOpts?.model ?? s?.initModel,
     permissionMode: hub?.spawnOpts?.permissionMode,
     effort: hub?.spawnOpts?.effort,
     tailing: !!hub?.tailer,
@@ -1500,6 +1503,10 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
       models: ['haiku', 'sonnet', 'opus', 'fable'],
       authRequired: !!config.authToken,
     })
+  }
+  // 各档实际配置的模型名（StatusPill 透传显示；每次调用实时读盘，配置改动即见）
+  if (url.pathname === '/api/claude/model-names' && req.method === 'GET') {
+    return json({ models: resolveTierModelNames(url.searchParams.get('cwd') ?? undefined) })
   }
   return undefined
 }

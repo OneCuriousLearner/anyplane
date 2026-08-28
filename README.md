@@ -32,7 +32,7 @@ Claude 侧 stdin/stdout 走双向 NDJSON（user 消息 + control_request/respons
 - **图片附件**：粘贴/选择图片发送（Claude content blocks / Codex localImage 落 `~/.cc-remote/uploads/`），历史图片默认展示
 - **消息标签**：斜杠命令回显（`<command-name>`）渲染为命令 chip，本地命令输出剥 ANSI 折叠，`<system-reminder>`/isMeta 不进主抄本，子代理 sidechain 消息不入主流
 - **状态利用**：`system/init` 提供模型/权限模式徽标；initialize 握手返回斜杠命令清单（含描述）驱动命令面板；`result` 生成回合摘要；`compact_boundary` 渲染为上下文压缩分隔线
-- **运行时切换**：模型（set_model）、权限模式（set_permission_mode，Codex 侧近似映射 approvalPolicy+sandbox）、effort、中断（interrupt）、/compact
+- **运行时切换**：模型（set_model，StatusPill 透传显示各档**实际配置的模型名**——开面板即查 `ANTHROPIC_DEFAULT_*_MODEL_NAME`，未配置降级 tier 名）、权限模式（set_permission_mode，Codex 侧近似映射 approvalPolicy+sandbox）、effort、中断（interrupt）、/compact
 - **权限审批**：`can_use_tool` / `requestApproval` 统一推到 UI 审批卡片；Codex 侧强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；或配置 `permissionPolicy: "bypass"` 全自动
 - **推送通知**：Web Push（VAPID）——锁屏/关掉页面也能收到审批/完成/错误通知；审批通知带**允许/拒绝按钮，不打开页面直接裁决**；点击通知深链直达会话。另有 **webhook 通道**（ntfy / Bark / Server酱）——国内 Android 无 FCM 环境的出路，Server酱可直达微信；ntfy 保留通知内一键审批，Bark/Server酱 点链接进确认页裁决
 - **会话详情抽屉**：context 分类用量 / **MCP 管理**（claude 侧结构化面板：状态/工具数/scope，重连与启停——启停持久化到 settings，与 TUI 同语义）/ 设置（只读控制查询）

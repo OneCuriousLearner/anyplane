@@ -72,6 +72,10 @@ export function StatusPill(props: {
   effort?: string
   /** effort 档位表（默认 claude 五档；codex 按模型 supportedReasoningEfforts 传入） */
   effortLevels?: readonly string[]
+  /** 各档实际配置的模型名（claude 设置透传）；未配置的档缺席 → 显示 tier 名 */
+  modelNames?: Record<string, { name: string; id?: string }> | null
+  /** 面板打开时回调（调用方借机实时拉取 modelNames） */
+  onPanelOpen?: () => void
   onSetModel: (m: string) => void
   onSetMode: (m: string) => void
   onSetEffort: (e: string) => void
@@ -83,6 +87,18 @@ export function StatusPill(props: {
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+
+  /** 模型值 → {显示名, tooltip}：tier 直查（haiku/sonnet/…）→ 按模型 ID 反查（init 报的是解析后 ID，
+   *  如 k3[1m]——大小写不敏感，设置里的 ID 写法可能不同）→ 未配置原样显示（降级） */
+  const resolveModel = (v?: string): { label: string; title?: string } => {
+    if (!v) return { label: '…' }
+    const names = props.modelNames ?? {}
+    const direct = names[v]
+    if (direct) return { label: direct.name, title: direct.id && direct.id !== direct.name ? direct.id : undefined }
+    const rev = Object.values(names).find((t) => t.id && t.id.toLowerCase() === v.toLowerCase())
+    if (rev) return { label: rev.name, title: v }
+    return { label: v }
+  }
 
   const syncPanelPos = () => {
     // 锚胶囊按钮左上角（与触发器重叠展开），而不是整行容器（容器含 px-3，会贴到消息区左边）
@@ -180,16 +196,25 @@ export function StatusPill(props: {
           onClick={() => setSub(sub === 'model' ? null : 'model')}
         >
           <span className="w-10 font-mono text-[10px] uppercase tracking-widest text-faint">model</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">[{props.model ?? '…'}]</span>
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-xs text-ink"
+            title={resolveModel(props.model).title}
+          >
+            [{resolveModel(props.model).label}]
+          </span>
           <span className="text-[10px] text-faint">{sub === 'model' ? '▴' : '▾'}</span>
         </button>
         {sub === 'model' && (
           <GlassSubPanel className="mx-1 mb-1 mt-0.5">
             {cfg.models.map((m) => {
-              const active = props.model === m
+              // 当前值可能是 tier（haiku）也可能是解析后的模型 ID（重连回放 initModel）——两种都认
+              const active =
+                props.model === m ||
+                (!!props.model && props.modelNames?.[m]?.id?.toLowerCase() === props.model.toLowerCase())
               return (
                 <button
                   key={m}
+                  title={resolveModel(m).title}
                   className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-surface2/60 ${
                     active ? 'bg-surface2' : ''
                   }`}
@@ -198,7 +223,10 @@ export function StatusPill(props: {
                     setSub(null)
                   }}
                 >
-                  <span className="font-mono text-xs text-ink">[{m}]</span>
+                  <span className="font-mono text-xs text-ink">[{resolveModel(m).label}]</span>
+                  {props.modelNames?.[m] && (
+                    <span className="min-w-0 truncate text-[10px] text-faint">{m}</span>
+                  )}
                   {active && <span className="ml-auto text-[10px] text-ok">✓</span>}
                 </button>
               )
@@ -216,12 +244,18 @@ export function StatusPill(props: {
     <div ref={rootRef} className="relative px-3 py-1.5">
       <button
         ref={triggerRef}
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          const next = !open
+          setOpen(next)
+          if (next) props.onPanelOpen?.()
+        }}
         className={`inline-flex w-fit shrink-0 items-center gap-2 rounded-md border border-line bg-bg/60 px-2.5 py-1 text-left font-mono text-[11px] text-ink hover:border-accent/40 hover:bg-bg ${open ? 'invisible' : ''}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode.dot}`} />
         <span className="shrink-0">{mode.short}</span>
-        <span className="shrink-0 text-faint">[{props.model ?? '…'}]</span>
+        <span className="shrink-0 text-faint" title={resolveModel(props.model).title}>
+          [{resolveModel(props.model).label}]
+        </span>
         <span className={`shrink-0 ${effortMeta.color}`}>{effortMeta.label}</span>
         <span className="shrink-0 text-faint">{open ? '▴' : '▾'}</span>
       </button>

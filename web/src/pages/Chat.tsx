@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createSession, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo } from '../lib/api'
+import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, startHandoff, type CodexModelInfo, type HistoryMessage, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { StatusPill, GLASS_BAR } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
@@ -32,6 +32,21 @@ interface McpServerInfo {
   config?: { type?: string; command?: string; args?: string[]; url?: string }
   scope?: string
   tools?: { name: string }[]
+}
+
+/** claude get_context_usage 应答的取用子集（analyzeContext 的 ContextData 里我们渲染的部分） */
+interface ContextDataLite {
+  categories: { name: string; tokens: number; isDeferred?: boolean }[]
+  totalTokens: number
+  maxTokens: number
+  percentage: number
+  model?: string
+}
+
+/** claude get_settings 应答的取用子集（settings 全量不枚举——applied + sources 概览 + 原始 JSON 折叠） */
+interface SettingsDataLite {
+  applied?: { model?: string; effort?: string | null }
+  sources?: { source: string; settings: Record<string, unknown> }[]
 }
 
 /** 流式草稿：一轮 assistant 输出的增量块（按 message.id + block index 归并） */
@@ -144,6 +159,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [detailContent, setDetailContent] = useState('加载中…')
   /** claude MCP 面板：mcp_status 的结构化结果（null = 未加载/加载失败，此时看 detailContent） */
   const [mcpServers, setMcpServers] = useState<McpServerInfo[] | null>(null)
+  /** claude context 用量结构化结果（get_context_usage） */
+  const [contextData, setContextData] = useState<ContextDataLite | null>(null)
+  /** claude 设置结构化结果（get_settings） */
+  const [settingsData, setSettingsData] = useState<SettingsDataLite | null>(null)
   /** MCP 动作进行中：`${serverName}:${action}` */
   const [mcpBusy, setMcpBusy] = useState<string | null>(null)
   /** 在途 MCP 动作的 query id（query_result 按 id 辨认动作应答与普通查询应答） */
@@ -529,6 +548,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             if (ev.state.exited) {
               commitDraft()
               setPhase(undefined)
+            } else if (ev.state.sessionState === 'idle' && !ev.state.busy && !ev.state.waiting && draftRef.current) {
+              // 自愈：权威 idle 到达时清掉陈旧流式草稿。服务端重启/断线期间 turn 终结时
+              // 客户端拿不到终结事件，"生成中"会永远挂着（实测：watch 重载后复现）。
+              // 等审批（waiting/requires_action）期间草稿是合法的，不在此清理。
+              setDraftBoth(null)
+              setPhase(undefined)
+              pendingResultsRef.current.clear()
             }
             break
           case 'approval_request':
@@ -668,19 +694,21 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               }
               break
             }
-            // claude 的 mcp_status 应答走结构化面板；其余（含 codex）维持 JSON 直出
-            const maybeMcp = ev.ok ? (ev.data as { mcpServers?: McpServerInfo[] } | undefined) : undefined
-            if (!isCodex && ev.ok && Array.isArray(maybeMcp?.mcpServers)) {
-              setMcpServers(maybeMcp.mcpServers ?? [])
-            } else {
-              // 非结构化应答：清掉旧清单（MCP tab 切回时会重新查询拉新）
-              setMcpServers(null)
-              setDetailContent(
-                ev.ok
-                  ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
-                  : `⚠ ${ev.error ?? '查询失败'}`,
-              )
-            }
+            // 始终保留原始 JSON（非结构化 tab 的主视图 + 设置面板的折叠原件）
+            const raw = ev.ok
+              ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
+              : `⚠ ${ev.error ?? '查询失败'}`
+            setDetailContent(raw)
+            // 按应答形状分发到结构化面板（claude 专属；codex 一律 JSON 直出）。
+            // 形状不匹配的 tab 清空对应结构化态，渲染链自然落回 <pre>
+            const d = ev.ok && !isCodex ? (ev.data as Record<string, unknown>) : undefined
+            setMcpServers(Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : null)
+            setContextData(
+              d && Array.isArray(d.categories) && typeof d.totalTokens === 'number'
+                ? (d as unknown as ContextDataLite)
+                : null,
+            )
+            setSettingsData(d && d.applied && Array.isArray(d.sources) ? (d as unknown as SettingsDataLite) : null)
             break
           }
           case 'rewound':
@@ -796,6 +824,16 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setDetailTitle(title)
     setDetailContent('加载中…')
     sockRef.current?.send({ kind: 'query', id: `q-${querySeq.current}`, query })
+  }
+
+  /** 各档实际配置的模型名（StatusPill 打开时实时拉取；null = 未拉取/失败 → 降级 tier 名） */
+  const [modelNames, setModelNames] = useState<Record<string, TierModelName> | null>(null)
+  /** claude 专属：开 StatusPill 面板即查当前设置（配置改动即刻反映，无需等会话重启） */
+  const loadModelNames = () => {
+    if (isCodex) return
+    void fetchClaudeModelNames(session.cwd)
+      .then(setModelNames)
+      .catch(() => {})
   }
 
   /** MCP 管理动作（claude）：reconnect / toggle。复用 query 通道（带 extra 的带应答控制请求） */
@@ -1343,6 +1381,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             model={initInfo.model}
             permissionMode={permMode}
             effort={effort}
+            modelNames={modelNames}
+            onPanelOpen={loadModelNames}
             onSetModel={(m) => {
               setInitInfo((prev) => ({ ...prev, model: m }))
               sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
@@ -1510,6 +1550,72 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                     </div>
                   )
                 })}
+              </div>
+            ) : detailTitle === 'context 用量' && !isCodex && contextData ? (
+              /* claude context 结构化：总量条 + 分类占比（deferred 类别淡显） */
+              <div className="max-h-56 overflow-auto rounded bg-bg/60 p-2">
+                <div className="mb-1.5 flex items-baseline justify-between font-mono text-[11px] text-ink">
+                  <span>
+                    {fmtTok(contextData.totalTokens)} / {fmtTok(contextData.maxTokens)} tok ·{' '}
+                    {contextData.percentage.toFixed(1)}%
+                  </span>
+                  {contextData.model && (
+                    <span className="text-[10px] text-faint">
+                      {modelNames?.[contextData.model]?.name ?? contextData.model}
+                    </span>
+                  )}
+                </div>
+                <div className="mb-2 h-1 overflow-hidden rounded-full bg-surface2">
+                  <div
+                    className="h-full bg-accent/70"
+                    style={{ width: `${Math.min(100, contextData.percentage)}%` }}
+                  />
+                </div>
+                {contextData.categories.map((c) => (
+                  <div key={c.name} className={`flex items-center gap-2 py-0.5 ${c.isDeferred ? 'opacity-50' : ''}`}>
+                    <span className="w-28 shrink-0 truncate font-mono text-[10px] text-muted" title={c.name}>
+                      {c.name}
+                    </span>
+                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface2/60">
+                      <div
+                        className={`h-full ${c.isDeferred ? 'bg-faint' : 'bg-wait/70'}`}
+                        style={{
+                          width: `${Math.min(100, (c.tokens / Math.max(1, contextData.maxTokens)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="w-12 shrink-0 text-right font-mono text-[10px] text-faint">
+                      {fmtTok(c.tokens)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : detailTitle === '设置' && !isCodex && settingsData ? (
+              /* claude 设置轻结构：生效值 + 来源概览；全量设置不枚举，原始 JSON 折叠兜底 */
+              <div className="max-h-56 overflow-auto rounded bg-bg/60 p-2">
+                {settingsData.applied && (
+                  <div className="mb-1.5 font-mono text-[11px] text-ink">
+                    当前生效：
+                    <span className="text-accent-soft">
+                      {modelNames?.[settingsData.applied.model ?? '']?.name ?? settingsData.applied.model ?? 'default'}
+                    </span>
+                    <span className="text-faint"> · effort {settingsData.applied.effort ?? '默认'}</span>
+                  </div>
+                )}
+                {(settingsData.sources ?? []).map((s) => (
+                  <div key={s.source} className="flex items-center gap-2 py-0.5 font-mono text-[10px]">
+                    <span className="text-muted">{s.source}</span>
+                    <span className="text-faint">{Object.keys(s.settings ?? {}).length} 项</span>
+                  </div>
+                ))}
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer font-mono text-[10px] text-faint hover:text-muted">
+                    原始 JSON
+                  </summary>
+                  <pre className="mt-1 max-h-40 overflow-auto rounded bg-bg p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
+                    {detailContent}
+                  </pre>
+                </details>
               </div>
             ) : (
               <pre className="max-h-56 overflow-auto rounded bg-bg/60 p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
