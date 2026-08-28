@@ -35,6 +35,7 @@ const captured = new Map<string, Captured>()
 const gonePaths = new Set<string>()
 const mock = Bun.serve({
   port: 18999,
+  hostname: '127.0.0.1', // mock 只服务本机被测服务端，不暴露到局域网
   async fetch(req) {
     const url = new URL(req.url)
     const headers: Record<string, string> = {}
