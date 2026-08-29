@@ -1,6 +1,7 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { SessionList } from './pages/SessionList'
 import { Chat } from './pages/Chat'
+import { AnyPlaneMark } from './components/AnyPlaneMark'
 import { ClaudeMark } from './components/ClaudeMark'
 import { ModeBadge } from './components/ModeBadge'
 import { getToken, onAuthRequired, setToken } from './lib/auth'
@@ -145,7 +146,7 @@ export default function App() {
           <Chat session={selected} onBack={() => setSelected(undefined)} onNavigate={setSelected} />
         ) : (
           <div className="hidden h-full flex-col items-center justify-center gap-3 text-faint md:flex">
-            <ClaudeMark className="h-10 w-10 opacity-25" />
+            <AnyPlaneMark className="h-10 w-10 text-ink/80 opacity-25" />
             <span className="font-mono text-xs tracking-widest">选择左侧会话，或新建一个</span>
           </div>
         )}

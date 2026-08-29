@@ -15,6 +15,7 @@ import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { authHeaders } from '../lib/auth'
 import { BellIcon } from '../components/BellIcon'
+import { AnyPlaneMark } from '../components/AnyPlaneMark'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
 import { ConfirmDialog, PromptDialog } from '../components/Dialogs'
@@ -297,7 +298,7 @@ export function SessionList(props: {
       <div className="border-b border-line bg-surface2 px-4 pb-3 pt-4">
         <div className="flex items-baseline justify-between">
           <h1 className="flex items-center gap-2 font-mono text-sm tracking-widest text-ink/80 uppercase">
-            <ClaudeMark className="h-4 w-4" />
+            <AnyPlaneMark className="h-4 w-4 text-ink/80" />
             AnyPlane
           </h1>
           <div className="flex items-center gap-2">
@@ -396,7 +397,6 @@ export function SessionList(props: {
             </button>
           </div>
         </div>
-        <p className="mt-1 text-xs text-muted">Claude Code Claw</p>
       </div>
 
       {/* 待审批收件箱：点击直达会话 */}
