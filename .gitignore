@@ -21,3 +21,4 @@ anyplane.config.json
 ## Local docs
 docs/claude-code/
 *.local.md
+*.tgz

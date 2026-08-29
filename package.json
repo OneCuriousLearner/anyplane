@@ -1,10 +1,46 @@
 {
   "name": "anyplane",
+  "version": "0.1.0",
+  "description": "Self-hosted, vendor-neutral control plane for your local coding agents (Claude Code, Codex). Run your agents, on any plane.",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "coding-agent",
+    "remote-control",
+    "control-plane",
+    "self-hosted",
+    "ai-agent"
+  ],
+  "homepage": "https://github.com/OneCuriousLearner/anyplane",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OneCuriousLearner/anyplane.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "anyplane": "cli/anyplane.ts"
+  },
+  "files": [
+    "cli",
+    "server/src",
+    "web/dist",
+    "scripts/gateway.ts",
+    "scripts/gateway-lib.ts",
+    "anyplane.config.example.json"
+  ],
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.0",
     "typescript": "^5.6.0"
   },
-  "private": true,
+  "engines": {
+    "bun": ">=1.3.13"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "dev:server": "bun run --cwd server dev",
@@ -13,7 +49,8 @@
     "start": "bun run --cwd server start",
     "gateway": "bun scripts/gateway.ts",
     "docs:claude": "bun scripts/fetch-claude-docs.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
   },
   "workspaces": [
     "server",

@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # npm Trusted Publishing（OIDC 换短期凭证，仓库不存 npm token）
+
+jobs:
+  publish:
+    name: npm publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun test
+
+      - run: bun run build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG 与 package.json 版本 $PKG 不一致"; exit 1
+          fi
+
+      # Trusted Publishing 要求 npm >= 11.5.1；lts 自带的 npm 版本偏旧
+      - run: npm install -g npm@latest
+
+      - run: npm publish

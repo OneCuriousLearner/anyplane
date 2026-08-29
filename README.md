@@ -47,7 +47,17 @@ Claude 侧 stdin/stdout 走双向 NDJSON（user 消息 + control_request/respons
 
 要求：Bun >= 1.3.13（Windows 请用 1.4.0+，见下方说明），PATH 中有已登录的官方 `claude` CLI；使用 Codex 后端需要 PATH 中有 `codex` CLI（>= 0.147，服务端自动 spawn `codex app-server --stdio` 并按其配置认证）。支持 Windows 与 Linux。
 
-**本项目仅使用 Bun，请勿使用 npm / npx / yarn / pnpm。** 依赖安装、脚本与运行时一律走 `bun`；用 npm 会产生错误的 lockfile、错误的进程树，并在 Windows 上更容易留下僵尸端口。
+**npm 包（推荐，装完即跑）**：
+
+```bash
+bunx anyplane            # 启动服务端（默认 :7480），托管 API + WebSocket + 前端
+bunx anyplane gateway    # 可选：80/443 域名网关（见下方「域名访问」）
+```
+
+配置文件与源码方式完全一致（`./anyplane.config.json` → `~/.anyplane/config.json` → 环境变量），
+运行数据同样在 `~/.anyplane/`。前端已随包预构建，无需 clone 仓库。
+
+**源码方式（开发用）**：**本项目仅使用 Bun，请勿使用 npm / npx / yarn / pnpm。** 依赖安装、脚本与运行时一律走 `bun`；用 npm 会产生错误的 lockfile、错误的进程树，并在 Windows 上更容易留下僵尸端口。
 
 ```bash
 bun install
