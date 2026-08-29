@@ -15,7 +15,7 @@ describe('parseAgentsJson', () => {
       },
       {
         pid: 3459106,
-        cwd: '/data/workspace/cc-remote',
+        cwd: '/data/workspace/anyplane',
         kind: 'interactive',
         startedAt: 1787811355350,
         sessionId: 'f5c5c987-9ca9-4778-bc68-dfd32d9a948b',

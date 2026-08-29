@@ -176,7 +176,7 @@ describe('webhook 通道', () => {
     await pushWebhooksToAll(APPROVAL)
     const body = JSON.parse(captured[0].body) as { title: string; group: string; level: string; url: string }
     expect(captured[0].url).toBe('https://bark.internal/key-1')
-    expect(body.group).toBe('cc-remote')
+    expect(body.group).toBe('anyplane')
     expect(body.level).toBe('timeSensitive')
     expect(body.url).toContain('/api/approval-page?')
     expect(body.url).not.toContain('d=allow') // 确认页不预置决定

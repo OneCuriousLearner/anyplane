@@ -1,4 +1,4 @@
-# cc-remote 后续规划（ROADMAP）
+# AnyPlane 后续规划（ROADMAP）
 
 > 2026-08-24 立。前置：统一 Agent 控制面 8 阶段计划已全部完成（见 `PLAN-unified-agent-plane.md`）。
 > 本文档收录已讨论定论、待排期的方向；每条附决策依据，避免将来重新论证。
@@ -7,14 +7,14 @@
 
 官方远程能力（Remote Control / claude.ai/code / codex remoteControl）对 **API-key 与 gateway 用户硬性禁用**
 （Remote Control 文档：订阅限定；v2.1.196 起 ANTHROPIC_BASE_URL 指向 gateway 即禁用）。
-cc-remote 是这群用户的控制面：本地优先、provider 中立、双供应商。以下方向都服务于这个定位，
+AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供应商。以下方向都服务于这个定位，
 不追官方云能力（云同步/E2EE/多设备），不与官方 TUI（agent view）赛跑 UI。
 
 ## 方向一：推送通知（手机审批闭环的最后一环）——✅ 已完成（2026-08-25）
 
 **已交付**（commit 见 git log）：
 - 服务端 `push.ts`：自实现 VAPID + aes128gcm（不依赖 web-push——其 node:https 假定 TLS）。
-  订阅注册表 `~/.cc-remote/push-subscriptions.json`（per-subscription 能力密钥），VAPID 密钥 `~/.cc-remote/vapid.json`。
+  订阅注册表 `~/.anyplane/push-subscriptions.json`（per-subscription 能力密钥），VAPID 密钥 `~/.anyplane/vapid.json`。
 - inbox 事件（approval/done/error）fan-out；审批推送内容详细（工具名 + 命令摘要 + 项目名——锁屏脱敏交给 OS）。
 - **通知直接审批**：能力 URL（`/api/approval-action?k&r&d&s=<secret>`），SW 通知按钮回POST 即裁决，不开页面；
   绕开 authToken（能力模型），仅对 pending 中的 requestId 有效。
@@ -75,11 +75,11 @@ cc-remote 是这群用户的控制面：本地优先、provider 中立、双供�
   codex 侧维持 mcpServerStatus/list 只读直出。浏览器实测重连/禁用/启用全通过。
 - **~~`generate_session_title` 控制通道~~** ✅ 已接入（2026-08-27）：首条真实 user 消息 × 首个 init 双条件触发
   （`maybeGenerateTitle`，按 sessionId 去重，/clear 后新会话再生成）；CLI persist 写 ai-title 进 transcript，
-  discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，无需 cc-remote 侧落状态。实测 4 项全过。
+  discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，无需 AnyPlane 侧落状态。实测 4 项全过。
 
 ## 更远的地平线（只记录，不动手）
 
 两家官方都在建各自的 agent 互联（claude 2.1.224 跨会话 SendMessage/ListAgents；codex remoteControl/pairing），
-但都是围墙花园。cc-remote 同时长在两家协议上，是唯一可能成为**跨供应商 agent 消息路由**的位置。
+但都是围墙花园。AnyPlane 同时长在两家协议上，是唯一可能成为**跨供应商 agent 消息路由**的位置。
 handoff 是这个路由的雏形（一次性、单向、带上下文）；成熟形态是双向持续消息总线。
 等两边协议出 research preview 再评估；lineage.json 字段设计不要锁死在"一次性接力"模型上。

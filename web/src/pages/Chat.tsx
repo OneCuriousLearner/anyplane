@@ -1024,7 +1024,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const cliEntries: SlashEntry[] = state.slashCommands?.length
     ? state.slashCommands.map((c) => ({ name: c.name, desc: c.description }))
     : (initInfo.slashCommands ?? []).map((n) => ({ name: n, desc: COMMAND_DESC[n] }))
-  // cc-remote 自有命令置顶（中文描述优先于 CLI 同名命令），其后是 CLI 报告的完整清单
+  // anyplane 自有命令置顶（中文描述优先于 CLI 同名命令），其后是 CLI 报告的完整清单
   const allEntries = mergeSlashCommands(cliEntries)
   const slashHints = filterSlashHints(input, allEntries)
   // 键盘导航：↑↓ 移动，Tab/Enter 采纳，Esc 关闭（索引随清单变化钳位）

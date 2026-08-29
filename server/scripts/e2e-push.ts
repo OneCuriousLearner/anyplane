@@ -16,9 +16,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { exitWithSummary, makeNote } from './e2e-lib'
 
-const BASE = process.env.CC_REMOTE_BASE ?? 'http://127.0.0.1:7480'
+const BASE = process.env.ANYPLANE_BASE ?? 'http://127.0.0.1:7480'
 const WS_BASE = BASE.replace(/^http/, 'ws')
-const TOKEN_Q = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
+const TOKEN_Q = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
 const { note, results } = makeNote()
 const b64url = (b: Buffer) => b.toString('base64url')
 // ---------- mock push service ----------
@@ -146,7 +146,7 @@ try {
     const [h, p, s] = jwtMatch[1].split('.')
     const claims = JSON.parse(Buffer.from(p, 'base64url').toString())
     // web-push VAPID 公钥是 base64url 未压缩点（0x04‖x‖y），转 JWK 验签
-    const vapidPub = JSON.parse(readFileSync(join(homedir(), '.cc-remote', 'vapid.json'), 'utf8')).publicKey
+    const vapidPub = JSON.parse(readFileSync(join(homedir(), '.anyplane', 'vapid.json'), 'utf8')).publicKey
     const raw = Buffer.from(vapidPub, 'base64url')
     const vapidKey = createPublicKey({
       key: { kty: 'EC', crv: 'P-256', x: b64url(raw.subarray(1, 33)), y: b64url(raw.subarray(33, 65)) },

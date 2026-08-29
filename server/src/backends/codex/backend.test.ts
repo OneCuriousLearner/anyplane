@@ -6,7 +6,7 @@ import { isCodexKey, keyFor, keyForNew, parseKey, splitThreadId } from './backen
 describe('keyFor / keyForNew / isCodexKey', () => {
   test('编码形状', () => {
     expect(keyFor('0198f4d2-7d1e-7e80-a1b2-c3d4e5f60708')).toBe('x|0198f4d2-7d1e-7e80-a1b2-c3d4e5f60708')
-    expect(keyForNew('/data/workspace/cc-remote')).toBe('xn|%2Fdata%2Fworkspace%2Fcc-remote')
+    expect(keyForNew('/data/workspace/anyplane')).toBe('xn|%2Fdata%2Fworkspace%2Fanyplane')
   })
 
   test('isCodexKey 与 claude key 互斥', () => {

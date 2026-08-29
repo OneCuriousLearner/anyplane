@@ -13,7 +13,7 @@ function deepLinkKey(): string | null {
   return m ? decodeURIComponent(m[1]) : null
 }
 
-const SIDEBAR_KEY = 'cc-remote-sidebar-width'
+const SIDEBAR_KEY = 'anyplane-sidebar-width'
 const SIDEBAR_DEFAULT = 300
 const SIDEBAR_MIN = 275
 const SIDEBAR_MAX = 560
@@ -107,7 +107,7 @@ export default function App() {
           </button>
         </form>
         <div className="max-w-xs text-center text-xs text-faint">
-          令牌在服务端的 cc-remote.config.json（authToken）或 CC_REMOTE_TOKEN 环境变量中配置
+          令牌在服务端的 anyplane.config.json（authToken）或 ANYPLANE_TOKEN 环境变量中配置
         </div>
       </div>
     )

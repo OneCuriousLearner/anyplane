@@ -1,5 +1,5 @@
 // reasoning 侧车存储：codex rollout 不持久化 reasoning items（thread/turns/list
-// full 视图实测只有 userMessage+agentMessage），cc-remote 自行落盘并在历史读取时按
+// full 视图实测只有 userMessage+agentMessage），anyplane 自行落盘并在历史读取时按
 // turn 时间窗回插，让"思考"在重进会话后仍可见。
 
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
@@ -15,7 +15,7 @@ export interface ReasoningEntry {
 }
 
 function dir(): string {
-  return ensurePrivateDir(join(homedir(), '.cc-remote', 'reasoning'))
+  return ensurePrivateDir(join(homedir(), '.anyplane', 'reasoning'))
 }
 
 function pathOf(threadId: string): string {

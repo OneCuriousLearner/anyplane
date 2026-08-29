@@ -51,9 +51,9 @@ function timeAgo(ms: number): string {
 }
 
 /** 桌面通知开关：localStorage 持久；浏览器授权后在页面隐藏时推送 */
-const NOTIFY_KEY = 'cc-remote-notify'
+const NOTIFY_KEY = 'anyplane-notify'
 /** 按项目目录折叠的分组，cwd 字符串数组 */
-const COLLAPSE_KEY = 'cc-remote-collapsed-groups'
+const COLLAPSE_KEY = 'anyplane-collapsed-groups'
 
 function loadCollapsed(): Set<string> {
   try {
@@ -107,7 +107,7 @@ export function SessionList(props: {
     if (!notifyRef.current || !('Notification' in window)) return
     if (Notification.permission !== 'granted' || !document.hidden) return
     try {
-      new Notification(title, { body, tag: 'cc-remote-inbox' })
+      new Notification(title, { body, tag: 'anyplane-inbox' })
     } catch {}
   }
 
@@ -154,9 +154,9 @@ export function SessionList(props: {
 
   // 标题角标：待审批数
   useEffect(() => {
-    document.title = approvals.length > 0 ? `(${approvals.length}) cc-remote` : 'cc-remote'
+    document.title = approvals.length > 0 ? `(${approvals.length}) AnyPlane` : 'AnyPlane'
     return () => {
-      document.title = 'cc-remote'
+      document.title = 'AnyPlane'
     }
   }, [approvals.length])
 
@@ -298,7 +298,7 @@ export function SessionList(props: {
         <div className="flex items-baseline justify-between">
           <h1 className="flex items-center gap-2 font-mono text-sm tracking-widest text-ink/80 uppercase">
             <ClaudeMark className="h-4 w-4" />
-            cc-remote
+            AnyPlane
           </h1>
           <div className="flex items-center gap-2">
             <div>

@@ -7,7 +7,7 @@ export type Insets = { top: number; right: number; bottom: number; left: number 
 export const DEFAULT_SLOT: SnapSlot = 6
 export const SNAP_MARGIN = 12
 export const DRAG_THRESHOLD = 6
-export const SLOT_KEY = 'cc-remote-dev-badge-slot'
+export const SLOT_KEY = 'anyplane-dev-badge-slot'
 
 const SLOTS: readonly SnapSlot[] = [1, 2, 3, 4, 5, 6]
 

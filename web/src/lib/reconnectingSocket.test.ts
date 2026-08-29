@@ -102,7 +102,7 @@ describe('wsUrl', () => {
     const saved = { location: g.location, localStorage: g.localStorage }
     let storedToken: string | null = null
     g.localStorage = {
-      getItem: (k: string) => (k === 'cc-remote-token' ? storedToken : null),
+      getItem: (k: string) => (k === 'anyplane-token' ? storedToken : null),
       setItem: (_k: string, v: string) => {
         storedToken = v
       },

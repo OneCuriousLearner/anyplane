@@ -3,7 +3,7 @@
 // 其发送路径走 node:https 且假定 TLS（本地 mock/非标端点直接 WRONG_VERSION_NUMBER），
 // 而 Bun fetch + node:crypto 的组合在双运行时下行为完全可控。配方由 e2e-push.ts 解密反向验证。
 //
-// 数据落 ~/.cc-remote/（沿用运行数据约定，不自动清理；410/404 的死订阅例外——已失效才摘）：
+// 数据落 ~/.anyplane/（沿用运行数据约定，不自动清理；410/404 的死订阅例外——已失效才摘）：
 //   vapid.json                  VAPID P-256 密钥对（首次启动生成，mode 600）
 //   push-subscriptions.json     浏览器订阅注册表，每行带 per-subscription secret（能力密钥）
 //
@@ -97,7 +97,7 @@ function vapidJwt(audience: string): string {
   const header = b64url(Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'ES256' })))
   const body = b64url(
     Buffer.from(
-      JSON.stringify({ aud: audience, exp: now + 12 * 3600, sub: 'mailto:cc-remote@localhost' }),
+      JSON.stringify({ aud: audience, exp: now + 12 * 3600, sub: 'mailto:anyplane@localhost' }),
     ),
   )
   const pubRaw = Buffer.from(keys.publicKey, 'base64url')
@@ -423,7 +423,7 @@ async function sendBark(wh: { type: 'bark'; url: string }, payload: PushPayload)
   const body: Record<string, unknown> = {
     title: payload.title,
     body: payload.body,
-    group: 'cc-remote',
+    group: 'anyplane',
     level: payload.type === 'done' ? 'active' : 'timeSensitive',
   }
   const link = payload.type === 'approval' ? approvalPageLink(wh, payload) : sessionLink(payload.key)

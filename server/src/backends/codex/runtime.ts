@@ -168,7 +168,7 @@ export class CodexSession {
           cwd: this.opts.cwd,
           ...perm,
           ...(this.opts.model ? { model: this.opts.model } : {}),
-          serviceName: 'cc-remote',
+          serviceName: 'anyplane',
         })) as { thread: { id: string; cwd?: string } }
         this.threadId = res.thread.id
         if (res.thread.cwd) this.opts.cwd = res.thread.cwd
@@ -359,7 +359,7 @@ export class CodexSession {
     this.startTurn(input)
   }
 
-  /** 普通新轮：审批一律路由给远程用户（cc-remote 的存在意义），覆盖用户配置里的 auto_review */
+  /** 普通新轮：审批一律路由给远程用户（anyplane 的存在意义），覆盖用户配置里的 auto_review */
   private startTurn(input: unknown[]): void {
     void this.runtime
       .rpcRequest('turn/start', {
@@ -595,7 +595,7 @@ export class CodexRuntime {
         for (const s of this.sessions.values()) s.handleProcessExit()
       }
       await rpc.request('initialize', {
-        clientInfo: { name: 'cc-remote', title: 'cc-remote', version: '0.2.0' },
+        clientInfo: { name: 'anyplane', title: 'anyplane', version: '0.2.0' },
         capabilities: { experimentalApi: true },
       })
       rpc.notify('initialized', {})

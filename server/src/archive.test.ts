@@ -1,5 +1,5 @@
 // claude 会话回收站：jsonl + subagents 目录整体移动，无物理删除。
-// trash 根目录固定在 ~/.cc-remote/trash/claude/（homedir），测试用唯一 slug 隔离并清理。
+// trash 根目录固定在 ~/.anyplane/trash/claude/（homedir），测试用唯一 slug 隔离并清理。
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -14,10 +14,10 @@ let configDir = ''
 let savedConfigDir = ''
 
 const transcript = () => join(configDir, 'projects', SLUG, `${SID}.jsonl`)
-const trashDir = () => join(homedir(), '.cc-remote', 'trash', 'claude', SLUG)
+const trashDir = () => join(homedir(), '.anyplane', 'trash', 'claude', SLUG)
 
 beforeAll(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'cc-remote-archive-'))
+  configDir = mkdtempSync(join(tmpdir(), 'anyplane-archive-'))
   savedConfigDir = config.claudeConfigDir
   config.claudeConfigDir = configDir
 })

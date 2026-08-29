@@ -73,16 +73,16 @@ describe('errorMessage', () => {
   })
 })
 
-describe('ensurePrivateDir（~/.cc-remote 私有目录）', () => {
+describe('ensurePrivateDir（~/.anyplane 私有目录）', () => {
   // POSIX 权限语义测试；Windows 的 chmod 语义不同，跳过断言仅保证不抛错
   test('新建目录与既有宽松目录都收紧为 700', () => {
     const root = mkdtempSync(join(tmpdir(), 'ccr-util-'))
     try {
-      const dir = join(root, '.cc-remote', 'uploads')
+      const dir = join(root, '.anyplane', 'uploads')
       expect(ensurePrivateDir(dir)).toBe(dir)
       if (process.platform !== 'win32') {
-        // .cc-remote 根与目标层都是 700
-        expect(statSync(join(root, '.cc-remote')).mode & 0o777).toBe(0o700)
+        // .anyplane 根与目标层都是 700
+        expect(statSync(join(root, '.anyplane')).mode & 0o777).toBe(0o700)
         expect(statSync(dir).mode & 0o777).toBe(0o700)
       }
       // 幂等：重复调用不抛错
@@ -92,7 +92,7 @@ describe('ensurePrivateDir（~/.cc-remote 私有目录）', () => {
     }
   })
 
-  test('路径不含 .cc-remote 段时只收紧目标目录本身', () => {
+  test('路径不含 .anyplane 段时只收紧目标目录本身', () => {
     const root = mkdtempSync(join(tmpdir(), 'ccr-util-'))
     try {
       if (process.platform !== 'win32') chmodSync(root, 0o755) // mkdtemp 默认 700，先放宽以观察不受影响

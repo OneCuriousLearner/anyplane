@@ -1,9 +1,9 @@
 // 斜杠命令面板数据层（纯函数，从 Chat.tsx 抽出以便单测）：
-// 清单合并 = cc-remote 自有命令置顶（中文描述优先于 CLI 同名）+ CLI 报告清单去重后按原序追加；
+// 清单合并 = anyplane 自有命令置顶（中文描述优先于 CLI 同名）+ CLI 报告清单去重后按原序追加；
 // 提示过滤 = 前缀匹配，且仅在「以 / 开头、还没进参数区（无空格）」时出提示。
 // 审计背景见 docs/audits/2026-08-slash-commands.md。
 
-/** cc-remote 自有命令（双后端对齐过的最小集；claude 侧没有的语义由前端拦截实现） */
+/** anyplane 自有命令（双后端对齐过的最小集；claude 侧没有的语义由前端拦截实现） */
 export const FALLBACK_COMMANDS: readonly string[] = [
   'compact',
   'context',

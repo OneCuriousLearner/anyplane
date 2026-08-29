@@ -130,7 +130,7 @@ describe('hostAllowed（无 token 模式的 DNS rebinding 防线）', () => {
     // Origin 与 Host 同名同宿主（originAllowed 的"相同放行"分支救不了这个场景），
     // Host 是浏览器禁改头，攻击者无法谎称回环
     expect(hostAllowed(withHost('attacker.com:7480'))).toBe(false)
-    expect(hostAllowed(withHost('cc-remote.devcloud.woa.com'))).toBe(false)
+    expect(hostAllowed(withHost('anyplane.example.com'))).toBe(false)
     expect(hostAllowed(withHost('localhost.evil.com:7480'))).toBe(false)
     // 内网 IP 也不是回环
     expect(hostAllowed(withHost('192.168.1.10:7480'))).toBe(false)

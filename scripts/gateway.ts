@@ -3,10 +3,10 @@
 //
 // 用法：
 //   bun run gateway [--insecure] [--no-replace]
-//   浏览器 http://cc-remote.devcloud.woa.com/           生产（默认）
-//          http://cc-remote.devcloud.woa.com/?mode=dev  开发
-//          http://cc-remote.devcloud.woa.com/?mode=prod 生产（显式）
-//          http://cc-remote-dev.devcloud.woa.com/       永远开发（需在 DevCloud 再挂一个域名）
+//   浏览器 http://anyplane.example.com/           生产（默认）
+//          http://anyplane.example.com/?mode=dev  开发
+//          http://anyplane.example.com/?mode=prod 生产（显式）
+//          http://anyplane-dev.example.com/       永远开发（需再挂一个域名，见 gateway.devHost）
 //   https:// 同源分流（自签证书；平台若在边缘终结 TLS，则只会打到明文 80）
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -51,9 +51,9 @@ const HOP = new Set([
 
 function loadFileConfig(): { authToken?: string; gateway?: Record<string, unknown> } {
   const candidates = [
-    join(process.cwd(), 'cc-remote.config.json'),
-    join(import.meta.dir, '..', 'cc-remote.config.json'),
-    join(homedir(), '.cc-remote', 'config.json'),
+    join(process.cwd(), 'anyplane.config.json'),
+    join(import.meta.dir, '..', 'anyplane.config.json'),
+    join(homedir(), '.anyplane', 'config.json'),
   ]
   for (const p of candidates) {
     if (!existsSync(p)) continue
@@ -90,15 +90,15 @@ function loadCfg(): GatewayCfg {
   const g = file.gateway ?? {}
   const args = parseArgs(process.argv.slice(2))
   return {
-    httpPort: num(process.env.CC_REMOTE_GATEWAY_HTTP_PORT ?? g.httpPort, 80),
-    httpsPort: num(process.env.CC_REMOTE_GATEWAY_HTTPS_PORT ?? g.httpsPort, 443),
-    prodHost: str(process.env.CC_REMOTE_PROD_HOST ?? g.prodHost, 'cc-remote.devcloud.woa.com'),
-    devHost: str(process.env.CC_REMOTE_DEV_HOST ?? g.devHost, 'cc-remote-dev.devcloud.woa.com'),
+    httpPort: num(process.env.ANYPLANE_GATEWAY_HTTP_PORT ?? g.httpPort, 80),
+    httpsPort: num(process.env.ANYPLANE_GATEWAY_HTTPS_PORT ?? g.httpsPort, 443),
+    prodHost: str(process.env.ANYPLANE_PROD_HOST ?? g.prodHost, 'anyplane.example.com'),
+    devHost: str(process.env.ANYPLANE_DEV_HOST ?? g.devHost, 'anyplane-dev.example.com'),
     prodTarget: str(g.prodTarget, 'http://127.0.0.1:7480'),
     devTarget: str(g.devTarget, 'http://127.0.0.1:5173'),
     sshTarget: str(g.sshTarget, '127.0.0.1:36000'),
     muxSsh: bool(g.muxSsh, true),
-    insecure: args.insecure || process.env.CC_REMOTE_GATEWAY_INSECURE === '1',
+    insecure: args.insecure || process.env.ANYPLANE_GATEWAY_INSECURE === '1',
     replace: !args.noReplace,
   }
 }
@@ -121,8 +121,8 @@ function certSan(cfg: GatewayCfg): string {
 }
 
 async function ensureCerts(cfg: GatewayCfg): Promise<{ cert: string; key: string }> {
-  // TLS 私钥落 ~/.cc-remote/certs：目录收紧 700（ensurePrivateDir）
-  const dir = ensurePrivateDir(join(homedir(), '.cc-remote', 'certs'))
+  // TLS 私钥落 ~/.anyplane/certs：目录收紧 700（ensurePrivateDir）
+  const dir = ensurePrivateDir(join(homedir(), '.anyplane', 'certs'))
   const certPath = join(dir, 'gateway.crt')
   const keyPath = join(dir, 'gateway.key')
   if (existsSync(certPath) && existsSync(keyPath)) {
@@ -202,7 +202,7 @@ function filterReqHeaders(req: Request, proto: string, target: string): Headers 
   const host = req.headers.get('host')
   if (host) out.set('x-forwarded-host', host)
   out.set('x-forwarded-proto', proto)
-  out.set('x-cc-remote-gateway', '1')
+  out.set('x-anyplane-gateway', '1')
   // 上游无 token 模式要求 Host 为回环（DNS rebinding 防线）：反代统一改写为上游 authority，
   // 并剥除浏览器 Origin（公网域名会被上游判成跨源）——网关即信任边界，剥除不削弱防线：
   // token 模式不查 Origin/Host；无 token 时网关本身需 --insecure 才起得来（已是有意的全暴露）。
@@ -226,7 +226,7 @@ async function proxyHttp(req: Request, target: string, proto: string, mode: Mode
   try {
     const upstream = await fetch(dest, init)
     const headers = copyHeaders(upstream.headers)
-    headers.set('x-cc-remote-mode', mode)
+    headers.set('x-anyplane-mode', mode)
     return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -251,7 +251,7 @@ function makeFetch(cfg: GatewayCfg): (req: Request, srv: { upgrade: (req: Reques
       const mode = pickMode(host, req.headers.get('cookie'), cfg.devHost, url.searchParams.get('mode'))
       const [devUp, prodUp] = await Promise.all([probe(cfg.devTarget), probe(cfg.prodTarget)])
       return htmlPage(
-        'cc-remote gateway',
+        'anyplane gateway',
         `<p>当前模式：<strong>${mode === 'dev' ? '开发 Vite :5173' : '生产 server :7480'}</strong></p>
 <p>Vite ${devUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'} ·
 server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'}</p>
@@ -542,15 +542,15 @@ function startMux(
 
 const fileCfg = loadFileConfig()
 const cfg = loadCfg()
-const token = process.env.CC_REMOTE_TOKEN || fileCfg.authToken
+const token = process.env.ANYPLANE_TOKEN || fileCfg.authToken
 
 if (!token && !cfg.insecure) {
   console.error('[gateway] 拒绝启动：把 :5173/:7480 暴露到 80/443 等于把本机 CLI 会话暴露到网络。')
-  console.error('[gateway] 请在 cc-remote.config.json 配置 authToken，或显式传入 --insecure / CC_REMOTE_GATEWAY_INSECURE=1。')
+  console.error('[gateway] 请在 anyplane.config.json 配置 authToken，或显式传入 --insecure / ANYPLANE_GATEWAY_INSECURE=1。')
   process.exit(1)
 }
 if (!token && cfg.insecure) {
-  console.warn('[gateway] 警告：--insecure，80/443 上的 cc-remote 无鉴权。仅限授信内网。')
+  console.warn('[gateway] 警告：--insecure，80/443 上的 anyplane 无鉴权。仅限授信内网。')
 }
 
 const tls = await ensureCerts(cfg)

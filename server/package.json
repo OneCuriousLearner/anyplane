@@ -1,5 +1,5 @@
 {
-  "name": "@cc-remote/server",
+  "name": "@anyplane/server",
   "private": true,
   "type": "module",
   "scripts": {

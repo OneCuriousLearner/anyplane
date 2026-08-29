@@ -32,7 +32,7 @@ self.addEventListener('push', (e) => {
           ]
         : [],
   }
-  e.waitUntil(self.registration.showNotification(p.title ?? 'cc-remote', opts))
+  e.waitUntil(self.registration.showNotification(p.title ?? 'AnyPlane', opts))
 })
 
 self.addEventListener('notificationclick', (e) => {

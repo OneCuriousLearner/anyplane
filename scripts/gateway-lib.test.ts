@@ -17,24 +17,24 @@ describe('detectProtocol', () => {
 })
 
 describe('pickMode', () => {
-  const devHost = 'cc-remote-dev.devcloud.woa.com'
+  const devHost = 'anyplane-dev.example.com'
   test('dev host wins over prod cookie', () => {
-    expect(pickMode(devHost, 'cc-remote-mode=prod', devHost)).toBe('dev')
+    expect(pickMode(devHost, 'anyplane-mode=prod', devHost)).toBe('dev')
   })
   test('cookie switches the shared prod domain', () => {
-    expect(pickMode('cc-remote.devcloud.woa.com', 'cc-remote-mode=dev', devHost)).toBe('dev')
-    expect(pickMode('cc-remote.devcloud.woa.com', 'cc-remote-mode=prod', devHost)).toBe('prod')
+    expect(pickMode('anyplane.example.com', 'anyplane-mode=dev', devHost)).toBe('dev')
+    expect(pickMode('anyplane.example.com', 'anyplane-mode=prod', devHost)).toBe('prod')
   })
   test('default is production', () => {
-    expect(pickMode('cc-remote.devcloud.woa.com', null, devHost)).toBe('prod')
+    expect(pickMode('anyplane.example.com', null, devHost)).toBe('prod')
   })
   test('query mode beats cookie', () => {
-    expect(pickMode('cc-remote.devcloud.woa.com', 'cc-remote-mode=prod', devHost, 'dev')).toBe('dev')
-    expect(pickMode('cc-remote.devcloud.woa.com', 'cc-remote-mode=dev', devHost, 'prod')).toBe('prod')
+    expect(pickMode('anyplane.example.com', 'anyplane-mode=prod', devHost, 'dev')).toBe('dev')
+    expect(pickMode('anyplane.example.com', 'anyplane-mode=dev', devHost, 'prod')).toBe('prod')
   })
   test('strips port from Host', () => {
-    expect(hostnameOf('cc-remote.devcloud.woa.com:80')).toBe('cc-remote.devcloud.woa.com')
-    expect(parseCookieMode('a=1; cc-remote-mode=dev; b=2')).toBe('dev')
+    expect(hostnameOf('anyplane.example.com:80')).toBe('anyplane.example.com')
+    expect(parseCookieMode('a=1; anyplane-mode=dev; b=2')).toBe('dev')
   })
 })
 

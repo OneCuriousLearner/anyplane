@@ -1,4 +1,4 @@
-// reasoning 侧车：codex rollout 不持久化 reasoning，cc-remote 自行落盘 ~/.cc-remote/reasoning/<threadId>.jsonl。
+// reasoning 侧车：codex rollout 不持久化 reasoning，anyplane 自行落盘 ~/.anyplane/reasoning/<threadId>.jsonl。
 // 测试用随机 threadId 隔离真实数据，结束后清理。
 import { afterAll, describe, expect, test } from 'bun:test'
 import { appendFileSync, rmSync } from 'node:fs'
@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { appendReasoning, readReasoning } from './reasoningStore'
 
 const THREAD = `test-${crypto.randomUUID()}`
-const file = () => join(homedir(), '.cc-remote', 'reasoning', `${THREAD}.jsonl`)
+const file = () => join(homedir(), '.anyplane', 'reasoning', `${THREAD}.jsonl`)
 
 afterAll(() => {
   rmSync(file(), { force: true })

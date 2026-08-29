@@ -1,6 +1,6 @@
 {
-  "name": "cc-remote",
-  "short_name": "cc-remote",
+  "name": "AnyPlane",
+  "short_name": "AnyPlane",
   "description": "本机 Claude Code / Codex 会话的浏览器控制面",
   "start_url": "/",
   "display": "standalone",

@@ -5,8 +5,8 @@ import { splitExistingKey } from './backend'
 // 字符集闸必须挡住路径遍历与分隔符注入。
 describe('splitExistingKey', () => {
   test('合法 s| key 解析', () => {
-    expect(splitExistingKey('s|-data-workspace-cc-remote|01a03cac-3fdc-7b80-9c5d-f14ba518f4dc')).toEqual({
-      slug: '-data-workspace-cc-remote',
+    expect(splitExistingKey('s|-data-workspace-anyplane|01a03cac-3fdc-7b80-9c5d-f14ba518f4dc')).toEqual({
+      slug: '-data-workspace-anyplane',
       sessionId: '01a03cac-3fdc-7b80-9c5d-f14ba518f4dc',
     })
   })

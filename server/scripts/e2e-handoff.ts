@@ -1,10 +1,10 @@
 // E2E-接力：复刻 handoff-lab 实验的产品路径（API → fork 简报 → 播种 → 血缘 → 目标启动）
-// 双向：claude → codex、codex → claude。需服务端已启动（默认 :7480，CC_REMOTE_PORT 覆盖）。
+// 双向：claude → codex、codex → claude。需服务端已启动（默认 :7480，ANYPLANE_PORT 覆盖）。
 // 用法：bun run server/scripts/e2e-handoff.ts [claudeSessionKey] [codexThreadKey]
 
-const PORT = process.env.CC_REMOTE_PORT ?? '7480'
+const PORT = process.env.ANYPLANE_PORT ?? '7480'
 const BASE = `http://localhost:${PORT}`
-const tokenQ = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
+const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
 
 const CLAUDE_KEY = process.argv[2] ?? 's|-data-workspace-handoff-lab|c347a3fa-6b3f-4672-ad12-11d801e3c73a'
 const CODEX_KEY = process.argv[3] ?? 'x|01a00fae-9231-79e1-8827-ad1000a03031'

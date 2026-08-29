@@ -4,7 +4,7 @@ AGENTS.md 只放读代码读不出的东西——设计哲学与决策原因；�
 
 ## 项目定位
 
-cc-remote：在手机/桌面浏览器中管理本机运行的官方 Claude Code 与 Codex 会话。
+AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code 与 Codex 会话。
 **不修改官方 CLI**——服务端以子进程方式驱动两家 CLI 的 headless 协议（Claude 走 stream-json NDJSON，Codex 走 app-server JSON-RPC），并统一翻译为 Claude stream-json 形状，前端与 WS 协议因此不分叉。
 与 claude.ai/code 网页版桥接本地 CLI 用的是同一套本地协议。
 
@@ -37,7 +37,7 @@ bun run server/scripts/e2e-codex.ts      # codex app-server 协议探针
 bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现场确认/血缘）
 ```
 
-服务端配置了 `authToken` 时，e2e 脚本需要 `CC_REMOTE_TOKEN` 环境变量才能连上 WS。
+服务端配置了 `authToken` 时，e2e 脚本需要 `ANYPLANE_TOKEN` 环境变量才能连上 WS。
 
 单元测试使用 Bun Test：
 
@@ -57,7 +57,7 @@ bun test web/            # 仅前端测试
 
 ### 服务端（server/src）
 
-- **运行数据目录（约定）**：一切 cc-remote 自产的运行数据都放 `~/.cc-remote/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）、`vapid.json` + `push-subscriptions.json`（推送密钥与订阅注册表）。**这些数据目录不做自动清理**，由用户自行管理。
+- **运行数据目录（约定）**：一切 AnyPlane 自产的运行数据都放 `~/.anyplane/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）、`vapid.json` + `push-subscriptions.json`（推送密钥与订阅注册表）。**这些数据目录不做自动清理**，由用户自行管理。
 - **`push.ts`** — Web Push 分发：inbox 事件（approval/done/error）→ 自实现 VAPID（RFC 8292）+ aes128gcm 载荷（RFC 8291/8188，不依赖 web-push 库——其 node:https 发送路径假定 TLS）。审批推送携带**能力 URL**（`/api/approval-action?k&r&d&s=<per-subscription secret>`），SW 通知按钮可直接审批不打开页面；该端点绕开 authToken（秘密只经加密推送投递，且仅对 pending 中的 requestId 有效）。死订阅（404/410）自动摘除。**订阅 endpoint 白名单**（防注册 SSRF/通知窃听——inbox 事件扇出给全部订阅）：缺省主流推送服务（FCM/Mozilla/Apple/WNS）+ 回环 mock；自托管推送在配置的 `pushAllowHosts` 追加域名（`['*']` = 任意 https）；投递不跟随重定向。
   **webhook 通道**（ntfy/Bark/Server酱，配置 `pushWebhooks` + `publicUrl`）：与订阅并列 fan-out，配置即信任（无注册面无白名单），渠道方可读通知全文（非端到端加密）。能力密钥 = HMAC(vapid 私钥, 渠道标识) 派生不落状态；直接审批分级——ntfy http action 真一键 POST，Bark/Server酱 落 `GET /api/approval-page` 确认页（GET 只渲染，防预览抓取误触）。
 - **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（WS 客户端、待审批、启动偏好与 goal/重键等会话级状态），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
@@ -70,9 +70,9 @@ bun test web/            # 仅前端测试
   - `backends/codex/`：`rpc.ts`（JSON-RPC stdio 客户端，-32001 过载退避）、`runtime.ts`（**单 app-server 进程托管全部线程**，按 threadId 解复用；ephemeral fork 收集器）、`translate.ts`（ThreadItem → stream-json 翻译）、`backend.ts`。
   - **busy 语义（重要）**：Claude 优先信任 `system/session_state_changed`；Codex 用 `thread/status/changed`（active/idle）+ 审批等待合成 requires_action。**running / requires_action 时绝不回收。**注意 **`system/init` 是每个 query turn 的首条流消息，不是 spawn 时发出**——纯控制查询（mcp_status 等）的会话在首个真实 turn 之前没有 init（模型/命令清单那刻才有）；initModel 入库即 `onStatusChange` 回放，前端在权威 idle 且不存在合法草稿时自清陈旧草稿（防服务端重启/断线后"生成中"永挂）。
 - **Codex 关键实现点**：审批 `requestApproval` → 统一审批卡（accept/acceptForSession/decline/cancel），`turn/start` 强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；权限模式近似映射 approvalPolicy+sandbox；**wire 枚举双轨**：`thread/start` 的 `sandbox` 是 kebab-case，`turn/start` 的 `sandboxPolicy` 是 camelCase（0.147.0 实测）；线程被其他进程持有时 resume 报 -32600（UI 显示"被占用"）；不 kill 线程进程，断开订阅后 app-server 30 分钟自动卸载。
-- **`handoff.ts`** — 接力编排：源会话自摘要（Claude 源在线时走 `side_question` 控制通道，离线才 spawn `--fork-session --resume --bare` 一次性问答 / Codex `thread/fork ephemeral:true`）→ 目标会话播种首条消息（简报 + 现场确认指令）→ 血缘写 `~/.cc-remote/lineage.json`。进度事件推源 Hub。
-- **AI 会话标题**：首条真实 user 消息 × 首个 init 双条件齐备才触发 `generate_session_title`（`maybeGenerateTitle` 两路调用——懒 spawn 下首条消息常先于 init 到达，只挂一路会漏）；按 sessionId 去重，/clear 重键后自然再生成。CLI `persist:true` 自写 ai-title 进 transcript，discovery 标题链自动接住，**cc-remote 侧不落任何标题状态**。
-- **`config.ts`** — 项目根目录 `cc-remote.config.json`、`~/.cc-remote/config.json`（均可选，但不允许放 `~/.config/`），`CC_REMOTE_PORT` / `CC_REMOTE_HOST` / `CC_REMOTE_TOKEN` / `CLAUDE_CONFIG_DIR` 环境变量覆盖。
+- **`handoff.ts`** — 接力编排：源会话自摘要（Claude 源在线时走 `side_question` 控制通道，离线才 spawn `--fork-session --resume --bare` 一次性问答 / Codex `thread/fork ephemeral:true`）→ 目标会话播种首条消息（简报 + 现场确认指令）→ 血缘写 `~/.anyplane/lineage.json`。进度事件推源 Hub。
+- **AI 会话标题**：首条真实 user 消息 × 首个 init 双条件齐备才触发 `generate_session_title`（`maybeGenerateTitle` 两路调用——懒 spawn 下首条消息常先于 init 到达，只挂一路会漏）；按 sessionId 去重，/clear 重键后自然再生成。CLI `persist:true` 自写 ai-title 进 transcript，discovery 标题链自动接住，**AnyPlane 侧不落任何标题状态**。
+- **`config.ts`** — 项目根目录 `anyplane.config.json`、`~/.anyplane/config.json`（均可选，但不允许放 `~/.config/`），`ANYPLANE_PORT` / `ANYPLANE_HOST` / `ANYPLANE_TOKEN` / `CLAUDE_CONFIG_DIR` 环境变量覆盖。
 
 ### 前端（web/src）
 
@@ -94,14 +94,14 @@ bun test web/            # 仅前端测试
 
 ## Windows 平台注意事项
 
-- **Bun <= 1.3.14 存在监听 socket 被子进程继承的 bug**（oven-sh/bun#36936），服务端和 `scripts/dev.ts` 启动时都会检查版本并拒绝启动（可用 `CC_REMOTE_ALLOW_UNSAFE_BUN=1` 跳过）。已形成的死 PID 监听需重启 Windows 才能释放。
+- **Bun <= 1.3.14 存在监听 socket 被子进程继承的 bug**（oven-sh/bun#36936），服务端和 `scripts/dev.ts` 启动时都会检查版本并拒绝启动（可用 `ANYPLANE_ALLOW_UNSAFE_BUN=1` 跳过）。已形成的死 PID 监听需重启 Windows 才能释放。
 - `scripts/dev.ts` 故意不用 `bun --watch` 和 `bun run --cwd`：Windows watcher 会在异步 SIGINT 清理完成前杀掉 server；多层包装进程会吞 Ctrl+C。**不要用任务管理器强杀 server**，会绕过 `server.stop(true)` 与子进程树清理。
 - claude 在 Windows 可能是 `.cmd`/`.bat`（需 `cmd.exe /d /s /c` 包装）或 `.exe`；`resolveClaudeCommand()` 优先选真实存在的 `.exe`。
 
 ## 已知限制（改相关功能前先读 README）
 
 - compact 边界之前的消息不能作为 rewind 目标；`rewind_files` 只能回滚到有检查点的消息（spawn 时设了 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`）；effort 运行时切换依赖 `update_environment_variables`，旧版 CLI 可能需重开会话。
-- Codex 侧：无文件检查点（不支持 rewind_both）；rollout 不持久化 reasoning（cc-remote 侧车落盘 `~/.cc-remote/reasoning/<threadId>.jsonl` 并在历史读取时按 turn 时间窗回插）。
+- Codex 侧：无文件检查点（不支持 rewind_both）；rollout 不持久化 reasoning（AnyPlane 侧车落盘 `~/.anyplane/reasoning/<threadId>.jsonl` 并在历史读取时按 turn 时间窗回插）。
 - 认证已实现（authToken），但**未配置 token 时严禁绑定非回环地址**。`GET /api/fs/list?path=`（新会话目录选择器用）会暴露本机目录结构，与"任意目录起会话 = 任意命令执行"同级风险。
 - 跨网段不自建公网穿透：三套免 VPS 配方（funnel/CF Tunnel/IPv6+DDNS）与安全红线见 `docs/public-access.md`。
 

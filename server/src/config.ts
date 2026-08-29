@@ -1,5 +1,5 @@
-// cc-remote 服务端配置
-// 配置文件：项目根目录 cc-remote.config.json 或 ~/.cc-remote/config.json（均可选，全部有默认值）
+// anyplane 服务端配置
+// 配置文件：项目根目录 anyplane.config.json 或 ~/.anyplane/config.json（均可选，全部有默认值）
 
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -26,7 +26,7 @@ export interface ServerConfig {
   /**
    * 访问令牌。未配置时不做任何鉴权（仅限回环使用）；
    * 配置后 /api 与 /ws 一律要求 Bearer 或 ?token= 校验。
-   * CC_REMOTE_TOKEN 环境变量优先。
+   * ANYPLANE_TOKEN 环境变量优先。
    */
   authToken?: string
   /** 默认权限策略：ask = 转发到 UI 审批；bypass = spawn 时直接 bypassPermissions */
@@ -50,7 +50,7 @@ export interface ServerConfig {
    */
   pushAllowHosts?: string[]
   /**
-   * cc-remote 的公网基准 URL（如 https://cc-remote.example.com，不带尾斜杠）。
+   * anyplane 的公网基准 URL（如 https://anyplane.example.com，不带尾斜杠）。
    * webhook 通知里的深链与直接审批按钮需要绝对 URL（ntfy app/微信/Bark 不在本站上下文），
    * 不配置则 webhook 只发纯文本（标题+摘要仍可达）。
    */
@@ -70,11 +70,11 @@ const DEFAULTS: ServerConfig = {
 
 function loadFileConfig(): Partial<ServerConfig> {
   // server 从 workspace 的 server/ 目录启动时，仍应支持 README 中约定的项目根配置文件。
-  const projectRootConfig = join(import.meta.dir, '..', '..', 'cc-remote.config.json')
+  const projectRootConfig = join(import.meta.dir, '..', '..', 'anyplane.config.json')
   const candidates = [
-    join(process.cwd(), 'cc-remote.config.json'),
+    join(process.cwd(), 'anyplane.config.json'),
     projectRootConfig,
-    join(homedir(), '.cc-remote', 'config.json'),
+    join(homedir(), '.anyplane', 'config.json'),
   ]
   for (const p of candidates) {
     if (existsSync(p)) {
@@ -91,9 +91,9 @@ function loadFileConfig(): Partial<ServerConfig> {
 export const config: ServerConfig = {
   ...DEFAULTS,
   ...loadFileConfig(),
-  ...(process.env.CC_REMOTE_PORT ? { port: Number(process.env.CC_REMOTE_PORT) } : {}),
-  ...(process.env.CC_REMOTE_HOST ? { host: process.env.CC_REMOTE_HOST } : {}),
-  ...(process.env.CC_REMOTE_TOKEN ? { authToken: process.env.CC_REMOTE_TOKEN } : {}),
+  ...(process.env.ANYPLANE_PORT ? { port: Number(process.env.ANYPLANE_PORT) } : {}),
+  ...(process.env.ANYPLANE_HOST ? { host: process.env.ANYPLANE_HOST } : {}),
+  ...(process.env.ANYPLANE_TOKEN ? { authToken: process.env.ANYPLANE_TOKEN } : {}),
   ...(process.env.CLAUDE_CONFIG_DIR ? { claudeConfigDir: process.env.CLAUDE_CONFIG_DIR } : {}),
 }
 

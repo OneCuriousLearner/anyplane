@@ -1,6 +1,6 @@
 // E2E-斜杠命令：/compact 透传 + /btw 侧问
 const key = 's|D--Coder-Agents-cc-remote|ee01d38e-b1f9-4c3d-8110-518aa465cdb0'
-const tokenQ = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
+const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
 const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}${tokenQ}`)
 
 const timeout = setTimeout(() => {

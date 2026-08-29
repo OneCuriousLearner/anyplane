@@ -1,4 +1,4 @@
-// cc-remote 服务端入口：REST + WebSocket + 静态托管
+// anyplane 服务端入口：REST + WebSocket + 静态托管
 
 import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
@@ -185,7 +185,7 @@ function approvalPageHtml(key: string, pending?: PendingApproval): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>审批 · cc-remote</title>
+<title>审批 · AnyPlane</title>
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#16130f;color:#e8e2d9;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
   .card{box-sizing:border-box;width:100%;max-width:26rem;margin:1rem;padding:1.25rem;border:1px solid #3a332a;border-radius:.5rem;background:#1e1a15}
@@ -1178,11 +1178,11 @@ function logWindowsPortState(stage: string, port: number): void {
 
 const distDir = resolve(import.meta.dir, '../../web/dist')
 
-if (!hasWindowsSocketFix() && process.env.CC_REMOTE_ALLOW_UNSAFE_BUN !== '1') {
+if (!hasWindowsSocketFix() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
   console.error(
-    `[cc-remote] Bun ${Bun.version} on Windows has the inherited-listener bug oven-sh/bun#36936.`,
+    `[anyplane] Bun ${Bun.version} on Windows has the inherited-listener bug oven-sh/bun#36936.`,
   )
-  console.error('[cc-remote] Run `bun upgrade --canary` and restart the terminal. Server startup refused.')
+  console.error('[anyplane] Run `bun upgrade --canary` and restart the terminal. Server startup refused.')
   process.exit(1)
 }
 
@@ -1216,10 +1216,10 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   if (url.pathname === '/api/push/test' && req.method === 'POST') {
     const payload: PushPayload = {
       type: 'done',
-      title: '测试通知 · cc-remote',
+      title: '测试通知 · AnyPlane',
       body: '推送链路可达：全部订阅与 webhook 通道会同时收到这一条。',
       key: '',
-      session: 'cc-remote',
+      session: 'anyplane',
       tag: 'ccr-test',
     }
     const [push, hooks] = await Promise.all([pushToAll(payload), pushWebhooksToAll(payload)])
@@ -1468,7 +1468,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     }
     return json({ records, nodes })
   }
-  // 上传图片：仅 ~/.cc-remote/uploads/ 内的 hash 命名文件（resolveUpload 边界校验）
+  // 上传图片：仅 ~/.anyplane/uploads/ 内的 hash 命名文件（resolveUpload 边界校验）
   const uploadMatch = url.pathname.match(/^\/api\/uploads\/([^/]+)$/)
   if (uploadMatch && req.method === 'GET') {
     const path = resolveUpload(uploadMatch[1])
@@ -1532,8 +1532,8 @@ let server: ReturnType<typeof Bun.serve<WSData>>
 
 // 绑定非回环地址却不配置 token = 把"任意目录起会话 + 任意命令执行"裸奔到网络上，拒绝启动
 if (!isLoopbackHost(config.host) && !config.authToken) {
-  console.error(`[cc-remote] 拒绝启动：host=${config.host} 为非回环地址，但未配置 authToken。`)
-  console.error('[cc-remote] 请在 cc-remote.config.json 设置 "authToken" 或设置环境变量 CC_REMOTE_TOKEN。')
+  console.error(`[anyplane] 拒绝启动：host=${config.host} 为非回环地址，但未配置 authToken。`)
+  console.error('[anyplane] 请在 anyplane.config.json 设置 "authToken" 或设置环境变量 ANYPLANE_TOKEN。')
   process.exit(1)
 }
 
@@ -1604,7 +1604,7 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         const index = Bun.file(join(distDir, 'index.html')) // SPA 回退
         if (await index.exists()) return new Response(index)
       }
-      return new Response('cc-remote server (web 未构建，请用 vite dev 或 bun run build)', { status: 200 })
+      return new Response('anyplane server (web 未构建，请用 vite dev 或 bun run build)', { status: 200 })
     },
     websocket: {
       // 30s 协议层下行 ping：前端 ReconnectingSocket 没有应用层心跳，空闲会话的 /ws 长连接
@@ -1684,9 +1684,9 @@ async function bindServer(): Promise<ReturnType<typeof Bun.serve<WSData>>> {
     const msg = errorMessage(e)
     const addrInUse = msg.includes('EADDRINUSE') || (e as { code?: string }).code === 'EADDRINUSE'
     if (!addrInUse) throw e
-    console.error(`[cc-remote] :${config.port} 已被占用，尝试接管本仓库残留进程…`)
+    console.error(`[anyplane] :${config.port} 已被占用，尝试接管本仓库残留进程…`)
     if ((await takeoverStaleListeners(config.port, isOwnServerProcess)) !== 'freed') throw e
-    console.log(`[cc-remote] :${config.port} 残留已清理，重新绑定`)
+    console.log(`[anyplane] :${config.port} 残留已清理，重新绑定`)
     return createServer()
   }
 }
@@ -1696,12 +1696,12 @@ try {
 } catch (e) {
   const msg = errorMessage(e)
   console.error(
-    `[cc-remote] bind failed port=${config.port} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}: ${msg}`,
+    `[anyplane] bind failed port=${config.port} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}: ${msg}`,
   )
   logWindowsPortState('bind-failed', config.port)
   if (process.platform === 'win32') {
     console.error(
-      '[cc-remote] 若 LISTENING PID 已不存在，通常是 Bun <=1.3.14 的 socket handle 继承问题；先升级 canary。已形成且找不到持有进程的绑定需重启 Windows 一次。',
+      '[anyplane] 若 LISTENING PID 已不存在，通常是 Bun <=1.3.14 的 socket handle 继承问题；先升级 canary。已形成且找不到持有进程的绑定需重启 Windows 一次。',
     )
   }
   process.exit(1)
@@ -1723,11 +1723,11 @@ const displayHost = isLoopbackHost(config.host)
     : config.host
 const accessUrl = `http://${displayHost}:${server.port}/${config.authToken ? `?token=${config.authToken}` : ''}`
 console.log(
-  `[cc-remote] listening on ${accessUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}`,
+  `[anyplane] listening on ${accessUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}`,
 )
-console.log(`[cc-remote] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
+console.log(`[anyplane] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
 if (!config.authToken) {
-  console.log('[cc-remote] 未配置 authToken，仅监听回环地址。需要局域网访问时：配置 authToken 并设置 host。')
+  console.log('[anyplane] 未配置 authToken，仅监听回环地址。需要局域网访问时：配置 authToken 并设置 host。')
 }
 
 // 局域网模式：打印扫码即入的终端二维码（URL 已带 token）
@@ -1736,28 +1736,28 @@ if (!isLoopbackHost(config.host)) {
     const { default: QRCode } = await import('qrcode')
     console.log(await QRCode.toString(accessUrl, { type: 'terminal', small: true }))
   } catch (e) {
-    console.warn('[cc-remote] 二维码生成失败（不影响服务）:', e)
+    console.warn('[anyplane] 二维码生成失败（不影响服务）:', e)
   }
 }
 
 let shuttingDown = false
 async function shutdown(reason: string): Promise<void> {
   if (shuttingDown) {
-    console.warn(`[cc-remote] shutdown already in progress; repeated=${reason}`)
+    console.warn(`[anyplane] shutdown already in progress; repeated=${reason}`)
     return
   }
   shuttingDown = true
   const started = performance.now()
-  console.log(`[cc-remote] shutdown begin reason=${reason} pid=${process.pid}`)
+  console.log(`[anyplane] shutdown begin reason=${reason} pid=${process.pid}`)
 
   // 先发起 listener/连接关闭，再清 Claude 子进程。Bun <=1.3.14 在 Windows
   // 会让这些子进程继承监听 handle；两边都完成前绝不能 process.exit()。
   let stopPromise: Promise<void>
   try {
-    console.log('[cc-remote] server.stop(true) begin')
+    console.log('[anyplane] server.stop(true) begin')
     stopPromise = Promise.resolve(server.stop(true))
   } catch (e) {
-    console.error('[cc-remote] server.stop(true) invoke failed:', e)
+    console.error('[anyplane] server.stop(true) invoke failed:', e)
     stopPromise = Promise.resolve()
   }
 
@@ -1765,34 +1765,34 @@ async function shutdown(reason: string): Promise<void> {
     processManager.disposeAll()
     codexRuntime.disposeAll()
   } catch (e) {
-    console.error('[cc-remote] disposeAll 失败:', e)
+    console.error('[anyplane] disposeAll 失败:', e)
   }
 
   const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 5_000))
   const stopped = stopPromise.then(
     () => 'stopped' as const,
     (e) => {
-      console.error('[cc-remote] server.stop(true) rejected:', e)
+      console.error('[anyplane] server.stop(true) rejected:', e)
       return 'failed' as const
     },
   )
   const result = await Promise.race([stopped, timeout])
   console.log(
-    `[cc-remote] shutdown server=${result} elapsedMs=${Math.round(performance.now() - started)}`,
+    `[anyplane] shutdown server=${result} elapsedMs=${Math.round(performance.now() - started)}`,
   )
 
   if (result === 'timeout') {
     // 到这里 listener 已调用 stop，强退只是最后兜底；正常路径不应触发。
-    console.error('[cc-remote] shutdown timed out after 5s; forcing exit')
+    console.error('[anyplane] shutdown timed out after 5s; forcing exit')
     process.exit(1)
   }
   logWindowsPortState('after-stop', config.port)
-  console.log(`[cc-remote] shutdown complete elapsedMs=${Math.round(performance.now() - started)}`)
+  console.log(`[anyplane] shutdown complete elapsedMs=${Math.round(performance.now() - started)}`)
   process.exit(0)
 }
 
 process.on('SIGINT', () => void shutdown('SIGINT'))
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('exit', (code) => {
-  console.log(`[cc-remote] process exit pid=${process.pid} code=${code} shuttingDown=${shuttingDown}`)
+  console.log(`[anyplane] process exit pid=${process.pid} code=${code} shuttingDown=${shuttingDown}`)
 })

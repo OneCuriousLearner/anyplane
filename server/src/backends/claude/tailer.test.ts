@@ -13,7 +13,7 @@ let fileSeq = 0
 const tailers: TranscriptTailer[] = []
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), 'cc-remote-tailer-'))
+  dir = mkdtempSync(join(tmpdir(), 'anyplane-tailer-'))
 })
 
 afterEach(() => {

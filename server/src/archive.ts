@@ -1,6 +1,6 @@
 // 会话归档/回收站：无物理删除。
 // - codex：官方 thread/archive（归档即回收站语义，rollout 与 sqlite 一致；thread/delete 不暴露）
-// - claude：官方无归档概念——把 transcript 移入 ~/.cc-remote/trash/claude/<slug>/（含 subagents 目录），
+// - claude：官方无归档概念——把 transcript 移入 ~/.anyplane/trash/claude/<slug>/（含 subagents 目录），
 //   恢复时移回。仅离线会话可操作（与改名同一边界：进程活着的会话绝不碰）。
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -12,7 +12,7 @@ function trashRoot(): string {
   return ensurePrivateDir(join(ccDataDir(), 'trash', 'claude'))
 }
 
-/** rename 的跨文件系统兜底：CLAUDE_CONFIG_DIR 可指到与 ~/.cc-remote 不同的挂载点（EXDEV）。
+/** rename 的跨文件系统兜底：CLAUDE_CONFIG_DIR 可指到与 ~/.anyplane 不同的挂载点（EXDEV）。
  *  非原子：cpSync 成功后、rmSync 前崩溃会留下双份；调用方/用户需手动清理回收站。
  */
 function move(src: string, dest: string): void {

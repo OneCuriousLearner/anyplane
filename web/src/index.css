@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* cc-remote design tokens — “session transcript” identity
+  /* anyplane design tokens — “session transcript” identity
      暖炭底 + 陶土橙（Claude 品牌色方向），日志抄本排版 */
   --color-bg: #16130f;
   --color-surface: #201b15;

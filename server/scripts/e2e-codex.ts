@@ -104,7 +104,7 @@ void new Response(proc.stderr as ReadableStream<Uint8Array>).text().then((t) => 
 
 try {
   const init = (await request('initialize', {
-    clientInfo: { name: 'cc-remote-probe', title: 'cc-remote probe', version: '0.1.0' },
+    clientInfo: { name: 'anyplane-probe', title: 'anyplane probe', version: '0.1.0' },
     capabilities: { experimentalApi: true },
   })) as Record<string, unknown>
   console.log('✓ initialize:', init.userAgent, 'codexHome:', init.codexHome)
@@ -114,7 +114,7 @@ try {
     cwd,
     approvalPolicy: 'never',
     sandbox: 'workspace-write',
-    serviceName: 'cc-remote-probe',
+    serviceName: 'anyplane-probe',
   })) as { thread: { id: string } }
   console.log('✓ thread/start:', started.thread.id)
 

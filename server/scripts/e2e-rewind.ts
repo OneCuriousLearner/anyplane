@@ -2,7 +2,7 @@
 // 三条都打到同一个目标消息（幂等：空恢复快照 + 同一截断点），最后发问验证会话可用。
 const key = 's|D--Coder-Agents-cc-remote|ee01d38e-b1f9-4c3d-8110-518aa465cdb0'
 
-const tokenQ = process.env.CC_REMOTE_TOKEN ? `?token=${process.env.CC_REMOTE_TOKEN}` : ''
+const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
 // 从 REST 拿一条用户消息 uuid。取最后一条带文本的用户消息：
 // 最早的消息通常早于文件检查点（无快照可恢复），最近的消息最可能有 checkpoint。
 const hist = await (await fetch(`http://localhost:7480/api/history/D--Coder-Agents-cc-remote/ee01d38e-b1f9-4c3d-8110-518aa465cdb0`)).json()

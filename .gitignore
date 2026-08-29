@@ -5,8 +5,8 @@ dist/
 ## Environment
 .env
 
-## 本机服务端配置（示例见 cc-remote.config.example.json）
-cc-remote.config.json
+## 本机服务端配置（示例见 anyplane.config.example.json）
+anyplane.config.json
 
 ## Logs
 *.log

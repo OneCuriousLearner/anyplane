@@ -3,7 +3,7 @@
 export type Mode = 'dev' | 'prod'
 export type WireProto = 'tls' | 'ssh' | 'http' | 'wait'
 
-export const MODE_COOKIE = 'cc-remote-mode'
+export const MODE_COOKIE = 'anyplane-mode'
 
 export function detectProtocol(buf: Uint8Array): WireProto {
   if (buf.length < 3) return 'wait'
@@ -27,7 +27,7 @@ export function hostnameOf(hostHeader: string): string {
 
 export function parseCookieMode(cookie: string | null | undefined): Mode | undefined {
   if (!cookie) return undefined
-  const m = cookie.match(/(?:^|;\s*)cc-remote-mode=(dev|prod)(?:;|$)/)
+  const m = cookie.match(/(?:^|;\s*)anyplane-mode=(dev|prod)(?:;|$)/)
   return m ? (m[1] as Mode) : undefined
 }
 
@@ -35,8 +35,8 @@ export function isAlwaysDevHost(host: string, devHost: string): boolean {
   const h = hostnameOf(host)
   const d = hostnameOf(devHost)
   if (h === d) return true
-  // 第二域名约定：cc-remote-dev.* 或 dev-cc-remote.*
-  return h.startsWith('cc-remote-dev.') || h.startsWith('dev-cc-remote.')
+  // 第二域名约定：anyplane-dev.* 或 dev-anyplane.*
+  return h.startsWith('anyplane-dev.') || h.startsWith('dev-anyplane.')
 }
 
 export function parseQueryMode(raw: string | null | undefined): Mode | undefined {
@@ -45,9 +45,9 @@ export function parseQueryMode(raw: string | null | undefined): Mode | undefined
 
 /**
  * 分流优先级：
- * 1. 命中 devHost / cc-remote-dev.* → 永远开发（同一浏览器可同时开两个域名）
+ * 1. 命中 devHost / anyplane-dev.* → 永远开发（同一浏览器可同时开两个域名）
  * 2. ?mode=dev|prod（地址栏可见）
- * 3. Cookie cc-remote-mode
+ * 3. Cookie anyplane-mode
  * 4. 默认生产
  */
 export function pickMode(

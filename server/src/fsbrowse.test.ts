@@ -7,7 +7,7 @@ import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 let root = ''
 
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), 'cc-remote-fsbrowse-'))
+  root = mkdtempSync(join(tmpdir(), 'anyplane-fsbrowse-'))
 })
 
 afterAll(() => {

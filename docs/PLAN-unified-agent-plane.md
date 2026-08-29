@@ -1,10 +1,10 @@
-# cc-remote 统一 Agent 控制面实施计划
+# AnyPlane 统一 Agent 控制面实施计划
 
 > 日期：2026-08-17。前置实验（双向接力验证）已通过，结论与数据见文末附录。
 
 ## 背景与目标
 
-cc-remote 目前只支持 Claude Code（stream-json NDJSON 驱动 `claude -p`）。本计划把它升级为**双后端本地 Agent 控制面**：
+AnyPlane 目前只支持 Claude Code（stream-json NDJSON 驱动 `claude -p`）。本计划把它升级为**双后端本地 Agent 控制面**：
 
 - 接入 Codex（`codex app-server`，JSON-RPC over stdio，官方协议、有 `generate-ts` 类型生成）
 - 以 **cwd（项目目录）为轴**组织 UI，同一目录下 Claude 会话与 Codex 线程并排
@@ -15,7 +15,7 @@ cc-remote 目前只支持 Claude Code（stream-json NDJSON 驱动 `claude -p`）
 
 ## 阶段 0：认证与暴露面（1-2 天，先行）
 
-- `config.ts` 增加 `authToken`（`CC_REMOTE_TOKEN` 环境变量覆盖）。
+- `config.ts` 增加 `authToken`（`ANYPLANE_TOKEN` 环境变量覆盖）。
 - 未配置 token：只绑 `127.0.0.1`，启动打印警告；配置后允许 `--host`/config 绑定局域网地址。
 - WS upgrade（`/ws/sessions/:key`）与全部 `/api/*` 统一校验（`Authorization: Bearer` 或 `?token=`）。
 - 启动时打印带 token 的完整 URL + QR（依赖 `qrcode`），手机扫码直达。
@@ -58,7 +58,7 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
 
 - 探针先行：`server/scripts/e2e-codex.ts`——spawn `codex app-server`，initialize（`capabilities.experimentalApi: true`）→ `thread/start` → `turn/start` → 收事件 → `turn/interrupt` → `thread/resume`。本机 codex 0.147.0。
 - 用 `codex app-server generate-ts --experimental` 生成 TS schema 存 `server/src/backends/codex/schema/`（gitignore，构建时生成；锁定 codex 版本要求）。
-- JSON-RPC 客户端：id 池、pending map、`-32001` 过载指数退避重试、initialize 握手（`clientInfo.name = "cc-remote"`）。
+- JSON-RPC 客户端：id 池、pending map、`-32001` 过载指数退避重试、initialize 握手（`clientInfo.name = "AnyPlane"`）。
 - 概念映射（已核实）：
   - 会话发现 `thread/list`（cwd/archived/searchTerm 过滤、分页）替代 slug 扫描
   - 历史 `thread/resume`（`excludeTurns` + `thread/turns/list` 分页）替代 readHistory+tailer
@@ -71,7 +71,7 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
   - `/btw` = `thread/fork` + `ephemeral: true` + `turn/start`（不落盘）
   - rewind 仅 `thread/revert`（实验性，只截对话不回文件；UI 隐藏 rewind_both）
   - busy 时发消息：`turn/steer`（插队）或 `thread/queue/add`（排队）——与 Claude 的 `priority` 字段统一为 `sendMode`
-- 回收语义：无订阅者的 thread 由 app-server 30 分钟自动卸载（与现有 idleTimeout 语义对齐），cc-remote 只负责断开订阅，**不 kill 进程**。
+- 回收语义：无订阅者的 thread 由 app-server 30 分钟自动卸载（与现有 idleTimeout 语义对齐），AnyPlane 只负责断开订阅，**不 kill 进程**。
 - 已核实的坑：
   - **workspace-write 沙箱下 `.git` 只读**（实验实测 commit 报 128)——默认 spawn 配置需放开 .git 或用 `dangerFullAccess`/自定义 permission profile;UI 要暴露这个选择。
   - paginated thread 单进程写锁：用户在 TUI/VSCode 开着同一 thread 时 `thread/resume` 报 `-32600`,UI 显示"被占用"。
@@ -92,7 +92,7 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
 - `POST /api/handoff { fromKey, toBackend, detail: 'brief'|'standard'|'detailed' }`:
   1. 源后端 fork 摘要：Claude 用现有 `/btw` 机制（`--fork-session --resume` 一次性问答）;Codex 用 `thread/fork ephemeral:true` + `turn/start`。提示词要求输出：项目目标/进度/对话内决策/文件清单/下一步。
   2. 创建目标会话：首条 user 消息 = 简报 + "你在 \<cwd\> 接替另一个 agent，先用 git status/diff 和关键文件确认现场再动手"。(Claude 也可叠加 `--append-system-prompt-file`;Codex 可叠加 `developer_instructions`，首消息方案为最通用实现。)
-  3. 血缘写 `~/.cc-remote/lineage.json`（源 key→目标 key、时间、简报、源 token 统计）。
+  3. 血缘写 `~/.anyplane/lineage.json`（源 key→目标 key、时间、简报、源 token 统计）。
 - UI：会话页"接力"按钮（可选简报详细度）；接力链渲染为虚拟时间线，段间用 compact_boundary 同款分隔线（"⚡ 接力 Claude→Codex · 简报 N tokens")；双向互链。
 - 提示文案诚实标注：目标 agent 首轮需重建上下文（读现场），给出源会话 token 统计供参考。
 - 验收：`server/scripts/e2e-handoff.ts` 双向各一次，断言目标会话产出了与"对话内隐藏设计"一致的行为（复刻本次实验）。

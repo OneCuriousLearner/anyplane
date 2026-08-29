@@ -58,9 +58,9 @@ export function ModeBadge() {
   const [hoverSlot, setHoverSlot] = useState<SnapSlot | null>(null)
 
   useEffect(() => {
-    document.title = 'DEV · cc-remote'
+    document.title = 'DEV · AnyPlane'
     return () => {
-      document.title = 'cc-remote'
+      document.title = 'AnyPlane'
     }
   }, [])
 

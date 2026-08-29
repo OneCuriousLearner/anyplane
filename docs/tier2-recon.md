@@ -11,7 +11,7 @@
 | codex | `turn/start` input 加 `{type:'localImage', path}` | ✅ 实测通过（模型答"红"）。注意：`{type:'image', url:'data:...'}` 在 DeepSeek provider 下模型声称看不到图（供应商/通道不支持），**codex 侧一律走 localImage**：浏览器上传 → 服务端写临时文件 → 传路径 |
 
 实现要点：
-- WS `user` 消息扩展 `attachments: [{name, mediaType, dataBase64}]`；claude 直接并进 content blocks；codex 服务端写 `~/.cc-remote/uploads/<uuid>.<ext>` 后用 localImage，引用计数/定期清理
+- WS `user` 消息扩展 `attachments: [{name, mediaType, dataBase64}]`；claude 直接并进 content blocks；codex 服务端写 `~/.anyplane/uploads/<uuid>.<ext>` 后用 localImage，引用计数/定期清理
 - 前端：输入区加附件按钮（手机相册/拍照），消息块渲染图片缩略（HistoryBlock 加 image 类型；历史里 claude 有 base64 原文、codex 只有路径——缩略图渲染要分别处理，v1 历史里显示 `[图片]` 占位即可）
 - 模型能力检测：codex `model/list` 的 `inputModalities` 有 image 时才显示按钮（deepseek-v4-flash 标称支持但 dataURL 实测失效，localImage 兜底）
 
@@ -43,7 +43,7 @@
 ## 4. fleet 管理（归档/删除）—— codex 已实测，claude 需自建语义
 
 - codex：`thread/archive` / `thread/unarchive` / `thread/delete` 实测往返正常（archive 后从主列表消失、进 archived 列表、unarchive 回来）。直接可做
-- claude：官方无归档概念，只能自己做：移动 jsonl 到 `~/.claude/projects/<slug>/archived/`（自定目录，官方不认识它，无冲突）或移到 cc-remote 自己的归档区。**风险**：官方 CLI 正在运行该会话时绝不能动（与改名同边界：仅离线会话）；删除 = 物理删除 jsonl（建议先进回收站目录）
+- claude：官方无归档概念，只能自己做：移动 jsonl 到 `~/.claude/projects/<slug>/archived/`（自定目录，官方不认识它，无冲突）或移到 AnyPlane 自己的归档区。**风险**：官方 CLI 正在运行该会话时绝不能动（与改名同边界：仅离线会话）；删除 = 物理删除 jsonl（建议先进回收站目录）
 - UI：SessionList 行长按/右键菜单（归档/删除），codex 会话有 archived 分组
 
 ## 顺带的发现（非第二梯队，但值得知道）

@@ -4,9 +4,9 @@ import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-/** cc-remote 运行数据根目录（~/.cc-remote/，约定见 AGENTS.md）；权限收紧由 ensurePrivateDir 完成 */
+/** anyplane 运行数据根目录（~/.anyplane/，约定见 AGENTS.md）；权限收紧由 ensurePrivateDir 完成 */
 export function ccDataDir(): string {
-  return ensurePrivateDir(join(homedir(), '.cc-remote'))
+  return ensurePrivateDir(join(homedir(), '.anyplane'))
 }
 
 /** 读 JSON 文件；不存在或解析失败返回 undefined（调用方决定回退值） */
@@ -24,7 +24,7 @@ export function errorMessage(e: unknown): string {
 }
 
 /**
- * ~/.cc-remote 下的私有数据目录：递归创建并把 .cc-remote 根到目标的每层收紧为 700
+ * ~/.anyplane 下的私有数据目录：递归创建并把 .anyplane 根到目标的每层收紧为 700
  *（vapid 私钥、推送订阅注册表、接力血缘简报、reasoning 侧车、网关 TLS 私钥都落在这里）。
  * mkdir 的 mode 只对新建目录生效，旧版本已建出的 755 目录靠 chmod 逐段兜底；
  * chmod 在 Windows 上语义有限，失败静默（NTFS 另有权限模型）。
@@ -32,7 +32,7 @@ export function errorMessage(e: unknown): string {
 export function ensurePrivateDir(dir: string): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const parts = dir.split(/[\\/]/)
-  const base = parts.lastIndexOf('.cc-remote')
+  const base = parts.lastIndexOf('.anyplane')
   const targets: string[] = []
   if (base >= 0) {
     for (let i = base; i < parts.length; i++) targets.push(parts.slice(0, i + 1).join('/'))
@@ -48,7 +48,7 @@ export function ensurePrivateDir(dir: string): string {
 }
 
 /** Bun <=1.3.14 在 Windows 存在监听 socket 被子进程继承的 bug（oven-sh/bun#36936）；
- *  server 与 scripts/dev.ts 启动时都以本判定拒绝启动（CC_REMOTE_ALLOW_UNSAFE_BUN=1 可跳过） */
+ *  server 与 scripts/dev.ts 启动时都以本判定拒绝启动（ANYPLANE_ALLOW_UNSAFE_BUN=1 可跳过） */
 export function hasWindowsSocketFix(): boolean {
   const [major = 0, minor = 0, patch = 0] = Bun.version.split(/[.-]/).map(Number)
   return (

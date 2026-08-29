@@ -23,7 +23,7 @@ describe('isCodexKey / isExistingKey', () => {
 
 describe('slugOf（与服务端 discovery.sanitizePath 一致）', () => {
   test('非字母数字全部转 -', () => {
-    expect(slugOf('/data/workspace/cc-remote')).toBe('-data-workspace-cc-remote')
+    expect(slugOf('/data/workspace/anyplane')).toBe('-data-workspace-anyplane')
     expect(slugOf('C:\\Users\\name\\项目')).toBe('C--Users-name---')
   })
 })
@@ -45,10 +45,10 @@ describe('sessionFromKey', () => {
   })
 
   test('b| 三段式 → 懒分叉：cwd 解码 + slug 重算', () => {
-    const s = sessionFromKey('b|%2Fdata%2Fworkspace%2Fcc-remote|source-sid')
+    const s = sessionFromKey('b|%2Fdata%2Fworkspace%2Fanyplane|source-sid')
     expect(s).toMatchObject({
-      cwd: '/data/workspace/cc-remote',
-      slug: '-data-workspace-cc-remote',
+      cwd: '/data/workspace/anyplane',
+      slug: '-data-workspace-anyplane',
       sessionId: 'source-sid',
       backend: 'claude',
     })

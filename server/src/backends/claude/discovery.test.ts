@@ -18,7 +18,7 @@ function line(obj: Record<string, unknown>): string {
 }
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), 'cc-remote-discovery-'))
+  dir = mkdtempSync(join(tmpdir(), 'anyplane-discovery-'))
   savedConfigDir = config.claudeConfigDir
   config.claudeConfigDir = dir
   const projectDir = join(dir, 'projects', SLUG)

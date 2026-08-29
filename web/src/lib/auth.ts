@@ -1,7 +1,7 @@
 // 访问令牌管理：URL ?token= 首次注入 → localStorage 持久化 → 从地址栏抹除。
 // 服务端未配置 authToken 时令牌为空即可（不鉴权）。
 
-const STORAGE_KEY = 'cc-remote-token'
+const STORAGE_KEY = 'anyplane-token'
 
 export function getToken(): string | null {
   const q = new URLSearchParams(location.search).get('token')

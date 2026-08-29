@@ -1,4 +1,4 @@
-// Transcript tailer：tail 未被 cc-remote spawn 的外部会话（如终端里跑着的交互式 claude）
+// Transcript tailer：tail 未被 anyplane spawn 的外部会话（如终端里跑着的交互式 claude）
 // 的 transcript JSONL，把新追加的完整消息实时推给浏览器。
 // 粒度是「完整消息」而非 token 增量——token 级流式只有 spawn 路径（stream-json 协议）才有。
 

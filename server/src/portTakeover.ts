@@ -3,7 +3,7 @@
 // 任一不明一律拒绝并打印手动指引——宁可启动失败，绝不误杀外来进程。
 // 平台：Linux(ss+/proc) 与 macOS(lsof+ps) 支持自动接管；Windows 首版仅提示手动命令
 //（Bun socket 继承 bug 的历史雷区，自动杀不值当）。
-// CC_REMOTE_PORT_TAKEOVER=0 可整体关闭（回退为旧行为：端口被占直接报错）。
+// ANYPLANE_PORT_TAKEOVER=0 可整体关闭（回退为旧行为：端口被占直接报错）。
 
 import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -137,7 +137,7 @@ export async function takeoverStaleListeners(
   port: number,
   isOurs: (desc: PidDesc) => boolean,
 ): Promise<TakeoverResult> {
-  if (process.env.CC_REMOTE_PORT_TAKEOVER === '0') return 'noop'
+  if (process.env.ANYPLANE_PORT_TAKEOVER === '0') return 'noop'
   const pids = await listListenPids(port)
   // 平台不支持时静默返回：dev.ts 是启动前预防性调用（端口可能根本没被占），不该产生噪音；
   // index.ts 只在 EADDRINUSE 后调用，走到原报错路径即可（Windows 指引已有）。

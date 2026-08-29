@@ -179,7 +179,7 @@ export async function renameSession(key: string, title: string): Promise<void> {
   if (!r.ok) throw await apiError(r)
 }
 
-/** 归档（回收站语义，无物理删除）：claude 移入 ~/.cc-remote/trash；codex 走官方 thread/archive */
+/** 归档（回收站语义，无物理删除）：claude 移入 ~/.anyplane/trash；codex 走官方 thread/archive */
 export async function archiveSession(key: string): Promise<void> {
   const r = await postJson('/api/sessions/archive', { key })
   if (!r.ok) throw await apiError(r)

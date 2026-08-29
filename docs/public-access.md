@@ -1,10 +1,10 @@
 # 公网接入配方（不自购云服务器）
 
-> 目标：手机在蜂窝网络下经公网 URL 使用 cc-remote（含锁屏推送与通知直接审批）。
+> 目标：手机在蜂窝网络下经公网 URL 使用 AnyPlane（含锁屏推送与通知直接审批）。
 > 三套方案都不需要自购 VPS；共同前提是**必须配置 `authToken`**——服务端只绑回环时它不强制，
 > 但暴露发生在反代/隧道层，token 是公网上的唯一防线（另见文末「安全红线」）。
 
-cc-remote 是单端口服务（7480 同时托管静态前端 + REST + WebSocket），三套方案都只是把
+AnyPlane 是单端口服务（7480 同时托管静态前端 + REST + WebSocket），三套方案都只是把
 `127.0.0.1:7480` 安全地暴露出去，服务端本身零改动。
 
 ## 先懂两条路：为什么"通知到了、按钮却点不动"
@@ -12,8 +12,8 @@ cc-remote 是单端口服务（7480 同时托管静态前端 + REST + WebSocket�
 推送链路和审批回执是**两条方向相反、互不相干的路径**：
 
 ```
-通知投递：cc-remote →（出方向）→ 推送服务（ntfy.sh/FCM/APNs/微信）→ 手机
-审批回执：手机 →（入方向）→ publicUrl 上的 cc-remote → /api/approval-action
+通知投递：AnyPlane →（出方向）→ 推送服务（ntfy.sh/FCM/APNs/微信）→ 手机
+审批回执：手机 →（入方向）→ publicUrl 上的 AnyPlane → /api/approval-action
 ```
 
 通知能不能**收到**，只取决于服务器出方向能否到达推送服务——这部分在任何网络下都成立。
@@ -58,18 +58,18 @@ cloudflared tunnel --url http://localhost:7480
 
 ```bash
 cloudflared tunnel login
-cloudflared tunnel create cc-remote
+cloudflared tunnel create AnyPlane
 # ~/.cloudflared/<tunnel-id>.json 凭据 + 下面 config.yml
 cat > ~/.cloudflared/config.yml <<'EOF'
 tunnel: <tunnel-id>
 credentials-file: /root/.cloudflared/<tunnel-id>.json
 ingress:
-  - hostname: cc-remote.example.com
+  - hostname: AnyPlane.example.com
     service: http://localhost:7480
   - service: http_status:404
 EOF
-cloudflared tunnel route dns cc-remote cc-remote.example.com
-cloudflared tunnel run cc-remote   # 或装成系统服务：cloudflared service install
+cloudflared tunnel route dns AnyPlane AnyPlane.example.com
+cloudflared tunnel run AnyPlane   # 或装成系统服务：cloudflared service install
 ```
 
 - TLS 在 **CF 边缘终止**（CF 可见明文）——换来 Access（身份感知代理，比 token 多一层登录）、
@@ -89,12 +89,12 @@ cloudflared tunnel run cc-remote   # 或装成系统服务：cloudflared service
 1. **确认有公网 v6**：`ip -6 addr` 出现非 `fe80::`/ULA 段，且与 https://test-ipv6.com 显示一致。
 2. **放行入站**：光猫桥接或路由器防火墙放行本机 v6 的 8443（注意：家宽 80/443 入站常被
    运营商过滤，所以用 8443 这类非常规端口）；本机防火墙同步放行。
-3. **DDNS**：ddns-go（支持 DNSPod/阿里/CF，检测到 v6 变化自动改记录）指向 `cc-remote.example.com`。
+3. **DDNS**：ddns-go（支持 DNSPod/阿里/CF，检测到 v6 变化自动改记录）指向 `AnyPlane.example.com`。
 4. **Caddy 反代 + 自动证书**（Let's Encrypt 的 HTTP-01/TLS-ALPN-01 都支持 v6）：
 
    ```
    # Caddyfile
-   cc-remote.example.com:8443 {
+   AnyPlane.example.com:8443 {
      reverse_proxy 127.0.0.1:7480
    }
    ```
@@ -109,7 +109,7 @@ cloudflared tunnel run cc-remote   # 或装成系统服务：cloudflared service
   「非回环绑定强制 token」的启动检查帮不到你——暴露发生在隧道/反代层，token 全靠自觉。
   同理，公网模式下 `bun run gateway` 不要带 `--insecure`（那是纯内网的用法）。
 - 知道你在暴露什么：`GET /api/fs/list` 会给出本机目录结构，「任意目录起会话 ≈ 任意命令执行」。
-  cc-remote 的控制面权限等于本机 shell，token 泄露 = 机器失守。
+  AnyPlane 的控制面权限等于本机 shell，token 泄露 = 机器失守。
 - 不要绕过 TLS：不要 `host: 0.0.0.0` + 裸 HTTP 直接暴露 7480。上面每套方案都有 TLS 终止层。
 - 推送能力 URL（`/api/approval-action` / `/api/approval-page`）按设计绕开 authToken——
   它只经端到端加密推送或你配置的 webhook 渠道投递，且仅对 pending 中的 requestId 有效。

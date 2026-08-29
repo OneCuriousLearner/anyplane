@@ -1,4 +1,4 @@
-// 图片上传落盘：~/.cc-remote/uploads/。
+// 图片上传落盘：~/.anyplane/uploads/。
 // 用户自行管理（不自动清理）；hash 命名去重，同名同内容不会重复占盘。
 
 import { createHash } from 'node:crypto'
@@ -18,7 +18,7 @@ export interface ImageAttachment {
 }
 
 export function uploadsDir(): string {
-  return ensurePrivateDir(join(homedir(), '.cc-remote', 'uploads'))
+  return ensurePrivateDir(join(homedir(), '.anyplane', 'uploads'))
 }
 
 const EXT_OF: Record<string, string> = {
