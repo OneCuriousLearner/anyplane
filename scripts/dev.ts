@@ -11,7 +11,7 @@ if (!hasWindowsSocketFix() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
   console.error(
     `[dev] Bun ${Bun.version} on Windows has a known inherited-listener bug (oven-sh/bun#36936).`,
   )
-  console.error('[dev] Run `bun upgrade --canary`, restart the terminal, then run `bun run dev` again.')
+  console.error('[dev] Run `bun upgrade` (need >= 1.4.0), restart the terminal, then run `bun run dev` again.')
   console.error('[dev] Refusing to start because another forced exit can create an unrecoverable stale port.')
   process.exit(1)
 }
@@ -75,7 +75,7 @@ async function stop(reason: string): Promise<void> {
 
   // Ctrl+C 是控制台事件，Windows 会同时发给同一控制台中的 server 和 Vite。
   // 不要立刻 proc.kill()/process.exit()：那会在 server.stop() 完成前硬杀 server，
-  // 并触发 Bun <=1.3.14 的监听 socket 继承问题。
+  // 并触发 Bun <=1.3.14（修复于 1.4.0）的监听 socket 继承问题。
   const graceful = Promise.all(exits)
   const result = await Promise.race([graceful, delay(5_000)])
 

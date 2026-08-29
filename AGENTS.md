@@ -10,7 +10,7 @@ AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code �
 
 ## 常用命令
 
-**本项目仅使用 Bun（>= 1.3.13；Windows 必须 1.3.15+ 或 canary）。绝不要用 npm / npx / yarn / pnpm。**
+**本项目仅使用 Bun（>= 1.3.13；Windows 必须 1.4.0+）。绝不要用 npm / npx / yarn / pnpm。**
 
 ```bash
 bun install          # 安装依赖（Bun workspaces: server + web）
@@ -94,7 +94,7 @@ bun test web/            # 仅前端测试
 
 ## Windows 平台注意事项
 
-- **Bun <= 1.3.14 存在监听 socket 被子进程继承的 bug**（oven-sh/bun#36936），服务端和 `scripts/dev.ts` 启动时都会检查版本并拒绝启动（可用 `ANYPLANE_ALLOW_UNSAFE_BUN=1` 跳过）。已形成的死 PID 监听需重启 Windows 才能释放。
+- **Bun <= 1.3.14 存在监听 socket 被子进程继承的 bug**（oven-sh/bun#36936），修复随 1.4.0 发布（1.3.15 稳定版从未发布）。服务端和 `scripts/dev.ts` 启动时都会检查版本并拒绝启动（可用 `ANYPLANE_ALLOW_UNSAFE_BUN=1` 跳过）。已形成的死 PID 监听需重启 Windows 才能释放。
 - `scripts/dev.ts` 故意不用 `bun --watch` 和 `bun run --cwd`：Windows watcher 会在异步 SIGINT 清理完成前杀掉 server；多层包装进程会吞 Ctrl+C。**不要用任务管理器强杀 server**，会绕过 `server.stop(true)` 与子进程树清理。
 - claude 在 Windows 可能是 `.cmd`/`.bat`（需 `cmd.exe /d /s /c` 包装）或 `.exe`；`resolveClaudeCommand()` 优先选真实存在的 `.exe`。
 

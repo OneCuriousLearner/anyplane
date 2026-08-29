@@ -1182,7 +1182,7 @@ if (!hasWindowsSocketFix() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
   console.error(
     `[anyplane] Bun ${Bun.version} on Windows has the inherited-listener bug oven-sh/bun#36936.`,
   )
-  console.error('[anyplane] Run `bun upgrade --canary` and restart the terminal. Server startup refused.')
+  console.error('[anyplane] Run `bun upgrade` (need >= 1.4.0) and restart the terminal. Server startup refused.')
   process.exit(1)
 }
 
@@ -1701,7 +1701,7 @@ try {
   logWindowsPortState('bind-failed', config.port)
   if (process.platform === 'win32') {
     console.error(
-      '[anyplane] 若 LISTENING PID 已不存在，通常是 Bun <=1.3.14 的 socket handle 继承问题；先升级 canary。已形成且找不到持有进程的绑定需重启 Windows 一次。',
+      '[anyplane] 若 LISTENING PID 已不存在，通常是 Bun <=1.3.14 的 socket handle 继承问题；升级到 1.4.0+。已形成且找不到持有进程的绑定需重启 Windows 一次。',
     )
   }
   process.exit(1)
@@ -1750,7 +1750,7 @@ async function shutdown(reason: string): Promise<void> {
   const started = performance.now()
   console.log(`[anyplane] shutdown begin reason=${reason} pid=${process.pid}`)
 
-  // 先发起 listener/连接关闭，再清 Claude 子进程。Bun <=1.3.14 在 Windows
+  // 先发起 listener/连接关闭，再清 Claude 子进程。Bun <=1.3.14（修复于 1.4.0）在 Windows
   // 会让这些子进程继承监听 handle；两边都完成前绝不能 process.exit()。
   let stopPromise: Promise<void>
   try {

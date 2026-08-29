@@ -45,7 +45,7 @@ Claude 侧 stdin/stdout 走双向 NDJSON（user 消息 + control_request/respons
 
 ## 运行
 
-要求：Bun >= 1.3.13（Windows 请用 1.3.15+ 或 canary，见下方说明），PATH 中有已登录的官方 `claude` CLI；使用 Codex 后端需要 PATH 中有 `codex` CLI（>= 0.147，服务端自动 spawn `codex app-server --stdio` 并按其配置认证）。支持 Windows 与 Linux。
+要求：Bun >= 1.3.13（Windows 请用 1.4.0+，见下方说明），PATH 中有已登录的官方 `claude` CLI；使用 Codex 后端需要 PATH 中有 `codex` CLI（>= 0.147，服务端自动 spawn `codex app-server --stdio` 并按其配置认证）。支持 Windows 与 Linux。
 
 **本项目仅使用 Bun，请勿使用 npm / npx / yarn / pnpm。** 依赖安装、脚本与运行时一律走 `bun`；用 npm 会产生错误的 lockfile、错误的进程树，并在 Windows 上更容易留下僵尸端口。
 
@@ -109,9 +109,10 @@ bun run gateway      # 对外 80/443 网关（见下方「域名访问」）
   - 手动验证：配置后重启服务端，让某会话触发一次审批（如让它写文件），观察 ntfy app / Bark / 微信是否收到并能否一键裁决；**铃铛面板的"测试通知"按钮**可向全部订阅与 webhook 通道一键发测试推送（返回分通道送达计数），不必触发真实审批。
 - 跨网段访问**不自建公网穿透**：三套免 VPS 配方（Tailscale funnel / Cloudflare Tunnel / 家宽 IPv6+DDNS）见 [`docs/public-access.md`](docs/public-access.md)，含安全红线与手机蜂窝网络验收清单
 - spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号
-- Windows 请使用 Bun 1.3.15+。Bun 1.3.14 及更早版本存在监听 socket 被子进程继承的问题
-  ([oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936))；1.3.15 发布前可用
-  `bun upgrade --canary` 获取已合并的修复。已经产生的死 PID 监听通常需要重启一次 Windows 才能释放。
+- Windows 请使用 Bun 1.4.0+。Bun 1.3.x 及更早版本存在监听 socket 被子进程继承的问题
+  ([oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936))；修复已随 1.4.0 发布
+  （1.3.15 稳定版从未发布，Bun 由 1.3.14 直接跳到 1.4.0）。
+  已经产生的死 PID 监听通常需要重启一次 Windows 才能释放。
 - `bun run dev` 使用纯 Bun 启动器并等待 server 完成优雅关闭；不要用任务管理器直接结束 server，
   否则可能绕过 `server.stop(true)` 与 Claude 子进程树清理。
 
