@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="docs/AnyPlane-icon.png" width="64" height="64" alt="AnyPlane" />
+</p>
+
 # AnyPlane
+
+> Run your agents, on any plane.
 
 Claude Code / Codex 远程工作管理工具：在手机（或桌面）浏览器中管理运行在本机/容器上的官方 Claude Code 与 Codex 会话。
 

@@ -1,20 +1,13 @@
-<svg viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-  <polygon fill="currentColor" 
-  points="
-  133.333333 0,
-  0 320,
-  53.333333 320,
-  186.666667 0,
-  157.942136 59.759349,
-  226.666667 224.059359,
-  206.111542 273.333333,
-  138.538623 111.164095,
-  120 160,
-  186.666667 320,
-  253.333333 320,
-  286.666667 240,
-  186.666667 0,
-  160 0
-  " 
-  />
+<svg viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg">
+  <!-- AnyPlane icon: A/P ambigram.
+       Grid: stroke edges ±1:2.4, tip cuts -3:8, slit = 0.8x stroke width.
+       Apex plateau centered on x=160; content bbox = x:32..261.33, y:32..288.
+       Full-bleed square variant (avatars, og:image): viewBox="32 32 256 256"
+       — top/bottom/left flush, plateau stays centered, 26.67 gap on the right. -->
+  <path fill="currentColor" fill-rule="evenodd" d="
+    M 138.67 32
+    L 32 288 L 74.67 288 L 122.67 172.8 L 170.67 288
+    L 234.67 288 L 261.33 224 L 181.33 32 L 160 32 Z
+    M 160 83.2 L 213.33 211.2 L 197.16 254.32 L 142.93 124.16 Z
+  "/>
 </svg>

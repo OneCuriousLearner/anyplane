@@ -298,7 +298,7 @@ export function SessionList(props: {
       <div className="border-b border-line bg-surface2 px-4 pb-3 pt-4">
         <div className="flex items-baseline justify-between">
           <h1 className="flex items-center gap-2 font-mono text-sm tracking-widest text-ink/80 uppercase">
-            <AnyPlaneMark className="h-4 w-4 text-ink/80" />
+            <AnyPlaneMark fullBleed className="h-4 w-4 text-ink/80" />
             AnyPlane
           </h1>
           <div className="flex items-center gap-2">

@@ -1,6 +1,9 @@
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { applyAnyPlaneFavicon } from './components/AnyPlaneMark'
 import './index.css'
+
+applyAnyPlaneFavicon()
 
 // PWA：最小 service worker（可安装到主屏；不做离线缓存）
 if ('serviceWorker' in navigator) {
