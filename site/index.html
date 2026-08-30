@@ -54,13 +54,24 @@
   .mark { width: 1.5rem; height: 1.5rem; color: var(--ink); flex: none; }
   .mark svg { width: 100%; height: 100%; display: block; }
   .wordmark { font: 600 .95rem var(--display); letter-spacing: .14em; }
-  header nav { margin-left: auto; display: flex; gap: .6rem; }
+  header nav { margin-left: auto; display: flex; gap: .6rem; align-items: center; }
   .pill {
     font: 600 .78rem var(--mono); text-decoration: none; color: var(--dim);
     background: var(--glass); border: 1px solid var(--hair); border-radius: 999px;
     padding: .34rem .95rem; transition: color .15s, background .15s;
   }
   .pill:hover { color: var(--ink); background: var(--glass-2); }
+  .langswitch {
+    display: flex; background: var(--glass); border: 1px solid var(--hair);
+    border-radius: 999px; overflow: hidden;
+  }
+  .langswitch button {
+    font: 600 .72rem var(--mono); color: var(--faint); background: none; border: 0;
+    padding: .36rem .62rem; cursor: pointer; transition: color .15s, background .15s;
+  }
+  .langswitch button + button { border-left: 1px solid var(--hair); }
+  .langswitch button.on { color: var(--ink); background: var(--glass-2); }
+  .langswitch button:hover { color: var(--ink); }
 
   /* ---------- hero ---------- */
   .hero { position: relative; padding: 5.5rem 0 4rem; overflow: hidden; }
@@ -78,6 +89,7 @@
     font: 700 clamp(2.6rem, 6.5vw, 4.6rem)/1.04 var(--display);
     letter-spacing: -.02em; max-width: 14ch;
   }
+  html[lang^="zh"] h1 { max-width: none; }
   h1 em { font-style: normal; color: var(--dim); }
   .lede { margin-top: 1.4rem; max-width: 44rem; color: var(--dim); font-size: 1.06rem; }
   .lede strong { color: var(--ink); font-weight: 600; }
@@ -199,6 +211,10 @@
     .manual .k { min-width: 0; }
     .manual li { flex-direction: column; gap: .25rem; }
   }
+  @media (max-width: 560px) {
+    .wordmark { display: none; }
+    .pill { padding: .3rem .7rem; }
+  }
   @media (prefers-reduced-motion: reduce) {
     *, .dot, .board-head .livedot { animation: none !important; }
     html { scroll-behavior: auto; }
@@ -214,6 +230,9 @@
     </span>
     <span class="wordmark">ANYPLANE</span>
     <nav>
+      <div class="langswitch" role="group" aria-label="Language / 语言">
+        <button type="button" data-lang="en">EN</button><button type="button" data-lang="zh-CN">简</button><button type="button" data-lang="zh-TW">繁</button>
+      </div>
       <a class="pill" href="https://github.com/OneCuriousLearner/anyplane">GitHub</a>
       <a class="pill" href="https://www.npmjs.com/package/anyplane">npm</a>
     </nav>
@@ -224,9 +243,9 @@
   <!-- HERO -->
   <div class="hero">
     <div class="wrap">
-      <p class="eyebrow">SELF-HOSTED · VENDOR-NEUTRAL · MIT</p>
-      <h1>Run your agents,<br><em>on any plane.</em></h1>
-      <p class="lede">
+      <p class="eyebrow" data-i18n="eyebrow">SELF-HOSTED · VENDOR-NEUTRAL · MIT</p>
+      <h1 data-i18n="h1">Run your agents,<br><em>on any plane.</em></h1>
+      <p class="lede" data-i18n="lede">
         AnyPlane is a <strong>control tower for the coding agents on your own machine</strong> —
         Claude Code and Codex sessions, structured approvals and push notifications,
         from any browser or phone. No vendor cloud in the middle:
@@ -236,22 +255,22 @@
       <div class="board" role="img" aria-label="Stylized session board: two Claude Code and two Codex sessions, one awaiting approval">
         <div class="board-head">
           <span class="livedot"></span>
-          <span>ANYPLANE TOWER — LOCAL SESSIONS</span>
+          <span data-i18n="board.head">ANYPLANE TOWER — LOCAL SESSIONS</span>
           <span class="clock" id="clock">00:00:00</span>
         </div>
         <div class="rows" id="rows">
-          <div class="row"><span class="flight">CC-6F2A</span><span class="runtime">CLAUDE CODE</span><span class="status"><span class="dot on"></span><span class="st">RUNNING</span></span><span class="gate">GATE A1</span></div>
-          <div class="row clearance"><span class="flight">CX-0147</span><span class="runtime">CODEX</span><span class="status"><span class="dot red"></span><span class="st">AWAITING CLEARANCE</span></span><span class="gate">TAP TO APPROVE</span></div>
-          <div class="row"><span class="flight">CC-91D3</span><span class="runtime">CLAUDE CODE</span><span class="status"><span class="dot"></span><span class="st">IDLE</span></span><span class="gate">GATE B2</span></div>
-          <div class="row"><span class="flight">CX-00E9</span><span class="runtime">CODEX</span><span class="status"><span class="dot on"></span><span class="st">RUNNING</span></span><span class="gate">GATE B3</span></div>
+          <div class="row"><span class="flight">CC-6F2A</span><span class="runtime">CLAUDE CODE</span><span class="status"><span class="dot on"></span><span class="st" data-i18n="st.running">RUNNING</span></span><span class="gate">GATE A1</span></div>
+          <div class="row clearance"><span class="flight">CX-0147</span><span class="runtime">CODEX</span><span class="status"><span class="dot red"></span><span class="st" data-i18n="st.clearance">AWAITING CLEARANCE</span></span><span class="gate" data-i18n="gate.approve">TAP TO APPROVE</span></div>
+          <div class="row"><span class="flight">CC-91D3</span><span class="runtime">CLAUDE CODE</span><span class="status"><span class="dot"></span><span class="st" data-i18n="st.idle">IDLE</span></span><span class="gate">GATE B2</span></div>
+          <div class="row"><span class="flight">CX-00E9</span><span class="runtime">CODEX</span><span class="status"><span class="dot on"></span><span class="st" data-i18n="st.running2">RUNNING</span></span><span class="gate">GATE B3</span></div>
         </div>
       </div>
 
       <div class="install">
         <span class="cmd"><span class="dollar">$</span> bunx anyplane
-          <button class="copy" id="copy" type="button">COPY</button>
+          <button class="copy" id="copy" type="button" data-i18n="copy">COPY</button>
         </span>
-        <span class="note">→ listening on http://localhost:7480</span>
+        <span class="note" data-i18n="install.note">→ listening on http://localhost:7480</span>
       </div>
     </div>
   </div>
@@ -259,22 +278,22 @@
   <!-- GATES -->
   <section>
     <div class="wrap">
-      <p class="sec-label">WHAT THE TOWER CLEARS</p>
+      <p class="sec-label" data-i18n="sec.gates">WHAT THE TOWER CLEARS</p>
       <div class="gates">
         <div class="gate-card">
           <span class="gate-tag">GATE A</span>
-          <h3>One tower, two runtimes</h3>
-          <p>Claude Code and Codex share a single structured message boundary. Approve, rewind, branch, hand off between agents — the same gestures for both, with zero frontend forks.</p>
+          <h3 data-i18n="gateA.h">One tower, two runtimes</h3>
+          <p data-i18n="gateA.p">Claude Code and Codex share a single structured message boundary. Approve, rewind, branch, hand off between agents — the same gestures for both, with zero frontend forks.</p>
         </div>
         <div class="gate-card">
           <span class="gate-tag">GATE B</span>
-          <h3>Clearance from the lock screen</h3>
-          <p>Approvals arrive as push notifications you can rule on without opening the page — capability URLs carry a one-tap secret. Web Push, ntfy, Bark and Server酱 channels included.</p>
+          <h3 data-i18n="gateB.h">Clearance from the lock screen</h3>
+          <p data-i18n="gateB.p">Approvals arrive as push notifications you can rule on without opening the page — capability URLs carry a one-tap secret. Web Push, ntfy, Bark and Server酱 channels included.</p>
         </div>
         <div class="gate-card">
           <span class="gate-tag">GATE C</span>
-          <h3>Your tower, your rules</h3>
-          <p>Self-hosted and vendor-neutral. Transcripts stay on disk, tokens stay local, no account, no relay. Works with API-key and gateway setups the official remotes exclude.</p>
+          <h3 data-i18n="gateC.h">Your tower, your rules</h3>
+          <p data-i18n="gateC.p">Self-hosted and vendor-neutral. Transcripts stay on disk, tokens stay local, no account, no relay. Works with API-key and gateway setups the official remotes exclude.</p>
         </div>
       </div>
     </div>
@@ -283,12 +302,12 @@
   <!-- FLIGHT MANUAL -->
   <section>
     <div class="wrap">
-      <p class="sec-label">FLIGHT MANUAL — WHAT THE PROTOCOL DEPTH BUYS</p>
+      <p class="sec-label" data-i18n="sec.manual">FLIGHT MANUAL — WHAT THE PROTOCOL DEPTH BUYS</p>
       <ul class="manual">
-        <li><span class="k">stream-json control</span><span>Claude Code's own headless protocol — sessions, approvals, model switching, rewind — driven natively, not screen-scraped.</span></li>
-        <li><span class="k">app-server JSON-RPC</span><span>Codex threads over its official app-server, translated into one message shape so the UI never forks.</span></li>
-        <li><span class="k">rewind · branch · handoff</span><span>Roll back files or conversation, lazy-fork a session, or hand a summarized brief to another agent.</span></li>
-        <li><span class="k">push, self-rolled</span><span>VAPID (RFC 8292) and aes128gcm payloads (RFC 8291) implemented in-house — no push SDK, no third party reading your approvals.</span></li>
+        <li><span class="k" data-i18n="m1.k">stream-json control</span><span data-i18n="m1">Claude Code's own headless protocol — sessions, approvals, model switching, rewind — driven natively, not screen-scraped.</span></li>
+        <li><span class="k" data-i18n="m2.k">app-server JSON-RPC</span><span data-i18n="m2">Codex threads over its official app-server, translated into one message shape so the UI never forks.</span></li>
+        <li><span class="k" data-i18n="m3.k">rewind · branch · handoff</span><span data-i18n="m3">Roll back files or conversation, lazy-fork a session, or hand a summarized brief to another agent.</span></li>
+        <li><span class="k" data-i18n="m4.k">push, self-rolled</span><span data-i18n="m4">VAPID (RFC 8292) and aes128gcm payloads (RFC 8291) implemented in-house — no push SDK, no third party reading your approvals.</span></li>
       </ul>
     </div>
   </section>
@@ -296,29 +315,30 @@
   <!-- INSTALL -->
   <section>
     <div class="wrap">
-      <p class="sec-label">TAKEOFF</p>
+      <p class="sec-label" data-i18n="sec.takeoff">TAKEOFF</p>
       <div class="steps">
         <div class="step">
-          <h3>Run it</h3>
-          <pre><span class="c"># one command, front-end prebuilt</span>
+          <h3 data-i18n="step1.h">Run it</h3>
+          <pre data-i18n="step1.pre"><span class="c"># one command, front-end prebuilt (via bunx)</span>
 bunx anyplane
-<span class="c"># → http://localhost:7480</span></pre>
+<span class="c"># or straight from npm (Bun still required on PATH)</span>
+npm i -g anyplane</pre>
         </div>
         <div class="step">
-          <h3>Configure (optional)</h3>
-          <pre><span class="c"># ~/.anyplane/config.json</span>
+          <h3 data-i18n="step2.h">Configure (optional)</h3>
+          <pre data-i18n="step2.pre"><span class="c"># ~/.anyplane/config.json</span>
 { "host": "0.0.0.0", "authToken": "long-random" }
 <span class="c"># LAN access always requires a token.</span></pre>
         </div>
       </div>
-      <p class="req">REQUIRES — Bun ≥ 1.3.13 (Windows ≥ 1.4.0) · claude and/or codex CLI on PATH, logged in</p>
+      <p class="req" data-i18n="req">REQUIRES — Bun ≥ 1.3.13 (Windows ≥ 1.4.0) · claude and/or codex CLI on PATH, logged in</p>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <span>MIT · FORMERLY CC-REMOTE</span>
+    <span data-i18n="footer">MIT · FORMERLY CC-REMOTE</span>
     <div class="right">
       <a href="https://github.com/OneCuriousLearner/anyplane">GitHub</a>
       <a href="https://www.npmjs.com/package/anyplane">npm</a>
@@ -328,7 +348,142 @@ bunx anyplane
 </footer>
 
 <script>
-  // 塔台钟 + 航班状态翻面（纯装饰；reduced-motion 时全部静止）
+  // ---------- i18n（单文件内联字典；站点长大到多页面再拆文件） ----------
+  const I18N = {
+    en: {
+      'meta.title': 'AnyPlane — Run your agents, on any plane',
+      'eyebrow': 'SELF-HOSTED · VENDOR-NEUTRAL · MIT',
+      'h1': 'Run your agents,<br><em>on any plane.</em>',
+      'lede': 'AnyPlane is a <strong>control tower for the coding agents on your own machine</strong> — Claude Code and Codex sessions, structured approvals and push notifications, from any browser or phone. No vendor cloud in the middle: your agents, your machines, your model accounts, your network.',
+      'board.head': 'ANYPLANE TOWER — LOCAL SESSIONS',
+      'st.running': 'RUNNING', 'st.running2': 'RUNNING', 'st.idle': 'IDLE',
+      'st.clearance': 'AWAITING CLEARANCE', 'st.holding': 'HOLDING', 'st.pushback': 'PUSHBACK',
+      'gate.approve': 'TAP TO APPROVE',
+      'copy': 'COPY', 'copied': 'COPIED',
+      'install.note': '→ listening on http://localhost:7480',
+      'sec.gates': 'WHAT THE TOWER CLEARS',
+      'gateA.h': 'One tower, two runtimes',
+      'gateA.p': 'Claude Code and Codex share a single structured message boundary. Approve, rewind, branch, hand off between agents — the same gestures for both, with zero frontend forks.',
+      'gateB.h': 'Clearance from the lock screen',
+      'gateB.p': 'Approvals arrive as push notifications you can rule on without opening the page — capability URLs carry a one-tap secret. Web Push, ntfy, Bark and Server酱 channels included.',
+      'gateC.h': 'Your tower, your rules',
+      'gateC.p': 'Self-hosted and vendor-neutral. Transcripts stay on disk, tokens stay local, no account, no relay. Works with API-key and gateway setups the official remotes exclude.',
+      'sec.manual': 'FLIGHT MANUAL — WHAT THE PROTOCOL DEPTH BUYS',
+      'm1.k': 'stream-json control',
+      'm1': "Claude Code's own headless protocol — sessions, approvals, model switching, rewind — driven natively, not screen-scraped.",
+      'm2.k': 'app-server JSON-RPC',
+      'm2': 'Codex threads over its official app-server, translated into one message shape so the UI never forks.',
+      'm3.k': 'rewind · branch · handoff',
+      'm3': 'Roll back files or conversation, lazy-fork a session, or hand a summarized brief to another agent.',
+      'm4.k': 'push, self-rolled',
+      'm4': 'VAPID (RFC 8292) and aes128gcm payloads (RFC 8291) implemented in-house — no push SDK, no third party reading your approvals.',
+      'sec.takeoff': 'TAKEOFF',
+      'step1.h': 'Run it',
+      'step1.pre': '<span class="c"># one command, front-end prebuilt (via bunx)</span>\nbunx anyplane\n<span class="c"># or straight from npm (Bun still required on PATH)</span>\nnpm i -g anyplane',
+      'step2.h': 'Configure (optional)',
+      'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># LAN access always requires a token.</span>',
+      'req': 'REQUIRES — Bun ≥ 1.3.13 (Windows ≥ 1.4.0) · claude and/or codex CLI on PATH, logged in',
+      'footer': 'MIT · FORMERLY CC-REMOTE',
+    },
+    'zh-CN': {
+      'meta.title': 'AnyPlane — 你的 Agent，随地起降。',
+      'eyebrow': '自托管 · 厂商中立 · MIT',
+      'h1': '你的 Agent，<br><em>随地起降。</em>',
+      'lede': 'AnyPlane 是<strong>你本机 coding agent 的塔台</strong>——Claude Code 与 Codex 的会话、结构化审批与推送通知，都能在任意浏览器或手机上管理。中间不经过任何厂商的云：你的 agent、你的机器、你的模型账号、你的网络。',
+      'board.head': 'ANYPLANE 塔台 — 本地会话',
+      'st.running': '运行中', 'st.running2': '运行中', 'st.idle': '空闲',
+      'st.clearance': '等待放行', 'st.holding': '盘旋中', 'st.pushback': '推出中',
+      'gate.approve': '点击批准',
+      'copy': '复制', 'copied': '已复制',
+      'install.note': '→ 监听 http://localhost:7480',
+      'sec.gates': '塔台的放行范围',
+      'gateA.h': '一座塔台，两种运行时',
+      'gateA.p': 'Claude Code 与 Codex 共享同一条结构化消息边界。审批、回滚、分叉、接力——两个 agent 用同一套手势，前端零分叉。',
+      'gateB.h': '锁屏上直接放行',
+      'gateB.p': '审批以推送通知送达，无需打开页面即可裁决——能力 URL 携带一次性密钥。内置 Web Push、ntfy、Bark 与 Server酱通道。',
+      'gateC.h': '你的塔台，你的规则',
+      'gateC.p': '自托管、厂商中立。transcript 留在本地磁盘，token 留在本机，没有账号、没有中转。官方遥控排除的 API-key 与网关方案，这里照用。',
+      'sec.manual': '飞行手册 — 协议深度换来了什么',
+      'm1.k': 'stream-json 控制通道',
+      'm1': '直接驱动 Claude Code 官方 headless 协议——会话、审批、模型切换、回滚——而非屏幕抓取。',
+      'm2.k': 'app-server JSON-RPC',
+      'm2': 'Codex 会话走官方 app-server，翻译成同一种消息形状，UI 不分叉。',
+      'm3.k': '回滚 · 分叉 · 接力',
+      'm3': '回滚文件或对话、懒分叉会话，或让另一个 agent 带交接简报接续工作。',
+      'm4.k': '推送，自己造',
+      'm4': 'VAPID（RFC 8292）与 aes128gcm 载荷（RFC 8291）全部自实现——不用推送 SDK，没有第三方读得到你的审批。',
+      'sec.takeoff': '起飞',
+      'step1.h': '跑起来',
+      'step1.pre': '<span class="c"># 一条命令，前端已预构建（经 bunx）</span>\nbunx anyplane\n<span class="c"># 或直接从 npm 安装（仍需 PATH 中有 Bun）</span>\nnpm i -g anyplane',
+      'step2.h': '配置（可选）',
+      'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># 局域网访问必须配置 token。</span>',
+      'req': '运行要求 — Bun ≥ 1.3.13（Windows ≥ 1.4.0）· PATH 中有已登录的 claude 和/或 codex CLI',
+      'footer': 'MIT · 前身 CC-REMOTE',
+    },
+    'zh-TW': {
+      'meta.title': 'AnyPlane — 你的 Agent，隨地起降。',
+      'eyebrow': '自託管 · 廠商中立 · MIT',
+      'h1': '你的 Agent，<br><em>隨地起降。</em>',
+      'lede': 'AnyPlane 是<strong>你本機 coding agent 的塔台</strong>——Claude Code 與 Codex 的會話、結構化審批與推播通知，都能在任意瀏覽器或手機上管理。中間不經過任何廠商的雲端：你的 agent、你的機器、你的模型帳號、你的網路。',
+      'board.head': 'ANYPLANE 塔台 — 本地會話',
+      'st.running': '執行中', 'st.running2': '執行中', 'st.idle': '閒置',
+      'st.clearance': '等待放行', 'st.holding': '盤旋中', 'st.pushback': '推出中',
+      'gate.approve': '點選批准',
+      'copy': '複製', 'copied': '已複製',
+      'install.note': '→ 監聽 http://localhost:7480',
+      'sec.gates': '塔台的放行範圍',
+      'gateA.h': '一座塔台，兩種執行環境',
+      'gateA.p': 'Claude Code 與 Codex 共用同一條結構化訊息邊界。審批、回溯、分叉、接力——兩個 agent 用同一套手勢，前端零分叉。',
+      'gateB.h': '鎖定畫面直接放行',
+      'gateB.p': '審批以推播通知送達，無需開啟頁面即可裁決——能力 URL 攜帶一次性金鑰。內建 Web Push、ntfy、Bark 與 Server醬通道。',
+      'gateC.h': '你的塔台，你的規則',
+      'gateC.p': '自託管、廠商中立。transcript 留在本機磁碟，token 留在本機，沒有帳號、沒有中繼。官方遙控排除的 API-key 與閘道方案，這裡照用。',
+      'sec.manual': '飛行手冊 — 協定深度換來了什麼',
+      'm1.k': 'stream-json 控制通道',
+      'm1': '直接驅動 Claude Code 官方 headless 協定——會話、審批、模型切換、回溯——而非螢幕擷取。',
+      'm2.k': 'app-server JSON-RPC',
+      'm2': 'Codex 對話串走官方 app-server，翻譯成同一種訊息形狀，UI 不分叉。',
+      'm3.k': '回溯 · 分叉 · 接力',
+      'm3': '回溯檔案或對話、惰性分叉會話，或讓另一個 agent 帶交接簡報接續工作。',
+      'm4.k': '推播，自己造',
+      'm4': 'VAPID（RFC 8292）與 aes128gcm 酬載（RFC 8291）全部自行實作——不用推播 SDK，沒有第三方讀得到你的審批。',
+      'sec.takeoff': '起飛',
+      'step1.h': '跑起來',
+      'step1.pre': '<span class="c"># 一條指令，前端已預建置（經 bunx）</span>\nbunx anyplane\n<span class="c"># 或直接從 npm 安裝（仍需 PATH 中有 Bun）</span>\nnpm i -g anyplane',
+      'step2.h': '設定（可選）',
+      'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># 區網存取必須設定 token。</span>',
+      'req': '執行需求 — Bun ≥ 1.3.13（Windows ≥ 1.4.0）· PATH 中有已登入的 claude 和/或 codex CLI',
+      'footer': 'MIT · 前身 CC-REMOTE',
+    },
+  };
+
+  let lang = 'en';
+  function setLang(next) {
+    lang = I18N[next] ? next : 'en';
+    localStorage.setItem('anyplane-lang', lang);
+    document.documentElement.lang = lang;
+    document.title = I18N[lang]['meta.title'];
+    for (const el of document.querySelectorAll('[data-i18n]')) {
+      const v = I18N[lang][el.dataset.i18n];
+      if (v !== undefined) el.innerHTML = v;
+    }
+    for (const b of document.querySelectorAll('.langswitch button')) {
+      b.classList.toggle('on', b.dataset.lang === lang);
+    }
+  }
+  function detectLang() {
+    const saved = localStorage.getItem('anyplane-lang');
+    if (saved && I18N[saved]) return saved;
+    const n = (navigator.language || 'en').toLowerCase();
+    if (n.startsWith('zh')) return /tw|hk|mo|hant/.test(n) ? 'zh-TW' : 'zh-CN';
+    return 'en';
+  }
+  for (const b of document.querySelectorAll('.langswitch button')) {
+    b.addEventListener('click', () => setLang(b.dataset.lang));
+  }
+  setLang(detectLang());
+
+  // ---------- 塔台钟 + 航班状态翻面（纯装饰；reduced-motion 时全部静止） ----------
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clock = document.getElementById('clock');
   function tickClock() {
@@ -338,8 +493,8 @@ bunx anyplane
   if (!reduced) {
     setInterval(tickClock, 1000);
     const churn = [
-      { flight: 'CC-6F2A', states: ['RUNNING', 'HOLDING', 'RUNNING'] },
-      { flight: 'CX-00E9', states: ['RUNNING', 'PUSHBACK', 'RUNNING'] },
+      { flight: 'CC-6F2A', base: 'st.running', states: ['st.running', 'st.holding', 'st.running'] },
+      { flight: 'CX-00E9', base: 'st.running2', states: ['st.running', 'st.pushback', 'st.running'] },
     ];
     let i = 0;
     setInterval(() => {
@@ -348,17 +503,19 @@ bunx anyplane
         .find(r => r.querySelector('.flight').textContent === c.flight);
       if (!row) return;
       const st = row.querySelector('.st');
-      st.textContent = c.states[Math.floor(i / churn.length) % c.states.length];
+      const key = c.states[Math.floor(i / churn.length) % c.states.length];
+      st.textContent = I18N[lang][key];
       st.classList.remove('tick'); void st.offsetWidth; st.classList.add('tick');
     }, 5200);
   }
 
+  // ---------- 复制安装命令 ----------
   const btn = document.getElementById('copy');
   btn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText('bunx anyplane');
-      btn.textContent = 'COPIED';
-      setTimeout(() => (btn.textContent = 'COPY'), 1400);
+      btn.textContent = I18N[lang]['copied'];
+      setTimeout(() => (btn.textContent = I18N[lang]['copy']), 1400);
     } catch {
       btn.textContent = 'bunx anyplane';
     }
