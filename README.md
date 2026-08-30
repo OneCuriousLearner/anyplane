@@ -8,6 +8,8 @@
 
 Claude Code / Codex 远程工作管理工具：在手机（或桌面）浏览器中管理运行在本机/容器上的官方 Claude Code 与 Codex 会话。
 
+**官网 [anyplane.run](https://anyplane.run)**（国内访问可试 [anyplane.cn](https://anyplane.cn)） · npm 包 [`anyplane`](https://www.npmjs.com/package/anyplane)
+
 ## 原理
 
 不修改官方 CLI。服务端以子进程方式驱动两家 CLI 的 headless 协议：
