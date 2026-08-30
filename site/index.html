@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnyPlane — Run your agents, on any plane</title>
+<meta name="description" content="AnyPlane is a self-hosted, vendor-neutral control tower for your local coding agents. Drive Claude Code and Codex sessions, approvals and notifications from any browser or phone.">
+<meta property="og:title" content="AnyPlane — Run your agents, on any plane">
+<meta property="og:description" content="Self-hosted, vendor-neutral control tower for your local coding agents (Claude Code, Codex).">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://anyplane.run">
+<meta property="og:image" content="https://anyplane.run/icon-512.png">
+<link rel="icon" href='data:image/svg+xml,<svg viewBox="32 32 256 256" xmlns="http://www.w3.org/2000/svg"><path fill="%238c8c8c" fill-rule="evenodd" d="M 138.67 32 L 32 288 L 74.67 288 L 122.67 172.8 L 170.67 288 L 234.67 288 L 261.33 224 L 181.33 32 L 160 32 Z M 160 83.2 L 213.33 211.2 L 197.16 254.32 L 142.93 124.16 Z"/></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --glass: rgba(255,255,255,.04);
+    --glass-2: rgba(255,255,255,.07);
+    --ink: #f5f5f4;
+    --dim: #a1a1aa;
+    --faint: #6b6b72;
+    --hair: rgba(255,255,255,.09);
+    --red: #e5484d;
+    --r-block: 14px;
+    --display: "Space Grotesk", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: rgba(229,72,77,.35); }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 6px;
+  }
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.5rem; }
+
+  /* ---------- top bar ---------- */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    background: rgba(10,10,11,.6);
+    border-bottom: 1px solid var(--hair);
+  }
+  header .wrap { display: flex; align-items: center; gap: .7rem; height: 3.6rem; }
+  .mark { width: 1.5rem; height: 1.5rem; color: var(--ink); flex: none; }
+  .mark svg { width: 100%; height: 100%; display: block; }
+  .wordmark { font: 600 .95rem var(--display); letter-spacing: .14em; }
+  header nav { margin-left: auto; display: flex; gap: .6rem; }
+  .pill {
+    font: 600 .78rem var(--mono); text-decoration: none; color: var(--dim);
+    background: var(--glass); border: 1px solid var(--hair); border-radius: 999px;
+    padding: .34rem .95rem; transition: color .15s, background .15s;
+  }
+  .pill:hover { color: var(--ink); background: var(--glass-2); }
+
+  /* ---------- hero ---------- */
+  .hero { position: relative; padding: 5.5rem 0 4rem; overflow: hidden; }
+  .hero::before {  /* 唯一的氛围光：让玻璃有东西可糊 */
+    content: ""; position: absolute; inset: -20% -30% auto; height: 130%;
+    background: radial-gradient(45% 55% at 50% 0%, rgba(255,255,255,.055), transparent 70%);
+    pointer-events: none;
+  }
+  .eyebrow {
+    font: 600 .72rem var(--mono); letter-spacing: .22em; color: var(--faint);
+    display: flex; align-items: center; gap: .8rem; margin-bottom: 1.6rem;
+  }
+  .eyebrow::before { content: ""; width: 2.2rem; height: 1px; background: var(--faint); }
+  h1 {
+    font: 700 clamp(2.6rem, 6.5vw, 4.6rem)/1.04 var(--display);
+    letter-spacing: -.02em; max-width: 14ch;
+  }
+  h1 em { font-style: normal; color: var(--dim); }
+  .lede { margin-top: 1.4rem; max-width: 44rem; color: var(--dim); font-size: 1.06rem; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- the tower board (signature) ---------- */
+  .board {
+    margin-top: 3rem; border-radius: var(--r-block);
+    background: var(--glass); border: 1px solid var(--hair);
+    backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+    overflow: hidden;
+  }
+  .board-head {
+    display: flex; align-items: center; gap: 1rem;
+    padding: .85rem 1.2rem; border-bottom: 1px solid var(--hair);
+    font: 600 .72rem var(--mono); letter-spacing: .18em; color: var(--faint);
+  }
+  .board-head .clock { margin-left: auto; color: var(--dim); letter-spacing: .1em; }
+  .board-head .livedot {
+    width: .45rem; height: .45rem; border-radius: 50%; background: var(--ink);
+    animation: blink 2.4s infinite;
+  }
+  .rows { font: .86rem/1 var(--mono); }
+  .row {
+    display: grid; grid-template-columns: 7.5rem 9rem 1fr auto;
+    align-items: center; gap: 1rem; padding: .8rem 1.2rem;
+    border-bottom: 1px solid rgba(255,255,255,.045);
+    color: var(--dim);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row .flight { color: var(--ink); font-weight: 600; letter-spacing: .06em; }
+  .row .status { display: flex; align-items: center; gap: .55rem; letter-spacing: .08em; }
+  .dot { width: .45rem; height: .45rem; border-radius: 50%; background: var(--faint); flex: none; }
+  .dot.on { background: var(--ink); }
+  .dot.red { background: var(--red); animation: blink 1.1s infinite; }
+  .row .gate { color: var(--faint); letter-spacing: .08em; }
+  .row.clearance { color: var(--ink); }
+  .row.clearance .gate { color: var(--red); }
+  .tick { animation: tick .5s ease; }
+  @keyframes tick {
+    0% { transform: translateY(.45em); opacity: 0; }
+    100% { transform: none; opacity: 1; }
+  }
+  @keyframes blink { 50% { opacity: .25; } }
+
+  /* ---------- install chip ---------- */
+  .install { margin-top: 2.2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
+  .cmd {
+    display: inline-flex; align-items: center; gap: .9rem;
+    font: 600 1rem var(--mono); color: var(--ink);
+    background: var(--glass-2); border: 1px solid var(--hair); border-radius: 999px;
+    padding: .8rem .7rem .8rem 1.4rem;
+  }
+  .cmd .dollar { color: var(--faint); }
+  .copy {
+    font: 600 .72rem var(--mono); letter-spacing: .08em; color: var(--dim);
+    background: var(--glass); border: 1px solid var(--hair); border-radius: 999px;
+    padding: .42rem .9rem; cursor: pointer; transition: color .15s;
+  }
+  .copy:hover { color: var(--ink); }
+  .install .note { font: .8rem var(--mono); color: var(--faint); }
+
+  /* ---------- sections ---------- */
+  section { border-top: 1px solid var(--hair); padding: 4.5rem 0; }
+  .sec-label {
+    font: 600 .72rem var(--mono); letter-spacing: .22em; color: var(--faint);
+    margin-bottom: 2.4rem; display: flex; align-items: center; gap: .8rem;
+  }
+  .sec-label::after { content: ""; flex: 1; height: 1px; background: var(--hair); }
+
+  .gates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .gate-card {
+    background: var(--glass); border: 1px solid var(--hair); border-radius: var(--r-block);
+    padding: 1.6rem 1.5rem 1.5rem;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  }
+  .gate-tag {
+    display: inline-block; font: 600 .68rem var(--mono); letter-spacing: .16em;
+    color: var(--dim); border: 1px solid var(--hair); border-radius: 999px;
+    padding: .22rem .7rem; margin-bottom: 1.1rem;
+  }
+  .gate-card h3 { font: 700 1.18rem/1.3 var(--display); letter-spacing: -.01em; margin-bottom: .6rem; }
+  .gate-card p { color: var(--dim); font-size: .94rem; }
+
+  .manual { font: .84rem var(--mono); }
+  .manual li {
+    display: flex; gap: 1.2rem; align-items: baseline; list-style: none;
+    padding: .85rem 0; border-bottom: 1px solid rgba(255,255,255,.05);
+    color: var(--dim);
+  }
+  .manual li:last-child { border-bottom: 0; }
+  .manual .k { color: var(--ink); font-weight: 600; min-width: 13rem; letter-spacing: .04em; }
+
+  .steps { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .step {
+    background: var(--glass); border: 1px solid var(--hair); border-radius: var(--r-block);
+    padding: 1.5rem;
+  }
+  .step h3 { font: 700 1.05rem var(--display); margin-bottom: .9rem; }
+  .step pre {
+    font: .82rem/1.9 var(--mono); color: var(--dim); white-space: pre-wrap;
+  }
+  .step pre .c { color: var(--faint); }
+  .req { margin-top: 1.4rem; font: .78rem var(--mono); color: var(--faint); }
+
+  footer { border-top: 1px solid var(--hair); padding: 2.6rem 0 3.4rem; }
+  footer .wrap {
+    display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: center;
+    font: .78rem var(--mono); color: var(--faint);
+  }
+  footer a { color: var(--dim); text-decoration: none; }
+  footer a:hover { color: var(--ink); }
+  footer .right { margin-left: auto; display: flex; gap: 1.2rem; }
+
+  @media (max-width: 760px) {
+    .gates, .steps { grid-template-columns: 1fr; }
+    .row { grid-template-columns: 5.2rem 1fr auto; }
+    .row .runtime { display: none; }
+    .rows { font-size: .74rem; }
+    .manual .k { min-width: 0; }
+    .manual li { flex-direction: column; gap: .25rem; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, .dot, .board-head .livedot { animation: none !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <span class="mark" role="img" aria-label="AnyPlane">
+      <svg viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" fill-rule="evenodd" d="M 138.67 32 L 32 288 L 74.67 288 L 122.67 172.8 L 170.67 288 L 234.67 288 L 261.33 224 L 181.33 32 L 160 32 Z M 160 83.2 L 213.33 211.2 L 197.16 254.32 L 142.93 124.16 Z"/></svg>
+    </span>
+    <span class="wordmark">ANYPLANE</span>
+    <nav>
+      <a class="pill" href="https://github.com/OneCuriousLearner/anyplane">GitHub</a>
+      <a class="pill" href="https://www.npmjs.com/package/anyplane">npm</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- HERO -->
+  <div class="hero">
+    <div class="wrap">
+      <p class="eyebrow">SELF-HOSTED · VENDOR-NEUTRAL · MIT</p>
+      <h1>Run your agents,<br><em>on any plane.</em></h1>
+      <p class="lede">
+        AnyPlane is a <strong>control tower for the coding agents on your own machine</strong> —
+        Claude Code and Codex sessions, structured approvals and push notifications,
+        from any browser or phone. No vendor cloud in the middle:
+        your agents, your machines, your model accounts, your network.
+      </p>
+
+      <div class="board" role="img" aria-label="Stylized session board: two Claude Code and two Codex sessions, one awaiting approval">
+        <div class="board-head">
+          <span class="livedot"></span>
+          <span>ANYPLANE TOWER — LOCAL SESSIONS</span>
+          <span class="clock" id="clock">00:00:00</span>
+        </div>
+        <div class="rows" id="rows">
+          <div class="row"><span class="flight">CC-6F2A</span><span class="runtime">CLAUDE CODE</span><span class="status"><span class="dot on"></span><span class="st">RUNNING</span></span><span class="gate">GATE A1</span></div>
+          <div class="row clearance"><span class="flight">CX-0147</span><span class="runtime">CODEX</span><span class="status"><span class="dot red"></span><span class="st">AWAITING CLEARANCE</span></span><span class="gate">TAP TO APPROVE</span></div>
+          <div class="row"><span class="flight">CC-91D3</span><span class="runtime">CLAUDE CODE</span><span class="status"><span class="dot"></span><span class="st">IDLE</span></span><span class="gate">GATE B2</span></div>
+          <div class="row"><span class="flight">CX-00E9</span><span class="runtime">CODEX</span><span class="status"><span class="dot on"></span><span class="st">RUNNING</span></span><span class="gate">GATE B3</span></div>
+        </div>
+      </div>
+
+      <div class="install">
+        <span class="cmd"><span class="dollar">$</span> bunx anyplane
+          <button class="copy" id="copy" type="button">COPY</button>
+        </span>
+        <span class="note">→ listening on http://localhost:7480</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- GATES -->
+  <section>
+    <div class="wrap">
+      <p class="sec-label">WHAT THE TOWER CLEARS</p>
+      <div class="gates">
+        <div class="gate-card">
+          <span class="gate-tag">GATE A</span>
+          <h3>One tower, two runtimes</h3>
+          <p>Claude Code and Codex share a single structured message boundary. Approve, rewind, branch, hand off between agents — the same gestures for both, with zero frontend forks.</p>
+        </div>
+        <div class="gate-card">
+          <span class="gate-tag">GATE B</span>
+          <h3>Clearance from the lock screen</h3>
+          <p>Approvals arrive as push notifications you can rule on without opening the page — capability URLs carry a one-tap secret. Web Push, ntfy, Bark and Server酱 channels included.</p>
+        </div>
+        <div class="gate-card">
+          <span class="gate-tag">GATE C</span>
+          <h3>Your tower, your rules</h3>
+          <p>Self-hosted and vendor-neutral. Transcripts stay on disk, tokens stay local, no account, no relay. Works with API-key and gateway setups the official remotes exclude.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FLIGHT MANUAL -->
+  <section>
+    <div class="wrap">
+      <p class="sec-label">FLIGHT MANUAL — WHAT THE PROTOCOL DEPTH BUYS</p>
+      <ul class="manual">
+        <li><span class="k">stream-json control</span><span>Claude Code's own headless protocol — sessions, approvals, model switching, rewind — driven natively, not screen-scraped.</span></li>
+        <li><span class="k">app-server JSON-RPC</span><span>Codex threads over its official app-server, translated into one message shape so the UI never forks.</span></li>
+        <li><span class="k">rewind · branch · handoff</span><span>Roll back files or conversation, lazy-fork a session, or hand a summarized brief to another agent.</span></li>
+        <li><span class="k">push, self-rolled</span><span>VAPID (RFC 8292) and aes128gcm payloads (RFC 8291) implemented in-house — no push SDK, no third party reading your approvals.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section>
+    <div class="wrap">
+      <p class="sec-label">TAKEOFF</p>
+      <div class="steps">
+        <div class="step">
+          <h3>Run it</h3>
+          <pre><span class="c"># one command, front-end prebuilt</span>
+bunx anyplane
+<span class="c"># → http://localhost:7480</span></pre>
+        </div>
+        <div class="step">
+          <h3>Configure (optional)</h3>
+          <pre><span class="c"># ~/.anyplane/config.json</span>
+{ "host": "0.0.0.0", "authToken": "long-random" }
+<span class="c"># LAN access always requires a token.</span></pre>
+        </div>
+      </div>
+      <p class="req">REQUIRES — Bun ≥ 1.3.13 (Windows ≥ 1.4.0) · claude and/or codex CLI on PATH, logged in</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>MIT · FORMERLY CC-REMOTE</span>
+    <div class="right">
+      <a href="https://github.com/OneCuriousLearner/anyplane">GitHub</a>
+      <a href="https://www.npmjs.com/package/anyplane">npm</a>
+      <a href="https://anyplane.run">anyplane.run</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // 塔台钟 + 航班状态翻面（纯装饰；reduced-motion 时全部静止）
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const clock = document.getElementById('clock');
+  function tickClock() {
+    clock.textContent = new Date().toTimeString().slice(0, 8);
+  }
+  tickClock();
+  if (!reduced) {
+    setInterval(tickClock, 1000);
+    const churn = [
+      { flight: 'CC-6F2A', states: ['RUNNING', 'HOLDING', 'RUNNING'] },
+      { flight: 'CX-00E9', states: ['RUNNING', 'PUSHBACK', 'RUNNING'] },
+    ];
+    let i = 0;
+    setInterval(() => {
+      const c = churn[i++ % churn.length];
+      const row = [...document.querySelectorAll('.row')]
+        .find(r => r.querySelector('.flight').textContent === c.flight);
+      if (!row) return;
+      const st = row.querySelector('.st');
+      st.textContent = c.states[Math.floor(i / churn.length) % c.states.length];
+      st.classList.remove('tick'); void st.offsetWidth; st.classList.add('tick');
+    }, 5200);
+  }
+
+  const btn = document.getElementById('copy');
+  btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText('bunx anyplane');
+      btn.textContent = 'COPIED';
+      setTimeout(() => (btn.textContent = 'COPY'), 1400);
+    } catch {
+      btn.textContent = 'bunx anyplane';
+    }
+  });
+</script>
+</body>
+</html>
