@@ -197,7 +197,7 @@ export function ModeBadge() {
         }`}
         style={{ left: pos.x, top: pos.y }}
       >
-        <span className="mode-badge-pulse size-1.5 rounded-full bg-busy" aria-hidden />
+        <span className="size-1.5 rounded-full bg-busy" aria-hidden />
         DEV
       </button>
     </>

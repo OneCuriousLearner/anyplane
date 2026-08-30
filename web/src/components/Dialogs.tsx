@@ -14,15 +14,15 @@ function DialogButtons(props: {
     <div className={`flex justify-end gap-2 ${props.className ?? ''}`}>
       <button
         type="button"
-        className="rounded px-2 py-1 text-xs text-muted transition-colors hover:text-ink"
+        className="rounded-full px-3 py-1.5 text-xs text-muted transition-colors hover:bg-surface hover:text-ink"
         onClick={props.onClose}
       >
         {props.cancelLabel ?? '取消'}
       </button>
       <button
         type="button"
-        className={`rounded px-2 py-1 text-xs transition-colors ${
-          props.danger ? 'text-danger hover:text-danger/80' : 'text-accent-soft hover:text-accent'
+        className={`rounded-full px-3 py-1.5 text-xs transition-colors ${
+          props.danger ? 'text-accent hover:bg-accent/10' : 'bg-ink text-bg'
         }`}
         onClick={props.onConfirm}
       >
@@ -75,7 +75,7 @@ export function PromptDialog(props: {
             if (e.key === 'Enter') props.onConfirm(value)
             if (e.key === 'Escape') props.onClose()
           }}
-          className="w-full rounded border border-line bg-bg px-2 py-1.5 text-xs text-ink outline-none transition-colors focus:border-accent/60"
+          className="w-full rounded-full bg-bg/60 px-3 py-1.5 text-xs text-ink outline-none transition-colors focus:bg-bg"
           placeholder={props.placeholder}
         />
         <DialogButtons

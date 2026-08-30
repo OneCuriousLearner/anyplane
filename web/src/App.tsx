@@ -101,9 +101,9 @@ export default function App() {
             defaultValue={getToken() ?? ''}
             placeholder="authToken"
             autoFocus
-            className="min-w-0 flex-1 rounded border border-line bg-surface px-3 py-2 text-sm outline-none"
+            className="min-w-0 flex-1 rounded-full bg-surface px-4 py-2 text-sm outline-none placeholder:text-faint focus:bg-surface2"
           />
-          <button type="submit" className="rounded bg-accent px-4 py-2 text-sm text-white">
+          <button type="submit" className="rounded-full bg-ink px-4 py-2 text-sm text-bg">
             进入
           </button>
         </form>
@@ -121,7 +121,7 @@ export default function App() {
     >
       {import.meta.env.DEV && <ModeBadge />}
       {/* 移动端：选中后隐藏列表；桌面端：双栏常显，右缘可拖宽 */}
-      <div className={`relative h-full border-line md:border-r ${selected ? 'hidden md:block' : 'block'}`}>
+      <div className={`relative h-full bg-surface/40 ${selected ? 'hidden md:block' : 'block'}`}>
         <SessionList selectedKey={selected?.key} onSelect={setSelected} />
         <div
           role="separator"
@@ -132,7 +132,7 @@ export default function App() {
           aria-valuemax={SIDEBAR_MAX}
           title="拖动调整宽度，双击恢复默认"
           className={`absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none md:block ${
-            resizing ? 'bg-accent/50' : 'hover:bg-accent/35'
+            resizing ? 'bg-muted/50' : 'hover:bg-muted/30'
           }`}
           onPointerDown={onResizeDown}
           onPointerMove={onResizeMove}

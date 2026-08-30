@@ -8,33 +8,33 @@ export function ToolCard(props: { tool: ToolBlock; className?: string }) {
   const summary = toolSummary(tool.name, tool.input)
 
   return (
-    <div className={`my-1.5 overflow-hidden rounded-md border border-line bg-surface2/40 ${props.className ?? ''}`}>
+    <div className={`my-1.5 overflow-hidden rounded-[14px] bg-surface ${props.className ?? ''}`}>
       <button
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left font-mono text-[12px] hover:bg-surface2/70"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[12px] transition-colors hover:bg-surface2"
         onClick={() => setOpen(!open)}
       >
         <span className="text-faint">{open ? '▾' : '▸'}</span>
-        <span className="shrink-0 text-accent-soft">{tool.name}</span>
+        <span className="shrink-0 font-semibold text-ink">{tool.name}</span>
         <span className="truncate text-muted">{summary}</span>
         <span className="ml-auto shrink-0">
           {tool.pending ? (
-            <span className="animate-pulse text-busy">…</span>
+            <span className="text-faint">…</span>
           ) : tool.resultError ? (
-            <span className="text-danger">✗</span>
+            <span className="text-accent">✗</span>
           ) : tool.resultText != null ? (
             <span className="text-ok">✓</span>
           ) : null}
         </span>
       </button>
       {open && (
-        <div className="border-t border-line/60">
+        <div className="bg-bg/50">
           <pre className="max-h-56 overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted">
             {toolDetail(tool.name, tool.input) || '（无参数）'}
           </pre>
           {tool.resultText != null && (
             <pre
-              className={`max-h-56 overflow-auto border-t border-line/60 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap ${
-                tool.resultError ? 'text-danger' : 'text-ink/80'
+              className={`max-h-56 overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap ${
+                tool.resultError ? 'text-accent' : 'text-ink/80'
               }`}
             >
               {tool.resultText.length > 4000 ? tool.resultText.slice(0, 4000) + '\n…（截断）' : tool.resultText}

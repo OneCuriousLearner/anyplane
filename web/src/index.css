@@ -1,24 +1,91 @@
 @import "tailwindcss";
 
-@theme {
-  /* anyplane design tokens — “session transcript” identity
-     暖炭底 + 陶土橙（Claude 品牌色方向），日志抄本排版 */
-  --color-bg: #16130f;
-  --color-surface: #201b15;
-  --color-surface2: #2a241c;
-  --color-line: #393125;
-  --color-ink: #ede4d3;
-  --color-muted: #9c8f7a;
-  --color-faint: #6b6156;
-  --color-accent: #e07850;
-  --color-accent-soft: #f0977a;
-  --color-busy: #e0a050;
-  --color-ok: #7bae7f;
-  --color-wait: #7c9cbf;
-  --color-danger: #d95d4e;
+/* ============ AnyPlane 设计 token —— E2 液态玻璃方向 ============
+   黑白灰单色 + 磨砂玻璃；块级圆角一律 14px，控件一律全圆；
+   唯一彩色面 = 审批红（--accent）；忙碌 = 背景浪带循环扫过（无呼吸灯）。
+   深浅色同源：dark 默认（白色叠加浮层），light 用略深浮层互为镜像。 */
+:root {
+  --bg: #0b0b0e;
+  --glass: rgb(255 255 255 / 0.05);
+  --glass2: rgb(255 255 255 / 0.09);
+  --bar: rgb(11 11 14 / 0.55);
+  --ink: #f2f2f4;
+  --muted: #9a9aa3;
+  --faint: #60606a;
+  --accent: #f0524a; /* 审批红：全局唯一彩色面 */
+  --ok: #3ecf8e;
+  --busy: #d9d9de;
+  --line: rgb(255 255 255 / 0.06);
+  --waveband: rgb(255 255 255 / 0.08);
+  --caret: #ffffff; /* 分组三角：深白浅黑 */
+  --user-bubble: rgb(255 255 255 / 0.16); /* 用户气泡：深浅都比 glass2 更跳 */
+  color-scheme: dark;
+}
+
+/* 浅色变量两处同步：系统偏好（未被手动覆盖时）+ 手动 data-theme="light"（lib/theme.ts） */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg: #f3f3f6;
+    --glass: rgb(0 0 0 / 0.045);
+    --glass2: rgb(0 0 0 / 0.075);
+    --bar: rgb(240 240 245 / 0.65);
+    --ink: #17171b;
+    --muted: #6c6c76;
+    --faint: #a6a6b0;
+    --accent: #d9433b;
+    --ok: #22a06b;
+    --busy: #8a8a94;
+    --line: rgb(0 0 0 / 0.06);
+    --waveband: rgb(0 0 0 / 0.05);
+    --caret: #000000;
+    --user-bubble: rgb(0 0 0 / 0.14);
+    color-scheme: light;
+  }
+}
+:root[data-theme='light'] {
+  --bg: #f3f3f6;
+  --glass: rgb(0 0 0 / 0.045);
+  --glass2: rgb(0 0 0 / 0.075);
+  --bar: rgb(240 240 245 / 0.65);
+  --ink: #17171b;
+  --muted: #6c6c76;
+  --faint: #a6a6b0;
+  --accent: #d9433b;
+  --ok: #22a06b;
+  --busy: #8a8a94;
+  --line: rgb(0 0 0 / 0.06);
+  --waveband: rgb(0 0 0 / 0.05);
+  --caret: #000000;
+  --user-bubble: rgb(0 0 0 / 0.14);
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--glass);
+  --color-surface2: var(--glass2);
+  --color-user-bubble: var(--user-bubble);
+  --color-bar: var(--bar);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent); /* 旧陶土浅色位并入审批红 */
+  --color-danger: var(--accent);
+  --color-wait: var(--accent);
+  --color-ok: var(--ok);
+  --color-busy: var(--busy);
+  --color-line: var(--line);
 
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
   --font-body: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  /* 双轨圆角：块级一律 14px（控件用 rounded-full） */
+  --radius-md: 14px;
+  --radius-lg: 14px;
+  --radius-xl: 14px;
+  --radius-2xl: 14px;
+  --radius-3xl: 14px;
 }
 
 :root {
@@ -43,18 +110,48 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 细滚动条，融入底色 */
+/* 全局隐藏滚动条（仍可滚动） */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-line) transparent;
+  scrollbar-width: none;
 }
 *::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  display: none;
 }
-*::-webkit-scrollbar-thumb {
-  background: var(--color-line);
-  border-radius: 3px;
+
+/* 裸 rounded 也归一到 14px（unlayered 规则优先于 utilities 层） */
+.rounded {
+  border-radius: 14px;
+}
+
+/* 悬浮磨砂横带：顶栏 / 分组头 / 浮层共用 */
+.glass-bar {
+  background: var(--color-bar);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+
+/* ---- 循环浪：只扫背景面（忙碌会话行等），无呼吸灯 ---- */
+@keyframes wave-x {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.wave-surface {
+  position: relative;
+  overflow: hidden;
+}
+.wave-surface::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 25%, var(--waveband) 50%, transparent 75%);
+  animation: wave-x 2.8s linear infinite;
 }
 
 /* markdown 正文排版 */
@@ -88,7 +185,7 @@ body {
   font-size: 0.92rem;
 }
 .prose-cc a {
-  color: var(--color-accent-soft);
+  color: var(--color-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -114,23 +211,20 @@ body {
   font-family: var(--font-mono);
   font-size: 0.82em;
   background: var(--color-surface2);
-  border: 1px solid var(--color-line);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 0.1em 0.35em;
 }
 .prose-cc pre {
   font-family: var(--font-mono);
   font-size: 0.78rem;
   line-height: 1.55;
-  background: #12100c;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
+  background: var(--color-surface);
+  border-radius: 10px;
   padding: 0.7em 0.9em;
   overflow-x: auto;
 }
 .prose-cc pre code {
   background: none;
-  border: none;
   padding: 0;
 }
 .prose-cc table {
@@ -154,49 +248,10 @@ body {
 }
 .prose-cc img {
   max-width: 100%;
-  border-radius: 6px;
+  border-radius: 10px;
 }
 
-/* ---- StatusPill 面板背景：CRT 终端特效（纯 CSS，零 JS 渲染开销） ----
-   三层叠加：指针磷光(径向高光, 消费 --mx/--my) + 水平扫描线 + 字符点阵。
-   主面板与 mode/model 展开的子面板共用本层；--mx/--my 由各面板容器的
-   onPointerMove 直接写 style（相对自身坐标），不触发 React 重渲染。 */
-.cc-panel-fx {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  overflow: hidden;
-  pointer-events: none;
-  color: var(--color-faint);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  line-height: 1;
-  opacity: 0.55;
-}
-
-/* 磷光余晖 + 扫描线 + 点阵 */
-.cc-panel-fx::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    /* 跟随指针的陶土橙磷光，默认藏在面板上方外 */
-    radial-gradient(
-      circle 130px at var(--mx, 50%) var(--my, -40%),
-      rgb(224 120 80 / 0.16),
-      transparent 70%
-    ),
-    /* CRT 水平扫描线 */
-    repeating-linear-gradient(0deg, rgb(255 255 255 / 0.03) 0 1px, transparent 1px 3px),
-    /* 终端字符网格点阵 */
-    radial-gradient(circle, rgb(237 228 211 / 0.10) 1px, transparent 1.4px);
-  background-size:
-    auto,
-    auto,
-    12px 12px;
-}
-
-/* 输入光标呼吸 */
+/* 输入光标闪动（流式草稿的打字光标） */
 @keyframes cc-blink {
   0%,
   55% {
@@ -275,25 +330,13 @@ body {
   transform-origin: 50% 50%;
 }
 
-@keyframes mode-badge-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-.mode-badge-pulse {
-  animation: mode-badge-pulse 1.6s ease-in-out infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .cc-cursor {
     animation: none;
   }
-  .mode-badge-pulse {
+  .wave-surface::after {
     animation: none;
+    opacity: 0;
   }
   .claude-star--active .claude-star__ray,
   .claude-star--pulse .claude-star__ray,

@@ -11,6 +11,13 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/src/assets/anyplane.svg" />
     <title>AnyPlane</title>
+    <script>
+      // 防主题闪烁：渲染前恢复手动选择的深浅色（无记录 = 跟随系统，什么也不做）
+      try {
+        var t = localStorage.getItem('anyplane-theme')
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

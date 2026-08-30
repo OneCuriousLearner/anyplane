@@ -6,13 +6,13 @@ import { parseUserText, shortTokens, type ChatMsg } from '../lib/blocks'
 function Thinking(props: { text: string; streaming?: boolean; className?: string }) {
   return (
     <details
-      className={`my-1.5 rounded-md border border-line/60 bg-surface2/30 ${props.className ?? ''}`}
+      className={`my-1.5 rounded-[14px] bg-surface ${props.className ?? ''}`}
       open={props.streaming}
     >
-      <summary className="cursor-pointer px-2.5 py-1.5 font-mono text-[11px] tracking-wide text-faint select-none">
-        思考{props.streaming && <span className="ml-1 animate-pulse text-busy">进行中…</span>}
+      <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] tracking-wide text-faint select-none">
+        思考{props.streaming && <span className="ml-1 text-muted">进行中…</span>}
       </summary>
-      <div className="border-t border-line/40 px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
+      <div className="px-3 pb-2.5 text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
         {props.text}
       </div>
     </details>
@@ -31,7 +31,7 @@ function UserText(props: { text: string }) {
             return (
               <span
                 key={i}
-                className="inline-block rounded border border-accent/50 bg-accent/20 px-1.5 py-0.5 font-mono text-[12px] text-accent-soft"
+                className="inline-block rounded-full bg-transparent px-2 py-0.5 font-mono text-[12px] text-muted"
               >
                 {s.text}
                 {s.args ? ` ${s.args}` : ''}
@@ -42,8 +42,8 @@ function UserText(props: { text: string }) {
             return (
               <pre
                 key={i}
-                className={`mt-1 max-h-40 overflow-auto rounded border border-accent/25 bg-black/20 px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap ${
-                  s.kind === 'local-err' ? 'text-danger' : 'text-muted'
+                className={`mt-1 max-h-40 overflow-auto rounded-[10px] bg-bg/60 px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap ${
+                  s.kind === 'local-err' ? 'text-accent' : 'text-muted'
                 }`}
               >
                 {s.text}
@@ -51,7 +51,7 @@ function UserText(props: { text: string }) {
             )
           case 'interrupted':
             return (
-              <span key={i} className="font-mono text-[11px] text-busy">
+              <span key={i} className="font-mono text-[11px] text-muted">
                 ■ 已被用户中断
               </span>
             )
@@ -70,27 +70,27 @@ function ImageAttachment(props: { src?: string }) {
       src={props.src}
       alt="图片附件"
       loading="lazy"
-      className="my-1.5 max-h-64 max-w-full rounded-md border border-line object-contain"
+      className="my-1.5 max-h-64 max-w-full rounded-[10px] object-contain"
     />
   )
 }
 
-/** 抄本式消息条目：左栏角色符号 + 内容区；compact 表示与上一条同角色（连续块，收紧间距、省略符号） */
+/** 消息条目：user 右靠气泡 / assistant 按块分行；compact 表示与上一条同角色（连续块，收紧间距） */
 export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   const { msg, compact } = props
 
-  // 侧问卡片：独立样式，正文 Markdown，思考折叠，回答中有呼吸态
+  // 侧问卡片：独立样式，正文 Markdown，思考折叠
   if (msg.btw != null) {
     return (
-      <div className="my-3 rounded-lg border border-accent/30 bg-accent/5">
-        <div className="flex items-center gap-2 border-b border-accent/20 px-3 py-2">
-          <span className="font-mono text-[10px] tracking-widest text-accent-soft uppercase">侧问</span>
+      <div className="my-3 rounded-[14px] bg-surface">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <span className="font-mono text-[10px] tracking-widest text-muted uppercase">侧问</span>
           <span className="truncate text-xs text-muted">{msg.btw}</span>
-          {msg.btwPending && <span className="ml-auto animate-pulse font-mono text-[10px] text-busy">回答中…</span>}
+          {msg.btwPending && <span className="ml-auto font-mono text-[10px] text-faint">回答中…</span>}
         </div>
-        <div className="px-3 py-2">
+        <div className="px-3 pb-2">
           {msg.blocks.length === 0 && msg.btwPending && (
-            <span className="cc-cursor inline-block h-3.5 w-[7px] bg-accent-soft" />
+            <span className="cc-cursor inline-block h-3.5 w-[7px] bg-muted" />
           )}
           {msg.blocks.map((b, i) => {
             if (b.kind === 'text') return <Markdown key={i} text={b.text} />
@@ -121,7 +121,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
     }
     const err = msg.systemKind === 'error'
     return (
-      <div className={`my-2 pl-7 font-mono text-[11px] ${err ? 'text-danger' : 'text-faint'}`}>
+      <div className={`my-2 pl-7 font-mono text-[11px] ${err ? 'text-accent' : 'text-faint'}`}>
         {msg.blocks.map((b, i) => (b.kind === 'text' ? <div key={i}>{b.text}</div> : null))}
       </div>
     )
@@ -129,17 +129,11 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
 
   const isUser = msg.role === 'user'
 
-  // user 消息保持单条气泡；assistant 按块分行，thinking/tool 块在左栏圆点
+  // user 消息右靠气泡（中性灰，不占用彩色面）；assistant 按块分行
   if (isUser) {
     return (
-      <div className={`${compact ? 'my-1' : 'my-3'} flex items-start gap-2.5`}>
-        <span
-          className="flex w-5 shrink-0 justify-center pt-[12px] font-mono text-sm leading-none select-none text-accent-soft"
-          aria-hidden="true"
-        >
-          {compact ? '' : '›'}
-        </span>
-        <div className="min-w-0 flex-1 rounded-md border border-accent/30 bg-accent/15 px-3 py-2">
+      <div className={`${compact ? 'my-1' : 'my-3'} flex justify-end`}>
+        <div className="max-w-[85%] rounded-[14px] bg-user-bubble px-3.5 py-2.5">
           {msg.blocks.map((b, i) => {
             if (b.kind === 'image') return <ImageAttachment key={i} src={b.src} />
             if (b.kind === 'text') return <UserText key={i} text={b.text} />
@@ -153,30 +147,19 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
 
   return (
     <div className={`${compact ? 'my-1' : 'my-3'} flex flex-col`}>
-      {msg.blocks.map((b, i) => {
-        const dot = b.kind === 'thinking' || b.kind === 'tool'
-        return (
-          <div key={b.kind === 'tool' ? b.id : i} className="flex items-start gap-2.5">
-            <span
-              className={`flex w-5 shrink-0 justify-center select-none ${dot ? 'pt-[17px]' : ''}`}
-              aria-hidden="true"
-            >
-              {dot && <span className="block h-1.5 w-1.5 rounded-full bg-zinc-400/70" />}
-            </span>
-            <div className="min-w-0 flex-1">
-              {b.kind === 'image' ? (
-                <ImageAttachment src={b.src} />
-              ) : b.kind === 'text' ? (
-                <Markdown text={b.text} />
-              ) : b.kind === 'thinking' ? (
-                <Thinking text={b.text} />
-              ) : (
-                <ToolCard tool={b} />
-              )}
-            </div>
-          </div>
-        )
-      })}
+      {msg.blocks.map((b, i) => (
+        <div key={b.kind === 'tool' ? b.id : i} className="min-w-0">
+          {b.kind === 'image' ? (
+            <ImageAttachment src={b.src} />
+          ) : b.kind === 'text' ? (
+            <Markdown text={b.text} />
+          ) : b.kind === 'thinking' ? (
+            <Thinking text={b.text} />
+          ) : (
+            <ToolCard tool={b} />
+          )}
+        </div>
+      ))}
     </div>
   )
 }

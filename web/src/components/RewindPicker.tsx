@@ -38,7 +38,7 @@ export function RewindPicker(props: {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 md:items-center" onClick={props.onClose}>
       <div
-        className="max-h-[70dvh] w-full max-w-lg overflow-y-auto rounded-t-xl border border-line bg-surface p-4 md:rounded-xl"
+        className="max-h-[70dvh] w-full max-w-lg overflow-y-auto rounded-[14px] bg-surface2/90 p-4 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.55)] backdrop-blur-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
@@ -59,23 +59,23 @@ export function RewindPicker(props: {
         {props.targets.map((t) => {
           const time = formatTime(t.timestamp)
           return (
-          <div key={t.uuid} className="mb-2 rounded border border-line bg-surface2/50 p-3">
+          <div key={t.uuid} className="mb-2 rounded-[14px] bg-surface p-3">
             <div className="mb-2 flex items-center gap-2">
               <span className="font-mono text-[10px] text-faint">用户消息</span>
               {time && <span className="font-mono text-[10px] text-faint">{time}</span>}
             </div>
             <p className="text-sm leading-relaxed text-ink">{t.summary || '（无可显示的用户文本）'}</p>
             {t.detail && t.detail !== t.summary && (
-              <details className="mt-2 rounded border border-line/60 bg-surface/40">
+              <details className="mt-2 rounded-[10px] bg-bg/50">
                 <summary className="cursor-pointer px-2 py-1.5 font-mono text-[11px] text-muted select-none">查看完整内容</summary>
-                <pre className="max-h-48 overflow-auto border-t border-line/60 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted whitespace-pre-wrap">
+                <pre className="max-h-48 overflow-auto px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted whitespace-pre-wrap">
                   {t.detail}
                 </pre>
               </details>
             )}
             {isCodex ? (
               <button
-                className="mt-2 w-full rounded bg-accent/90 py-1.5 font-mono text-[11px] font-medium text-bg hover:bg-accent"
+                className="mt-2 w-full rounded-full bg-ink py-1.5 font-mono text-[11px] font-medium text-bg"
                 onClick={() => props.onRewindConversation(t.uuid)}
               >
                 从此处分叉（原会话不动）
@@ -83,19 +83,19 @@ export function RewindPicker(props: {
             ) : (
             <div className="grid grid-cols-2 gap-2">
               <button
-                className="rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
+                className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-muted hover:text-ink"
                 onClick={() => props.onRewindFiles(t.uuid)}
               >
                 仅回滚文件
               </button>
               <button
-                className="rounded border border-line py-1.5 font-mono text-[11px] text-muted hover:bg-surface2 hover:text-ink"
+                className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-muted hover:text-ink"
                 onClick={() => props.onRewindConversation(t.uuid)}
               >
                 仅回滚对话
               </button>
               <button
-                className="col-span-2 rounded bg-accent/90 py-1.5 font-mono text-[11px] font-medium text-bg hover:bg-accent"
+                className="col-span-2 rounded-full bg-ink py-1.5 font-mono text-[11px] font-medium text-bg"
                 onClick={() => props.onRewindBoth(t.uuid)}
               >
                 回滚对话+文件

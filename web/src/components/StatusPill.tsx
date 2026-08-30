@@ -1,10 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ServerConfigInfo } from '../lib/api'
-import { GlassSubPanel, PanelFx, trackFxPointer } from './GlassPanel'
 
-// ---- 视觉编码（沿用 “session transcript” 暖炭 + 陶土橙 token 体系） ----
-// mode：色点（危险度语义）  effort：Claude Code 原生 glyph（强度渐强）
+// ---- 视觉编码（E2 液态玻璃 token：唯一彩色面 = 审批红，其余走灰阶） ----
+// mode：色点（危险度语义）  effort：档位 glyph（强度渐强）
 
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORT_LEVELS)[number]
@@ -17,49 +16,42 @@ export const EFFORT_GLYPH: Record<Effort, string> = {
   max: '◈',
 }
 
-const EFFORT_META: Record<
-  Effort,
-  { color: string; fill: string; label: string; desc: string }
-> = {
-  low: { color: 'text-faint', fill: 'bg-faint', label: 'low', desc: '最快，最省' },
-  medium: { color: 'text-wait', fill: 'bg-wait', label: 'medium', desc: '轻快日常' },
-  high: { color: 'text-ok', fill: 'bg-ok', label: 'high', desc: '默认推荐' },
-  xhigh: { color: 'text-busy', fill: 'bg-busy', label: 'xhigh', desc: '深度推理' },
-  max: { color: 'text-accent', fill: 'bg-accent', label: 'max', desc: '全力以赴' },
+const EFFORT_META: Record<Effort, { color: string; label: string; desc: string }> = {
+  low: { color: 'text-faint', label: 'low', desc: '最快，最省' },
+  medium: { color: 'text-muted', label: 'medium', desc: '轻快日常' },
+  high: { color: 'text-ink', label: 'high', desc: '默认推荐' },
+  xhigh: { color: 'text-ink', label: 'xhigh', desc: '深度推理' },
+  max: { color: 'text-ink', label: 'max', desc: '全力以赴' },
 }
 
+// mode 色点语义：自动放行类一律审批红（醒目即风险），询问/只读类走灰阶
 const MODE_META: Record<string, { dot: string; label: string; short: string; desc: string }> = {
   default: { dot: 'bg-faint', label: 'default(manual)', short: 'default', desc: '每次询问' },
-  acceptEdits: { dot: 'bg-busy', label: 'accept edits', short: 'edits', desc: '自动接受文件编辑' },
+  acceptEdits: { dot: 'bg-ok', label: 'accept edits', short: 'edits', desc: '自动接受文件编辑' },
   auto: { dot: 'bg-accent', label: 'auto', short: 'auto', desc: 'AI 自动审批指令' },
-  plan: { dot: 'bg-wait', label: 'plan', short: 'plan', desc: '先出计划再动手' },
-  bypassPermissions: { dot: 'bg-danger', label: 'bypass permissions', short: 'bypass', desc: '全部自动放行' },
+  plan: { dot: 'bg-ok', label: 'plan', short: 'plan', desc: '先出计划再动手' },
+  bypassPermissions: { dot: 'bg-accent', label: 'bypass permissions', short: 'bypass', desc: '全部自动放行' },
   // codex 预设（sandbox × approvalPolicy 二维组合的常用档）
-  readOnly: { dot: 'bg-wait', label: 'read only', short: '只读', desc: '只读沙箱 · 每次询问' },
+  readOnly: { dot: 'bg-ok', label: 'read only', short: '只读', desc: '只读沙箱 · 每次询问' },
   workspace: { dot: 'bg-faint', label: 'workspace', short: '工作区', desc: '工作区可写 · 每次询问' },
-  workspaceAuto: { dot: 'bg-busy', label: 'workspace auto', short: '免审', desc: '工作区可写 · 自动放行' },
-  fullAccess: { dot: 'bg-danger', label: 'full access', short: '全开', desc: '完全访问 · 自动放行' },
+  workspaceAuto: { dot: 'bg-accent', label: 'workspace auto', short: '免审', desc: '工作区可写 · 自动放行' },
+  fullAccess: { dot: 'bg-accent', label: 'full access', short: '全开', desc: '完全访问 · 自动放行' },
 }
 
-/** effort 元信息兜底：非 claude 五档时按索引循环 glyph、中性色 */
+/** effort 元信息兜底：非 claude 五档时中性色 */
 const EFFORT_GLYPH_LIST = Object.values(EFFORT_GLYPH)
 const effortMetaOf = (level: string) =>
   (EFFORT_META as Record<string, (typeof EFFORT_META)[Effort]>)[level] ?? {
-    color: 'text-ok',
-    fill: 'bg-ok',
+    color: 'text-muted',
     label: level,
     desc: '',
   }
 const effortGlyphOf = (level: string, idx: number) =>
   (EFFORT_GLYPH as Record<string, string>)[level] ?? EFFORT_GLYPH_LIST[idx % EFFORT_GLYPH_LIST.length]
 
-/** 毛玻璃主面板：半透明底 + blur-md。须 portal 到 body，否则会被带 backdrop-filter 的顶栏截成 backdrop root。
- *  背景特效层见 index.css 的 .cc-panel-fx（CRT 扫描线 / 点阵 / 指针磷光），子面板复用同一层 */
-const GLASS =
-  'rounded-md border border-white/15 bg-linear-[150deg] from-white/[0.10] via-bg/55 to-bg/70 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.75),inset_-0.58px_1px_0_rgba(255,255,255,0.10)] backdrop-blur-md'
-
-/** 悬浮顶/底栏用毛玻璃条：无圆角，配合单向边框 */
-export const GLASS_BAR = 'bg-bg/60 backdrop-blur-md'
+/** 磨砂浮层面板（须 portal 到 body，否则被带 backdrop-filter 的父级截成 backdrop root） */
+const PANEL =
+  'rounded-[14px] bg-surface2/85 p-2 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.55)] backdrop-blur-xl'
 
 function modeLabel(mode?: string): string {
   return (mode && MODE_META[mode]?.label) ?? mode ?? 'default'
@@ -83,7 +75,7 @@ export function StatusPill(props: {
   const { cfg } = props
   const [open, setOpen] = useState(false)
   const [sub, setSub] = useState<'mode' | 'model' | null>(null)
-  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  const [panelPos, setPanelPos] = useState<{ bottom: number; left: number; width: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -101,11 +93,11 @@ export function StatusPill(props: {
   }
 
   const syncPanelPos = () => {
-    // 锚胶囊按钮左上角（与触发器重叠展开），而不是整行容器（容器含 px-3，会贴到消息区左边）
+    // 面板左下角与胶囊左下角重叠，向上展开（触发器 open 时 invisible，由面板盖住原位）
     const el = triggerRef.current ?? rootRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    setPanelPos({ top: r.top, left: r.left, width: 320 })
+    setPanelPos({ bottom: window.innerHeight - r.bottom, left: r.left, width: 320 })
   }
 
   useLayoutEffect(() => {
@@ -149,15 +141,12 @@ export function StatusPill(props: {
     createPortal(
       <div
         ref={panelRef}
-        className={`fixed z-50 overflow-hidden p-2 ${GLASS}`}
-        style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
-        onPointerMove={trackFxPointer}
+        className={`fixed z-50 overflow-hidden ${PANEL}`}
+        style={{ bottom: panelPos.bottom, left: panelPos.left, width: panelPos.width }}
       >
-        <PanelFx corners />
-        <div className="relative">
         {/* mode 行 */}
         <button
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left hover:bg-surface2/60"
+          className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left hover:bg-surface"
           onClick={() => setSub(sub === 'mode' ? null : 'mode')}
         >
           <span className="w-10 font-mono text-[10px] uppercase tracking-widest text-faint">mode</span>
@@ -166,14 +155,14 @@ export function StatusPill(props: {
           <span className="text-[10px] text-faint">{sub === 'mode' ? '▴' : '▾'}</span>
         </button>
         {sub === 'mode' && (
-          <GlassSubPanel className="mx-1 mb-1 mt-0.5">
+          <div className="mx-1 mb-1 mt-0.5 rounded-[10px] bg-bg/50 p-1">
             {cfg.permissionModes.map((m) => {
               const mm = MODE_META[m] ?? { dot: 'bg-faint', label: m, short: m, desc: '' }
               const active = modeKey === m
               return (
                 <button
                   key={m}
-                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-surface2/60 ${
+                  className={`flex w-full items-center gap-3 rounded-[8px] px-3 py-2 text-left hover:bg-surface ${
                     active ? 'bg-surface2' : ''
                   }`}
                   onClick={() => {
@@ -188,12 +177,12 @@ export function StatusPill(props: {
                 </button>
               )
             })}
-          </GlassSubPanel>
+          </div>
         )}
 
         {/* model 行 */}
         <button
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left hover:bg-surface2/60"
+          className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left hover:bg-surface"
           onClick={() => setSub(sub === 'model' ? null : 'model')}
         >
           <span className="w-10 font-mono text-[10px] uppercase tracking-widest text-faint">model</span>
@@ -206,7 +195,7 @@ export function StatusPill(props: {
           <span className="text-[10px] text-faint">{sub === 'model' ? '▴' : '▾'}</span>
         </button>
         {sub === 'model' && (
-          <GlassSubPanel className="mx-1 mb-1 mt-0.5">
+          <div className="mx-1 mb-1 mt-0.5 rounded-[10px] bg-bg/50 p-1">
             {cfg.models.map((m) => {
               // 当前值可能是 tier（haiku）也可能是解析后的模型 ID（重连回放 initModel）——两种都认
               const active =
@@ -216,7 +205,7 @@ export function StatusPill(props: {
                 <button
                   key={m}
                   title={resolveModel(m).title}
-                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-surface2/60 ${
+                  className={`flex w-full items-center gap-3 rounded-[8px] px-3 py-2 text-left hover:bg-surface ${
                     active ? 'bg-surface2' : ''
                   }`}
                   onClick={() => {
@@ -232,17 +221,16 @@ export function StatusPill(props: {
                 </button>
               )
             })}
-          </GlassSubPanel>
+          </div>
         )}
 
         <EffortSlider levels={levels} value={effort} onChange={props.onSetEffort} />
-        </div>
       </div>,
       document.body,
     )
 
   return (
-    <div ref={rootRef} className="relative px-3 py-1.5">
+    <div ref={rootRef} className="relative shrink-0">
       <button
         ref={triggerRef}
         onClick={() => {
@@ -250,7 +238,7 @@ export function StatusPill(props: {
           setOpen(next)
           if (next) props.onPanelOpen?.()
         }}
-        className={`inline-flex w-fit shrink-0 items-center gap-2 rounded-md border border-line bg-bg/60 px-2.5 py-1 text-left font-mono text-[11px] text-ink hover:border-accent/40 hover:bg-bg ${open ? 'invisible' : ''}`}
+        className={`inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-left font-mono text-[11px] text-muted transition-colors hover:bg-surface hover:text-ink ${open ? 'invisible' : ''}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode.dot}`} />
         <span className="shrink-0">{mode.short}</span>
@@ -265,7 +253,7 @@ export function StatusPill(props: {
   )
 }
 
-/** 终端字符滑条：整条轨道用等宽字符渲染（[●══●══◉──○──○]），磷光辉光点缀。
+/** 字符滑条：整条轨道用等宽字符渲染（[●══●══◉──○──○]），灰阶呈现。
  *  交互：拖动 / 点击吸附档位，聚焦后 ←→↑↓ 步进、Home/End 跳两端。
  *  档位表由调用方传入（claude 五档 / codex 按模型 supportedReasoningEfforts）。 */
 function EffortSlider(props: { levels: readonly string[]; value: string; onChange: (e: string) => void }) {
@@ -336,7 +324,7 @@ function EffortSlider(props: { levels: readonly string[]; value: string; onChang
       </div>
 
       {/* 字符轨道：flex-1 单元格等宽撑满，档间距恒定；括号外是留白触控区 */}
-      <div className="flex items-center rounded-md px-2 py-2 font-mono text-sm leading-none focus-within:bg-surface2/40 hover:bg-surface2/40">
+      <div className="flex items-center rounded-[10px] px-2 py-2 font-mono text-sm leading-none focus-within:bg-surface hover:bg-surface">
         <span className="shrink-0 text-faint">[</span>
         <div
           ref={trackRef}
@@ -347,7 +335,7 @@ function EffortSlider(props: { levels: readonly string[]; value: string; onChang
           aria-valuemax={N}
           aria-valuenow={idx + 1}
           aria-valuetext={LEVELS[idx]}
-          className="flex flex-1 cursor-pointer touch-none rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+          className="flex flex-1 cursor-pointer touch-none rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-muted"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -355,15 +343,10 @@ function EffortSlider(props: { levels: readonly string[]; value: string; onChang
           onKeyDown={onKeyDown}
         >
           {Array.from({ length: WIDTH }, (_, c) => {
-            // 拇指：当前档位 glyph，磷光最强
+            // 拇指：当前档位 glyph
             if (c === cursor) {
               return (
-                <span
-                  key={c}
-                  className={`flex-1 text-center [text-shadow:0_0_8px_currentColor] ${
-                    dragIdx !== null ? 'text-accent' : meta.color
-                  }`}
-                >
+                <span key={c} className="flex-1 text-center text-ink">
                   {effortGlyphOf(LEVELS[idx], idx)}
                 </span>
               )
@@ -372,12 +355,7 @@ function EffortSlider(props: { levels: readonly string[]; value: string; onChang
             if (c % GAP === 0) {
               const passed = c < cursor
               return (
-                <span
-                  key={c}
-                  className={`flex-1 text-center ${
-                    passed ? 'text-accent-soft [text-shadow:0_0_5px_currentColor]' : 'text-faint'
-                  }`}
-                >
+                <span key={c} className={`flex-1 text-center ${passed ? 'text-muted' : 'text-faint'}`}>
                   {passed ? '●' : '○'}
                 </span>
               )
@@ -385,7 +363,7 @@ function EffortSlider(props: { levels: readonly string[]; value: string; onChang
             // 连接段：已过 ═，未到 ─
             const passed = c < cursor
             return (
-              <span key={c} className={`flex-1 text-center ${passed ? 'text-accent/70' : 'text-line'}`}>
+              <span key={c} className={`flex-1 text-center ${passed ? 'text-muted' : 'text-faint/60'}`}>
                 {passed ? '═' : '─'}
               </span>
             )

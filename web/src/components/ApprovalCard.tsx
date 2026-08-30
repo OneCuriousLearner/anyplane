@@ -20,20 +20,20 @@ export function ApprovalCard(props: {
   const inputStr = JSON.stringify(approval.input, null, 2) ?? ''
 
   return (
-    <div className="my-3 rounded-lg border border-busy/50 bg-busy/5">
-      <div className="flex items-center gap-2 border-b border-busy/30 px-3 py-2">
-        <span className="font-mono text-xs tracking-widest text-busy uppercase">审批</span>
-        <span className="rounded border border-busy/40 bg-busy/10 px-1.5 py-0.5 font-mono text-[11px] text-busy">
+    <div className="my-3 rounded-[14px] bg-accent/10 p-3.5">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-xs tracking-widest text-accent uppercase">审批</span>
+        <span className="rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[11px] text-accent">
           {approval.toolName}
         </span>
         <span className="ml-auto font-mono text-[10px] text-faint">等待你的裁决</span>
       </div>
-      <pre className="max-h-48 overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">
+      <pre className="mt-2.5 max-h-48 overflow-auto rounded-[10px] bg-bg/50 px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">
         {inputStr.length > 2000 ? inputStr.slice(0, 2000) + '\n…（截断）' : inputStr}
       </pre>
-      <div className="flex gap-2 border-t border-busy/30 p-2">
+      <div className="mt-3 flex gap-2">
         <button
-          className="flex-1 rounded bg-ok/90 py-2 text-sm font-medium text-bg hover:bg-ok"
+          className="flex-1 rounded-full bg-ink py-2 text-sm font-medium text-bg"
           onClick={() => {
             const input = approval.input as Record<string, unknown> | undefined
             onDecision({ behavior: 'allow', updatedInput: input })
@@ -42,7 +42,7 @@ export function ApprovalCard(props: {
           ✓ 允许
         </button>
         <button
-          className="flex-1 rounded border border-danger/60 py-2 text-sm text-danger hover:bg-danger/10"
+          className="flex-1 rounded-full py-2 text-sm text-accent hover:bg-accent/10"
           onClick={() => onDecision({ behavior: 'deny', message: '用户在远程端拒绝了该操作' })}
         >
           ✗ 拒绝
@@ -58,15 +58,15 @@ function OptionButton(props: { pressed: boolean; onClick: () => void; children: 
     <button
       type="button"
       aria-pressed={props.pressed}
-      className={`w-full rounded border px-2.5 py-2 text-left transition-colors ${
+      className={`w-full rounded-[14px] px-2.5 py-2 text-left transition-colors ${
         props.pressed
-          ? 'border-accent bg-accent/15 text-ink'
-          : 'border-line bg-surface/50 text-muted hover:border-accent/50 hover:bg-surface2'
+          ? 'bg-surface2 text-ink'
+          : 'bg-surface text-muted hover:bg-surface2 hover:text-ink'
       }`}
       onClick={props.onClick}
     >
       <span className="flex gap-2">
-        <span className="font-mono text-xs text-accent-soft">{props.pressed ? '●' : '○'}</span>
+        <span className="font-mono text-xs text-muted">{props.pressed ? '●' : '○'}</span>
         {props.children}
       </span>
     </button>
@@ -94,12 +94,12 @@ function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (
   }
 
   return (
-    <div className="my-3 rounded-lg border border-accent/50 bg-accent/5">
-      <div className="flex items-center gap-2 border-b border-accent/30 px-3 py-2">
-        <span className="font-mono text-xs tracking-widest text-accent-soft uppercase">需要你的选择</span>
+    <div className="my-3 rounded-[14px] bg-accent/10 p-3.5">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-xs tracking-widest text-accent uppercase">需要你的选择</span>
         <span className="ml-auto font-mono text-[10px] text-faint">AskUserQuestion</span>
       </div>
-      <div className="space-y-5 p-3">
+      <div className="mt-3 space-y-5">
         {input.questions.map((question) => {
           const selected = selections[question.question] ?? []
           const otherSelected = selected.includes('__other__')
@@ -107,7 +107,7 @@ function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (
           return (
             <section key={question.question}>
               <div className="mb-2 flex items-center gap-2">
-                <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent-soft">
+                <span className="rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
                   {question.header}
                 </span>
                 {question.multiSelect && <span className="font-mono text-[10px] text-faint">可多选</span>}
@@ -138,12 +138,12 @@ function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (
                     value={otherAnswers[question.question] ?? ''}
                     onChange={(event) => setOtherAnswers((current) => ({ ...current, [question.question]: event.target.value }))}
                     placeholder="请输入你的回答"
-                    className="min-h-20 w-full resize-y rounded border border-accent/50 bg-surface px-2.5 py-2 text-sm outline-none placeholder:text-faint focus:border-accent"
+                    className="min-h-20 w-full resize-y rounded-[14px] bg-surface px-2.5 py-2 text-sm outline-none placeholder:text-faint focus:bg-surface2"
                   />
                 )}
               </div>
               {selectedOption?.preview && !question.multiSelect && (
-                <pre className="mt-2 max-h-48 overflow-auto rounded border border-line bg-surface2/60 p-2 font-mono text-[11px] text-muted whitespace-pre-wrap">
+                <pre className="mt-2 max-h-48 overflow-auto rounded-[10px] bg-surface p-2 font-mono text-[11px] text-muted whitespace-pre-wrap">
                   {selectedOption.preview}
                 </pre>
               )}
@@ -151,16 +151,16 @@ function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (
           )
         })}
       </div>
-      <div className="flex gap-2 border-t border-accent/30 p-2">
+      <div className="mt-3 flex gap-2">
         <button
-          className="flex-1 rounded bg-accent py-2 text-sm font-medium text-bg disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex-1 rounded-full bg-ink py-2 text-sm font-medium text-bg disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!canSubmit}
           onClick={() => onDecision({ behavior: 'allow', updatedInput: withAskUserQuestionAnswers(input, selections, otherAnswers) })}
         >
           提交回答
         </button>
         <button
-          className="rounded border border-danger/60 px-4 py-2 text-sm text-danger hover:bg-danger/10"
+          className="rounded-full px-4 py-2 text-sm text-accent hover:bg-accent/10"
           onClick={() => onDecision({ behavior: 'deny', message: '用户未回答这些问题' })}
         >
           取消

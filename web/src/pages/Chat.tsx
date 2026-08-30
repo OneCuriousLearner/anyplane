@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type HistoryMessage, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
-import { StatusPill, GLASS_BAR } from '../components/StatusPill'
+import { StatusPill } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RewindPicker } from '../components/RewindPicker'
 import { MessageView } from '../components/MessageView'
@@ -15,7 +15,7 @@ import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
 const MORE_ITEM =
-  'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface2/60 hover:text-ink'
+  'flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface hover:text-ink'
 
 interface Approval {
   requestId: string
@@ -959,7 +959,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       // codex review/start：无参审未提交改动，带参按自定义说明审（inline 在本线程跑）
       const instructions = text.slice(7).trim()
       sockRef.current.send({ kind: 'control', subtype: 'review', ...(instructions ? { extra: { instructions } } : {}) })
-      pushSystem(instructions ? `🔍 审查中：${instructions}` : '🔍 审查未提交的改动中…')
+      pushSystem(instructions ? `◈ 审查中：${instructions}` : '◈ 审查未提交的改动中…')
       setInput('')
       return
     }
@@ -1088,7 +1088,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     <div className="relative h-full overflow-clip bg-bg text-ink">
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-3 pb-[100px] pt-[120px] md:px-6">
+        <div className="mx-auto max-w-3xl px-[17px] pb-[110px] pt-[84px] md:px-[29px]">
           {messages.map((m, i) => (
             <MessageView
               key={m.id}
@@ -1097,57 +1097,41 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             />
           ))}
 
-          {/* 流式草稿：移除 message 级 Claude 图标，按块分行；thinking/tool 块左栏圆点 */}
+          {/* 流式草稿：按块分行，与已落盘消息同一套排版 */}
           {draft && draft.blocks.length > 0 && (
             <div className="my-3 flex flex-col">
-              {draft.blocks.map((b) => {
-                const dot = b.kind === 'thinking' || b.kind === 'tool'
-                return (
-                  <div key={b.idx} className="flex items-start gap-2.5">
-                    <span
-                      className={`flex w-5 shrink-0 justify-center select-none ${dot ? 'pt-[17px]' : ''}`}
-                      aria-hidden="true"
-                    >
-                      {dot && <span className="block h-1.5 w-1.5 rounded-full bg-zinc-400/70" />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      {b.kind === 'tool' ? (
-                        <div className="my-1.5 rounded-md border border-line bg-surface2/40 px-2.5 py-1.5 font-mono text-[12px]">
-                          <span className="text-accent-soft">{b.name ?? '…'}</span>
-                          <span className="ml-2 animate-pulse text-busy">…</span>
-                        </div>
-                      ) : b.kind === 'thinking' ? (
-                        <div className="my-1.5 rounded-md border border-line/60 bg-surface2/30 px-2.5 py-1.5">
-                          <span className="font-mono text-[11px] tracking-wide text-faint">思考</span>
-                          <span className="ml-1 animate-pulse font-mono text-[11px] text-busy">进行中…</span>
-                          {b.text && (
-                            <div className="mt-1 max-h-48 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
-                              {b.text}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="relative">
-                          <Markdown text={b.text} />
-                          <span className="cc-cursor ml-0.5 inline-block h-3.5 w-[7px] bg-accent-soft align-text-bottom" />
+              {draft.blocks.map((b) => (
+                <div key={b.idx} className="min-w-0">
+                  {b.kind === 'tool' ? (
+                    <div className="my-1.5 rounded-[14px] bg-surface px-3 py-2 font-mono text-[12px]">
+                      <span className="font-semibold text-ink">{b.name ?? '…'}</span>
+                      <span className="ml-2 text-faint">…</span>
+                    </div>
+                  ) : b.kind === 'thinking' ? (
+                    <div className="my-1.5 rounded-[14px] bg-surface px-3 py-2">
+                      <span className="font-mono text-[11px] tracking-wide text-faint">思考</span>
+                      <span className="ml-1 font-mono text-[11px] text-muted">进行中…</span>
+                      {b.text && (
+                        <div className="mt-1 max-h-48 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
+                          {b.text}
                         </div>
                       )}
                     </div>
-                  </div>
-                )
-              })}
+                  ) : (
+                    <div className="relative">
+                      <Markdown text={b.text} />
+                      <span className="cc-cursor ml-0.5 inline-block h-3.5 w-[7px] bg-muted align-text-bottom" />
+                    </div>
+                  )}
+                </div>
+              ))}
               {draft.blocks.every((b) => b.kind !== 'text') && (
-                <div className="flex items-start gap-2.5">
-                  <span className="flex w-5 shrink-0" aria-hidden="true" />
-                  <div className="min-w-0 flex-1">
-                    <span className="cc-cursor inline-block h-3.5 w-[7px] bg-accent-soft" />
-                  </div>
+                <div className="min-w-0">
+                  <span className="cc-cursor inline-block h-3.5 w-[7px] bg-muted" />
                 </div>
               )}
             </div>
           )}
-
-          {busy && !draft && <div className="my-2 animate-pulse pl-7 font-mono text-[11px] text-faint">✳ 生成中…</div>}
 
           {approvals.map((a) => (
             <ApprovalCard
@@ -1158,7 +1142,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           ))}
 
           {/* 底部 100px 空位上方：后端徽标（忙碌旋转 / 空闲可点彩蛋） */}
-          <div className="mt-4 ml-[30px] flex items-center gap-2.5">
+          <div className="mt-4 ml-[10px] flex items-center gap-2.5">
             {isCodex ? (
               <CodexMark active={busy || Boolean(draft) || Boolean(phase)} size={28} />
             ) : (
@@ -1168,21 +1152,25 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         </div>
       </div>
 
-      {/* 顶栏 + 状态胶囊：同一块悬浮毛玻璃，避免两段玻璃割裂 */}
-      <div className={`absolute inset-x-0 top-0 z-30 border-b border-line ${GLASS_BAR}`}>
-        <div className="border-b border-line/60 px-3 py-2">
+      {/* 顶栏：悬浮磨砂横带 */}
+      <div className="glass-bar absolute inset-x-0 top-0 z-30">
+        <div className="px-3 py-2.5">
           <div className="flex items-center gap-2">
             <button
-              className="rounded px-1.5 py-1 font-mono text-xs text-muted hover:bg-surface2 md:hidden"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface2 text-muted transition-colors hover:text-ink md:hidden"
               onClick={props.onBack}
+              title="返回列表"
+              aria-label="返回列表"
             >
-              ← 列表
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
             </button>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{session.title ?? session.cwd ?? session.sessionId}</div>
               <div className="flex items-center gap-2 font-mono text-[10px] tracking-wide text-faint">
-                <span className={connected ? 'text-ok' : 'text-danger'}>{connected ? '●' : '○'}</span>
-                <span className={busy || phase ? 'animate-pulse text-busy' : ''}>{statusLine}</span>
+                <span className={connected ? 'text-ok' : 'text-accent'}>{connected ? '●' : '○'}</span>
+                <span className={busy || phase ? 'text-busy' : ''}>{statusLine}</span>
               </div>
             </div>
             {(isExisting || !isCodex || state.sessionId) && (
@@ -1190,8 +1178,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 <button
                   ref={moreBtnRef}
                   type="button"
-                  className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded border text-faint hover:text-muted ${
-                    moreOpen ? 'border-accent/50 text-ink' : 'border-line'
+                  className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors ${
+                    moreOpen ? 'bg-surface2 text-ink' : 'bg-surface2 text-muted hover:text-ink'
                   }`}
                   title="更多"
                   aria-label="更多"
@@ -1199,18 +1187,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   aria-expanded={moreOpen}
                   onClick={() => setMoreOpen((v) => !v)}
                 >
-                  <svg
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.4"
-                    strokeLinecap="round"
-                    className="h-3.5 w-3.5"
-                    aria-hidden
-                  >
-                    <path d="M2.5 4.25h11" />
-                    <path d="M2.5 8h11" />
-                    <path d="M2.5 11.75h11" />
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden>
+                    <circle cx="5" cy="12" r="1.8" />
+                    <circle cx="12" cy="12" r="1.8" />
+                    <circle cx="19" cy="12" r="1.8" />
                   </svg>
                   {state.goal && (
                     <span className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-ok" aria-hidden />
@@ -1279,7 +1259,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                     <button
                       type="button"
                       role="menuitem"
-                      className={`${MORE_ITEM} text-accent-soft hover:text-accent-soft disabled:opacity-40`}
+                      className={`${MORE_ITEM} disabled:opacity-40`}
                       disabled={handoffBusy}
                       title="让另一个 agent 接续本目录的工作（源会话 fork 自写简报，目标会话带简报进场）"
                       onClick={() => {
@@ -1302,7 +1282,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             <div className="mt-1 font-mono text-[10px] tracking-wide text-faint/80">{usageLine}</div>
           )}
           {goalOpen && (
-            <div className="mt-2 rounded border border-line bg-surface2/80 p-2">
+            <div className="mt-2 rounded-[14px] bg-surface2/80 p-2.5 backdrop-blur-xl">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="font-mono text-[10px] tracking-wide text-faint">
                   ◎ 会话目标{state.goal ? '（进行中）' : ''}——agent 会持续工作直到条件达成
@@ -1321,7 +1301,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               )}
               <div className="flex gap-1.5">
                 <input
-                  className="min-w-0 flex-1 rounded border border-line bg-bg px-2 py-1 font-mono text-[11px] text-ink placeholder:text-faint/60"
+                  className="min-w-0 flex-1 rounded-full bg-bg/60 px-3 py-1.5 font-mono text-[11px] text-ink outline-none placeholder:text-faint/60"
                   placeholder={isCodex ? '如：迁移完所有调用点并通过测试' : '如：test/auth 全部通过且 lint 干净'}
                   value={goalDraft}
                   onChange={(e) => setGoalDraft(e.target.value)}
@@ -1333,7 +1313,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   }}
                 />
                 <button
-                  className="shrink-0 rounded border border-ok/60 px-2 py-1 font-mono text-[11px] text-ok disabled:opacity-40"
+                  className="shrink-0 rounded-full bg-ink px-3 py-1.5 font-mono text-[11px] text-bg disabled:opacity-40"
                   disabled={!goalDraft.trim()}
                   onClick={() => {
                     if (!goalDraft.trim()) return
@@ -1345,7 +1325,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 </button>
                 {state.goal && (
                   <button
-                    className="shrink-0 rounded border border-danger/60 px-2 py-1 font-mono text-[11px] text-danger"
+                    className="shrink-0 rounded-full px-3 py-1.5 font-mono text-[11px] text-accent hover:bg-accent/10"
                     onClick={() => {
                       sendGoal()
                       setGoalOpen(false)
@@ -1359,41 +1339,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           )}
         </div>
 
-        {cfg && !isCodex && (
-          <StatusPill
-            cfg={cfg}
-            model={initInfo.model}
-            permissionMode={permMode}
-            effort={effort}
-            modelNames={modelNames}
-            onPanelOpen={loadModelNames}
-            onSetModel={(m) => {
-              setInitInfo((prev) => ({ ...prev, model: m }))
-              sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
-            }}
-            onSetMode={handleSetMode}
-            onSetEffort={handleSetEffort}
-          />
-        )}
-
-        {isCodex && codexModels && codexModels.length > 0 && (
-          <StatusPill
-            cfg={codexCfg}
-            model={codexModelId}
-            permissionMode={codexModeOf(permMode ?? state.permissionMode)}
-            effort={effort ?? state.effort ?? codexCurrentModel?.defaultEffort}
-            effortLevels={codexEffortLevels}
-            onSetModel={(m) => {
-              sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
-            }}
-            onSetMode={handleSetMode}
-            onSetEffort={handleSetEffort}
-          />
-        )}
-
         {/* 接力链导航条：仅在当前会话参与血缘时出现 */}
         {lineage && (
-          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-line/60 px-3 py-1.5 font-mono text-[10px]">
+          <div className="flex items-center gap-1.5 overflow-x-auto px-3 py-1.5 font-mono text-[10px]">
             <span className="shrink-0 text-faint">⇄ 接力链:</span>
             {lineage.records
               .map((r) => {
@@ -1407,10 +1355,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                       key={k}
                       disabled={!info}
                       onClick={() => info && props.onNavigate?.(info)}
-                      className={`flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 ${
+                      className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 ${
                         current
-                          ? 'border-accent/60 bg-accent/15 text-accent-soft'
-                          : 'border-line text-faint hover:text-muted'
+                          ? 'bg-surface2 text-ink'
+                          : 'text-faint hover:text-muted'
                       }`}
                       title={k}
                     >
@@ -1436,14 +1384,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             {state.activeTasks!.map((t) => (
               <span
                 key={t.id}
-                className="flex items-center gap-1.5 rounded border border-busy/40 bg-busy/10 px-2 py-0.5 font-mono text-[10px] text-busy"
+                className="flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 font-mono text-[10px] text-muted"
                 title={t.summary ?? t.description}
               >
-                <span className="animate-pulse">●</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-busy" />
                 <span className="max-w-48 truncate">{t.description || t.id}</span>
                 {t.lastToolName && <span className="text-faint">· {t.lastToolName}</span>}
                 <button
-                  className="ml-0.5 text-danger hover:font-bold"
+                  className="ml-0.5 text-accent hover:font-bold"
                   title="停止该后台任务"
                   onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'stop_task', extra: { task_id: t.id } })}
                 >
@@ -1456,14 +1404,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
         {/* 会话详情抽屉 */}
         {detailOpen && (
-          <div className="border-t border-line/60 px-3 py-2">
+          <div className="px-3 py-2">
             <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px]">
               <span className="text-muted">{detailTitle}</span>
               {/* codex 只有 mcp_status 有对应物（mcpServerStatus/list）；context/设置是 claude 控制请求 */}
               {(isCodex ? (['mcp_status'] as const) : (['get_context_usage', 'mcp_status', 'get_settings'] as const)).map((q) => (
                 <button
                   key={q}
-                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-faint hover:text-muted"
+                  className="rounded-full bg-surface px-2.5 py-1 text-[10px] text-faint hover:text-ink"
                   onClick={() =>
                     runQuery(q, q === 'get_context_usage' ? 'context 用量' : q === 'mcp_status' ? 'MCP 状态' : '设置')
                   }
@@ -1477,7 +1425,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             </div>
             {detailTitle === 'MCP 状态' && !isCodex && mcpServers ? (
               /* claude MCP 管理面板：状态 + 重连/启停（toggle 持久化到 settings，与 TUI 同语义） */
-              <div className="max-h-56 overflow-auto rounded bg-bg/60 p-2">
+              <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
                 {mcpServers.length === 0 && (
                   <div className="py-1 font-mono text-[10px] text-faint">无 MCP 服务器（在 claude 配置里添加后出现）</div>
                 )}
@@ -1514,7 +1462,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                         {srv.error && <div className="truncate font-mono text-[10px] text-danger">{srv.error}</div>}
                       </div>
                       <button
-                        className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-faint hover:text-muted disabled:opacity-40"
+                        className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
                         disabled={!!mcpBusy || srv.status === 'disabled'}
                         title="重新连接（mcp_reconnect）"
                         onClick={() => mcpAction(srv.name, 'mcp_reconnect')}
@@ -1522,7 +1470,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                         {reconnecting ? '…' : '重连'}
                       </button>
                       <button
-                        className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-faint hover:text-muted disabled:opacity-40"
+                        className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
                         disabled={!!mcpBusy}
                         title={srv.status === 'disabled' ? '启用并连接（写入 settings）' : '禁用并断开（写入 settings）'}
                         onClick={() => mcpAction(srv.name, 'mcp_toggle', srv.status === 'disabled')}
@@ -1535,7 +1483,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               </div>
             ) : detailTitle === 'context 用量' && !isCodex && contextData ? (
               /* claude context 结构化：总量条 + 分类占比（deferred 类别淡显） */
-              <div className="max-h-56 overflow-auto rounded bg-bg/60 p-2">
+              <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
                 <div className="mb-1.5 flex items-baseline justify-between font-mono text-[11px] text-ink">
                   <span>
                     {fmtTok(contextData.totalTokens)} / {fmtTok(contextData.maxTokens)} tok ·{' '}
@@ -1549,7 +1497,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 </div>
                 <div className="mb-2 h-1 overflow-hidden rounded-full bg-surface2">
                   <div
-                    className="h-full bg-accent/70"
+                    className="h-full bg-ink/60"
                     style={{ width: `${Math.min(100, contextData.percentage)}%` }}
                   />
                 </div>
@@ -1558,9 +1506,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                     <span className="w-28 shrink-0 truncate font-mono text-[10px] text-muted" title={c.name}>
                       {c.name}
                     </span>
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface2/60">
+                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface2">
                       <div
-                        className={`h-full ${c.isDeferred ? 'bg-faint' : 'bg-wait/70'}`}
+                        className={`h-full ${c.isDeferred ? 'bg-faint' : 'bg-muted'}`}
                         style={{
                           width: `${Math.min(100, (c.tokens / Math.max(1, contextData.maxTokens)) * 100)}%`,
                         }}
@@ -1574,11 +1522,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               </div>
             ) : detailTitle === '设置' && !isCodex && settingsData ? (
               /* claude 设置轻结构：生效值 + 来源概览；全量设置不枚举，原始 JSON 折叠兜底 */
-              <div className="max-h-56 overflow-auto rounded bg-bg/60 p-2">
+              <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
                 {settingsData.applied && (
                   <div className="mb-1.5 font-mono text-[11px] text-ink">
                     当前生效：
-                    <span className="text-accent-soft">
+                    <span className="text-muted">
                       {modelNames?.[settingsData.applied.model ?? '']?.name ?? settingsData.applied.model ?? 'default'}
                     </span>
                     <span className="text-faint"> · effort {settingsData.applied.effort ?? '默认'}</span>
@@ -1594,13 +1542,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   <summary className="cursor-pointer font-mono text-[10px] text-faint hover:text-muted">
                     原始 JSON
                   </summary>
-                  <pre className="mt-1 max-h-40 overflow-auto rounded bg-bg p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
+                  <pre className="mt-1 max-h-40 overflow-auto rounded-[10px] bg-bg/60 p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
                     {detailContent}
                   </pre>
                 </details>
               </div>
             ) : (
-              <pre className="max-h-56 overflow-auto rounded bg-bg/60 p-2 font-mono text-[10px] whitespace-pre-wrap text-muted">
+              <pre className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5 font-mono text-[10px] whitespace-pre-wrap text-muted">
                 {detailContent}
               </pre>
             )}
@@ -1629,29 +1577,18 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         />
       )}
 
-      {/* ↓ 必须与毛玻璃底栏同级：挂在带 backdrop-filter 的父级下时，子级只能模糊父级内部，看不到消息区 */}
-      {!atBottom && (
-        <button
-          className="absolute bottom-20 right-4 z-40 rounded-md border border-line bg-bg/55 px-2.5 py-1.5 font-mono text-sm text-ink shadow-lg shadow-black/40 backdrop-blur-md hover:bg-bg/70"
-          onClick={() => scrollToBottom(false)}
-          title="回到底部"
-        >
-          ↓
-        </button>
-      )}
-
-      {/* 输入区：Claude Code 式双横线提示符；底部下沉 8px 出视口 */}
-      <div className={`absolute inset-x-0 -bottom-2 z-30 px-3 pb-5 pt-3 ${GLASS_BAR}`}>
+      {/* 输入区：悬浮磨砂圆角块；模型胶囊 / 图片 / 发送全收进块内 */}
+      <div className="absolute inset-x-0 bottom-0 z-30 px-3 pb-3 pt-2">
         <div className="mx-auto max-w-3xl">
           {slashHints.length > 0 && (
-            <div className="mb-2 rounded border border-line bg-surface2/60 p-1">
+            <div className="mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
               {/* 完整清单可滚动（CLI initialize 握手报告多少就列多少），自有命令置顶；键盘导航时高亮行跟随滚动 */}
               <div ref={slashScrollRef} className="max-h-60 overflow-y-auto">
                 {slashHints.map((c, i) => (
                   <button
                     key={c.name}
-                    className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left ${
-                      i === slashActive ? 'bg-surface2' : 'hover:bg-surface2'
+                    className={`flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left ${
+                      i === slashActive ? 'bg-surface' : 'hover:bg-surface'
                     }`}
                     onMouseEnter={() => setSlashIdx(i)}
                     onClick={() => {
@@ -1660,62 +1597,70 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                       inputRef.current?.focus()
                     }}
                   >
-                    <span className="font-mono text-[12px] text-accent-soft">/{c.name}</span>
+                    <span className="font-mono text-[12px] text-ink">/{c.name}</span>
                     {c.desc && <span className="truncate text-xs text-faint">{c.desc}</span>}
                   </button>
                 ))}
               </div>
-              <div className="border-t border-line/60 px-2 py-1 font-mono text-[9px] tracking-wide text-faint">
+              <div className="px-2.5 py-1 font-mono text-[9px] tracking-wide text-faint">
                 {slashHints.length} 个命令 · ↑↓ 移动 · Tab 补全
                 {input.trim() === '/' && ' · 继续输入可过滤'}
               </div>
             </div>
           )}
-          {/* busy 时发送方式：插队（steer，下一边界被模型看到）/ 排队（queue，当前轮结束后） */}
-          {busy && (
-            <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px]">
-              <span className="text-faint">工作中，发送：</span>
-              {(['steer', 'queue'] as const).map((m) => (
-                <button
-                  key={m}
-                  className={`rounded border px-1.5 py-0.5 ${
-                    sendMode === m ? 'border-accent/60 bg-accent/15 text-accent-soft' : 'border-line text-faint hover:text-muted'
-                  }`}
-                  onClick={() => setSendMode(m)}
-                >
-                  {m === 'steer' ? '插队' : '排队'}
-                </button>
-              ))}
-              <span className="text-faint/70">
-                {sendMode === 'steer'
-                  ? isCodex
-                    ? '追加进当前轮'
-                    : '打断当前并立即处理'
-                  : '当前轮结束后自动开始'}
-              </span>
-            </div>
-          )}
-          {/* 待发送图片预览 */}
-          {pendingImages.length > 0 && (
-            <div className="mb-1.5 flex flex-wrap gap-2">
-              {pendingImages.map((img, i) => (
-                <span key={i} className="relative">
-                  <img src={imgPreviewSrc(img)} alt={img.name} className="h-14 w-14 rounded border border-line object-cover" />
+          <div className="relative">
+            {/* ↓ 与输入块同列、贴在正上方；不放进磨砂块内，否则 backdrop 只能糊到父级内部 */}
+            {!atBottom && (
+              <button
+                className="absolute bottom-full right-0 z-40 mb-2 grid h-9 w-9 place-items-center rounded-full bg-surface2/85 text-ink shadow-lg backdrop-blur-xl hover:bg-surface2"
+                onClick={() => scrollToBottom(false)}
+                title="回到底部"
+                aria-label="回到底部"
+              >
+                ↓
+              </button>
+            )}
+            <div className="rounded-[14px] bg-surface2/80 px-3 pb-2 pt-2.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+            {/* busy 时发送方式：插队（steer，下一边界被模型看到）/ 排队（queue，当前轮结束后） */}
+            {busy && (
+              <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px]">
+                <span className="text-faint">工作中，发送：</span>
+                {(['steer', 'queue'] as const).map((m) => (
                   <button
-                    className="absolute -right-1.5 -top-1.5 rounded-full bg-danger px-1 text-[10px] leading-4 text-white"
-                    onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                    key={m}
+                    className={`rounded-full px-2.5 py-0.5 ${
+                      sendMode === m ? 'bg-surface text-ink' : 'text-faint hover:text-muted'
+                    }`}
+                    onClick={() => setSendMode(m)}
                   >
-                    ✕
+                    {m === 'steer' ? '插队' : '排队'}
                   </button>
+                ))}
+                <span className="text-faint/70">
+                  {sendMode === 'steer'
+                    ? isCodex
+                      ? '追加进当前轮'
+                      : '打断当前并立即处理'
+                    : '当前轮结束后自动开始'}
                 </span>
-              ))}
-            </div>
-          )}
-          <div
-            className={`flex items-start gap-2 border-y px-1 py-2 transition-colors ${
-              busy ? 'border-busy/50' : 'border-line focus-within:border-accent/50'
-            }`}
-          >
+              </div>
+            )}
+            {/* 待发送图片预览 */}
+            {pendingImages.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {pendingImages.map((img, i) => (
+                  <span key={i} className="relative">
+                    <img src={imgPreviewSrc(img)} alt={img.name} className="h-14 w-14 rounded-[10px] object-cover" />
+                    <button
+                      className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-accent text-[9px] leading-none text-white"
+                      onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <input
               ref={fileInputRef}
               type="file"
@@ -1727,82 +1672,105 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 e.target.value = ''
               }}
             />
-            <button
-              type="button"
-              className="mt-[1px] shrink-0 self-start text-faint transition-colors hover:text-accent-soft"
-              title="添加图片（jpg/png/gif/webp，≤5MB）"
-              aria-label="添加图片"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
-                <rect x="1.25" y="2.25" width="13.5" height="11.5" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
-                <circle cx="5.25" cy="6" r="1.15" fill="currentColor" />
-                <path d="M1.5 12.25 6 8.25l2.4 2.1 2.1-1.7 4 3.6" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
-              </svg>
-            </button>
-            <div className="flex min-w-0 flex-1 items-start gap-2">
-              <span
-                className={`mt-[1px] shrink-0 select-none font-mono text-sm leading-none ${
-                  busy ? 'text-busy' : 'text-accent-soft'
-                }`}
-                aria-hidden="true"
-              >
-                ❯
-              </span>
-              <textarea
-                ref={inputRef}
-                className="max-h-[200px] min-h-[1.25rem] flex-1 resize-none overflow-hidden bg-transparent py-0 font-mono text-sm leading-snug text-ink outline-none placeholder:text-faint"
-                rows={1}
-                placeholder={busy ? '工作中…' : ''}
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value)
-                  setSlashIdx(0)
-                }}
-                onKeyDown={(e) => {
-                  // 斜杠命令面板打开时的键盘导航
-                  if (slashHints.length > 0) {
-                    if (e.key === 'ArrowDown') {
-                      e.preventDefault()
-                      setSlashIdx((i) => Math.min(i + 1, slashHints.length - 1))
-                      return
-                    }
-                    if (e.key === 'ArrowUp') {
-                      e.preventDefault()
-                      setSlashIdx((i) => Math.max(i - 1, 0))
-                      return
-                    }
-                    if (e.key === 'Tab') {
-                      e.preventDefault()
-                      setInput(`/${slashHints[slashActive].name} `)
-                      setSlashIdx(0)
-                      return
-                    }
-                    if (e.key === 'Escape') {
-                      e.preventDefault()
-                      setInput('')
-                      setSlashIdx(0)
-                      return
-                    }
-                  }
-                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            <textarea
+              ref={inputRef}
+              className="max-h-[200px] min-h-[1.5rem] w-full resize-none overflow-hidden bg-transparent px-1 text-[15px] leading-snug text-ink outline-none placeholder:text-faint"
+              rows={1}
+              placeholder={busy ? '工作中…' : 'ᕕ( ◠ڼ◠ )ᕗ'}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value)
+                setSlashIdx(0)
+              }}
+              onKeyDown={(e) => {
+                // 斜杠命令面板打开时的键盘导航
+                if (slashHints.length > 0) {
+                  if (e.key === 'ArrowDown') {
                     e.preventDefault()
-                    // 输入还是高亮命令的真前缀时先补全不发送；完整命令名（如 /compact）才直接发送
-                    const trimmed = input.trim()
-                    const active = slashHints[slashActive]
-                    if (slashHints.length > 0 && active && `/${active.name}` !== trimmed) {
-                      setInput(`/${active.name} `)
-                      setSlashIdx(0)
-                      return
-                    }
-                    send()
+                    setSlashIdx((i) => Math.min(i + 1, slashHints.length - 1))
+                    return
                   }
-                }}
-              />
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setSlashIdx((i) => Math.max(i - 1, 0))
+                    return
+                  }
+                  if (e.key === 'Tab') {
+                    e.preventDefault()
+                    setInput(`/${slashHints[slashActive].name} `)
+                    setSlashIdx(0)
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setInput('')
+                    setSlashIdx(0)
+                    return
+                  }
+                }
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault()
+                  // 输入还是高亮命令的真前缀时先补全不发送；完整命令名（如 /compact）才直接发送
+                  const trimmed = input.trim()
+                  const active = slashHints[slashActive]
+                  if (slashHints.length > 0 && active && `/${active.name}` !== trimmed) {
+                    setInput(`/${active.name} `)
+                    setSlashIdx(0)
+                    return
+                  }
+                  send()
+                }
+              }}
+            />
+            <div className="mt-1 flex items-center gap-1.5">
+              {cfg && !isCodex && (
+                <StatusPill
+                  cfg={cfg}
+                  model={initInfo.model}
+                  permissionMode={permMode}
+                  effort={effort}
+                  modelNames={modelNames}
+                  onPanelOpen={loadModelNames}
+                  onSetModel={(m) => {
+                    setInitInfo((prev) => ({ ...prev, model: m }))
+                    sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+                  }}
+                  onSetMode={handleSetMode}
+                  onSetEffort={handleSetEffort}
+                />
+              )}
+              {isCodex && codexModels && codexModels.length > 0 && (
+                <StatusPill
+                  cfg={codexCfg}
+                  model={codexModelId}
+                  permissionMode={codexModeOf(permMode ?? state.permissionMode)}
+                  effort={effort ?? state.effort ?? codexCurrentModel?.defaultEffort}
+                  effortLevels={codexEffortLevels}
+                  onSetModel={(m) => {
+                    sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+                  }}
+                  onSetMode={handleSetMode}
+                  onSetEffort={handleSetEffort}
+                />
+              )}
+              <div className="flex-1" />
+              <button
+                type="button"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface hover:text-ink"
+                title="添加图片（jpg/png/gif/webp，≤5MB）"
+                aria-label="添加图片"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="m21 15-5-5L5 21" />
+                </svg>
+              </button>
               {busy ? (
                 <button
                   type="button"
-                  className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-danger transition-opacity hover:text-danger/80"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-[11px] leading-none text-white transition-opacity hover:opacity-85"
                   onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
                   title="中断当前回合"
                   aria-label="中断当前回合"
@@ -1812,15 +1780,19 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               ) : (
                 <button
                   type="button"
-                  className="mt-[1px] shrink-0 self-start font-mono text-sm leading-none text-accent-soft transition-opacity hover:text-accent disabled:pointer-events-none disabled:opacity-25"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-ink text-bg transition-opacity hover:opacity-85 disabled:pointer-events-none disabled:opacity-25"
                   disabled={(!input.trim() && pendingImages.length === 0) || !connected}
                   onClick={send}
                   title="发送"
                   aria-label="发送"
                 >
-                  ↑
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                    <path d="M12 19V5" />
+                    <path d="m5 12 7-7 7 7" />
+                  </svg>
                 </button>
               )}
+            </div>
             </div>
           </div>
         </div>

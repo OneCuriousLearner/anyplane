@@ -13,12 +13,12 @@ export function CodexMark(props: {
   active?: boolean
   className?: string
   size?: number
-  /** 图标颜色，默认纯白 */
+  /** 图标颜色，默认继承调用处 text color */
   color?: string
   /** 列表等场景：禁用点击彩蛋与 title */
   static?: boolean
 }) {
-  const { active = false, className = '', size = 28, color = '#ffffff', static: isStatic = false } = props
+  const { active = false, className = '', size = 28, color = 'currentColor', static: isStatic = false } = props
   const [deg, setDeg] = useState(0)
 
   const svg = (

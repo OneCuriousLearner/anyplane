@@ -8,6 +8,7 @@ type NodeState =
 
 /** 根集合在 tree Map 中的 key（与服务端空 path 约定一致） */
 const ROOT = ''
+const RECENT_OPEN_KEY = 'anyplane-dirpicker-recent-open'
 
 const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
 
@@ -30,6 +31,15 @@ export function DirPicker(props: {
   const [notice, setNotice] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
   const [manualCwd, setManualCwd] = useState('')
+  /** 最近目录折叠：记住上次；首次移动端收起、桌面展开 */
+  const [recentOpen, setRecentOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem(RECENT_OPEN_KEY)
+      if (v === '0') return false
+      if (v === '1') return true
+    } catch {}
+    return window.matchMedia('(min-width: 768px)').matches
+  })
 
   const treeRef = useRef(tree)
   treeRef.current = tree
@@ -173,7 +183,7 @@ export function DirPicker(props: {
           style={{ paddingLeft: indent }}
         >
           <span className="truncate">{st.message}</span>
-          <button className="shrink-0 text-accent-soft underline" onClick={() => loadLevel(path)}>
+          <button className="shrink-0 text-muted underline" onClick={() => loadLevel(path)}>
             重试
           </button>
         </div>
@@ -197,8 +207,8 @@ export function DirPicker(props: {
         <div
           data-path={e.path}
           onClick={() => setSelected(e.path)}
-          className={`flex cursor-pointer items-center gap-1 border-b border-line/40 py-2 pr-3 text-sm transition-colors hover:bg-surface2/60 ${
-            isSel ? 'bg-surface2/80 shadow-[inset_2px_0_0_var(--color-accent)]' : ''
+          className={`mx-1 flex cursor-pointer items-center gap-1 rounded-[10px] py-2 pr-3 text-sm transition-colors hover:bg-surface ${
+            isSel ? 'bg-surface2' : ''
           }`}
           style={{ paddingLeft: 8 + depth * 16 }}
         >
@@ -216,7 +226,7 @@ export function DirPicker(props: {
           {depth === 0 && e.name !== e.path && (
             <span className="truncate font-mono text-[10px] text-faint">{e.path}</span>
           )}
-          {isSel && <span className="ml-auto shrink-0 pl-2 text-accent">✓</span>}
+          {isSel && <span className="ml-auto shrink-0 pl-2 text-ink">✓</span>}
         </div>
         {isOpen && renderLevel(e.path, depth + 1)}
       </div>
@@ -226,37 +236,56 @@ export function DirPicker(props: {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg text-ink">
       {/* 报头 */}
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+      <div className="flex items-center justify-between px-4 py-3">
         <h2 className="font-mono text-sm tracking-widest text-muted uppercase">选择项目目录</h2>
         <button
-          className="rounded border border-line px-2 py-0.5 font-mono text-xs text-faint hover:text-ink"
+          className="grid h-8 w-8 place-items-center rounded-full bg-surface2 text-muted hover:text-ink"
           onClick={props.onClose}
+          aria-label="关闭"
         >
           ✕
         </button>
       </div>
 
       {notice && (
-        <div className="border-b border-line bg-surface2/50 px-4 py-2 text-xs text-busy">{notice}</div>
+        <div className="px-4 py-2 text-xs text-muted">{notice}</div>
       )}
 
-      {/* 最近目录 */}
+      {/* 最近目录：竖排长列表，点标题折叠/展开 */}
       {recentCwds.length > 0 && (
-        <div className="border-b border-line px-4 py-3">
-          <div className="mb-2 font-mono text-[11px] tracking-wide text-faint">最近目录</div>
-          <div className="flex flex-wrap gap-2">
-            {recentCwds.map((cwd) => (
+        <div>
+          <button
+            type="button"
+            aria-expanded={recentOpen}
+            title={recentOpen ? '折叠最近目录' : '展开最近目录'}
+            className="flex w-full items-center gap-2 px-4 py-1.5 text-left font-mono text-[11px] tracking-wide text-faint hover:text-muted"
+            onClick={() => {
+              setRecentOpen((prev) => {
+                const next = !prev
+                localStorage.setItem(RECENT_OPEN_KEY, next ? '1' : '0')
+                return next
+              })
+            }}
+          >
+            <span className="w-3 shrink-0">{recentOpen ? '▾' : '▸'}</span>
+            最近
+          </button>
+          {recentOpen &&
+            recentCwds.map((cwd) => (
               <button
                 key={cwd}
+                type="button"
                 disabled={revealing}
+                title={cwd}
+                aria-label={`定位到 ${cwd}`}
                 onClick={() => revealPath(cwd)}
-                className="max-w-full rounded border border-line bg-surface px-2.5 py-1.5 text-left hover:border-accent/60 disabled:opacity-50"
+                className="mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-[10px] px-4 py-2 text-left hover:bg-surface disabled:opacity-50"
               >
-                <div className="text-sm">{baseName(cwd)}</div>
-                <div className="max-w-56 truncate font-mono text-[10px] text-faint">{cwd}</div>
+                <span className="w-3 shrink-0" />
+                <span className="shrink-0 text-sm">{baseName(cwd)}</span>
+                <span className="min-w-0 truncate font-mono text-[10px] text-faint">{cwd}</span>
               </button>
             ))}
-          </div>
         </div>
       )}
 
@@ -266,7 +295,7 @@ export function DirPicker(props: {
       </div>
 
       {/* 手动输入兜底 */}
-      <div className="border-t border-line">
+      <div className="mt-1">
         <button
           className="flex w-full items-center gap-1 px-4 py-2 font-mono text-[11px] text-faint hover:text-muted"
           onClick={() => setManualOpen(!manualOpen)}
@@ -276,14 +305,14 @@ export function DirPicker(props: {
         {manualOpen && (
           <div className="flex gap-2 px-4 pb-3">
             <input
-              className="flex-1 rounded border border-line bg-bg px-3 py-2 font-mono text-xs outline-none placeholder:text-faint focus:border-accent/60"
+              className="flex-1 rounded-full bg-surface px-4 py-2 font-mono text-xs outline-none placeholder:text-faint focus:bg-surface2"
               placeholder="项目目录，如 /home/you/proj 或 D:\proj"
               value={manualCwd}
               onChange={(e) => setManualCwd(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && start(manualCwd.trim())}
             />
             <button
-              className="rounded bg-accent px-3 text-sm text-bg hover:bg-accent-soft disabled:opacity-40"
+              className="rounded-full bg-ink px-4 text-sm text-bg disabled:opacity-40"
               disabled={!manualCwd.trim() || starting}
               onClick={() => start(manualCwd.trim())}
             >
@@ -294,14 +323,14 @@ export function DirPicker(props: {
       </div>
 
       {/* 底部确认栏 */}
-      <div className="border-t border-line bg-surface px-4 py-3">
+      <div className="px-4 py-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="truncate font-mono text-xs text-muted">{selected || '未选择目录'}</div>
-          <div className="flex shrink-0 overflow-hidden rounded border border-line font-mono text-[11px]">
+          <div className="flex shrink-0 rounded-full bg-surface p-0.5 font-mono text-[11px]">
             {(['claude', 'codex'] as const).map((b) => (
               <button
                 key={b}
-                className={`px-2.5 py-1 ${backend === b ? 'bg-accent text-bg' : 'text-faint hover:text-muted'}`}
+                className={`rounded-full px-3 py-1 ${backend === b ? 'bg-surface2 text-ink' : 'text-faint hover:text-muted'}`}
                 onClick={() => setBackend(b)}
               >
                 {b === 'claude' ? 'Claude' : 'Codex'}
@@ -310,7 +339,7 @@ export function DirPicker(props: {
           </div>
         </div>
         <button
-          className="w-full rounded bg-accent py-2 text-sm font-medium text-bg hover:bg-accent-soft disabled:opacity-40"
+          className="w-full rounded-full bg-ink py-2.5 text-sm font-medium text-bg disabled:opacity-40"
           disabled={!selected || starting || revealing}
           onClick={() => start(selected)}
         >
