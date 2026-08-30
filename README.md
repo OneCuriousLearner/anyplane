@@ -132,22 +132,30 @@ bun run gateway      # 对外 80/443 网关（见下方「域名访问」）
 - `bun run dev` 使用纯 Bun 启动器并等待 server 完成优雅关闭；不要用任务管理器直接结束 server，
   否则可能绕过 `server.stop(true)` 与 Claude 子进程树清理。
 
-## Claude Code 官方文档（本地镜像）
+## 官方文档（本地镜像）
 
-本地可拉取 [Claude Code Docs](https://code.claude.com/docs/en/overview) 的 Markdown 镜像到 `docs/claude-code/`（已加入 `.gitignore`，不进仓库）：
+本地可拉取 Markdown 镜像（已加入 `.gitignore`，不进仓库）：
 
 ```bash
-bun run docs:claude
+bun run docs:claude   # Claude Code → docs/claude-code/
+bun run docs:codex    # Codex / ChatGPT Learn → docs/codex/
 ```
 
-会写入：
+**Claude Code** 写入 `docs/claude-code/`：
 
-- `docs/claude-code/llms.txt` — 官方文档索引
-- `docs/claude-code/llms-full.txt` — 全量合并文本
-- `docs/claude-code/en/**/*.md` — 按路径拆分的各页（当前约 185 篇）
-- `docs/claude-code/manifest.json` — 拉取元数据（时间、成功/失败计数）
+- `llms.txt` / `llms-full.txt` — 官方索引与全量合并文本
+- `en/**/*.md` — 按路径拆分的各页（当前约 185 篇）
+- `manifest.json` — 拉取元数据（时间、成功/失败计数）
 
 来源为官方 [`llms.txt`](https://code.claude.com/docs/llms.txt) / [`llms-full.txt`](https://code.claude.com/docs/llms-full.txt)；单页亦可直接访问 `https://code.claude.com/docs/en/<page>.md`。
+
+**Codex** 写入 `docs/codex/`：
+
+- `llms.txt` / `llms-full.txt` — 官方索引与全量合并文本
+- `docs/**/*.md` — 按路径拆分的各页（CLI / app-server / Skills / MCP 等）
+- `manifest.json` — 拉取元数据
+
+来源为官方 [`learn.chatgpt.com/llms.txt`](https://learn.chatgpt.com/llms.txt) / [`llms-full.txt`](https://learn.chatgpt.com/docs/llms-full.txt)；单页在 URL 后追加 `.md`，例如 `https://learn.chatgpt.com/docs/app-server.md`。
 
 ## 域名访问（80/443 网关）
 

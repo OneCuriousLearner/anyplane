@@ -20,5 +20,6 @@ anyplane.config.json
 
 ## Local docs
 docs/claude-code/
+docs/codex/
 *.local.md
 *.tgz

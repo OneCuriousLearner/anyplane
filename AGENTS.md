@@ -109,4 +109,6 @@ bun test web/            # 仅前端测试
 
 `docs/claude-code/` 是官方 Claude Code 文档的本地 Markdown 镜像（gitignore，不进仓库），**协议/CLI/SDK 相关改动的重要开发参考**。用 `bun run docs:claude` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `en/**/*.md`。
 
+`docs/codex/` 是官方 Codex / ChatGPT Learn 文档的本地 Markdown 镜像（gitignore，不进仓库；`GPT's suggestion.md` 除外）。**app-server / CLI / Skills / MCP 相关改动的重要开发参考**。用 `bun run docs:codex` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `docs/**/*.md`（关键页：`docs/app-server.md`、`docs/developer-commands.md`、`docs/non-interactive-mode.md`）。
+
 **长文本文档（审计报告/调研记录/规划）放 `docs/` 目录**（如 `docs/audits/2026-08-slash-commands.md` 斜杠命令全景审计、`ROADMAP.md` 后续规划），AGENTS.md 只保留最关键结论并引用路径。
