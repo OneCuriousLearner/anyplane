@@ -1,6 +1,6 @@
 {
   "name": "anyplane",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Self-hosted, vendor-neutral control plane for your local coding agents (Claude Code, Codex). Run your agents, on any plane.",
   "keywords": [
     "claude-code",
