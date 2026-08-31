@@ -15,7 +15,10 @@ anyplane.config.json
 .tmp/
 
 ## Agent
-.claude/
+# 必须忽略「目录内的内容」而不是目录本身，否则 Git 不会进入 .claude/，否定规则无效。
+.claude/*
+!.claude/tasks/
+!.claude/tasks/**
 .cursor/
 
 ## Local docs
