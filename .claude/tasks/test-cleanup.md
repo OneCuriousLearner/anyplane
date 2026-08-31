@@ -1,6 +1,6 @@
 # 任务：清理不应存在或无意义的测试
 
-审计 cc-remote 仓库的全部测试（server/、scripts/、web/ 下的 `*.test.ts`）：
+审计 anyplane 仓库的全部测试（server/、scripts/、web/ 下的 `*.test.ts`）：
 
 1. 先 `bun install`，然后在工作区根目录运行 `bun test` 确认基线全绿。
 2. 找出以下三类问题测试：
@@ -15,7 +15,7 @@
 
 ## 执行环境
 
-- 你在 cc-remote 仓库的一个 git worktree 中工作，当前分支是脚本为此任务新建的（基于 origin/master）。
+- 你在 anyplane 仓库的一个 git worktree 中工作，当前分支是脚本为此任务新建的（基于 origin/master）。
 - 本项目只使用 Bun（>= 1.3.13），绝不要用 npm / npx / yarn / pnpm。
 
 ## 提交与 PR 规范

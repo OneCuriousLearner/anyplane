@@ -1,5 +1,10 @@
 // E2E-斜杠命令：/compact 透传 + /btw 侧问
-const key = 's|D--Coder-Agents-cc-remote|ee01d38e-b1f9-4c3d-8110-518aa465cdb0'
+// 用法：bun run server/scripts/e2e-slash.ts [cwd] [sessionId]
+const sanitizePath = (p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')
+const cwd = process.argv[2] ?? process.cwd()
+const slug = sanitizePath(cwd)
+const sessionId = process.argv[3] ?? 'ee01d38e-b1f9-4c3d-8110-518aa465cdb0'
+const key = `s|${slug}|${sessionId}`
 const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
 const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}${tokenQ}`)
 

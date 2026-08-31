@@ -1,4 +1,4 @@
-/security-review 审查 the entire cc-remote repository：覆盖 server/、web/、scripts/ 下全部 TypeScript/TSX 源码。不要只看当前分支的 pending changes——当前分支是新开的、没有 diff，必须主动把全仓库当作审查对象。
+/security-review 审查 the entire anyplane repository：覆盖 server/、web/、scripts/ 下全部 TypeScript/TSX 源码。不要只看当前分支的 pending changes——当前分支是新开的、没有 diff，必须主动把全仓库当作审查对象。
 
 以下约束与审查目标同属本任务的强制要求：
 

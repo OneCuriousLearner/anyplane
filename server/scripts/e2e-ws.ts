@@ -1,7 +1,10 @@
 // E2E：模拟浏览器 WS 客户端，走 attach → user → 收 assistant/result 全流程
-// 用法：bun run server/scripts/e2e-ws.ts
-const slug = 'D--Coder-Agents-cc-remote'
-const sessionId = 'ee01d38e-b1f9-4c3d-8110-518aa465cdb0' // smoke 测试产生的会话
+// 用法：bun run server/scripts/e2e-ws.ts [cwd] [sessionId]
+// cwd 默认 process.cwd()，slug 由 cwd 按 discovery sanitizePath 推导；sessionId 默认 smoke 会话。
+const sanitizePath = (p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')
+const cwd = process.argv[2] ?? process.cwd()
+const slug = sanitizePath(cwd)
+const sessionId = process.argv[3] ?? 'ee01d38e-b1f9-4c3d-8110-518aa465cdb0' // smoke 测试产生的会话
 const key = `s|${slug}|${sessionId}`
 
 const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''

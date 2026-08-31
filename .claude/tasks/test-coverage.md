@@ -1,6 +1,6 @@
 # 任务：为测试覆盖率不足的区域补测试
 
-分析 cc-remote 仓库的测试覆盖情况并补齐短板：
+分析 anyplane 仓库的测试覆盖情况并补齐短板：
 
 1. 先 `bun install`，然后在工作区根目录运行 `bun test` 确认基线全绿。
 2. 找出覆盖率最低或完全没有测试的核心逻辑模块。优先 server/src 与 web/src 下的纯逻辑（协议解析、blocks 归并、翻译层、hub 状态管理等）；已有 e2e 脚本覆盖的真实 CLI 链路不要重复造单元测试。
@@ -12,7 +12,7 @@
 
 ## 执行环境
 
-- 你在 cc-remote 仓库的一个 git worktree 中工作，当前分支是脚本为此任务新建的（基于 origin/master）。
+- 你在 anyplane 仓库的一个 git worktree 中工作，当前分支是脚本为此任务新建的（基于 origin/master）。
 - 本项目只使用 Bun（>= 1.3.13），绝不要用 npm / npx / yarn / pnpm。
 
 ## 提交与 PR 规范
