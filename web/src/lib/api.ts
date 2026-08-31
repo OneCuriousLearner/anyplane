@@ -110,10 +110,23 @@ export async function fetchSessions(): Promise<SessionInfo[]> {
   return r.json()
 }
 
+/** 一条子代理（Task/Agent 工具）的侧链转录（claude 侧；codex 无此概念） */
+export interface SubagentHistory {
+  /** 主抄本中发起该子代理的 Agent/Task tool_use id */
+  toolUseId?: string
+  agentId?: string
+  agentType?: string
+  description?: string
+  spawnDepth?: number
+  messages: HistoryMessage[]
+}
+
 export interface HistoryResponse {
   messages: HistoryMessage[]
   /** 服务端本次实际读取的 transcript 字节数，作为 tail_subscribe 的起始偏移 */
   fileBytes: number
+  /** 子代理侧链转录（历史回放用；实时更新走 WS 的 parent_tool_use_id 消息） */
+  subagents?: SubagentHistory[]
 }
 
 export async function fetchHistory(slug: string, sessionId: string): Promise<HistoryResponse> {

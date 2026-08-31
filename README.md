@@ -199,4 +199,5 @@ bun run server/scripts/e2e-rewind.ts     # rewind_files 与对话回滚
 - `rewind_files` 只能回滚到发生过文件变更、存在检查点的消息（spawn 时已设 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`）
 - `side_question` 与 `/goal` 需要 Claude CLI ≥ 2.1.139；旧版会回 `Unknown skill`
 - Codex 无文件检查点（不支持文件回滚）；rollout 不持久化 reasoning（AnyPlane 侧车落盘 `~/.anyplane/reasoning/` 并在读历史时回插）
+- Codex 子代理（spawn_agent 等）：生命周期卡片 + 转录经 `thread/read` 轮询回填（运行中 8s 一次，终态收尾一次——子线程内容不进父通知流）；无 token 级心跳、历史回放不重建子代理卡
 - effort 的运行时切换依赖 `update_environment_variables`，若所用 CLI 版本不支持则需重开会话（spawn 时 `--effort` 一定有效）

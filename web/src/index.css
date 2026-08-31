@@ -19,6 +19,7 @@
   --waveband: rgb(255 255 255 / 0.08);
   --caret: #ffffff; /* 分组三角：深白浅黑 */
   --user-bubble: rgb(255 255 255 / 0.16); /* 用户气泡：深浅都比 glass2 更跳 */
+  --subagent-pane: #121215; /* 子代理右栏：相对 --bg 略抬亮，浅色对应 #eeeef1 */
   color-scheme: dark;
 }
 
@@ -39,6 +40,7 @@
     --waveband: rgb(0 0 0 / 0.05);
     --caret: #000000;
     --user-bubble: rgb(0 0 0 / 0.14);
+    --subagent-pane: #eeeef1;
     color-scheme: light;
   }
 }
@@ -57,6 +59,7 @@
   --waveband: rgb(0 0 0 / 0.05);
   --caret: #000000;
   --user-bubble: rgb(0 0 0 / 0.14);
+  --subagent-pane: #eeeef1;
   color-scheme: light;
 }
 

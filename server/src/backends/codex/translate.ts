@@ -31,6 +31,17 @@ interface ThreadItem {
   durationMs?: number
   /** enteredReviewMode/exitedReviewMode 的审查说明 */
   review?: string
+  /** subAgentActivity：started/interacted/interrupted/completed */
+  kind?: string
+  /** collabAgentToolCall：任务提示文本 */
+  prompt?: string
+  /** collabAgentToolCall：接收方子线程 id 列表（spawn End 才有值） */
+  receiverThreadIds?: string[]
+  /** collabAgentToolCall End：各子代理已知状态（wait End 携带终态与报告正文） */
+  agentsStates?: Record<string, { status?: string; message?: string }>
+  /** subAgentActivity：子代理线程 id 与角色路径 */
+  agentThreadId?: string
+  agentPath?: string
 }
 
 /** message_start + content_block_start 开头流（agentMessage 文本 / reasoning 思考共用） */
@@ -72,6 +83,16 @@ export class ThreadTranslator {
           },
         ]
       }
+      // collabAgentToolCall 进主线工具卡（codex 的"工具"本体就是它，不显示主线会像没调工具）；
+      // Begin 时还没有子线程 id，侧栏生命周期桶在 itemCompleted 统一处理
+      case 'collabAgentToolCall':
+        return [
+          {
+            type: 'assistant',
+            message: { id: `tool-${item.id}`, role: 'assistant', content: [this.toolUseBlock(item)] },
+          },
+        ]
+      // subAgentActivity 只以 item/completed 送达，且不是工具调用，不进主线卡
       default:
         return []
     }
@@ -105,6 +126,13 @@ export class ThreadTranslator {
         return [systemText(`进入代码审查：${item.review ?? ''}`)]
       case 'exitedReviewMode':
         return [systemText(`审查完成\n${item.review ?? ''}`)]
+      // 子代理生命周期 → claude task_started/task_notification 形状（前端侧栏零分叉）。
+      // 桶键统一用子线程 id（agentThreadId）：collab 与 subAgentActivity 两条事件线天然归并。
+      // collab 同时补主线 tool_result，与 itemStarted 的 tool_use 配成一张卡
+      case 'collabAgentToolCall':
+        return [...collabAgentMsgs(item), collabToolResultMsg(item)]
+      case 'subAgentActivity':
+        return subAgentActivityMsgs(item)
       default:
         return []
     }
@@ -147,6 +175,8 @@ export class ThreadTranslator {
         return { type: 'tool_use', id: item.id, name: `${item.server ?? 'mcp'}:${item.tool ?? '?'}`, input: item.arguments }
       case 'webSearch':
         return { type: 'tool_use', id: item.id, name: 'WebSearch', input: { query: item.query ?? '' } }
+      case 'collabAgentToolCall':
+        return { type: 'tool_use', id: item.id, name: 'Collab', input: { tool: item.tool ?? '?', prompt: item.prompt ?? '' } }
       default:
         return { type: 'tool_use', id: item.id, name: item.type ?? '?', input: {} }
     }
@@ -189,6 +219,108 @@ function toolResultFromItem(item: ThreadItem): { text: string; isError: boolean 
 
 function systemText(text: string): CliMessage {
   return { type: 'system', subtype: 'status', text }
+}
+
+/** collab 子代理状态（pendingInit/running/interrupted/completed/errored/shutdown/notFound）
+ *  → claude task_notification 三态；非终态返回 null 不发通知 */
+function collabTerminalStatus(status?: string): 'completed' | 'failed' | 'stopped' | null {  switch (status) {
+    case 'completed':
+      return 'completed'
+    case 'interrupted':
+    case 'shutdown':
+      return 'stopped'
+    case 'errored':
+    case 'notFound':
+      return 'failed'
+    default:
+      return null
+  }
+}
+
+function collabToolResultMsg(item: ThreadItem): CliMessage {
+  const isError = item.status === 'failed' || item.status === 'interrupted'
+  const parts: string[] = [`${String(item.tool ?? '?')} → ${String(item.status ?? '?')}`]
+  const receivers = (item.receiverThreadIds ?? []).filter(Boolean)
+  if (receivers.length > 0) parts.push(`agents: ${receivers.length}`)
+  for (const [tid, st] of Object.entries(item.agentsStates ?? {})) {
+    const msg = typeof st?.message === 'string' && st.message.trim() ? `: ${st.message.slice(0, 120)}` : ''
+    parts.push(`${tid.slice(0, 8)} ${String(st?.status ?? '?')}${msg}`)
+  }
+  return toolResultMsg(item.id!, parts.join('\n'), isError)
+}
+
+/**
+ * collabAgentToolCall End → 生命周期事件。
+ * 只在 End 处理：Begin（inProgress）时 receiverThreadIds 为空，建了桶也无法与后续事件归并。
+ * - spawnAgent 成功：task_started（桶键 = 新子线程 id，prompt 截断作描述）
+ * - spawnAgent 失败/打断：无子线程 id，用 call id 建一张即终态的卡（否则失败完全不可见）
+ * - 所有 End 的 agentsStates：携带各子代理终态（wait End 的报告正文在此），逐个发 task_notification；
+ *   与 subAgentActivity 的终态可能重复，前端 markTerminal 幂等（仅刷新驱逐倒计时）
+ */
+function collabAgentMsgs(item: ThreadItem): CliMessage[] {
+  const out: CliMessage[] = []
+  const receivers = (item.receiverThreadIds ?? []).filter(Boolean)
+  if (item.tool === 'spawnAgent') {
+    if (item.status === 'completed' && receivers.length > 0) {
+      out.push({
+        type: 'system',
+        subtype: 'task_started',
+        tool_use_id: receivers[0],
+        agent_thread_id: receivers[0],
+        task_type: 'spawnAgent',
+        description: typeof item.prompt === 'string' && item.prompt.trim() ? item.prompt.slice(0, 80) : '子代理',
+      })
+    } else if (item.status === 'failed' || item.status === 'interrupted') {
+      out.push({
+        type: 'system',
+        subtype: 'task_notification',
+        tool_use_id: receivers[0] ?? item.id,
+        agent_thread_id: receivers[0],
+        status: item.status === 'interrupted' ? 'stopped' : 'failed',
+      })
+    }
+  }
+  for (const [tid, st] of Object.entries(item.agentsStates ?? {})) {
+    const mapped = collabTerminalStatus(st?.status)
+    if (!mapped) continue
+    out.push({
+      type: 'system',
+      subtype: 'task_notification',
+      tool_use_id: tid,
+      agent_thread_id: tid,
+      status: mapped,
+      summary: typeof st?.message === 'string' ? st.message.slice(0, 500) : undefined,
+    })
+  }
+  return out
+}
+
+/**
+ * subAgentActivity → 生命周期事件。只以 item/completed 送达（event_mapping.rs 实测），
+ * kind=started/interacted/interrupted/completed 各占一条；interacted 无展示语义，忽略。
+ */
+function subAgentActivityMsgs(item: ThreadItem): CliMessage[] {
+  const tid = item.agentThreadId
+  if (!tid) return []
+  switch (item.kind) {
+    case 'started':
+      return [
+        {
+          type: 'system',
+          subtype: 'task_started',
+          tool_use_id: tid,
+          agent_thread_id: tid,
+          task_type: 'subAgent',
+          description: item.agentPath || '子代理',
+        },
+      ]
+    case 'completed':
+      return [{ type: 'system', subtype: 'task_notification', tool_use_id: tid, agent_thread_id: tid, status: 'completed' }]
+    case 'interrupted':
+      return [{ type: 'system', subtype: 'task_notification', tool_use_id: tid, agent_thread_id: tid, status: 'stopped' }]
+    default: // interacted
+      return []
+  }
 }
 
 /** reasoning 的 summary 与 content 可能互为镜像（部分供应商），重复时只取一份 */

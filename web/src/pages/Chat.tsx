@@ -5,6 +5,7 @@ import { StatusPill } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RewindPicker } from '../components/RewindPicker'
 import { MessageView } from '../components/MessageView'
+import { SubagentPanel, type SubagentFeed } from '../components/SubagentPanel'
 import { Markdown } from '../components/Markdown'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { ClaudeStar } from '../components/ClaudeStar'
@@ -131,6 +132,47 @@ function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage, toolIdx?: Map<strin
   }
 }
 
+/**
+ * 把一条实时 sidechain CLI 消息（带 parent_tool_use_id 的完整 assistant/user）转成
+ * HistoryMessage 形状，使其可以复用 appendHistoryMsg 落进子代理桶。
+ * 与 discovery.entryToHistoryMessage 的块映射保持一致（text/thinking/tool_use/tool_result）。
+ */
+function cliSidechainToHistory(rec: Record<string, unknown>): HistoryMessage | null {
+  const type = rec.type
+  if (type !== 'assistant' && type !== 'user') return null
+  const content = (rec.message as { content?: unknown } | undefined)?.content
+  const blocks: { kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'; text?: string; name?: string; id?: string; input?: unknown; isError?: boolean }[] = []
+  if (typeof content === 'string') {
+    if (content.trim()) blocks.push({ kind: 'text', text: content })
+  } else if (Array.isArray(content)) {
+    for (const c of content as Record<string, unknown>[]) {
+      if (c?.type === 'text' && typeof c.text === 'string' && c.text.trim()) blocks.push({ kind: 'text', text: c.text })
+      else if (c?.type === 'thinking' && typeof c.thinking === 'string' && c.thinking.trim())
+        blocks.push({ kind: 'thinking', text: c.thinking })
+      else if (c?.type === 'tool_use') blocks.push({ kind: 'tool_use', name: c.name as string, id: c.id as string, input: c.input })
+      else if (c?.type === 'tool_result')
+        blocks.push({ kind: 'tool_result', id: c.tool_use_id as string, text: toolResultText(c.content), isError: c.is_error === true })
+    }
+  }
+  if (blocks.length === 0) return null
+  return { uuid: rec.uuid as string | undefined, role: type, blocks, timestamp: rec.timestamp as string | undefined }
+}
+
+/** 子代理桶：SubagentFeed + 归并用的 tool 配对索引与去重集合（不发布给渲染） */
+interface SubagentBucket extends SubagentFeed {
+  toolIdx: Map<string, { mi: number; bi: number }>
+  seen: Set<string>
+  /** codex 子线程转录已懒取过（防重取） */
+  transcriptFetched?: boolean
+}
+
+/**
+ * 终态卡片的展示宽限期：镜像官方协调器面板的 PANEL_GRACE_MS
+ *（claude-code src/utils/task/framework.ts:28）——完成后留 30s 供扫一眼报告，随后驱逐。
+ * 报告摘要仍留在主线 Agent 工具卡与系统消息里，驱逐不丢信息。
+ */
+const PANEL_GRACE_MS = 30_000
+
 export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: (s: SessionInfo) => void }) {
   const { session } = props
   const [messages, setMessages] = useState<ChatMsg[]>([])
@@ -184,6 +226,95 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const pendingResultsRef = useRef(new Map<string, { text: string; isError: boolean }>())
   /** 历史加载时服务端读到的 transcript 字节数，tail_subscribe 的起始偏移 */
   const historyOffsetRef = useRef<number | undefined>(undefined)
+
+  // ---------- 子代理侧链（Task/Agent 工具的逐 turn 活动，右侧拉栏展示） ----------
+  const subMapRef = useRef(new Map<string, SubagentBucket>())
+  const [subagents, setSubagents] = useState<SubagentFeed[]>([])
+  const [agentsOpen, setAgentsOpen] = useState(false)
+
+  /** 发布桶快照：浅拷贝桶对象与消息数组，让 React 感知变化（事件为逐 turn 粒度，量小） */
+  const pubSubagents = () =>
+    setSubagents([...subMapRef.current.values()].map((b) => ({ ...b, messages: [...b.messages] })))
+
+  const subagentBucket = (toolUseId: string): SubagentBucket => {
+    let b = subMapRef.current.get(toolUseId)
+    if (!b) {
+      b = { toolUseId, status: 'running', messages: [], toolIdx: new Map(), seen: new Set() }
+      subMapRef.current.set(toolUseId, b)
+    }
+    return b
+  }
+
+  const appendSubagentMsg = (toolUseId: string, h: HistoryMessage) => {
+    const b = subagentBucket(toolUseId)
+    // 历史加载与 live 追加可能重叠（落盘与 WS 投递交界），按 uuid 去重
+    if (h.uuid) {
+      if (b.seen.has(h.uuid)) return
+      b.seen.add(h.uuid)
+    }
+    appendHistoryMsg(b.messages, h, b.toolIdx)
+  }
+
+  /** 统一终态：状态 + 清心跳 + 挂驱逐倒计时（宽限期后 1s 滴答自动移除卡片）。
+   *  live 与历史终态一视同仁——历史卡默示展示 30s 即足，长期驻留会让老会话侧栏越堆越多。 */
+  const markTerminal = (b: SubagentBucket, status: SubagentFeed['status']) => {
+    b.status = status
+    b.activity = undefined
+    b.evictAfter = Date.now() + PANEL_GRACE_MS
+    maybeFetchCodexTranscript(b)
+  }
+
+  /** codex 子代理转录懒取：子线程不被父通知流转发，终态后经 thread/read 拉回填充 */
+  const maybeFetchCodexTranscript = (b: SubagentBucket) => {
+    if (!isCodex || !b.agentId || b.transcriptFetched || b.messages.length > 0) return
+    b.transcriptFetched = true
+    fetchCodexHistory(b.agentId)
+      .then((resp) => {
+        for (const h of resp.messages) appendSubagentMsg(b.toolUseId, h)
+        pubSubagents()
+      })
+      .catch(() => {})
+  }
+
+  /**
+   * 用 SessionState.activeTasks（服务端权威运行任务表）水合桶：
+   * 中途接入的客户端错过 live-only 的 task_started，没有这一步桶的首绘就会是终态。
+   * 反方向：桶还 running 却不在任务表且会话空闲 → 通知在断线间隙丢了，判终态。
+   * 判死只对 claude 生效——codex 服务端不维护任务表（backgroundTasks 恒空），空表无信息。
+   */
+  const hydrateSubagents = (st: SessionState) => {
+    if (!Array.isArray(st.activeTasks)) return
+    let dirty = false
+    const live = new Set<string>()
+    for (const t of st.activeTasks) {
+      if (!t.toolUseId) continue
+      live.add(t.toolUseId)
+      const existing = subMapRef.current.get(t.toolUseId)
+      if (existing) {
+        // 终态不被水合覆盖；running 的补心跳信息
+        if (existing.status === 'running' && t.lastToolName && existing.lastToolName !== t.lastToolName) {
+          existing.lastToolName = t.lastToolName
+          dirty = true
+        }
+        continue
+      }
+      const b = subagentBucket(t.toolUseId)
+      b.status = 'running'
+      b.description = t.description ?? b.description
+      b.agentType = t.taskType ?? b.agentType
+      b.lastToolName = t.lastToolName ?? b.lastToolName
+      dirty = true
+    }
+    if (!st.busy && !isCodex) {
+      for (const b of subMapRef.current.values()) {
+        if (b.status === 'running' && !live.has(b.toolUseId)) {
+          markTerminal(b, 'done')
+          dirty = true
+        }
+      }
+    }
+    if (dirty) pubSubagents()
+  }
 
   const setMsgs = (up: (prev: ChatMsg[]) => ChatMsg[]) => {
     messagesRef.current = up(messagesRef.current)
@@ -264,6 +395,30 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     const toolIdx = new Map<string, { mi: number; bi: number }>()
     for (const h of resp.messages) appendHistoryMsg(out, h, toolIdx)
     setMsgs(() => out)
+
+    // 子代理侧链进桶；终态/报告以主线 Agent 工具卡的配对结果为准（tool_result 已落盘 = 已完成）
+    subMapRef.current.clear()
+    // 先扫主线找「已完成」的 Agent 调用（转录落盘即终态），它们在历史加载时**不建桶**——
+    // 侧栏只放运行中与刚完成的卡，复活一堆 30s 后齐消失是噪声；翻旧账走主线 Agent 工具卡
+    const finished = new Set<string>()
+    for (const m of out) {
+      for (const blk of m.blocks) {
+        if (blk.kind === 'tool' && (blk.name === 'Agent' || blk.name === 'Task') && blk.pending === false && blk.id) {
+          finished.add(blk.id)
+        }
+      }
+    }
+    for (const s of resp.subagents ?? []) {
+      const id = s.toolUseId ?? s.agentId
+      if (!id || finished.has(id)) continue // 已完成的在历史里不复活
+      const b = subagentBucket(id)
+      b.agentId = s.agentId ?? b.agentId
+      b.agentType = s.agentType ?? b.agentType
+      b.description = s.description ?? b.description
+      for (const h of s.messages) appendSubagentMsg(b.toolUseId, h)
+    }
+    pubSubagents()
+
     // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队
     // codex 的实时流走 app-server 订阅（attach 即 resume），无 tailer
     if (!isCodex) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
@@ -283,6 +438,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setEffort(undefined)
     setApprovals([])
     setPhase(undefined)
+    subMapRef.current.clear()
+    setSubagents([])
+    setAgentsOpen(false)
     if (!isExisting) return
     const loader = isCodex
       ? fetchCodexHistory(session.sessionId)
@@ -299,6 +457,25 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       cancelled = true
     }
   }, [session.key])
+
+  // ---------- 终态卡片的 TTL 驱逐（仿官方协调器面板：1s 滴答扫 evictAfter） ----------
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now()
+      let dirty = false
+      for (const [id, b] of subMapRef.current) {
+        if (b.evictAfter != null && now >= b.evictAfter) {
+          // 报告摘要仍留在主线 Agent 工具卡与「⚙ 子代理完成」系统消息里，驱逐不丢信息
+          subMapRef.current.delete(id)
+          dirty = true
+        }
+      }
+      if (dirty) pubSubagents()
+      // 桶清空时收起侧栏——此时会话无运行中子代理（running 桶永不驱逐），收起的都是终态卡
+      if (dirty && subMapRef.current.size === 0) setAgentsOpen(false)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   // ---------- 流式草稿 ----------
 
@@ -425,8 +602,16 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     }
 
     if (msg.type === 'assistant') {
-      // sidechain（子代理内部消息）不进主抄本
-      if (rec.parent_tool_use_id) return
+      // sidechain（子代理内部消息）不进主抄本——落进对应子代理桶，右侧栏展示
+      const ptui = rec.parent_tool_use_id as string | undefined
+      if (ptui) {
+        const h = cliSidechainToHistory(rec)
+        if (h) {
+          appendSubagentMsg(ptui, h)
+          pubSubagents()
+        }
+        return
+      }
       const content = msg.message?.content
       const blocks = Array.isArray(content) ? content : []
       const msgId = (rec.message as { id?: string } | undefined)?.id
@@ -465,13 +650,33 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     }
 
     if (msg.type === 'user') {
-      if (msg.isMeta || rec.parent_tool_use_id) return
+      if (msg.isMeta) return
+      // sidechain：子代理的 prompt / tool_result，落进对应桶（tool_result 在桶内配对）
+      const ptui = rec.parent_tool_use_id as string | undefined
+      if (ptui) {
+        const h = cliSidechainToHistory(rec)
+        if (h) {
+          appendSubagentMsg(ptui, h)
+          pubSubagents()
+        }
+        return
+      }
       const content = msg.message?.content
       const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
       const textBlocks: Block[] = []
       for (const c of blocks) {
         if (c?.type === 'tool_result') {
           pairToolResult(c.tool_use_id, toolResultText(c.content), c.is_error === true)
+          // 主线 Agent tool_result 是子代理的终态兜底（正常路径是 task_notification 先到）
+          const b = c.tool_use_id ? subMapRef.current.get(c.tool_use_id) : undefined
+          if (b && b.status === 'running') {
+            markTerminal(b, c.is_error === true ? 'error' : 'done')
+            if (!b.summary) {
+              const t = toolResultText(c.content)
+              if (t) b.summary = t.slice(0, 500)
+            }
+            pubSubagents()
+          }
         } else if (c?.type === 'text' && c.text?.trim()) {
           // /goal 的评估器反馈（Stop hook）：goal 循环内的中途评估，渲染为系统提示而非用户气泡
           if (c.text.startsWith('Stop hook feedback:')) {
@@ -503,11 +708,58 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         }
         case 'thinking_tokens':
           break // 增量 token 估算，不展示
-        case 'task_started':
+        case 'task_started': {
+          // 生命周期事件是桶的主注册点（tool_use_id ↔ task_id 映射在此建立）
+          const toolUseId = rec.tool_use_id as string | undefined
+          if (toolUseId) {
+            const b = subagentBucket(toolUseId)
+            b.agentId = (rec.task_id as string | undefined) ?? b.agentId
+            // codex 合成事件经 agent_thread_id 携带子线程 id（终态后懒拉转录用）
+            b.agentId = (rec.agent_thread_id as string | undefined) ?? b.agentId
+            b.description = (rec.description as string | undefined) ?? b.description
+            b.agentType = (rec.subagent_type as string | undefined) ?? (rec.task_type as string | undefined) ?? b.agentType
+            b.status = 'running'
+            pubSubagents()
+            // 桌面端自动拉开侧栏（移动端屏幕小，只亮顶栏按钮）
+            if (window.matchMedia('(min-width: 768px)').matches) setAgentsOpen(true)
+          }
           pushSystem(`⚙ 子代理启动：${String(rec.description ?? '')}`)
           break
+        }
+        case 'task_progress': {
+          // 心跳：拟人化动作描述 + 用量，解决"长 turn 安静期像卡住"的体感
+          // 桶不存在也补建——中途接入错过 task_started 时，心跳就是首个可见信号
+          const toolUseId = rec.tool_use_id as string | undefined
+          if (toolUseId) {
+            const b = subagentBucket(toolUseId)
+            b.activity = (rec.description as string | undefined) ?? b.activity
+            b.lastToolName = (rec.last_tool_name as string | undefined) ?? b.lastToolName
+            b.usage = (rec.usage as SubagentFeed['usage'] | undefined) ?? b.usage
+            pubSubagents()
+          }
+          break
+        }
+        case 'task_updated': {
+          // 终态 patch（completed/stopped/failed）；只带 task_id，经 agentId 映射回桶
+          const taskId = rec.task_id as string | undefined
+          const patch = rec.patch as { status?: string } | undefined
+          const b = [...subMapRef.current.values()].find((x) => x.agentId === taskId)
+          if (b && patch?.status && patch.status !== 'running' && b.status === 'running') {
+            markTerminal(b, patch.status === 'completed' ? 'done' : patch.status === 'stopped' ? 'stopped' : 'error')
+            pubSubagents()
+          }
+          break
+        }
         case 'task_notification': {
           const summary = typeof rec.summary === 'string' ? rec.summary : ''
+          const toolUseId = rec.tool_use_id as string | undefined
+          if (toolUseId) {
+            const b = subagentBucket(toolUseId)
+            markTerminal(b, rec.status === 'completed' ? 'done' : rec.status === 'stopped' ? 'stopped' : 'error')
+            b.summary = summary || b.summary
+            b.usage = (rec.usage as SubagentFeed['usage'] | undefined) ?? b.usage
+            pubSubagents()
+          }
           pushSystem(`⚙ 子代理完成${summary ? `：${summary.slice(0, 200)}` : ''}`)
           break
         }
@@ -550,6 +802,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             }
             if (typeof ev.state.permissionMode === 'string') setPermMode(ev.state.permissionMode)
             if (typeof ev.state.effort === 'string') setEffort(ev.state.effort)
+            // 服务端权威运行任务表水合子代理桶（中途接入补建 / 断线丢通知判死）
+            hydrateSubagents(ev.state)
             // 进程已退出时固化/清理未完成的流式草稿，避免半截内容悬挂
             if (ev.state.exited) {
               commitDraft()
@@ -740,6 +994,17 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               appendHistoryMsg(out, h)
               return out
             })
+            // 尾到的主线 tool_result 给已存在桶补终态——外部会话（tailer 路径）没有
+            // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
+            for (const blk of h.blocks) {
+              if (blk.kind !== 'tool_result' || !blk.id) continue
+              const b = subMapRef.current.get(blk.id)
+              if (b && b.status === 'running') {
+                markTerminal(b, blk.isError ? 'error' : 'done')
+                if (!b.summary && blk.text) b.summary = blk.text.slice(0, 500)
+                pubSubagents()
+              }
+            }
             break
           }
           case 'moved': {
@@ -1085,10 +1350,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   : '浏览中（发送消息时启动 CLI）'
 
   return (
-    <div className="relative h-full overflow-clip bg-bg text-ink">
+    <div className="flex h-full min-h-0 bg-bg text-ink">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-clip">
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-[17px] pb-[110px] pt-[84px] md:px-[29px]">
+        <div className="mx-auto max-w-3xl px-[17px] pb-[300px] pt-[84px] md:px-[29px]">
           {messages.map((m, i) => (
             <MessageView
               key={m.id}
@@ -1173,6 +1439,29 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 <span className={busy || phase ? 'text-busy' : ''}>{statusLine}</span>
               </div>
             </div>
+            {/* 子代理侧栏开关：有子代理活动时出现；运行中带计数徽标与呼吸 */}
+            {subagents.length > 0 && (
+              <button
+                type="button"
+                className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors ${
+                  agentsOpen ? 'bg-surface2 text-ink' : 'bg-surface2 text-muted hover:text-ink'
+                }`}
+                title="子代理活动"
+                aria-label="子代理活动"
+                aria-expanded={agentsOpen}
+                onClick={() => setAgentsOpen((v) => !v)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+                  <path d="M6 3v12" />
+                  <circle cx="18" cy="6" r="3" />
+                  <circle cx="6" cy="18" r="3" />
+                  <path d="M18 9a9 9 0 0 1-9 9" />
+                </svg>
+                {subagents.some((s) => s.status === 'running') && (
+                  <span className="absolute top-0.5 right-0.5 size-1.5 animate-pulse rounded-full bg-busy" aria-hidden />
+                )}
+              </button>
+            )}
             {(isExisting || !isCodex || state.sessionId) && (
               <>
                 <button
@@ -1770,12 +2059,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               {busy ? (
                 <button
                   type="button"
-                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-[11px] leading-none text-white transition-opacity hover:opacity-85"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-white transition-opacity hover:opacity-85"
                   onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
                   title="中断当前回合"
                   aria-label="中断当前回合"
                 >
-                  ■
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                    <rect x="5" y="5" width="14" height="14" rx="3" />
+                  </svg>
                 </button>
               ) : (
                 <button
@@ -1797,6 +2088,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           </div>
         </div>
       </div>
+      </div>
+      <SubagentPanel open={agentsOpen} onClose={() => setAgentsOpen(false)} subagents={subagents} />
     </div>
   )
 }

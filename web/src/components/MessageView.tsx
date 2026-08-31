@@ -42,7 +42,7 @@ function UserText(props: { text: string }) {
             return (
               <pre
                 key={i}
-                className={`mt-1 max-h-40 overflow-auto rounded-[10px] bg-bg/60 px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap ${
+                className={`mt-1 max-h-40 overflow-auto rounded-[10px] bg-transparent px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap ${
                   s.kind === 'local-err' ? 'text-accent' : 'text-muted'
                 }`}
               >

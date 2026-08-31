@@ -250,7 +250,7 @@ export function listSessions(): SessionInfo[] {
 // ---------- 历史消息（供 UI 首次加载） ----------
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 import 自用 + re-export 兼容既有 import 路径
-import type { HistoryBlock, HistoryMessage } from '../types'
+import type { HistoryBlock, HistoryMessage, SubagentHistory } from '../types'
 export type { HistoryMessage } from '../types'
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
@@ -289,8 +289,12 @@ export function isSelectableRewindTarget(obj: Record<string, unknown>): boolean 
  * 把一条 transcript JSONL 记录转为 HistoryMessage；返回 null 表示不进主抄本。
  * readHistory 与 transcript tailer 共用同一套解析，保证历史与实时追加渲染一致。
  * 不含 rewindable 计算（依赖全文件行序上下文），由调用方补。
+ * allowSidechain：解析子代理侧链文件/内联侧链行时置 true（默认过滤，不进主抄本）。
  */
-export function entryToHistoryMessage(obj: Record<string, unknown>): HistoryMessage | null {
+export function entryToHistoryMessage(
+  obj: Record<string, unknown>,
+  opts?: { allowSidechain?: boolean },
+): HistoryMessage | null {
   const type = obj.type as string
   if (type === 'system' && obj.subtype === 'compact_boundary') {
     const meta = (obj.compactMetadata ?? obj.compact_metadata ?? {}) as Record<string, unknown>
@@ -309,8 +313,8 @@ export function entryToHistoryMessage(obj: Record<string, unknown>): HistoryMess
   }
   if (type !== 'user' && type !== 'assistant') return null
   if (isInternalUserMessage(obj as CliMessage)) return null
-  // 子代理内部消息不进主对话抄本
-  if (obj.isSidechain) return null
+  // 子代理内部消息不进主对话抄本（侧链文件解析时由 allowSidechain 放行）
+  if (obj.isSidechain && !opts?.allowSidechain) return null
   const message = obj.message as { content?: unknown } | undefined
   const content = message?.content
   const blocks: HistoryBlock[] = []
@@ -353,9 +357,9 @@ export function readHistory(
   slug: string,
   sessionId: string,
   limit = 300,
-): { messages: HistoryMessage[]; fileBytes: number } {
+): { messages: HistoryMessage[]; fileBytes: number; subagents: SubagentHistory[] } {
   const path = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
-  if (!existsSync(path)) return { messages: [], fileBytes: 0 }
+  if (!existsSync(path)) return { messages: [], fileBytes: 0, subagents: readSubagentTranscripts(slug, sessionId) }
   // 读 Buffer 而非 utf8 文本：fileBytes 必须与本次实际解析的字节精确一致，
   // tailer 从该偏移续读才不会有缝（statSync 与 read 之间文件可能增长）。
   const raw = readFileSync(path)
@@ -364,6 +368,8 @@ export function readHistory(
   const msgLineIdx: number[] = []
   const selectable: boolean[] = []
   let lastBoundaryLine = -1
+  // 旧版格式的内联侧链消息（isSidechain 行混在主 transcript 里）：按 parentToolUseId 分桶
+  const legacySidechain = new Map<string, HistoryMessage[]>()
   for (let li = 0; li < lines.length; li++) {
     const t = lines[li].trim()
     if (!t.startsWith('{')) continue
@@ -374,6 +380,16 @@ export function readHistory(
       continue
     }
     if (obj.type === 'system' && obj.subtype === 'compact_boundary') lastBoundaryLine = li
+    if (obj.isSidechain) {
+      const m = entryToHistoryMessage(obj, { allowSidechain: true })
+      const k = (obj.parentToolUseId as string | undefined) ?? '?'
+      if (m) {
+        const bucket = legacySidechain.get(k) ?? []
+        bucket.push(m)
+        legacySidechain.set(k, bucket)
+      }
+      continue
+    }
     const msg = entryToHistoryMessage(obj)
     if (!msg) continue
     msgs.push(msg)
@@ -385,5 +401,70 @@ export function readHistory(
   for (let i = 0; i < msgs.length; i++) {
     msgs[i].rewindable = msgLineIdx[i] > lastBoundaryLine && selectable[i]
   }
-  return { messages: msgs.slice(-limit), fileBytes: raw.length }
+  // 子代理侧链：新版拆分文件为主，旧版内联桶补齐缺口（同一 toolUseId 不重复）
+  const subagents = readSubagentTranscripts(slug, sessionId)
+  for (const [toolUseId, messages] of legacySidechain) {
+    if (!subagents.some((s) => s.toolUseId === toolUseId)) subagents.push({ toolUseId, messages })
+  }
+  subagents.sort((a, b) => (a.messages[0]?.timestamp ?? '').localeCompare(b.messages[0]?.timestamp ?? ''))
+  return { messages: msgs.slice(-limit), fileBytes: raw.length, subagents }
+}
+
+/** 单个子代理转录的消息上限（防止超长转录拖垮首载；超出时保留末尾） */
+const SUBAGENT_HISTORY_LIMIT = 150
+
+/**
+ * 读取 <sessionId>/subagents/agent-*.jsonl（元数据在同名 .meta.json）。
+ * 新版 CLI 把子代理侧链从主 transcript 拆到这个目录；主文件只剩 Agent tool_use/tool_result。
+ * meta.json 形状（2.1.x 实测）：{ agentType, description, toolUseId, spawnDepth }。
+ */
+export function readSubagentTranscripts(slug: string, sessionId: string): SubagentHistory[] {
+  const dir = join(config.claudeConfigDir, 'projects', slug, sessionId, 'subagents')
+  if (!existsSync(dir)) return []
+  let files: string[]
+  try {
+    files = readdirSync(dir)
+  } catch {
+    return []
+  }
+  const out: SubagentHistory[] = []
+  for (const f of files) {
+    if (!f.endsWith('.jsonl')) continue
+    const agentId = f.replace(/^agent-/, '').replace(/\.jsonl$/, '')
+    let meta: Record<string, unknown> = {}
+    try {
+      meta = JSON.parse(readFileSync(join(dir, f.replace(/\.jsonl$/, '.meta.json')), 'utf8'))
+    } catch {
+      // meta 缺失不致命：消息仍在，只是少了 description/agentType
+    }
+    let raw: string
+    try {
+      raw = readFileSync(join(dir, f), 'utf8')
+    } catch {
+      continue
+    }
+    const messages: HistoryMessage[] = []
+    for (const line of raw.split('\n')) {
+      const t = line.trim()
+      if (!t.startsWith('{')) continue
+      let obj: Record<string, unknown>
+      try {
+        obj = JSON.parse(t)
+      } catch {
+        continue
+      }
+      const m = entryToHistoryMessage(obj, { allowSidechain: true })
+      if (m) messages.push(m)
+    }
+    out.push({
+      toolUseId: meta.toolUseId as string | undefined,
+      agentId,
+      agentType: meta.agentType as string | undefined,
+      description: meta.description as string | undefined,
+      spawnDepth: meta.spawnDepth as number | undefined,
+      messages: messages.slice(-SUBAGENT_HISTORY_LIMIT),
+    })
+  }
+  out.sort((a, b) => (a.messages[0]?.timestamp ?? '').localeCompare(b.messages[0]?.timestamp ?? ''))
+  return out
 }

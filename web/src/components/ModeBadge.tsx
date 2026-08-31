@@ -164,7 +164,7 @@ export function ModeBadge() {
             <div
               key={id}
               aria-hidden
-              className={`pointer-events-none fixed z-[9998] rounded-full border ${
+              className={`pointer-events-none fixed z-[10000] rounded-full border ${
                 active ? 'border-busy/70 bg-busy/15' : 'border-busy/20 bg-busy/5'
               }`}
               style={{ left: a.x, top: a.y, width: size.w, height: size.h }}
@@ -188,7 +188,7 @@ export function ModeBadge() {
         }}
         aria-label="开发模式，点击新开生产标签页，可拖动贴边"
         title={'开发模式 · Vite :5173\n点击新开生产标签页\n拖动可贴边'}
-        className={`fixed z-[9999] flex touch-none items-center gap-1.5 rounded-full border border-busy/40 bg-bg/75 px-2.5 py-1 font-mono text-[10px] tracking-widest text-busy shadow-[0_8px_24px_-8px_rgba(0,0,0,0.65)] backdrop-blur-md select-none ${
+        className={`fixed z-[10001] flex touch-none items-center gap-1.5 rounded-full border border-busy/40 bg-bg/75 px-2.5 py-1 font-mono text-[10px] tracking-widest text-busy shadow-[0_8px_24px_-8px_rgba(0,0,0,0.65)] backdrop-blur-md select-none ${
           drag ? 'cursor-grabbing' : 'cursor-grab'
         } ${
           showGhosts && !drag

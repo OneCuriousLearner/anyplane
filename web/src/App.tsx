@@ -82,7 +82,7 @@ export default function App() {
     return (
       <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-bg px-6">
         {import.meta.env.DEV && <ModeBadge />}
-        <ClaudeMark className="h-10 w-10 opacity-40" />
+        <AnyPlaneMark fullBleed className="h-10 w-10 opacity-40" />
         <div className="font-mono text-xs tracking-widest text-faint">需要访问令牌</div>
         <form
           className="flex w-full max-w-xs gap-2"

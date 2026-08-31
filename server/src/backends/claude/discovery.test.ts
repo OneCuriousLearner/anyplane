@@ -150,4 +150,75 @@ describe('entryToHistoryMessage（readHistory 与 tailer 共用的单条解析�
     expect(entryToHistoryMessage({ type: 'assistant', message: { content: [{ type: 'text', text: '' }] } })).toBeNull()
     expect(entryToHistoryMessage({ type: 'assistant', message: {} })).toBeNull()
   })
+
+  test('allowSidechain 放行侧链消息（子代理转录解析用）', () => {
+    const side = { type: 'assistant', isSidechain: true, uuid: 's1', message: { content: [{ type: 'text', text: '子代理结论' }] } }
+    expect(entryToHistoryMessage(side)).toBeNull()
+    expect(entryToHistoryMessage(side, { allowSidechain: true })).toMatchObject({ uuid: 's1', blocks: [{ kind: 'text', text: '子代理结论' }] })
+  })
+})
+
+describe('readHistory 子代理侧链收集', () => {
+  const SID2 = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff'
+
+  beforeAll(() => {
+    const projectDir = join(dir, 'projects', SLUG)
+    // 主 transcript：一条提问 + 主线 Agent tool_use/tool_result + 一行旧版内联侧链
+    writeFileSync(
+      join(projectDir, `${SID2}.jsonl`),
+      [
+        line({ type: 'user', uuid: 'u1', timestamp: '2026-08-31T00:00:00Z', message: { role: 'user', content: '跑个子代理' } }),
+        line({
+          type: 'assistant', uuid: 'a1', timestamp: '2026-08-31T00:00:01Z',
+          message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tool_main', name: 'Agent', input: { description: '旧版内联代理' } }] },
+        }),
+        line({ type: 'assistant', uuid: 's1', isSidechain: true, parentToolUseId: 'tool_main', timestamp: '2026-08-31T00:00:02Z', message: { role: 'assistant', content: [{ type: 'text', text: '内联侧链内容' }] } }),
+        line({
+          type: 'user', uuid: 'u2', timestamp: '2026-08-31T00:00:03Z',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool_main', content: '旧版报告' }] },
+        }),
+      ].join('\n'),
+    )
+    // 新版拆分格式：subagents/agent-*.jsonl + .meta.json
+    const subDir = join(projectDir, SID2, 'subagents')
+    mkdirSync(subDir, { recursive: true })
+    writeFileSync(
+      join(subDir, 'agent-abc123.jsonl'),
+      [
+        line({ type: 'user', uuid: 'sa-u1', isSidechain: true, agentId: 'abc123', timestamp: '2026-08-31T00:01:00Z', message: { role: 'user', content: '查找 Hub 定义' } }),
+        line({
+          type: 'assistant', uuid: 'sa-a1', isSidechain: true, agentId: 'abc123', timestamp: '2026-08-31T00:01:01Z',
+          message: { role: 'assistant', content: [{ type: 'thinking', thinking: '想' }, { type: 'tool_use', id: 'tool_inner', name: 'Grep', input: { pattern: 'Hub' } }] },
+        }),
+        line({
+          type: 'user', uuid: 'sa-u2', isSidechain: true, agentId: 'abc123', timestamp: '2026-08-31T00:01:02Z',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool_inner', content: 'index.ts' }] },
+        }),
+        line({ type: 'assistant', uuid: 'sa-a2', isSidechain: true, agentId: 'abc123', timestamp: '2026-08-31T00:01:03Z', message: { role: 'assistant', content: [{ type: 'text', text: '在 index.ts' }] } }),
+      ].join('\n'),
+    )
+    writeFileSync(
+      join(subDir, 'agent-abc123.meta.json'),
+      JSON.stringify({ agentType: 'Explore', description: '查找 Hub 类定义文件', toolUseId: 'tool_split', spawnDepth: 1 }),
+    )
+  })
+
+  test('新版拆分文件：消息 + meta 元数据齐全，tool_use/tool_result 可配对', () => {
+    const { subagents } = readHistory(SLUG, SID2)
+    const split = subagents.find((s) => s.toolUseId === 'tool_split')
+    expect(split).toMatchObject({ agentId: 'abc123', agentType: 'Explore', description: '查找 Hub 类定义文件', spawnDepth: 1 })
+    expect(split?.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    expect(split?.messages[1]?.blocks).toEqual([
+      { kind: 'thinking', text: '想' },
+      { kind: 'tool_use', id: 'tool_inner', name: 'Grep', input: { pattern: 'Hub' } },
+    ])
+  })
+
+  test('旧版内联侧链：按 parentToolUseId 分桶，不污染主抄本', () => {
+    const { messages, subagents } = readHistory(SLUG, SID2)
+    expect(messages.some((m) => m.uuid === 's1')).toBe(false)
+    const legacy = subagents.find((s) => s.toolUseId === 'tool_main')
+    expect(legacy?.messages).toHaveLength(1)
+    expect(legacy?.messages[0]?.blocks[0]).toEqual({ kind: 'text', text: '内联侧链内容' })
+  })
 })

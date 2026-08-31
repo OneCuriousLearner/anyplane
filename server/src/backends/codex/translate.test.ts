@@ -257,3 +257,140 @@ describe('itemsToHistory', () => {
     expect(msgs).toEqual([{ uuid: 'x1', role: 'system', subtype: 'compact_boundary', blocks: [] }])
   })
 })
+
+describe('子代理生命周期翻译（collabAgentToolCall / subAgentActivity）', () => {
+  // 桶键统一为子线程 id（agentThreadId），两条事件线在前端归并成同一张卡；
+  // 终态枚举严格用 claude 三值（completed/failed/stopped），前端映射直接生效。
+  const t = () => new ThreadTranslator()
+
+  test('subAgentActivity：started → task_started，completed/interrupted → task_notification，interacted 忽略', () => {
+    const started = t().itemCompleted({ id: 'e1', type: 'subAgentActivity', kind: 'started', agentThreadId: 'th-1', agentPath: 'worker/explore' })
+    expect(started).toEqual([
+      {
+        type: 'system',
+        subtype: 'task_started',
+        tool_use_id: 'th-1',
+        agent_thread_id: 'th-1',
+        task_type: 'subAgent',
+        description: 'worker/explore',
+      },
+    ])
+
+    expect(t().itemCompleted({ id: 'e2', type: 'subAgentActivity', kind: 'completed', agentThreadId: 'th-1', agentPath: 'worker/explore' })).toEqual([
+      { type: 'system', subtype: 'task_notification', tool_use_id: 'th-1', agent_thread_id: 'th-1', status: 'completed' },
+    ])
+    expect(t().itemCompleted({ id: 'e3', type: 'subAgentActivity', kind: 'interrupted', agentThreadId: 'th-1', agentPath: 'worker/explore' })).toEqual([
+      { type: 'system', subtype: 'task_notification', tool_use_id: 'th-1', agent_thread_id: 'th-1', status: 'stopped' },
+    ])
+    expect(t().itemCompleted({ id: 'e4', type: 'subAgentActivity', kind: 'interacted', agentThreadId: 'th-1', agentPath: 'p' })).toEqual([])
+    // 缺 agentThreadId 无法归并，整条丢弃
+    expect(t().itemCompleted({ id: 'e5', type: 'subAgentActivity', kind: 'started' })).toEqual([])
+  })
+
+  test('spawnAgent 成功 End → task_started（receiver 为桶键，prompt 截断作描述）', () => {
+    const msgs = t().itemCompleted({
+      id: 'call-1',
+      type: 'collabAgentToolCall',
+      tool: 'spawnAgent',
+      status: 'completed',
+      receiverThreadIds: ['th-9'],
+      prompt: '去仓库里找到 Hub 的定义位置',
+      agentsStates: { 'th-9': { status: 'running' } }, // 非终态不发通知
+    })
+    expect(msgs).toEqual([
+      {
+        type: 'system',
+        subtype: 'task_started',
+        tool_use_id: 'th-9',
+        agent_thread_id: 'th-9',
+        task_type: 'spawnAgent',
+        description: '去仓库里找到 Hub 的定义位置',
+      },
+      // 主线 tool_result 配对卡（itemStarted 的 tool_use 在此收尾）
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'spawnAgent → completed\nagents: 1\nth-9 running', is_error: false }],
+        },
+      },
+    ])
+  })
+
+  test('spawnAgent 失败 End 且无 receiver → 用 call id 建即终态卡（失败不得不可见）', () => {
+    const msgs = t().itemCompleted({
+      id: 'call-2',
+      type: 'collabAgentToolCall',
+      tool: 'spawnAgent',
+      status: 'failed',
+      receiverThreadIds: [],
+      prompt: 'x',
+    })
+    expect(msgs).toEqual([
+      { type: 'system', subtype: 'task_notification', tool_use_id: 'call-2', agent_thread_id: undefined, status: 'failed' },
+      {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-2', content: 'spawnAgent → failed', is_error: true }] },
+      },
+    ])
+  })
+
+  test('wait End 的 agentsStates 逐个翻终态（报告正文入 summary），running/pendingInit 跳过', () => {
+    const msgs = t().itemCompleted({
+      id: 'call-3',
+      type: 'collabAgentToolCall',
+      tool: 'wait',
+      status: 'completed',
+      receiverThreadIds: ['th-1', 'th-2', 'th-3', 'th-4'],
+      agentsStates: {
+        'th-1': { status: 'completed', message: '报告正文' },
+        'th-2': { status: 'errored', message: '炸了' },
+        'th-3': { status: 'interrupted' },
+        'th-4': { status: 'running' },
+      },
+    })
+    expect(msgs).toEqual([
+      { type: 'system', subtype: 'task_notification', tool_use_id: 'th-1', agent_thread_id: 'th-1', status: 'completed', summary: '报告正文' },
+      { type: 'system', subtype: 'task_notification', tool_use_id: 'th-2', agent_thread_id: 'th-2', status: 'failed', summary: '炸了' },
+      { type: 'system', subtype: 'task_notification', tool_use_id: 'th-3', agent_thread_id: 'th-3', status: 'stopped', summary: undefined },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call-3',
+              content: 'wait → completed\nagents: 4\nth-1 completed: 报告正文\nth-2 errored: 炸了\nth-3 interrupted\nth-4 running',
+              is_error: false,
+            },
+          ],
+        },
+      },
+    ])
+  })
+
+  test('非 spawn 工具 End 只出主线配对卡，不建侧栏桶；Begin（inProgress）不翻译', () => {
+    const tr = t()
+    expect(
+      tr.itemCompleted({ id: 'c4', type: 'collabAgentToolCall', tool: 'sendInput', status: 'completed', receiverThreadIds: ['th-1'] }),
+    ).toEqual([
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'c4', content: 'sendInput → completed\nagents: 1', is_error: false }],
+        },
+      },
+    ])
+    // itemStarted 出主线 tool_use 卡（Begin 时就该有卡，不能等 End）
+    expect(tr.itemStarted({ id: 'c5', type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'inProgress', prompt: 'x' })).toEqual([
+      {
+        type: 'assistant',
+        message: { id: 'tool-c5', role: 'assistant', content: [{ type: 'tool_use', id: 'c5', name: 'Collab', input: { tool: 'spawnAgent', prompt: 'x' } }] },
+      },
+    ])
+    // subAgentActivity 不是工具调用，不进主线卡
+    expect(tr.itemStarted({ id: 'e6', type: 'subAgentActivity', kind: 'started', agentThreadId: 'th-1', agentPath: 'p' })).toEqual([])
+  })
+})

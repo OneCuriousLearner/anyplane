@@ -44,6 +44,21 @@ export interface HistoryMessage {
   rewindable?: boolean
 }
 
+/**
+ * 一条子代理（Task/Agent 工具）的侧链转录。
+ * 新版 CLI 落盘在 <sessionId>/subagents/agent-*.jsonl（元数据在同名 .meta.json），
+ * 旧版内联在主 transcript（isSidechain:true + parentToolUseId）——两种来源统一成此形状。
+ */
+export interface SubagentHistory {
+  /** 主抄本中发起该子代理的 Agent/Task tool_use id（与主线工具卡配对、状态判定的键） */
+  toolUseId?: string
+  agentId?: string
+  agentType?: string
+  description?: string
+  spawnDepth?: number
+  messages: HistoryMessage[]
+}
+
 /** 会话列表项（聚合 Claude discovery 与 Codex thread/list） */
 export interface SessionSummary {
   backend: BackendName
