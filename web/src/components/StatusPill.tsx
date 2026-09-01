@@ -230,7 +230,7 @@ export function StatusPill(props: {
     )
 
   return (
-    <div ref={rootRef} className="relative shrink-0">
+    <div ref={rootRef} className="relative min-w-0 max-w-full">
       <button
         ref={triggerRef}
         onClick={() => {
@@ -238,12 +238,14 @@ export function StatusPill(props: {
           setOpen(next)
           if (next) props.onPanelOpen?.()
         }}
-        className={`inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-left font-mono text-[11px] text-muted transition-colors hover:bg-surface hover:text-ink ${open ? 'invisible' : ''}`}
+        className={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-left font-mono text-[11px] text-muted transition-colors hover:bg-surface hover:text-ink ${open ? 'invisible' : ''}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode.dot}`} />
         <span className="shrink-0">{mode.short}</span>
-        <span className="shrink-0 text-faint" title={modelInfo.title}>
-          [{modelInfo.label}]
+        <span className="flex min-w-0 items-baseline text-faint" title={modelInfo.title ?? modelInfo.label}>
+          <span className="shrink-0">[</span>
+          <span className="min-w-0 truncate">{modelInfo.label}</span>
+          <span className="shrink-0">]</span>
         </span>
         <span className={`shrink-0 ${effortMeta.color}`}>{effortMeta.label}</span>
         <span className="shrink-0 text-faint">{open ? '▴' : '▾'}</span>

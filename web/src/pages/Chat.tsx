@@ -2024,7 +2024,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 }
               }}
             />
-            <div className="mt-1 flex items-center gap-1.5">
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <div className="min-w-0 flex-1">
               {cfg && !isCodex && (
                 <StatusPill
                   cfg={cfg}
@@ -2055,7 +2056,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   onSetEffort={handleSetEffort}
                 />
               )}
-              <div className="flex-1" />
+              </div>
               {/* 上下文窗口占用环：首个 API 应答/首个 turn 前（state.context 缺省）不渲染 */}
               <ContextRing
                 backend={isCodex ? 'codex' : 'claude'}

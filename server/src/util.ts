@@ -23,6 +23,12 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/** 与官方 CLI 的 projects 目录 slug 规则一致：非字母数字 → '-'（截断/hash 情形极罕见，不实现）。
+ *  放在叶子层：transcript 相关模块（discovery/processManager/tailer）共用，避免依赖成环。 */
+export function sanitizePath(p: string): string {
+  return p.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
 /**
  * ~/.anyplane 下的私有数据目录：递归创建并把 .anyplane 根到目标的每层收紧为 700
  *（vapid 私钥、推送订阅注册表、接力血缘简报、reasoning 侧车、网关 TLS 私钥都落在这里）。

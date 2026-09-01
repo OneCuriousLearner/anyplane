@@ -74,14 +74,19 @@ export function ContextRing(props: {
             className="stroke-current transition-[stroke-dasharray] duration-300"
           />
         </svg>
-        <span className="hidden font-mono text-[10px] min-[420px]:inline">{clamped}%</span>
       </button>
       {/* 面板右下角与环形右下角重合，向上展开（触发器 open 时 invisible，由面板盖住原位） */}
-      <PopupPanel open={open} anchor={btnRef.current} onClose={() => setOpen(false)} placement="cover-end">
-        <div className="min-w-64 p-3">
-          <div className="mb-1.5 flex items-baseline justify-between font-mono text-[11px]">
-            <span className="text-muted">上下文占用{props.backend === 'codex' ? '（codex）' : ''}</span>
-            <span className={tone}>
+      <PopupPanel
+        open={open}
+        anchor={btnRef.current}
+        onClose={() => setOpen(false)}
+        placement="cover-end"
+        className="max-w-[280px]"
+      >
+        <div className="min-w-0 w-full p-3">
+          <div className="mb-1.5 flex min-w-0 items-baseline justify-between gap-2 font-mono text-[11px]">
+            <span className="shrink-0 text-muted">上下文占用{props.backend === 'codex' ? '（codex）' : ''}</span>
+            <span className={`min-w-0 truncate ${tone}`}>
               {clamped}% · {fmtTok(context.usedTokens)} / {fmtTok(context.windowSize)}
             </span>
           </div>

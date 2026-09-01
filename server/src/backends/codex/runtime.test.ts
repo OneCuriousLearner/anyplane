@@ -2,7 +2,7 @@
 // approvalPolicy+sandbox；wire 枚举双轨（thread/start 用 kebab-case sandbox，
 // turn/start 用 camelCase sandboxPolicy 对象）是本文件锁定的重点。
 import { describe, expect, test } from 'bun:test'
-import { CodexSession, mapPermissionMode, sandboxPolicyOf } from './runtime'
+import { CodexSession, extractTokenCountFromRolloutTail, mapPermissionMode, sandboxPolicyOf } from './runtime'
 
 describe('mapPermissionMode（codex 原生预设）', () => {
   test('四档预设', () => {
@@ -87,5 +87,40 @@ describe('CodexSession contextUsage（tokenUsage/updated → 统一形状）', (
     expect(session.contextUsage).toBeUndefined()
     expect(session.tokenUsage.inputTokens).toBe(29000)
     expect(session.tokenUsage.reasoningTokens).toBe(400)
+  })
+})
+
+describe('extractTokenCountFromRolloutTail（resume 水合）', () => {
+  const rec = (last: Record<string, number>, total?: Record<string, number>, w?: number) => JSON.stringify({
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: total ?? last,
+        last_token_usage: last,
+        ...(w != null ? { model_context_window: w } : {}),
+      },
+    },
+  })
+  const u1 = { input_tokens: 14548, cached_input_tokens: 8704, cache_write_input_tokens: 0, output_tokens: 41, reasoning_output_tokens: 37, total_tokens: 14589 }
+  const u2 = { input_tokens: 15492, cached_input_tokens: 14464, cache_write_input_tokens: 0, output_tokens: 3, reasoning_output_tokens: 0, total_tokens: 15495 }
+
+  test('取尾部最后一条 token_count；snake → camel 与 wire 同形', () => {
+    const text = [rec(u1), rec(u2, { ...u2, total_tokens: 30084 }, 996147)].join('\n')
+    expect(extractTokenCountFromRolloutTail(text)).toEqual({
+      last: { totalTokens: 15495, inputTokens: 15492, cachedInputTokens: 14464, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0 },
+      total: { totalTokens: 30084, inputTokens: 15492, cachedInputTokens: 14464, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0 },
+      modelContextWindow: 996147,
+    })
+  })
+
+  test('截断行/非 token_count 行跳过；缺 model_context_window 时省略', () => {
+    const truncated = '{"type":"event_msg","payload":{"type":"token_count","info":{"las'
+    const other = JSON.stringify({ type: 'response_item', payload: { type: 'message' } })
+    const text = [truncated, other, rec(u1)].join('\n')
+    const got = extractTokenCountFromRolloutTail(text)
+    expect(got?.last.totalTokens).toBe(14589)
+    expect(got?.modelContextWindow).toBeUndefined()
+    expect(extractTokenCountFromRolloutTail(other)).toBeUndefined()
   })
 })

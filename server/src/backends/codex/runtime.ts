@@ -8,6 +8,9 @@ import { saveUpload } from '../../uploads'
 import { errorMessage } from '../../util'
 import { RpcClient, RpcError } from './rpc'
 import { appendReasoning, readReasoning } from './reasoningStore'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { Glob } from 'bun'
 import {
   itemsToHistory,
   mapThreadStatus,
@@ -65,6 +68,54 @@ export function sandboxPolicyOf(kebab: string): Record<string, unknown> | undefi
   }
   const type = map[kebab]
   return type ? { type } : undefined
+}
+
+/** rollout 尾部回扫出的 token 用量（与 thread/tokenUsage/updated wire 同形的 camelCase 记录，
+ *  水合后直接进 CodexSession 的 lastUsage/totalUsage/modelContextWindow，getter 无需分支） */
+export interface RolloutTokenCount {
+  last: Record<string, number>
+  total: Record<string, number>
+  modelContextWindow?: number
+}
+
+/** 从 rollout 文本尾部倒序找最后一条 event_msg/token_count 记录。
+ *  codex rollout 会把每次补全的 TokenUsageInfo 持久化为 token_count 事件（snake_case），
+ *  而 thread/resume 不补发 tokenUsage 通知（实测）——resume 水合的唯一数据源。 */
+export function extractTokenCountFromRolloutTail(text: string): RolloutTokenCount | undefined {
+  const mapUsage = (u: unknown): Record<string, number> | undefined => {
+    if (!u || typeof u !== 'object') return undefined
+    const r = u as Record<string, unknown>
+    return {
+      totalTokens: Number(r.total_tokens ?? 0) || 0,
+      inputTokens: Number(r.input_tokens ?? 0) || 0,
+      cachedInputTokens: Number(r.cached_input_tokens ?? 0) || 0,
+      cacheWriteInputTokens: Number(r.cache_write_input_tokens ?? 0) || 0,
+      outputTokens: Number(r.output_tokens ?? 0) || 0,
+      reasoningOutputTokens: Number(r.reasoning_output_tokens ?? 0) || 0,
+    }
+  }
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line || !line.includes('token_count')) continue
+    let rec: { payload?: { type?: string; info?: Record<string, unknown> } }
+    try {
+      rec = JSON.parse(line) as typeof rec
+    } catch {
+      continue // 尾块首行可能被截断，跳过
+    }
+    const info = rec.payload?.type === 'token_count' ? rec.payload.info : undefined
+    if (!info) continue
+    const last = mapUsage(info.last_token_usage)
+    if (!last) continue
+    const w = Number(info.model_context_window ?? 0) || 0
+    return {
+      last,
+      total: mapUsage(info.total_token_usage) ?? last,
+      ...(w > 0 ? { modelContextWindow: w } : {}),
+    }
+  }
+  return undefined
 }
 
 interface PendingCodexApproval {
@@ -214,6 +265,9 @@ export class CodexSession {
     this.runtime.registerThread(this.threadId!, this)
     if (this.opts.effort) this.turnOverrides.effort = this.opts.effort
     this.cb.onMessage({ type: 'system', subtype: 'init', session_id: this.threadId, model: this.opts.model })
+    // resume 水合：thread/resume 不补发 tokenUsage（实测），回扫 rollout 尾部的
+    // token_count 事件播种窗口占用与累计用量，让环形 UI 在首个新 turn 之前就有数
+    if (this.opts.resumeThreadId) void this.hydrateContextUsage()
     // 回读线程目标：goal 是 durable 的，重连/换端后 chip 需要恢复
     void this.runtime
       .rpcRequest('thread/goal/get', { threadId: this.threadId })
@@ -225,6 +279,45 @@ export class CodexSession {
       })
       .catch(() => {}) // 旧版 app-server 无 goal API 时静默降级
     this.cb.onStatusChange?.()
+  }
+
+  /** resume 水合：定位本线程的 rollout 文件（home/sessions/<日期目录>/rollout-*<threadId>.jsonl），
+   *  尾部回扫最后一条 token_count 播种 lastUsage/totalUsage/modelContextWindow。
+   *  尽力而为：找不到/读不到就保持隐藏等首个新 turn；竞态守卫——只填空位，不覆盖 live 值。 */
+  private async hydrateContextUsage(): Promise<void> {
+    const threadId = this.opts.resumeThreadId
+    if (!threadId) return
+    try {
+      const home = this.runtime.home
+      const glob = new Glob(`sessions/**/rollout-*${threadId}.jsonl`)
+      let rel: string | undefined
+      for await (const p of glob.scan({ cwd: home, onlyFiles: true })) {
+        rel = p
+        break // threadId 全局唯一，首个命中即所求
+      }
+      if (!rel) return
+      const f = Bun.file(join(home, rel))
+      const TAIL = 512 * 1024
+      const text = await f.slice(Math.max(0, f.size - TAIL), f.size).text()
+      const found = extractTokenCountFromRolloutTail(text)
+      if (!found || this.exited) return
+      let changed = false
+      if (!this.lastUsage) {
+        this.lastUsage = found.last
+        changed = true
+      }
+      if (!this.totalUsage) {
+        this.totalUsage = found.total
+        changed = true
+      }
+      if (!this.modelContextWindow && found.modelContextWindow) {
+        this.modelContextWindow = found.modelContextWindow
+        changed = true
+      }
+      if (changed) this.cb.onStatusChange?.()
+    } catch {
+      // rollout 缺失/不可读：保持隐藏，等首个新 turn
+    }
   }
 
   // ---------- 事件入口（runtime 按 threadId 分发） ----------
@@ -615,6 +708,13 @@ export class CodexRuntime {
   private byThread = new Map<string, CodexSession>()
   /** ephemeral fork（/btw、接力简报）的临时事件收集器，按 threadId 路由 */
   private collectors = new Map<string, EphemeralCollector>()
+  /** initialize 应答的 codexHome（rollout 水合定位 sessions/ 目录用） */
+  private reportedHome: string | undefined
+
+  /** codex 数据根目录：initialize 上报值优先，回退 CODEX_HOME env / ~/.codex */
+  get home(): string {
+    return this.reportedHome ?? process.env.CODEX_HOME ?? join(homedir(), '.codex')
+  }
 
   async ensureRpc(): Promise<RpcClient> {
     if (this.rpc && !this.rpc.exited) return this.rpc
@@ -628,10 +728,11 @@ export class CodexRuntime {
         this.rpc = undefined
         for (const s of this.sessions.values()) s.handleProcessExit()
       }
-      await rpc.request('initialize', {
+      const initRes = (await rpc.request('initialize', {
         clientInfo: { name: 'anyplane', title: 'anyplane', version: '0.2.0' },
         capabilities: { experimentalApi: true },
-      })
+      })) as { codexHome?: string }
+      if (typeof initRes.codexHome === 'string') this.reportedHome = initRes.codexHome
       rpc.notify('initialized', {})
       this.rpc = rpc
       console.log('[codex] app-server 已启动并完成握手')

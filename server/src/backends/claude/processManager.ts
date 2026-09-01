@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type Subprocess } from 'bun'
 import { config } from '../../config'
-import { errorMessage, pumpLines } from '../../util'
+import { errorMessage, pumpLines, sanitizePath } from '../../util'
 import type { ApprovalDecision, BackgroundTask, SessionCallbacks, SpawnOptions } from '../types'
 import {
   approvalResponse,
@@ -38,6 +38,42 @@ export function contextWindowOf(model: string | undefined): number {
   const disabled = /^(1|true|yes)$/i.test(process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT ?? '')
   if (!disabled && model && /\[1m\]/i.test(model)) return 1_000_000
   return 200_000
+}
+
+/** transcript 尾部回扫出的"最后一次主线 API 调用"usage（水合用，与 ClaudeSession.lastCallUsage 同形） */
+export interface TranscriptCallUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+/** 从 transcript 文本尾部倒序找最后一条主线 assistant 行的 message.usage。
+ *  与实时跟踪同口径：sidechain（isSidechain:true）不计；transcript 的 usage 是完成态
+ *  （output_tokens 为真实值，不像 stream 快照恒为 0）。找不到返回 undefined。 */
+export function extractUsageFromTranscriptTail(text: string): TranscriptCallUsage | undefined {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line || !line.includes('"assistant"')) continue
+    let msg: Record<string, unknown>
+    try {
+      msg = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue // 尾块首行可能被截断，跳过
+    }
+    if (msg.type !== 'assistant' || msg.isSidechain === true) continue
+    const u = (msg.message as { usage?: unknown } | undefined)?.usage
+    if (!u || typeof u !== 'object') continue
+    const r = u as Record<string, unknown>
+    return {
+      inputTokens: Number(r.input_tokens ?? 0) || 0,
+      outputTokens: Number(r.output_tokens ?? 0) || 0,
+      cacheReadTokens: Number(r.cache_read_input_tokens ?? 0) || 0,
+      cacheWriteTokens: Number(r.cache_creation_input_tokens ?? 0) || 0,
+    }
+  }
+  return undefined
 }
 
 /** 解析 claude 可执行文件。返回 [cmd, prefixArgs] —— .cmd/.bat 需要 cmd.exe 包装 */
@@ -201,6 +237,28 @@ export class ClaudeSession {
     this.cb.onStatusChange?.()
   }
 
+  /** resume/fork 水合：回扫源 transcript 尾部，把最后一条主线 assistant 的 usage 播种为
+   *  上下文占用，让环形 UI 在首个新 turn 之前就有数（resume 后 CLI 不重放 usage，实测）。
+   *  rewind（resumeSessionAt）会截断历史，尾部是"被回滚掉的未来"，跳过；
+   *  竞态守卫：首个新 turn 的 live 值先到则不覆盖（水合是尽力而为，读不到就等首 turn）。 */
+  private hydrateContextUsage(): void {
+    const sourceId = this.opts.resumeSessionId ?? this.opts.forkFromSessionId
+    if (!sourceId || this.opts.resumeSessionAt) return
+    const path = join(config.claudeConfigDir, 'projects', sanitizePath(this.opts.cwd), `${sourceId}.jsonl`)
+    void (async () => {
+      const f = Bun.file(path)
+      const TAIL = 768 * 1024
+      const text = await f.slice(Math.max(0, f.size - TAIL), f.size).text()
+      return extractUsageFromTranscriptTail(text)
+    })()
+      .then((u) => {
+        if (!u || this.lastCallUsage || this.exited) return
+        this.lastCallUsage = u
+        this.cb.onStatusChange?.()
+      })
+      .catch(() => {}) // transcript 缺失/不可读：保持隐藏，等首个新 turn
+  }
+
   /** 返回副本，避免调用方改写回收判定所依赖的任务表。 */
   get backgroundTasks(): BackgroundTask[] {
     return [...this.activeTasks.values()].map((task) => ({ ...task }))
@@ -222,6 +280,7 @@ export class ClaudeSession {
     if (!existsSync(this.opts.cwd)) {
       throw new Error(`项目目录不存在: ${this.opts.cwd}`)
     }
+    this.hydrateContextUsage()
     const { cmd, prefix } = resolveClaudeCommand()
     const args = [
       ...prefix,

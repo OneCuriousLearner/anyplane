@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { config } from '../../config'
-import { ClaudeSession, contextWindowOf } from './processManager'
+import { ClaudeSession, contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
 
 const originalDetachRecycleMs = config.detachRecycleMs
 
@@ -302,5 +302,39 @@ describe('ClaudeSession contextUsage（官方 statusline current_usage 的 headl
     // usageAcc 仍按 turn 累计（session 累计口径不变）
     expect(session.tokenUsage.inputTokens).toBe(29801)
     expect(session.tokenUsage.cacheReadTokens).toBe(29696)
+  })
+})
+
+describe('extractUsageFromTranscriptTail（resume/fork 水合）', () => {
+  const line = (over: Record<string, unknown>) => JSON.stringify({
+    type: 'assistant',
+    isSidechain: false,
+    uuid: 'u',
+    message: { id: 'msg-x', role: 'assistant', content: [], usage: { input_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 10, output_tokens: 7 } },
+    ...over,
+  })
+
+  test('取尾部最后一条主线 assistant 的 usage；transcript 的 output 为真实值', () => {
+    const text = [
+      line({ uuid: 'old' }),
+      line({ uuid: 'new', message: { id: 'msg-y', role: 'assistant', content: [], usage: { input_tokens: 200, cache_read_input_tokens: 60, cache_creation_input_tokens: 20, output_tokens: 9 } } }),
+    ].join('\n')
+    expect(extractUsageFromTranscriptTail(text)).toEqual({ inputTokens: 200, outputTokens: 9, cacheReadTokens: 60, cacheWriteTokens: 20 })
+  })
+
+  test('sidechain 行与无 usage 行跳过；尾块首行截断容错', () => {
+    const side = JSON.stringify({
+      type: 'assistant', isSidechain: true,
+      message: { id: 'msg-s', role: 'assistant', content: [], usage: { input_tokens: 999, cache_read_input_tokens: 999, cache_creation_input_tokens: 999, output_tokens: 999 } },
+    })
+    const noUsage = JSON.stringify({ type: 'assistant', isSidechain: false, message: { id: 'msg-n', role: 'assistant', content: [] } })
+    const truncated = '{"type":"assistant","isSidechain":false,"message":{"id":"msg-t' // 截断行（尾块首行）
+    const text = [line({ uuid: 'main' }), truncated, noUsage, side].join('\n')
+    expect(extractUsageFromTranscriptTail(text)).toEqual({ inputTokens: 100, outputTokens: 7, cacheReadTokens: 50, cacheWriteTokens: 10 })
+  })
+
+  test('找不到主线 usage 返回 undefined', () => {
+    expect(extractUsageFromTranscriptTail('{"type":"user","message":{}}')).toBeUndefined()
+    expect(extractUsageFromTranscriptTail('')).toBeUndefined()
   })
 })
