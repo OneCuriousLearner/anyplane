@@ -318,6 +318,7 @@ function baseStatusOf(
         sessionId: string | undefined
         connectedClients: number
         tokenUsage: unknown
+        contextUsage: unknown
       }
     | undefined,
   hub: Hub | undefined,
@@ -331,6 +332,7 @@ function baseStatusOf(
     sessionId: s?.sessionId,
     clients: s?.connectedClients ?? hub?.clients.size ?? 0,
     usage: s?.tokenUsage,
+    context: s?.contextUsage,
     permissionMode: hub?.spawnOpts?.permissionMode,
     effort: hub?.spawnOpts?.effort,
   }

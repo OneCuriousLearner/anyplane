@@ -85,6 +85,8 @@ export class CodexSession {
   private lastUsage: Record<string, number> | undefined
   /** tokenUsage.total：线程累计用量（codex 侧是覆盖语义，不是累加） */
   private totalUsage: Record<string, number> | undefined
+  /** 模型上下文窗口大小（thread/tokenUsage/updated 的 modelContextWindow；旧版 app-server 可能缺省） */
+  private modelContextWindow: number | undefined
   /** turn/start 的覆盖项（model/approvalPolicy/sandbox），未 spawn 时缓存 */
   turnOverrides: Params = {}
   /** 线程目标（thread/goal/* 通知驱动；objective + 官方统计） */
@@ -144,6 +146,34 @@ export class CodexSession {
     return {
       inputTokens: Number(u.inputTokens ?? 0) || 0,
       outputTokens: Number(u.outputTokens ?? 0) || 0,
+      cacheReadTokens: Number(u.cachedInputTokens ?? 0) || 0,
+      cacheWriteTokens: Number(u.cacheWriteInputTokens ?? 0) || 0,
+      reasoningTokens: Number(u.reasoningOutputTokens ?? 0) || 0,
+    }
+  }
+
+  /** 当前上下文窗口占用（codex 口径：last.totalTokens = 最新活跃上下文大小，对应 TUI footer
+   *  的 "N% context left" 数据源；TUI 另减 12k baseline，这里保持原始值由前端统一口径）。
+   *  首个 turn 之前或旧版 app-server 缺 modelContextWindow 时为 undefined（前端据此隐藏环形 UI）。 */
+  get contextUsage():
+    | {
+        usedTokens: number
+        windowSize: number
+        outputTokens: number
+        inputTokens: number
+        cacheReadTokens: number
+        cacheWriteTokens: number
+        reasoningTokens: number
+      }
+    | undefined {
+    const u = this.lastUsage
+    const w = this.modelContextWindow
+    if (!u || !w) return undefined
+    return {
+      usedTokens: Number(u.totalTokens ?? 0) || 0,
+      windowSize: w,
+      outputTokens: Number(u.outputTokens ?? 0) || 0,
+      inputTokens: Number(u.inputTokens ?? 0) || 0,
       cacheReadTokens: Number(u.cachedInputTokens ?? 0) || 0,
       cacheWriteTokens: Number(u.cacheWriteInputTokens ?? 0) || 0,
       reasoningTokens: Number(u.reasoningOutputTokens ?? 0) || 0,
@@ -221,12 +251,16 @@ export class CodexSession {
         break
       }
       case 'thread/tokenUsage/updated': {
-        const tu = params.tokenUsage as { last?: Record<string, number>; total?: Record<string, number> } | undefined
-        if (tu?.last) this.lastUsage = tu.last
-        if (tu?.total) {
-          this.totalUsage = tu.total
-          this.cb.onStatusChange?.()
+        const tu = params.tokenUsage as
+          | { last?: Record<string, number>; total?: Record<string, number>; modelContextWindow?: number }
+          | undefined
+        if (!tu) break
+        if (tu.last) this.lastUsage = tu.last
+        if (tu.total) this.totalUsage = tu.total
+        if (typeof tu.modelContextWindow === 'number' && tu.modelContextWindow > 0) {
+          this.modelContextWindow = tu.modelContextWindow
         }
+        this.cb.onStatusChange?.()
         break
       }
       case 'thread/goal/updated': {

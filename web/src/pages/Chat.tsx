@@ -10,12 +10,38 @@ import { ClaudeMark } from '../components/ClaudeMark'
 import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
+import { ContextRing } from '../components/ContextRing'
 import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
 const MORE_ITEM =
   'flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface hover:text-ink'
+
+/** 复制到剪贴板：clipboard API 仅在安全上下文可用，http 局域网访问走 textarea 回退 */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // 权限拒绝等 → 走回退
+  }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    ta.remove()
+    return ok
+  } catch {
+    return false
+  }
+}
 
 interface Approval {
   requestId: string
@@ -212,6 +238,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const [goalDraft, setGoalDraft] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
   const moreBtnRef = useRef<HTMLButtonElement>(null)
+  const [idCopied, setIdCopied] = useState(false)
   const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -329,6 +356,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   const isCodex = isCodexKey(session.key)
   const isExisting = isExistingKey(session.key)
+  /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
+   *  未 spawn 时只有 s|/x| key 内嵌的才是本会话 id——b| 嵌的是源会话 id，不能误显示 */
+  const currentSessionId =
+    state.sessionId ??
+    (session.key.startsWith('s|') || session.key.startsWith('x|') ? session.sessionId : undefined)
 
   // codex 模型目录（model/list）：模型/effort 档位/默认值
   useEffect(() => {
@@ -1450,6 +1482,30 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                   offset={6}
                   className="min-w-44"
                 >
+                  {currentSessionId && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={`${MORE_ITEM} ${idCopied ? 'text-ok hover:text-ok' : ''}`}
+                      title={`${isCodex ? 'thread id' : 'session id'}：${currentSessionId}（点击复制完整 ID）`}
+                      onClick={() => {
+                        void copyText(currentSessionId).then((ok) => {
+                          if (!ok) {
+                            setMoreOpen(false)
+                            pushSystem(`⚠ 复制失败，请手动复制：${currentSessionId}`, 'error')
+                            return
+                          }
+                          setIdCopied(true)
+                          setTimeout(() => {
+                            setIdCopied(false)
+                            setMoreOpen(false)
+                          }, 900)
+                        })
+                      }}
+                    >
+                      {idCopied ? '✓ 已复制' : `⧉ ${currentSessionId.slice(0, 8)}…`}
+                    </button>
+                  )}
                   {isExisting && (
                     <button
                       type="button"
@@ -1463,7 +1519,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                         if (!detailOpen) runQuery(isCodex ? 'mcp_status' : 'get_context_usage', isCodex ? 'MCP 状态' : 'context 用量')
                       }}
                     >
-                      详情
+                      ▤ 详情
                     </button>
                   )}
                   {(!isCodex || state.sessionId) && (
@@ -2000,6 +2056,25 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                 />
               )}
               <div className="flex-1" />
+              {/* 上下文窗口占用环：首个 API 应答/首个 turn 前（state.context 缺省）不渲染 */}
+              <ContextRing
+                backend={isCodex ? 'codex' : 'claude'}
+                context={state.context}
+                usage={state.usage}
+                modelLabel={
+                  isCodex
+                    ? (codexCurrentModel?.label ?? codexModelId)
+                    : (modelNames?.[initInfo.model ?? '']?.name ?? initInfo.model)
+                }
+                onOpenFullDetail={
+                  !isCodex && isExisting
+                    ? () => {
+                        setDetailOpen(true)
+                        runQuery('get_context_usage', 'context 用量')
+                      }
+                    : undefined
+                }
+              />
               <button
                 type="button"
                 className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface hover:text-ink"

@@ -129,3 +129,10 @@ export interface SessionCallbacks {
 // - sendUserText 的 sendMode/images 为可选增强；codex 的 images 元素需要 name 字段。
 // - write 接受任意 StdinMessage，但 codex 只响应 update_environment_variables
 //   （CLAUDE_CODE_EFFORT_LEVEL → reasoning effort），其余形状按设计忽略。
+// - contextUsage（当前上下文窗口占用）两后端同形：
+//   { usedTokens, windowSize, outputTokens, inputTokens, cacheReadTokens, cacheWriteTokens,
+//     reasoningTokens? }（reasoningTokens 仅 codex 有源）。
+//   usedTokens 口径各自对齐官方 statusline：claude = 最近一次调用的 input+cache（不含 output）；
+//   codex = tokenUsage.last.totalTokens（最新活跃上下文大小）。windowSize：claude 按模型
+//   启发式（[1m]→1M，否则 200k）；codex 用通知里的 modelContextWindow。
+//   首个 API 应答/首个 turn 之前为 undefined——前端据此隐藏环形 UI（resume 不补发，实测）。

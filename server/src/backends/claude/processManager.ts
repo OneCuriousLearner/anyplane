@@ -30,6 +30,16 @@ export type { ApprovalDecision, SpawnOptions } from '../types'
 /** Claude Code session_state_changed 三态 */
 export type SessionRunState = 'idle' | 'running' | 'requires_action'
 
+/** 上下文窗口大小：官方 getContextWindowForModel 的 headless 近似——[1m] 后缀 → 1M，
+ *  CLAUDE_CODE_DISABLE_1M_CONTEXT 为真时恒 200k，否则默认 200k。
+ *  capability 表/实验 flag 是 CLI 进程内状态，headless 协议不可见（官方口径见
+ *  docs/claude-code/en/statusline.md 的 context_window.context_window_size）。 */
+export function contextWindowOf(model: string | undefined): number {
+  const disabled = /^(1|true|yes)$/i.test(process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT ?? '')
+  if (!disabled && model && /\[1m\]/i.test(model)) return 1_000_000
+  return 200_000
+}
+
 /** 解析 claude 可执行文件。返回 [cmd, prefixArgs] —— .cmd/.bat 需要 cmd.exe 包装 */
 export function resolveClaudeCommand(): { cmd: string; prefix: string[] } {
   const candidates: string[] = []
@@ -90,6 +100,9 @@ export class ClaudeSession {
   private exitEmitted = false
   /** 本进程内各 turn result.usage 的累计（只计 token，不含任何费用字段） */
   private usageAcc = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+  /** 最近一次主线 API 调用的 usage（官方 statusline 的 context_window.current_usage 口径；
+   *  数据源：assistant 消息的 message.usage + result.usage，sidechain 不计） */
+  private lastCallUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined
   /** 等待 CLI 确认的外发 control request，例如组合 rewind 的第一步。 */
   private pendingControlRequests = new Map<string, {
     resolve: (response: unknown) => void
@@ -138,6 +151,54 @@ export class ClaudeSession {
   /** 累计 token 用量（本进程生命周期内） */
   get tokenUsage(): { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } {
     return { ...this.usageAcc }
+  }
+
+  /** 当前上下文窗口占用（官方 statusline context_window 口径：used=input+cache，不含 output）。
+   *  首个 API 应答之前为 undefined（前端据此隐藏环形 UI）。 */
+  get contextUsage():
+    | {
+        usedTokens: number
+        windowSize: number
+        outputTokens: number
+        inputTokens: number
+        cacheReadTokens: number
+        cacheWriteTokens: number
+      }
+    | undefined {
+    const u = this.lastCallUsage
+    if (!u) return undefined
+    return {
+      usedTokens: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+      windowSize: contextWindowOf(this.initModel ?? this.opts.model),
+      outputTokens: u.outputTokens,
+      inputTokens: u.inputTokens,
+      cacheReadTokens: u.cacheReadTokens,
+      cacheWriteTokens: u.cacheWriteTokens,
+    }
+  }
+
+  /** 记录最近一次 API 调用的 usage（assistant 与 result 同口径）；按值去重，变了才广播 status */
+  private noteContextUsage(u: unknown): void {
+    if (!u || typeof u !== 'object') return
+    const r = u as Record<string, unknown>
+    const next = {
+      inputTokens: Number(r.input_tokens ?? 0) || 0,
+      outputTokens: Number(r.output_tokens ?? 0) || 0,
+      cacheReadTokens: Number(r.cache_read_input_tokens ?? 0) || 0,
+      cacheWriteTokens: Number(r.cache_creation_input_tokens ?? 0) || 0,
+    }
+    const prev = this.lastCallUsage
+    if (
+      prev &&
+      prev.inputTokens === next.inputTokens &&
+      prev.outputTokens === next.outputTokens &&
+      prev.cacheReadTokens === next.cacheReadTokens &&
+      prev.cacheWriteTokens === next.cacheWriteTokens
+    ) {
+      return
+    }
+    this.lastCallUsage = next
+    this.cb.onStatusChange?.()
   }
 
   /** 返回副本，避免调用方改写回收判定所依赖的任务表。 */
@@ -294,6 +355,9 @@ export class ClaudeSession {
         this.pendingControlRequests.delete(requestId)
         reject(new Error(`控制请求 ${subtype} 超时`))
         this.scheduleRecycleIfSafe()
+        // 等待中的控制请求计入 busy（见 getter）；超时清空后 busy 可能翻回 false。
+        // 纯控制查询的会话没有 session_state_changed，不推状态前端会永远停在"工作中"
+        this.cb.onStatusChange?.()
       }, timeoutMs)
       // write 已同步完成，CLI 的应答最早在后续事件循环 tick 才到达，此时注册不会丢响应
       this.pendingControlRequests.set(requestId, { resolve, reject, timeout })
@@ -523,6 +587,12 @@ export class ClaudeSession {
       this.scheduleRecycleIfSafe()
     }
 
+    // 主线 assistant 消息的 per-call usage：官方 statusline current_usage 的 headless 等价物。
+    // sidechain（子代理）上下文独立，不计入主窗口占用
+    if (msg.type === 'assistant' && msg.parent_tool_use_id == null && msg.isSidechain !== true) {
+      this.noteContextUsage((msg.message as { usage?: unknown } | undefined)?.usage)
+    }
+
     // token 用量累计：result.usage（费用字段不进累加器、不进 UI）
     if (msg.type === 'result' && msg.usage && typeof msg.usage === 'object') {
       const u = msg.usage as Record<string, unknown>
@@ -533,6 +603,14 @@ export class ClaudeSession {
       acc('outputTokens', u.output_tokens)
       acc('cacheReadTokens', u.cache_read_input_tokens)
       acc('cacheWriteTokens', u.cache_creation_input_tokens)
+      // result.usage 是本 turn 各 API 调用的累计（turn 口径，usageAcc 靠它做 session 累计正
+      // 确）；上下文占用必须保持"最后一次调用"口径（assistant 消息），绝不能把 turn 总和写
+      // 进去——否则多调用 turn 结束时 input/cache 会虚增（实测 2 次调用 ≈ 翻倍）。
+      // 唯一取用的是 output_tokens：assistant 流式快照的 output 恒为 0，turn 总输出以它为终值。
+      const out = Number(u.output_tokens ?? 0) || 0
+      if (this.lastCallUsage && out !== this.lastCallUsage.outputTokens) {
+        this.lastCallUsage = { ...this.lastCallUsage, outputTokens: out }
+      }
       this.cb.onStatusChange?.()
     }
 
@@ -551,6 +629,9 @@ export class ClaudeSession {
         if (response.subtype === 'success') pending.resolve(response.response)
         else pending.reject(new Error(typeof response.error === 'string' ? response.error : '控制请求失败'))
         this.scheduleRecycleIfSafe()
+        // pending 清空后 busy 可能翻回 false（纯控制查询的会话没有 session_state_changed
+        // 兜底推送），必须主动通知，否则前端"工作中"永挂
+        this.cb.onStatusChange?.()
         // 已被 sendControlAndWait 消费的应答不再透传（与 can_use_tool 同模式）：
         // 消费方（如 rewind_both）会自行广播结果，透传会造成同一结果/错误双重展示
         return

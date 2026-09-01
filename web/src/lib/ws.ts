@@ -55,6 +55,18 @@ export interface SessionState {
     cacheWriteTokens?: number
     reasoningTokens?: number
   }
+  /** 当前上下文窗口占用（两后端同形；首个 API 应答/首个 turn 之前缺省——环形 UI 据此隐藏）。
+   *  usedTokens 口径对齐各家官方 statusline：claude=input+cache（不含 output）；
+   *  codex=tokenUsage.last.totalTokens（最新活跃上下文大小）。 */
+  context?: {
+    usedTokens: number
+    windowSize: number
+    outputTokens: number
+    inputTokens?: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    reasoningTokens?: number
+  }
   /** Claude Code system/task_started 与 task_notification 之间的后台任务数。 */
   activeTaskCount?: number
   /** 运行中任务的最小信息；不含 prompt、输出等敏感/冗长内容。 */
