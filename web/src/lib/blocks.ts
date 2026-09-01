@@ -17,6 +17,156 @@ export type Block =
   | { kind: 'image'; src: string }
   | ToolBlock
 
+export type CollapsibleBlock = Extract<Block, { kind: 'thinking' | 'tool' }>
+
+export function isCollapsibleBlock(b: Block): b is CollapsibleBlock {
+  return b.kind === 'thinking' || b.kind === 'tool'
+}
+
+export type BlockRun =
+  | { kind: 'collapsible'; blocks: CollapsibleBlock[] }
+  | { kind: 'content'; block: Block }
+
+/** 一条消息内：相邻思考/工具收成一段，正文与图片打断分组。 */
+export function groupCollapsibleRuns(blocks: readonly Block[]): BlockRun[] {
+  const runs: BlockRun[] = []
+  for (const b of blocks) {
+    if (isCollapsibleBlock(b)) {
+      const last = runs[runs.length - 1]
+      if (last?.kind === 'collapsible') last.blocks.push(b)
+      else runs.push({ kind: 'collapsible', blocks: [b] })
+    } else {
+      runs.push({ kind: 'content', block: b })
+    }
+  }
+  return runs
+}
+
+/** 流式草稿块（Chat DraftBlock 的可序列化子集） */
+export interface DraftBlockLike {
+  idx: number
+  kind: 'text' | 'thinking' | 'tool'
+  text: string
+  name?: string
+  toolId?: string
+  jsonBuf?: string
+}
+
+export function draftBlockToBlock(b: DraftBlockLike): Block {
+  if (b.kind === 'tool') {
+    let input: unknown
+    try {
+      input = b.jsonBuf ? JSON.parse(b.jsonBuf) : undefined
+    } catch {
+      /* 流式 JSON 尚未闭合，参数留空 */
+    }
+    return {
+      kind: 'tool',
+      id: b.toolId ?? `draft-${b.idx}`,
+      name: b.name ?? '…',
+      input,
+      pending: true,
+    }
+  }
+  if (b.kind === 'thinking') return { kind: 'thinking', text: b.text }
+  return { kind: 'text', text: b.text }
+}
+
+export interface ActivityItem {
+  key: string
+  block: CollapsibleBlock
+  streaming?: boolean
+}
+
+export type TranscriptRow =
+  | { type: 'message'; msg: ChatMsg; compact: boolean }
+  | { type: 'activity'; items: ActivityItem[]; compact: boolean }
+  | { type: 'content'; blocks: { key: string; block: Block; streaming?: boolean }[]; compact: boolean }
+
+/**
+ * 把消息列表 + 可选流式草稿摊成渲染行。
+ * 相邻 assistant 消息之间的思考/工具会跨消息并进同一 activity 组；
+ * 用户/系统/侧问卡片、以及正文/图片会打断分组。
+ */
+export function buildTranscriptRows(
+  messages: readonly ChatMsg[],
+  draft?: { blocks: readonly DraftBlockLike[] } | null,
+): TranscriptRow[] {
+  const rows: TranscriptRow[] = []
+  let activity: ActivityItem[] | null = null
+  let activityCompact = false
+
+  const prevRole = (): ChatMsg['role'] | undefined => {
+    if (activity) return 'assistant'
+    const last = rows[rows.length - 1]
+    if (!last) return undefined
+    if (last.type === 'message') return last.msg.role
+    return 'assistant'
+  }
+
+  const compactFor = (role: ChatMsg['role']) => role !== 'system' && prevRole() === role
+
+  const endActivity = () => {
+    if (activity && activity.length > 0) {
+      rows.push({ type: 'activity', items: activity, compact: activityCompact })
+    }
+    activity = null
+  }
+
+  const pushActivityItem = (item: ActivityItem) => {
+    if (!activity) {
+      activityCompact = compactFor('assistant')
+      activity = []
+    }
+    activity.push(item)
+  }
+
+  const pushContent = (piece: { key: string; block: Block; streaming?: boolean }) => {
+    const compact = compactFor('assistant')
+    endActivity()
+    const last = rows[rows.length - 1]
+    if (last?.type === 'content') last.blocks.push(piece)
+    else rows.push({ type: 'content', blocks: [piece], compact })
+  }
+
+  for (const msg of messages) {
+    if (msg.btw != null || msg.role !== 'assistant') {
+      const compact = compactFor(msg.role)
+      endActivity()
+      rows.push({ type: 'message', msg, compact })
+      continue
+    }
+    msg.blocks.forEach((b, i) => {
+      if (isCollapsibleBlock(b)) {
+        pushActivityItem({
+          key: b.kind === 'tool' ? `tool:${b.id}` : `${msg.id}:thinking:${i}`,
+          block: b,
+        })
+      } else {
+        pushContent({ key: `${msg.id}:${i}`, block: b })
+      }
+    })
+  }
+
+  if (draft) {
+    for (const b of draft.blocks) {
+      const block = draftBlockToBlock(b)
+      if (isCollapsibleBlock(block)) {
+        pushActivityItem({
+          key: `draft:${b.idx}`,
+          block,
+          streaming: block.kind === 'thinking',
+        })
+      } else {
+        pushContent({ key: `draft:${b.idx}`, block, streaming: block.kind === 'text' })
+      }
+    }
+  }
+
+  endActivity()
+  return rows
+}
+
 export interface ChatMsg {
   id: string
   role: 'user' | 'assistant' | 'system'

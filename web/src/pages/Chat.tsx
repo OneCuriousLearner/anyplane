@@ -4,9 +4,8 @@ import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from 
 import { StatusPill } from '../components/StatusPill'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RewindPicker } from '../components/RewindPicker'
-import { MessageView } from '../components/MessageView'
+import { Transcript } from '../components/Transcript'
 import { SubagentPanel, type SubagentFeed } from '../components/SubagentPanel'
-import { Markdown } from '../components/Markdown'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
@@ -1355,49 +1354,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto max-w-3xl px-[17px] pb-[300px] pt-[84px] md:px-[29px]">
-          {messages.map((m, i) => (
-            <MessageView
-              key={m.id}
-              msg={m}
-              compact={m.role !== 'system' && messages[i - 1]?.role === m.role}
-            />
-          ))}
-
-          {/* 流式草稿：按块分行，与已落盘消息同一套排版 */}
-          {draft && draft.blocks.length > 0 && (
-            <div className="my-3 flex flex-col">
-              {draft.blocks.map((b) => (
-                <div key={b.idx} className="min-w-0">
-                  {b.kind === 'tool' ? (
-                    <div className="my-1.5 rounded-[14px] bg-surface px-3 py-2 font-mono text-[12px]">
-                      <span className="font-semibold text-ink">{b.name ?? '…'}</span>
-                      <span className="ml-2 text-faint">…</span>
-                    </div>
-                  ) : b.kind === 'thinking' ? (
-                    <div className="my-1.5 rounded-[14px] bg-surface px-3 py-2">
-                      <span className="font-mono text-[11px] tracking-wide text-faint">思考</span>
-                      <span className="ml-1 font-mono text-[11px] text-muted">进行中…</span>
-                      {b.text && (
-                        <div className="mt-1 max-h-48 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
-                          {b.text}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <Markdown text={b.text} />
-                      <span className="cc-cursor ml-0.5 inline-block h-3.5 w-[7px] bg-muted align-text-bottom" />
-                    </div>
-                  )}
-                </div>
-              ))}
-              {draft.blocks.every((b) => b.kind !== 'text') && (
-                <div className="min-w-0">
-                  <span className="cc-cursor inline-block h-3.5 w-[7px] bg-muted" />
-                </div>
-              )}
-            </div>
-          )}
+          <Transcript messages={messages} draft={draft} />
 
           {approvals.map((a) => (
             <ApprovalCard

@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  buildTranscriptRows,
+  draftBlockToBlock,
+  groupCollapsibleRuns,
   parseUserText,
   rewindPreview,
   shortTokens,
@@ -7,6 +10,7 @@ import {
   toolDetail,
   toolResultText,
   toolSummary,
+  type ChatMsg,
 } from './blocks'
 
 describe('rewindPreview', () => {
@@ -128,5 +132,95 @@ describe('toolResultText / stripAnsi / shortTokens', () => {
     expect(shortTokens(999)).toBe('999')
     expect(shortTokens(1000)).toBe('1k')
     expect(shortTokens(231952)).toBe('232k')
+  })
+})
+
+describe('groupCollapsibleRuns / buildTranscriptRows', () => {
+  const thinking = (text: string): ChatMsg['blocks'][number] => ({ kind: 'thinking', text })
+  const tool = (
+    id: string,
+    name: string,
+    extra?: { pending?: boolean; resultError?: boolean; resultText?: string },
+  ): ChatMsg['blocks'][number] => ({
+    kind: 'tool',
+    id,
+    name,
+    input: { file_path: `/tmp/${id}` },
+    ...extra,
+  })
+  const text = (t: string): ChatMsg['blocks'][number] => ({ kind: 'text', text: t })
+  const msg = (id: string, role: ChatMsg['role'], blocks: ChatMsg['blocks']): ChatMsg => ({ id, role, blocks })
+
+  test('一条消息内相邻思考/工具收成一段，正文打断', () => {
+    const runs = groupCollapsibleRuns([
+      thinking('a'),
+      tool('w', 'Write'),
+      text('hello'),
+      thinking('b'),
+      tool('r', 'Read'),
+    ])
+    expect(runs.map((r) => r.kind)).toEqual(['collapsible', 'content', 'collapsible'])
+    if (runs[0]?.kind !== 'collapsible' || runs[2]?.kind !== 'collapsible') throw new Error('expected groups')
+    expect(runs[0].blocks.map((b) => b.kind)).toEqual(['thinking', 'tool'])
+    expect(runs[2].blocks.map((b) => b.kind)).toEqual(['thinking', 'tool'])
+  })
+
+  test('跨连续 assistant 消息把思考/工具并进同一 activity，正文单独成行', () => {
+    const rows = buildTranscriptRows([
+      msg('u1', 'user', [text('请写文件')]),
+      msg('a1', 'assistant', [thinking('t1'), tool('w', 'Write', { resultError: true, resultText: 'fail' })]),
+      msg('a2', 'assistant', [thinking('t2'), tool('r', 'Read', { resultText: 'ok' })]),
+      msg('a3', 'assistant', [thinking('t3'), text('已存在，无需再写入。')]),
+    ])
+    expect(rows.map((r) => r.type)).toEqual(['message', 'activity', 'content'])
+    const act = rows[1]
+    if (act?.type !== 'activity') throw new Error('expected activity')
+    expect(act.items.map((it) => (it.block.kind === 'tool' ? it.block.name : '思考'))).toEqual([
+      '思考',
+      'Write',
+      '思考',
+      'Read',
+      '思考',
+    ])
+    const body = rows[2]
+    if (body?.type !== 'content') throw new Error('expected content')
+    expect(body.blocks[0]?.block).toEqual(text('已存在，无需再写入。'))
+  })
+
+  test('用户/系统消息打断 activity 组', () => {
+    const rows = buildTranscriptRows([
+      msg('a1', 'assistant', [thinking('t1'), tool('w', 'Write')]),
+      msg('s1', 'system', [text('─ 本轮')]),
+      msg('a2', 'assistant', [thinking('t2'), tool('r', 'Read')]),
+    ])
+    expect(rows.map((r) => r.type)).toEqual(['activity', 'message', 'activity'])
+  })
+
+  test('流式草稿的思考/工具并进上一段 activity', () => {
+    const rows = buildTranscriptRows([msg('a1', 'assistant', [thinking('t1'), tool('w', 'Write')])], {
+      blocks: [
+        { idx: 0, kind: 'thinking', text: 'draft-th' },
+        { idx: 1, kind: 'tool', text: '', name: 'Read', toolId: 'r', jsonBuf: '{"file_path":"/tmp/r"}' },
+        { idx: 2, kind: 'text', text: '正文' },
+      ],
+    })
+    expect(rows.map((r) => r.type)).toEqual(['activity', 'content'])
+    const act = rows[0]
+    if (act?.type !== 'activity') throw new Error('expected activity')
+    expect(act.items).toHaveLength(4)
+    expect(act.items[2]?.streaming).toBe(true)
+    expect(act.items[3]?.block).toMatchObject({ kind: 'tool', name: 'Read', pending: true })
+    const body = rows[1]
+    if (body?.type !== 'content') throw new Error('expected content')
+    expect(body.blocks[0]?.streaming).toBe(true)
+  })
+
+  test('draftBlockToBlock 容忍未闭合 JSON', () => {
+    expect(draftBlockToBlock({ idx: 0, kind: 'tool', text: '', name: 'Write', jsonBuf: '{"file' })).toMatchObject({
+      kind: 'tool',
+      name: 'Write',
+      pending: true,
+      input: undefined,
+    })
   })
 })

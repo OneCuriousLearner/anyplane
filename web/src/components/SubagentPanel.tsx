@@ -6,7 +6,7 @@
 // - 历史：readHistory 的 subagents 字段（新版 subagents/*.jsonl + 旧版内联侧链）
 
 import { useEffect, useRef, useState } from 'react'
-import { MessageView } from './MessageView'
+import { Transcript } from './Transcript'
 import { shortTokens, type ChatMsg } from '../lib/blocks'
 
 export interface SubagentFeed {
@@ -107,9 +107,7 @@ function AgentCard(props: { feed: SubagentFeed }) {
               {feed.status === 'running' ? '等待转录…' : '无转录记录'}
             </div>
           )}
-          {feed.messages.map((m, i) => (
-            <MessageView key={m.id} msg={m} compact={m.role !== 'system' && feed.messages[i - 1]?.role === m.role} />
-          ))}
+          <Transcript messages={feed.messages} />
         </div>
       )}
 

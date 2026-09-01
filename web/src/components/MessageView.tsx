@@ -1,23 +1,12 @@
 import { Markdown } from './Markdown'
-import { ToolCard } from './ToolCard'
-import { parseUserText, shortTokens, type ChatMsg } from '../lib/blocks'
-
-/** 思考块：默认折叠 */
-function Thinking(props: { text: string; streaming?: boolean; className?: string }) {
-  return (
-    <details
-      className={`my-1.5 rounded-[14px] bg-surface ${props.className ?? ''}`}
-      open={props.streaming}
-    >
-      <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] tracking-wide text-faint select-none">
-        思考{props.streaming && <span className="ml-1 text-muted">进行中…</span>}
-      </summary>
-      <div className="px-3 pb-2.5 text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
-        {props.text}
-      </div>
-    </details>
-  )
-}
+import { ActivityGroup } from './ActivityGroup'
+import {
+  groupCollapsibleRuns,
+  parseUserText,
+  shortTokens,
+  type Block,
+  type ChatMsg,
+} from '../lib/blocks'
 
 /** user 消息文本：解析斜杠命令回显 / 本地命令输出 / 中断标记 */
 function UserText(props: { text: string }) {
@@ -75,6 +64,37 @@ function ImageAttachment(props: { src?: string }) {
   )
 }
 
+function contentKey(b: Block, i: number): string {
+  return b.kind === 'tool' ? b.id : `${b.kind}:${i}`
+}
+
+/** 把相邻思考/工具收成一组；flush 用于已有底的容器（侧问、用户气泡） */
+function BlockRuns(props: { blocks: Block[]; thinkingStreaming?: boolean; flush?: boolean }) {
+  return (
+    <>
+      {groupCollapsibleRuns(props.blocks).map((run, i) => {
+        if (run.kind === 'collapsible') {
+          return (
+            <ActivityGroup
+              key={`g${i}`}
+              flush={props.flush}
+              items={run.blocks.map((b, j) => ({
+                key: contentKey(b, j),
+                block: b,
+                streaming: b.kind === 'thinking' ? props.thinkingStreaming : undefined,
+              }))}
+            />
+          )
+        }
+        const b = run.block
+        if (b.kind === 'image') return <ImageAttachment key={i} src={b.src} />
+        if (b.kind === 'text') return <Markdown key={i} text={b.text} />
+        return null
+      })}
+    </>
+  )
+}
+
 /** 消息条目：user 右靠气泡 / assistant 按块分行；compact 表示与上一条同角色（连续块，收紧间距） */
 export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   const { msg, compact } = props
@@ -92,12 +112,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
           {msg.blocks.length === 0 && msg.btwPending && (
             <span className="cc-cursor inline-block h-3.5 w-[7px] bg-muted" />
           )}
-          {msg.blocks.map((b, i) => {
-            if (b.kind === 'text') return <Markdown key={i} text={b.text} />
-            if (b.kind === 'thinking') return <Thinking key={i} text={b.text} streaming={msg.btwPending} />
-            if (b.kind === 'image') return <ImageAttachment key={i} src={b.src} />
-            return <ToolCard key={b.id} tool={b} />
-          })}
+          <BlockRuns blocks={msg.blocks} thinkingStreaming={msg.btwPending} flush />
         </div>
       </div>
     )
@@ -131,14 +146,27 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
 
   // user 消息右靠气泡（中性灰，不占用彩色面）；assistant 按块分行
   if (isUser) {
+    const runs = groupCollapsibleRuns(msg.blocks)
     return (
       <div className={`${compact ? 'my-1' : 'my-3'} flex justify-end`}>
         <div className="max-w-[85%] rounded-[14px] bg-user-bubble px-3.5 py-2.5">
-          {msg.blocks.map((b, i) => {
+          {runs.map((run, i) => {
+            if (run.kind === 'collapsible') {
+              return (
+                <ActivityGroup
+                  key={`g${i}`}
+                  flush
+                  items={run.blocks.map((b, j) => ({
+                    key: contentKey(b, j),
+                    block: b,
+                  }))}
+                />
+              )
+            }
+            const b = run.block
             if (b.kind === 'image') return <ImageAttachment key={i} src={b.src} />
             if (b.kind === 'text') return <UserText key={i} text={b.text} />
-            if (b.kind === 'thinking') return <Thinking key={i} text={b.text} />
-            return <ToolCard key={b.id} tool={b} />
+            return null
           })}
         </div>
       </div>
@@ -147,19 +175,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
 
   return (
     <div className={`${compact ? 'my-1' : 'my-3'} flex flex-col`}>
-      {msg.blocks.map((b, i) => (
-        <div key={b.kind === 'tool' ? b.id : i} className="min-w-0">
-          {b.kind === 'image' ? (
-            <ImageAttachment src={b.src} />
-          ) : b.kind === 'text' ? (
-            <Markdown text={b.text} />
-          ) : b.kind === 'thinking' ? (
-            <Thinking text={b.text} />
-          ) : (
-            <ToolCard tool={b} />
-          )}
-        </div>
-      ))}
+      <BlockRuns blocks={msg.blocks} />
     </div>
   )
 }
