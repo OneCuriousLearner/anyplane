@@ -46,7 +46,7 @@ Claude 侧 stdin/stdout 走双向 NDJSON（user 消息 + control_request/respons
 - **会话详情抽屉**：context 分类用量 / **MCP 管理**（claude 侧结构化面板：状态/工具数/scope，重连与启停——启停持久化到 settings，与 TUI 同语义）/ 设置（只读控制查询）
 - **斜杠命令面板**：输入 `/` 弹出全量可滚动清单（自有命令置顶，键盘导航）；claude 命令尽量透传，codex 有对应物的命令前端拦截映射（app-server 无斜杠解析）
 - **回滚（rewind）**：消息选择器——仅回滚文件（文件检查点）、仅回滚对话、对话+文件（先确认检查点恢复成功再截断对话）；Codex 无文件检查点，提供"从此处分叉"（原线程不动）
-- **后台任务**：task_started → task_notification 活动任务芯片，可 `stop_task` 手动停止
+- **后台任务**：task_started → task_notification 全类型（子代理 / 自动后台化的耗时 shell 等）右侧栏生命周期卡片，运行中可展开子代理转录；输入区上方另有活动任务芯片，可 `stop_task` 手动停止
 - **会话改名**：Claude 离线会话追加 custom-title（官方 /rename 同形）；Codex `thread/name/set`（会话内 `/rename <名>` 亦可）
 - **归档与回收站**：归档只移入 `~/.anyplane/trash/`（不物理删除），回收站可恢复；物理删除留给用户自行处理
 - **收件箱**：`/ws/inbox` 跨会话审批/完成/错误汇总；桌面通知（页面隐藏时）；标题角标；PWA 可添加到手机主屏
