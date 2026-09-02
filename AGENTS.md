@@ -82,7 +82,7 @@ bun test web/            # 仅前端测试
 - `lib/ws.ts` — WS 客户端（按 sessionKey 连接、自动重连），`ServerEvent` 联合类型即服务端广播的全部事件种类。
 - `lib/blocks.ts` — 消息块模型：**live 流与历史加载共用同一套块归并逻辑**。增量（stream_event delta）与 assistant 块快照按 `message.id`+块序号归并定稿，不重复渲染。tool_use/tool_result 按 id 配对成一张卡。
 - 过滤规则：`<system-reminder>`/isMeta 不进主抄本，sidechain（子代理）消息不入主流；`compact_boundary` 渲染为分隔线。
-- 后台任务侧栏（`components/TasksPanel.tsx` + `Chat.tsx` 的桶归并）：与主线并行的任务全类型入栏——`task_type` 包括 local_agent（子代理）、local_bash（**CLI 2.1.x 会把耗时前台 Bash 自动后台化并发 task_started**，shell 卡由此而来；shell 无转录，只展示心跳/统计/终态摘要）等。桶的数据源有三——live 事件（task_started/progress/notification）、status 事件携带的服务端权威 `activeTasks` 水合（**task_started 是 live-only 不落盘**，中途接入的客户端只能靠它补建 running 桶，否则首绘即终态）、历史 `resp.subagents` 字段（**只接转录落盘但主线 tool_result 缺失的未完成 agent**——已完成的不建桶，否则老会话重进会复活一堆历史卡 30s 后齐消失，纯噪声；翻旧账走主线 Agent 工具卡）。**终态语义只有一种**：挂 `evictAfter` 宽限期（30s，镜像官方协调器面板 `PANEL_GRACE_MS`），1s 滴答驱逐、桶清空即收起侧栏，驱逐即永久（重进不再出现）。外部会话（tailer 路径）没有 task_notification，tail 尾到的主线 tool_result 是 running 桶唯一的终态信号，同样走这套驱逐。输入区上方另有后台任务芯片行（activeTasks 直渲染 + `stop_task` 快捷停止），与侧栏并存——侧栏关闭时也能停任务。codex 侧由 translate.ts 把 `collabAgentToolCall`/`subAgentActivity` 合成同形状 task 事件，桶键统一为子线程 id；子代理转录不被父通知流转发（实测：运行中只见生命周期 item），前端经 `fetchCodexHistory(agentThreadId)` 轮询回填——运行中 8s 一次、终态收尾一次（uuid 去重，重复拉取无副作用）；collabAgentToolCall 同时出主线 Collab 工具卡（Begin 建卡、End 配对），否则 codex 会话主线看不到任何工具调用。
+- 后台任务侧栏（`components/TasksPanel.tsx` + `Chat.tsx` 的桶归并）：与主线并行的任务全类型入栏——`task_type` 包括 local_agent（子代理）、local_bash（**CLI 2.1.x 会把耗时前台 Bash 自动后台化并发 task_started**，shell 卡由此而来；shell 无转录，只展示心跳/统计/终态摘要）等。桶的数据源有三——live 事件（task_started/progress/notification）、status 事件携带的服务端权威 `activeTasks` 水合（**task_started 是 live-only 不落盘**，中途接入的客户端只能靠它补建 running 桶，否则首绘即终态）、历史 `resp.subagents` 字段（**只接转录落盘但主线 tool_result 缺失的未完成 agent**——已完成的不建桶，否则老会话重进会复活一堆历史卡 30s 后齐消失，纯噪声；翻旧账走主线 Agent 工具卡）。**终态语义只有一种**：挂 `evictAfter` 宽限期（30s，镜像官方协调器面板 `PANEL_GRACE_MS`），1s 滴答驱逐、桶清空即收起侧栏，驱逐即永久（重进不再出现）。外部会话（tailer 路径）没有 task_notification，tail 尾到的主线 tool_result 是 running 桶唯一的终态信号，同样走这套驱逐。停止按钮在侧栏运行中卡片上（`stop_task`；早期输入区上方的芯片行已并入面板——大量并行时芯片会遮挡对话区）。面板默认只展示前 5 张卡（深度优先序），其余点「展开」。嵌套 agent（子代理再扇出）按父子缩进分组：血缘 = 水合下发的 `parentToolUseId`（服务端 `toolUseParents` 从侧链消息推导——嵌套的 Agent tool_use 挂在父任务转录里，且实测先于对应 task_started 到达），缺省时渲染期从各桶转录的工具块归属反推；`spawn_depth` 随 task_started 透传入桶。codex 侧由 translate.ts 把 `collabAgentToolCall`/`subAgentActivity` 合成同形状 task 事件，桶键统一为子线程 id；子代理转录不被父通知流转发（实测：运行中只见生命周期 item），前端经 `fetchCodexHistory(agentThreadId)` 轮询回填——运行中 8s 一次、终态收尾一次（uuid 去重，重复拉取无副作用）；collabAgentToolCall 同时出主线 Collab 工具卡（Begin 建卡、End 配对），否则 codex 会话主线看不到任何工具调用。
 
 ### 斜杠命令
 
@@ -114,5 +114,7 @@ bun test web/            # 仅前端测试
 `docs/codex/` 是官方 Codex / ChatGPT Learn 文档的本地 Markdown 镜像（gitignore，不进仓库；`GPT's suggestion.md` 除外）。**app-server / CLI / Skills / MCP 相关改动的重要开发参考**。用 `bun run docs:codex` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `docs/**/*.md`（关键页：`docs/app-server.md`、`docs/developer-commands.md`、`docs/non-interactive-mode.md`）。
 
 **长文本文档（审计报告/调研记录/规划）放 `docs/` 目录**（如 `docs/audits/2026-08-slash-commands.md` 斜杠命令全景审计、`ROADMAP.md` 后续规划），AGENTS.md 只保留最关键结论并引用路径。
+
+README 面向安装用户只保留常用项；用户向参考文档放 `docs/`：配置全集与推送 webhook 细节见 `docs/configuration.md`，域名网关与远程容器部署见 `docs/gateway.md`——改配置项/网关行为时同步这两份。
 
 发版流程与权限模型见 `docs/releasing.md`：**tag 与根 package.json 版本必须同步**（CI 强校验），发布权限默认仅仓库 owner（npm Trusted Publishing 绑定本仓库 + release.yml，仓库不存 npm token）。

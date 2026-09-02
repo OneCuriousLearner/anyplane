@@ -118,6 +118,10 @@ export interface BackgroundTask {
   startedAt: number
   lastToolName?: string
   summary?: string
+  /** task_started 的 spawn_depth（1 = 主线扇出）；嵌套 agent >1 */
+  depth?: number
+  /** 父任务的 toolUseId（嵌套 agent 时）；血缘推导见 processManager 的 toolUseParents */
+  parentToolUseId?: string
 }
 
 export interface SessionCallbacks {

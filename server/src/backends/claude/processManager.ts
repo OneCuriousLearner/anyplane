@@ -125,6 +125,11 @@ export class ClaudeSession {
   private fallbackBusy = false
   /** task_started → task_notification 的任务表，独立于主会话运行状态。 */
   private activeTasks = new Map<string, BackgroundTask>()
+  /** 嵌套 agent 血缘：Agent/Task tool_use_id → 父任务的 tool_use_id。
+   *  子代理转录里扇出嵌套 agent 的 tool_use 挂在 sidechain 消息上，消息的
+   *  parent_tool_use_id 即父任务（实测先于对应 task_started 到达）。
+   *  只记 Agent/Task 调用，避免随普通工具调用无界增长。 */
+  private toolUseParents = new Map<string, string>()
   /** queue 模式（busy 时发消息）：headless 下 'next'/'later' 会在本轮结束后滞留，
    *  因此排队由服务端实现——idle/result 时按序 flush。 */
   private queuedTexts: Array<{ text: string; images?: Array<{ mediaType: string; dataBase64: string }> }> = []
@@ -334,6 +339,7 @@ export class ClaudeSession {
     this.runState = 'idle'
     this.fallbackBusy = false
     this.activeTasks.clear()
+    this.toolUseParents.clear()
     // initialize 握手：拿 slash 命令清单（含描述）；开启 prompt_suggestion（若该版本支持）。
     // 必须在首条 user 消息前发出；失败不影响会话（老版本无此请求）。
     void this.sendControlAndWait('initialize', { promptSuggestions: true }, 10_000)
@@ -507,6 +513,7 @@ export class ClaudeSession {
     this.fallbackBusy = false
     this.runState = 'idle'
     this.activeTasks.clear()
+    this.toolUseParents.clear()
     this.queuedTexts.length = 0
     for (const pending of this.pendingControlRequests.values()) {
       clearTimeout(pending.timeout)
@@ -612,12 +619,26 @@ export class ClaudeSession {
     // Claude Code 的后台任务生命周期。不能只依赖 session_state_changed：
     // background Agent 可能让主会话先结束当前模型回合，而任务仍在异步执行。
     // task_notification 是 task_started 的唯一终态 bookend。
+    if (msg.type === 'assistant' && typeof msg.parent_tool_use_id === 'string') {
+      const content = (msg as { message?: { content?: unknown } }).message?.content
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          const b = block as { type?: string; id?: string; name?: string } | undefined
+          if (b?.type === 'tool_use' && typeof b.id === 'string' && (b.name === 'Agent' || b.name === 'Task')) {
+            this.toolUseParents.set(b.id, msg.parent_tool_use_id as string)
+          }
+        }
+      }
+    }
     if (msg.type === 'system' && msg.subtype === 'task_started' && typeof msg.task_id === 'string') {
+      const toolUseId = typeof msg.tool_use_id === 'string' ? msg.tool_use_id : undefined
       this.activeTasks.set(msg.task_id, {
         id: msg.task_id,
         description: typeof msg.description === 'string' ? msg.description : '',
         taskType: typeof msg.task_type === 'string' ? msg.task_type : undefined,
-        toolUseId: typeof msg.tool_use_id === 'string' ? msg.tool_use_id : undefined,
+        toolUseId,
+        depth: typeof msg.spawn_depth === 'number' ? msg.spawn_depth : undefined,
+        parentToolUseId: toolUseId ? this.toolUseParents.get(toolUseId) : undefined,
         startedAt: Date.now(),
       })
       console.log(`[session ${this.key}] task_started id=${msg.task_id} type=${msg.task_type ?? '-'} active=${this.activeTasks.size}`)

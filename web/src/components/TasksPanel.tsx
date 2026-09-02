@@ -7,8 +7,12 @@
 //   耗时前台 Bash）等；shell 类无转录，只展示心跳/统计/终态摘要
 // - 转录：带 parent_tool_use_id 的完整 assistant/user 消息（官方只保证完整消息，无 token 级 delta）
 // - 历史：readHistory 的 subagents 字段（新版 subagents/*.jsonl + 旧版内联侧链）
+//
+// 嵌套 agent（子代理再扇出子代理）：task_started 自带 spawn_depth；精确父子关系
+// 优先用水合下发的 parentToolUseId（服务端 toolUseParents 推导），缺省时渲染期
+// 从各桶转录里工具块的归属反推——嵌套的 Agent tool_use 出现在父任务转录中。
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Transcript } from './Transcript'
 import { shortTokens, type ChatMsg } from '../lib/blocks'
 
@@ -30,8 +34,15 @@ export interface TaskFeed {
   summary?: string
   /** 终态卡片的驱逐时刻（epoch ms，仿官方 PANEL_GRACE_MS 宽限期）；undefined = 不驱逐 */
   evictAfter?: number
+  /** task_started 的 spawn_depth（1 = 主线扇出） */
+  depth?: number
+  /** 父任务的 toolUseId（嵌套 agent 时，水合下发） */
+  parentToolUseId?: string
   messages: ChatMsg[]
 }
+
+/** 面板默认展示的卡片数（深度优先序），其余收进「展开」 */
+const VISIBLE_LIMIT = 5
 
 const STATUS_META: Record<TaskFeed['status'], { dot: string; label: string }> = {
   running: { dot: 'bg-busy', label: '运行中' },
@@ -52,8 +63,8 @@ function fmtDuration(ms?: number): string | undefined {
   return s >= 60 ? `${Math.floor(s / 60)}m${s % 60}s` : `${s}s`
 }
 
-function TaskCard(props: { feed: TaskFeed }) {
-  const { feed } = props
+function TaskCard(props: { feed: TaskFeed; depth: number; onStop?: (taskId: string) => void }) {
+  const { feed, depth, onStop } = props
   const running = feed.status === 'running'
   // shell 类任务无转录（终态摘要走 summary）；agent 类与已有消息时照常给转录区
   const hasTranscript = feed.kind !== 'local_bash'
@@ -77,24 +88,39 @@ function TaskCard(props: { feed: TaskFeed }) {
   ].filter(Boolean)
 
   return (
-    <div className="rounded-[14px] bg-surface">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
-        onClick={() => hasTranscript && setOpen((v) => !v)}
-        aria-expanded={hasTranscript ? open : undefined}
-      >
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot} ${running ? 'animate-pulse' : ''}`} />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
-          {feed.description || type || '后台任务'}
-        </span>
-        {type && (
-          <span className="shrink-0 rounded-full bg-surface2 px-2 py-0.5 font-mono text-[10px] text-muted">
-            {type}
+    <div className="rounded-[14px] bg-surface" style={depth > 0 ? { marginLeft: depth * 16 } : undefined}>
+      {/* 头部：整行可点切换转录；停止按钮是独立兄弟节点（按钮不能嵌套按钮） */}
+      <div className="flex items-center">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left"
+          onClick={() => hasTranscript && setOpen((v) => !v)}
+          aria-expanded={hasTranscript ? open : undefined}
+        >
+          {depth > 0 && <span className="shrink-0 text-[10px] text-faint">↳</span>}
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot} ${running ? 'animate-pulse' : ''}`} />
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+            {feed.description || type || '后台任务'}
           </span>
+          {type && (
+            <span className="shrink-0 rounded-full bg-surface2 px-2 py-0.5 font-mono text-[10px] text-muted">
+              {type}
+            </span>
+          )}
+          <span className="shrink-0 font-mono text-[10px] text-faint">{meta.label}</span>
+        </button>
+        {running && feed.agentId && onStop && (
+          <button
+            type="button"
+            className="mr-2 grid h-6 w-6 shrink-0 place-items-center rounded-full text-accent transition-colors hover:bg-surface2"
+            title="停止该后台任务"
+            aria-label={`停止任务：${feed.description ?? feed.agentId}`}
+            onClick={() => onStop(feed.agentId!)}
+          >
+            ✕
+          </button>
         )}
-        <span className="shrink-0 font-mono text-[10px] text-faint">{meta.label}</span>
-      </button>
+      </div>
 
       {/* 心跳行：task_progress 的实时动作描述，运行中呼吸 */}
       {(running || feed.activity) && (
@@ -135,14 +161,58 @@ function TaskCard(props: { feed: TaskFeed }) {
   )
 }
 
+/** 拍平成深度优先序的渲染条目；parentToolUseId 缺省时从转录工具块归属反推 */
+export function flattenTasks(tasks: TaskFeed[]): Array<{ feed: TaskFeed; depth: number }> {
+  // 转录归属反推：嵌套 agent 的 Agent tool_use 出现在父任务的转录消息里
+  const ownerOf = new Map<string, string>()
+  for (const t of tasks) {
+    for (const m of t.messages) {
+      for (const b of m.blocks) {
+        if (b.kind === 'tool' && b.id) ownerOf.set(b.id, t.toolUseId)
+      }
+    }
+  }
+  const ids = new Set(tasks.map((t) => t.toolUseId))
+  const children = new Map<string, TaskFeed[]>()
+  const roots: TaskFeed[] = []
+  for (const t of tasks) {
+    const p = t.parentToolUseId ?? ownerOf.get(t.toolUseId)
+    if (p && p !== t.toolUseId && ids.has(p)) {
+      const list = children.get(p)
+      if (list) list.push(t)
+      else children.set(p, [t])
+    } else {
+      roots.push(t)
+    }
+  }
+  const flat: Array<{ feed: TaskFeed; depth: number }> = []
+  const visited = new Set<string>()
+  const walk = (f: TaskFeed, d: number) => {
+    if (visited.has(f.toolUseId)) return // 防御成环（异常数据下不死循环）
+    visited.add(f.toolUseId)
+    flat.push({ feed: f, depth: d })
+    for (const c of children.get(f.toolUseId) ?? []) walk(c, d + 1)
+  }
+  for (const r of roots) walk(r, 0)
+  // 理论完备：成环被 visited 截断的孤儿挂到末尾，不丢卡
+  for (const t of tasks) if (!visited.has(t.toolUseId)) flat.push({ feed: t, depth: 0 })
+  return flat
+}
+
 /**
  * 后台任务列表。桌面端是对话列的可收起右边栏（占位、不遮抄本）；
  * 移动端仍全宽 fixed 覆盖（带背板），窄屏挤不出 380px 列。
+ * 默认只展示前 VISIBLE_LIMIT 张卡（深度优先序），其余点击「展开」——
+ * 大量并行扇出时不至于把面板撑成无尽长列表。
  */
-export function TasksPanel(props: { open: boolean; onClose: () => void; tasks: TaskFeed[] }) {
-  const { open, onClose, tasks } = props
+export function TasksPanel(props: { open: boolean; onClose: () => void; tasks: TaskFeed[]; onStop?: (taskId: string) => void }) {
+  const { open, onClose, tasks, onStop } = props
+  const [expanded, setExpanded] = useState(false)
+  const flat = useMemo(() => flattenTasks(tasks), [tasks])
   if (!open) return null
   const runningCount = tasks.filter((s) => s.status === 'running').length
+  const visible = expanded ? flat : flat.slice(0, VISIBLE_LIMIT)
+  const hidden = flat.length - visible.length
   return (
     <>
       <div className="fixed inset-0 z-[80] bg-bg/60 md:hidden" onClick={onClose} aria-hidden />
@@ -165,9 +235,18 @@ export function TasksPanel(props: { open: boolean; onClose: () => void; tasks: T
           {tasks.length === 0 && (
             <div className="py-8 text-center font-mono text-[11px] text-faint">本会话还没有后台任务活动</div>
           )}
-          {tasks.map((s) => (
-            <TaskCard key={s.toolUseId} feed={s} />
+          {visible.map(({ feed, depth }) => (
+            <TaskCard key={feed.toolUseId} feed={feed} depth={depth} onStop={onStop} />
           ))}
+          {flat.length > VISIBLE_LIMIT && (
+            <button
+              type="button"
+              className="rounded-full bg-surface px-3 py-1.5 font-mono text-[11px] text-muted transition-colors hover:bg-surface2 hover:text-ink"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? '收起' : `展开其余 ${hidden} 个…`}
+            </button>
+          )}
         </div>
       </aside>
     </>

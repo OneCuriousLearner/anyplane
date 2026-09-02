@@ -78,6 +78,10 @@ export interface SessionState {
     startedAt: number
     lastToolName?: string
     summary?: string
+    /** task_started 的 spawn_depth（1 = 主线扇出）；嵌套 agent >1 */
+    depth?: number
+    /** 父任务的 toolUseId（嵌套 agent 时） */
+    parentToolUseId?: string
   }>
   /** 未启动时为待应用启动参数；已启动时为当前选择 */
   model?: string

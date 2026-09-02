@@ -326,10 +326,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       }
       const b = taskBucket(t.toolUseId)
       b.status = 'running'
+      b.agentId = t.id // stop_task 需要 task_id，水合路径此前只建桶不记 agentId
       b.description = t.description ?? b.description
       b.agentType = t.taskType ?? b.agentType
       b.kind = t.taskType ?? b.kind
       b.lastToolName = t.lastToolName ?? b.lastToolName
+      b.depth = t.depth ?? b.depth
+      b.parentToolUseId = t.parentToolUseId ?? b.parentToolUseId
       dirty = true
     }
     if (!st.busy && !isCodex) {
@@ -751,6 +754,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             b.description = (rec.description as string | undefined) ?? b.description
             b.agentType = (rec.subagent_type as string | undefined) ?? (rec.task_type as string | undefined) ?? b.agentType
             b.kind = (rec.task_type as string | undefined) ?? b.kind
+            b.depth = (rec.spawn_depth as number | undefined) ?? b.depth
             b.status = 'running'
             pubTasks()
             // 桌面端自动拉开侧栏（移动端屏幕小，只亮顶栏按钮）
@@ -1682,29 +1686,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           </div>
         )}
 
-        {/* 后台任务芯片：task_started → task_notification 之间的活动任务，可手动停止 */}
-        {(state.activeTasks?.length ?? 0) > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-3 py-1.5">
-            {state.activeTasks!.map((t) => (
-              <span
-                key={t.id}
-                className="flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 font-mono text-[10px] text-muted"
-                title={t.summary ?? t.description}
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-busy" />
-                <span className="max-w-48 truncate">{t.description || t.id}</span>
-                {t.lastToolName && <span className="text-faint">· {t.lastToolName}</span>}
-                <button
-                  className="ml-0.5 text-accent hover:font-bold"
-                  title="停止该后台任务"
-                  onClick={() => sockRef.current?.send({ kind: 'control', subtype: 'stop_task', extra: { task_id: t.id } })}
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        {/* 后台任务 Chips 已并入右侧「后台任务」面板（运行中卡片上有停止按钮） */}
 
         {/* 会话详情抽屉 */}
         {detailOpen && (
@@ -2124,7 +2106,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         </div>
       </div>
       </div>
-      <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} tasks={tasks} />
+      <TasksPanel
+        open={tasksOpen}
+        onClose={() => setTasksOpen(false)}
+        tasks={tasks}
+        onStop={(taskId) => sockRef.current?.send({ kind: 'control', subtype: 'stop_task', extra: { task_id: taskId } })}
+      />
     </div>
   )
 }
