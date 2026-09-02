@@ -2,7 +2,13 @@
 // sessionKey：已存在会话 `s|<slug>|<sessionId>`；新会话 `n|<encodeURIComponent(cwd)>`；
 // 分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息才 --fork-session）。
 
+import { closeSync, openSync, readSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { config } from '../../config'
+import type { ContextUsageInfo } from '../types'
 import { listSessions } from './discovery'
+import { contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
+import { sessionModelOf } from './sessionModels'
 
 export function keyFor(slug: string, sessionId: string): string {
   return `s|${slug}|${sessionId}`
@@ -56,4 +62,62 @@ export function splitExistingKey(key: string): { slug: string; sessionId: string
   const [, slug, sessionId] = parts
   if (!/^[a-zA-Z0-9-]+$/.test(slug) || !/^[a-zA-Z0-9-]+$/.test(sessionId)) return null
   return { slug, sessionId }
+}
+
+// ---------- 离线水合：无活进程时从 transcript 恢复上下文占用 ----------
+
+const HYDRATE_TAIL = 768 * 1024
+const hydrationCache = new Map<string, { mtimeMs: number; context: ContextUsageInfo | undefined }>()
+
+/** 离线水合：点开会话（attach/pushStatus）但进程未 spawn 时，直读 transcript 尾部恢复
+ *  上下文占用，让环形 UI 无需发消息即有数。与 spawn 内水合（processManager）同源同口径。
+ *  mtime 缓存：attach/status 高频调用下每次文件变化只重读一次；仅限 s| 既有会话 key
+ *  （splitExistingKey 的形状闸同时挡掉 n|/b|/codex key 与路径遍历）。
+ *  调用方须自行限频——会话列表端点不可逐行调用（N 行 × 文件读）。 */
+export function hydratedContextOf(key: string): ContextUsageInfo | undefined {
+  const ek = splitExistingKey(key)
+  if (!ek) return undefined
+  const path = join(config.claudeConfigDir, 'projects', ek.slug, `${ek.sessionId}.jsonl`)
+  let size: number
+  let mtimeMs: number
+  try {
+    const st = statSync(path)
+    size = st.size
+    mtimeMs = st.mtimeMs
+  } catch {
+    return undefined
+  }
+  const hit = hydrationCache.get(key)
+  if (hit && hit.mtimeMs === mtimeMs) return hit.context
+  const context = readTailContext(path, size, ek.sessionId)
+  if (hydrationCache.size > 500) hydrationCache.delete(hydrationCache.keys().next().value!)
+  hydrationCache.set(key, { mtimeMs, context })
+  return context
+}
+
+function readTailContext(path: string, size: number, sessionId: string): ContextUsageInfo | undefined {
+  let text: string
+  try {
+    const fd = openSync(path, 'r')
+    try {
+      const buf = Buffer.alloc(Math.min(size, HYDRATE_TAIL))
+      readSync(fd, buf, 0, buf.length, Math.max(0, size - buf.length))
+      text = buf.toString('utf8')
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return undefined
+  }
+  const u = extractUsageFromTranscriptTail(text)
+  if (!u) return undefined
+  return {
+    usedTokens: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+    // 离线无 initModel：靠 init 时持久化的 sessionId→model 表；没见过 live 的会话回退默认窗口
+    windowSize: contextWindowOf(sessionModelOf(sessionId)),
+    outputTokens: u.outputTokens,
+    inputTokens: u.inputTokens,
+    cacheReadTokens: u.cacheReadTokens,
+    cacheWriteTokens: u.cacheWriteTokens,
+  }
 }

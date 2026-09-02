@@ -69,6 +69,7 @@ bun test web/            # 仅前端测试
   - `backends/claude/`：`processManager.ts`（CLI 子进程、NDJSON 行泵、busy 语义、空闲回收、Windows 进程树清理）、`discovery.ts`（会话发现）、`tailer.ts`（外部会话 transcript 跟踪）、`agents.ts`（`claude agents --json --all` daemon 视图 SWR 轮询——pid 文件优先、daemon 兜底，独有价值是 background agent 存活态；control.sock 逆向协议版本锁死，刻意不用）、`protocol.ts`（**宽松解析原则：未知字段/未知 type 一律透传**）。
   - `backends/codex/`：`rpc.ts`（JSON-RPC stdio 客户端，-32001 过载退避）、`runtime.ts`（**单 app-server 进程托管全部线程**，按 threadId 解复用；ephemeral fork 收集器）、`translate.ts`（ThreadItem → stream-json 翻译）、`backend.ts`。
   - **busy 语义（重要）**：Claude 优先信任 `system/session_state_changed`；Codex 用 `thread/status/changed`（active/idle）+ 审批等待合成 requires_action。**running / requires_action 时绝不回收。**注意 **`system/init` 是每个 query turn 的首条流消息，不是 spawn 时发出**——纯控制查询（mcp_status 等）的会话在首个真实 turn 之前没有 init（模型/命令清单那刻才有）；initModel 入库即 `onStatusChange` 回放，前端在权威 idle 且不存在合法草稿时自清陈旧草稿（防服务端重启/断线后"生成中"永挂）。
+  - **上下文占用（环形 UI 数据源，重要）**：两后端同形 `contextUsage`（types.ts 契约），经 status 事件 `context` 字段下发。口径对齐官方 statusline：claude = 最后一条**主线** assistant 消息的 `message.usage`（input+cache，不含 output），**绝不能用 `result.usage` 的 input 侧——它是本 turn 各 API 调用的累计，多调用 turn 结束会虚增近翻倍**（result 只取 output_tokens：assistant 流式快照的 output 恒为 0）；codex = `thread/tokenUsage/updated` 的 `last.totalTokens`（`total` 是累计，两者别混）。窗口大小：claude 按模型启发式（`contextWindowOf`：`[1m]`→1M 否则 200k），**transcript 的 `message.model` 缺 `[1m]` 后缀**（实测 "k3" vs init 的 "k3[1m]"），故 init 时把 sessionId→model 持久化到 `~/.anyplane/session-models.json`（`sessionModels.ts`）供离线窗口判定；codex 用通知自带 `modelContextWindow`。水合两级：spawn/resume 时回扫 transcript/rollout 尾部（进程内）；**离线水合** `backend.hydratedContextOf`（attach/pushStatus 时无进程也直读 transcript，点开页面即有环形）——mtime 缓存，**列表端点严禁逐行调用**（N 行 × 文件读）。
 - **Codex 关键实现点**：审批 `requestApproval` → 统一审批卡（accept/acceptForSession/decline/cancel），`turn/start` 强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；权限模式近似映射 approvalPolicy+sandbox；**wire 枚举双轨**：`thread/start` 的 `sandbox` 是 kebab-case，`turn/start` 的 `sandboxPolicy` 是 camelCase（0.147.0 实测）；线程被其他进程持有时 resume 报 -32600（UI 显示"被占用"）；不 kill 线程进程，断开订阅后 app-server 30 分钟自动卸载。
 - **`handoff.ts`** — 接力编排：源会话自摘要（Claude 源在线时走 `side_question` 控制通道，离线才 spawn `--fork-session --resume --bare` 一次性问答 / Codex `thread/fork ephemeral:true`）→ 目标会话播种首条消息（简报 + 现场确认指令）→ 血缘写 `~/.anyplane/lineage.json`。进度事件推源 Hub。
 - **AI 会话标题**：首条真实 user 消息 × 首个 init 双条件齐备才触发 `generate_session_title`（`maybeGenerateTitle` 两路调用——懒 spawn 下首条消息常先于 init 到达，只挂一路会漏）；按 sessionId 去重，/clear 重键后自然再生成。CLI `persist:true` 自写 ai-title 进 transcript，discovery 标题链自动接住，**AnyPlane 侧不落任何标题状态**。
@@ -77,7 +78,7 @@ bun test web/            # 仅前端测试
 ### 前端（web/src）
 
 - `pages/SessionList.tsx`（会话列表）+ `pages/Chat.tsx`（聊天主界面，大部分交互逻辑在这）；`App.tsx` 只是双栏布局。
-- 其他前端子系统索引：斜杠命令面板与拦截表（`Chat.tsx`）、推送订阅设置（`SessionList.tsx` + `lib/push.ts`）、推送深链 `#s=<key>`（`App.tsx`）。
+- 其他前端子系统索引：斜杠命令面板与拦截表（`Chat.tsx`）、推送订阅设置（`SessionList.tsx` + `lib/push.ts`）、推送深链 `#s=<key>`（`App.tsx`）、上下文环形与详情面板（`components/ContextRing.tsx`，输入行「添加图片」左侧，`state.context` 缺省即隐藏；70/90% 阈值变色对齐官方 statusline 示例）。
 - `lib/ws.ts` — WS 客户端（按 sessionKey 连接、自动重连），`ServerEvent` 联合类型即服务端广播的全部事件种类。
 - `lib/blocks.ts` — 消息块模型：**live 流与历史加载共用同一套块归并逻辑**。增量（stream_event delta）与 assistant 块快照按 `message.id`+块序号归并定稿，不重复渲染。tool_use/tool_result 按 id 配对成一张卡。
 - 过滤规则：`<system-reminder>`/isMeta 不进主抄本，sidechain（子代理）消息不入主流；`compact_boundary` 渲染为分隔线。

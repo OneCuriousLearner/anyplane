@@ -4,7 +4,7 @@ import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { hostAllowed, isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
-import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
+import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, hydratedContextOf, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { resolveTierModelNames } from './backends/claude/modelNames'
 import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
@@ -339,8 +339,10 @@ function baseStatusOf(
 }
 
 /** liveHint：调用方（/api/sessions）刚做过 pid 扫描时传入复用，避免每行各扫一次；
- *  显式 null 表示"已知不在线"（跳过扫描），undefined 才现扫 */
-function statusOf(key: string, liveHint?: { status: string; pid: number } | null): Record<string, unknown> {
+ *  显式 null 表示"已知不在线"（跳过扫描），undefined 才现扫。
+ *  hydrateContext：仅单会话 attach/pushStatus 路径开启（离线时读 transcript 尾部补
+ *  上下文占用）；列表端点禁止开启（N 行 × 文件读）。 */
+function statusOf(key: string, liveHint?: { status: string; pid: number } | null, hydrateContext = false): Record<string, unknown> {
   if (isCodexKey(key)) return codexStatusOf(key)
   const s = processManager.get(key)
   const hub = hubs.get(key)
@@ -354,6 +356,9 @@ function statusOf(key: string, liveHint?: { status: string; pid: number } | null
   const waiting = (s?.waiting ?? false) || pending > 0 || live?.status === 'waiting'
   const st = baseStatusOf(s, hub, waiting)
   if (live?.status === 'busy') st.busy = true // 审批等待与外部进程 busy 都算 busy，防止误回收
+  // 离线/未 spawn 水合：直读 transcript 尾部，点开会话即有上下文环形（无需先发消息）；
+  // live 值存在时恒优先（spawn 内水合与实时跟踪是同源数据的更新版）
+  if (hydrateContext && st.context == null) st.context = hydratedContextOf(key)
   return {
     ...st,
     activeTaskCount: s?.activeTaskCount ?? 0,
@@ -369,7 +374,7 @@ function statusOf(key: string, liveHint?: { status: string; pid: number } | null
 }
 
 function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
-  broadcast(hub, { kind: 'status', state: { ...statusOf(hub.key), ...extra } })
+  broadcast(hub, { kind: 'status', state: { ...statusOf(hub.key, undefined, true), ...extra } })
 }
 
 /** codex 会话状态：与 statusOf 同形，供列表 managed 字段与 WS status 复用 */
@@ -1627,7 +1632,7 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         hub.clients.add(ws)
         processManager.get(ws.data.key)?.attachClient()
         codexRuntime.get(ws.data.key)?.attachClient()
-        ws.send(JSON.stringify({ kind: 'status', state: statusOf(ws.data.key) }))
+        ws.send(JSON.stringify({ kind: 'status', state: statusOf(ws.data.key, undefined, true) }))
         for (const a of hub.pendingApprovals.values()) {
           ws.send(JSON.stringify({ kind: 'approval_request', ...a }))
         }

@@ -23,6 +23,7 @@ import {
   type CliMessage,
   type StdinMessage,
 } from './protocol'
+import { rememberSessionModel } from './sessionModels'
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 re-export 兼容既有 import 路径
 export type { ApprovalDecision, SpawnOptions } from '../types'
@@ -582,7 +583,11 @@ export class ClaudeSession {
     if (isInitMessage(msg)) {
       this.sessionId = msg.session_id
       // 记录 init 报告的模型 ID（当前档位解析后的真实值），供 statusOf 在重连/attach 时回放给前端
-      if (typeof msg.model === 'string') this.initModel = msg.model
+      if (typeof msg.model === 'string') {
+        this.initModel = msg.model
+        // 持久化一份给离线水合：transcript 的 message.model 缺 [1m] 后缀，窗口启发式只能靠这里
+        if (this.sessionId) rememberSessionModel(this.sessionId, msg.model)
+      }
       console.log(`[session ${this.key}] init session_id=${this.sessionId}`)
       // initModel/sessionId 入库即回放：先于 init 到达的 attach 拿到的状态里 model 还是空的
       this.cb.onStatusChange?.()

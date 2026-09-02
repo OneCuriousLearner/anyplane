@@ -77,6 +77,18 @@ export interface SessionSummary {
 
 // ---------- 会话句柄相关 ----------
 
+/** 当前上下文窗口占用（两后端同形；口径与边界见文件末尾契约注释） */
+export interface ContextUsageInfo {
+  usedTokens: number
+  windowSize: number
+  outputTokens: number
+  inputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  /** 仅 codex 有源 */
+  reasoningTokens?: number
+}
+
 /** claude headless spawn 参数（codex 用 CodexSpawnOpts，形状近似） */
 export interface SpawnOptions {
   cwd: string

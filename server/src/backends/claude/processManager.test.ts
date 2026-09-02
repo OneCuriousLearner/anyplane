@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { config } from '../../config'
 import { ClaudeSession, contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
+import { setStoreFileForTest } from './sessionModels'
 
 const originalDetachRecycleMs = config.detachRecycleMs
 
@@ -202,6 +206,11 @@ describe('contextWindowOf（官方 getContextWindowForModel 的 headless 近似�
 })
 
 describe('ClaudeSession contextUsage（官方 statusline current_usage 的 headless 等价物）', () => {
+  // init 分支会持久化 sessionId→model：重定向到临时文件，避免污染真实 ~/.anyplane。
+  // 必须在 beforeEach 里做（别的测试文件的清理会把全局 store 重置回默认路径）
+  const modelsTmp = join(mkdtempSync(join(tmpdir(), 'anyplane-models-')), 'session-models.json')
+  beforeEach(() => setStoreFileForTest(modelsTmp))
+  afterEach(() => setStoreFileForTest(undefined))
   const makeSession = () => {
     let statusPushes = 0
     const session = new ClaudeSession('test-context-usage', { cwd: process.cwd() }, {
