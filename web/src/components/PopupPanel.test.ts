@@ -9,8 +9,6 @@ describe('popupPosition', () => {
   test('cover-end 面板右下角与锚点右下角重合', () => {
     const pos = popupPosition(ring, 'cover-end', 6, vp)
     expect(pos).toEqual({ bottom: vp.height - ring.bottom, right: vp.width - ring.right })
-    expect(vp.width - pos.right!).toBe(ring.right)
-    expect(vp.height - pos.bottom!).toBe(ring.bottom)
   })
 
   test('cover-start 面板左下角与锚点左下角重合（StatusPill 同款）', () => {
