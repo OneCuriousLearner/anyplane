@@ -1,6 +1,6 @@
 // 服务端通用小助手：错误文案归一化、NDJSON 行泵、平台版本闸。
 
-import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,6 +16,15 @@ export function readJsonFile<T>(path: string): T | undefined {
   } catch {
     return undefined
   }
+}
+
+/** 写 JSON 文件：tmp+rename 原子替换——崩溃中途不会留下半截 JSON
+ *（半截文件下次启动被 readJsonFile 静默吞成 undefined，lineage 之类状态表会无声清空）。
+ *  mode 仅对新建文件生效（rename 保留 tmp 的权限）。 */
+export function writeJsonFile(path: string, value: unknown, opts?: { mode?: number; pretty?: boolean }): void {
+  const tmp = `${path}.tmp`
+  writeFileSync(tmp, JSON.stringify(value, null, opts?.pretty ? 2 : 0), opts?.mode ? { mode: opts.mode } : undefined)
+  renameSync(tmp, path)
 }
 
 /** unknown 错误 → 单行文案（broadcast/json 响应用；console.* 请直接传原对象保留堆栈） */

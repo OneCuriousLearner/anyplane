@@ -10,7 +10,7 @@
 // 能力模型：直接审批 URL 只经端到端加密的推送（或受信的 webhook 渠道）投递到设备，
 // 「持有有效 secret + requestId 处于 pending」即充分条件，不依赖页面登录态。
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import {
   createCipheriv,
   createHmac,
@@ -24,7 +24,7 @@ import {
 import { join } from 'node:path'
 import { isLoopbackHostname } from './auth'
 import { config, type PushWebhookConfig } from './config'
-import { ccDataDir } from './util'
+import { ccDataDir, readJsonFile, writeJsonFile } from './util'
 
 export interface PushSubscriptionRow {
   endpoint: string
@@ -64,9 +64,13 @@ let vapid: VapidKeys | undefined
 function loadVapid(): VapidKeys {
   if (!vapid) {
     const path = join(ccDataDir(), 'vapid.json')
-    if (existsSync(path)) {
-      vapid = JSON.parse(readFileSync(path, 'utf8')) as VapidKeys
+    const stored = existsSync(path) ? readJsonFile<VapidKeys>(path) : undefined
+    if (stored?.publicKey && stored.privateKey) {
+      vapid = stored
     } else {
+      // 文件损坏（崩溃半截写/手改）不能静默 throw——重新生成密钥对；
+      // 旧订阅的 VAPID 校验会失败，推送服务返回 404/410 后被自动摘除重订阅
+      if (existsSync(path)) console.warn('[push] vapid.json 损坏，重新生成密钥对（既有订阅将失效并被摘除）')
       const pair = generateKeyPairSync('ec', { namedCurve: 'P-256' })
       const pub = pair.publicKey.export({ format: 'jwk' }) as { x: string; y: string }
       const priv = pair.privateKey.export({ format: 'jwk' }) as { d: string }
@@ -74,7 +78,7 @@ function loadVapid(): VapidKeys {
         publicKey: b64url(Buffer.concat([Buffer.from([4]), Buffer.from(pub.x, 'base64url'), Buffer.from(pub.y, 'base64url')])),
         privateKey: priv.d,
       }
-      writeFileSync(path, JSON.stringify(vapid, null, 2), { mode: 0o600 })
+      writeJsonFile(path, vapid, { mode: 0o600, pretty: true })
     }
   }
   return vapid
@@ -172,13 +176,17 @@ function subsPath(): string {
 function loadSubs(): PushSubscriptionRow[] {
   if (!subs) {
     const path = subsPath()
-    subs = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as PushSubscriptionRow[]) : []
+    const stored = existsSync(path) ? readJsonFile<PushSubscriptionRow[]>(path) : undefined
+    // 损坏文件回退空表而非 throw（启动期 throw 会拖垮整个推送分发）；
+    // 浏览器下次订阅会重新登记
+    if (existsSync(path) && !Array.isArray(stored)) console.warn('[push] push-subscriptions.json 损坏，按空订阅表继续')
+    subs = Array.isArray(stored) ? stored : []
   }
   return subs
 }
 
 function saveSubs(): void {
-  writeFileSync(subsPath(), JSON.stringify(loadSubs(), null, 2), { mode: 0o600 })
+  writeJsonFile(subsPath(), loadSubs(), { mode: 0o600, pretty: true })
 }
 
 export function addSubscription(
@@ -300,7 +308,9 @@ async function sendOne(row: PushSubscriptionRow, payload: PushPayload): Promise<
 
 /** fan-out 到全部订阅；push service 判定失效（404/410）的订阅摘除 */
 export async function pushToAll(payload: PushPayload): Promise<{ sent: number; pruned: number }> {
-  const all = loadSubs()
+  // 迭代副本而非注册表本体：投递途中 410 摘除会 splice 原数组，
+  // 按索引继续迭代会错位（跳过存活订阅或重复投递）
+  const all = [...loadSubs()]
   if (all.length === 0) return { sent: 0, pruned: 0 }
   let sent = 0
   let pruned = 0
