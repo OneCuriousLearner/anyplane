@@ -89,7 +89,7 @@ interface Hub {
   titleGeneratedFor?: string
   /** 首条 user 消息原文（标题素材）：init 未到时先记账，maybeGenerateTitle 两路触发 */
   pendingTitleText?: string
-  /** sessionNameOf 的 s| key cwd 缓存：parseKey 反查 listSessions 至多一次（'' = 已查过、未知） */
+  /** sessionNameOf 的 s|/x| key cwd 缓存：反查（listSessions / CodexSession.cwd）至多一次（'' = 已查过、未知） */
   nameCwd?: string
 }
 
@@ -141,6 +141,12 @@ function sessionNameOf(key: string): string {
     if (hub?.nameCwd) return base(hub.nameCwd)
     // slug 是 sanitizePath(cwd)：末段即目录名（近似，仅推送显示用）
     if (parts[1]) return parts[1].split('-').pop() ?? key.slice(0, 18)
+  }
+  // x|：cwd 不在 key 里，取已加载 CodexSession 的 cwd（thread/read 解析后即有；
+  // 推送/审批页恰好在会话存活期触发）。取不到时落 key 截断，不做同步 RPC
+  if (parts[0] === 'x') {
+    if (hub && hub.nameCwd === undefined) hub.nameCwd = codexRuntime.get(key)?.cwd ?? ''
+    if (hub?.nameCwd) return base(hub.nameCwd)
   }
   return key.slice(0, 18)
 }
@@ -919,14 +925,16 @@ function handleClientMessage(hub: Hub, raw: string): void {
     case 'btw': {
       // 侧问：借用当前会话上下文的一次性问答，不进主会话历史
       const question = String(data.question ?? '').trim()
+      // btw_pending 必须先于校验失败分支发出：前端卡片由它创建，
+      // 否则校验失败的 btw_result 找不到卡（按 question 配对）被静默丢弃，用户零反馈
+      if (question) broadcast(hub, { kind: 'btw_pending', question })
       if (isCodexKey(hub.key)) {
         const parsed = codexParseKey(hub.key)
         const tid = codexRuntime.get(hub.key)?.sessionId ?? parsed?.resumeThreadId
         if (!question || !tid) {
-          broadcast(hub, { kind: 'btw_result', ok: false, text: '侧问需要已有会话（先发过至少一条消息）' })
+          broadcast(hub, { kind: 'btw_result', ok: false, question, text: '侧问需要已有会话（先发过至少一条消息）' })
           return
         }
-        broadcast(hub, { kind: 'btw_pending', question })
         void codexRuntime
           .runEphemeralQuestion(tid, question, 180_000, (delta, thinking) => {
             broadcast(hub, { kind: 'btw_delta', question, delta, thinking: thinking || undefined })
@@ -942,12 +950,11 @@ function handleClientMessage(hub: Hub, raw: string): void {
       const parsed = parseKey(hub.key)
       const sid = session()?.sessionId ?? parsed?.resumeSessionId ?? parsed?.forkFromSessionId
       if (!question || !parsed || !sid) {
-        broadcast(hub, { kind: 'btw_result', ok: false, text: '侧问需要已有会话（先发过至少一条消息）' })
+        broadcast(hub, { kind: 'btw_result', ok: false, question, text: '侧问需要已有会话（先发过至少一条消息）' })
         return
       }
       const s = ensureClaudeSession(hub)
       if (!s) return // ensureSpawned 已广播具体错误
-      broadcast(hub, { kind: 'btw_pending', question })
       s.sideQuestion(question)
         .then((text) => broadcast(hub, { kind: 'btw_result', ok: true, question, text }))
         .catch((e) =>
@@ -1476,6 +1483,16 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
             backend: parts[0] === 'xn' ? 'codex' : 'claude',
             slug: parts[0] === 'xn' ? 'codex' : sanitizePath(decodeURIComponent(parts[1] ?? '')),
             sessionId: 'new',
+            cwd: r.cwd,
+          }
+        } else if (parts[0] === 'b' && parts.length === 3) {
+          // 懒分叉源（分叉后从未 spawn 或被回收，fromResolvedKey 缺省时记录里仍是 b| key）：
+          // 缺节点会让前端接力链按钮 disabled（死按钮）；sessionId 内嵌的是分叉源 id
+          nodes[k] = {
+            key: k,
+            backend: 'claude',
+            slug: sanitizePath(decodeURIComponent(parts[1] ?? '')),
+            sessionId: parts[2],
             cwd: r.cwd,
           }
         }

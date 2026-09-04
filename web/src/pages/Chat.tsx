@@ -963,7 +963,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               makeSessionInfo({
                 key: ev.targetKey,
                 slug: ev.toBackend === 'codex' ? 'codex' : session.slug,
-                sessionId: 'new',
+                // 目标已 spawn 时 targetKey 是 resolved key（s|/x|）：必须带真实 id，
+                // 否则 codex 侧 fetchCodexHistory('new') 必失败、历史视图永远空白
+                sessionId: ev.targetSessionId ?? 'new',
                 cwd: session.cwd,
                 backend: ev.toBackend,
                 status: 'busy',
