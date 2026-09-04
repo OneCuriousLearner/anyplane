@@ -2,12 +2,11 @@
 // 已在 handoff-lab 实验验证：两家的"对话内隐藏设计"可经简报无损传递（见 docs/PLAN 附录）。
 
 import { spawn } from 'bun'
-import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { codexRuntime } from './backends/codex/runtime'
 import type { BackendName } from './backends/types'
-import { ccDataDir, childEnv, pumpLines, readJsonFile } from './util'
+import { ccDataDir, childEnv, pumpLines, readJsonFile, writeJsonFile } from './util'
 
 export type HandoffDetail = 'brief' | 'standard' | 'detailed'
 
@@ -145,7 +144,7 @@ export function appendLineage(rec: LineageRecord): void {
   const path = lineagePath()
   const all = readJsonFile<LineageRecord[]>(path) ?? []
   all.push(rec)
-  writeFileSync(path, JSON.stringify(all, null, 2))
+  writeJsonFile(path, all, { pretty: true })
 }
 
 export function lineageFor(key: string): LineageRecord[] {

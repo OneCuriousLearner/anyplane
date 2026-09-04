@@ -354,3 +354,11 @@ export function shortTokens(n?: number): string {
   if (n >= 1000) return `${Math.round(n / 1000)}k`
   return String(n)
 }
+
+/** token 数格式化（一位小数的 k/M 简写）：上下文环形与输入行用量共用，
+ *  全 UI 同口径（此前 Chat 与 ContextRing 各有一份私有实现，精度/单位已漂移） */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
+}

@@ -6,6 +6,7 @@ import type { ApprovalDecision, BackgroundTask, SessionCallbacks } from '../type
 import type { CliMessage } from '../claude/protocol'
 import { saveUpload } from '../../uploads'
 import { errorMessage } from '../../util'
+import { config } from '../../config'
 import { RpcClient, RpcError } from './rpc'
 import { appendReasoning, readReasoning } from './reasoningStore'
 import { homedir } from 'node:os'
@@ -142,6 +143,8 @@ export class CodexSession {
   turnOverrides: Params = {}
   /** 线程目标（thread/goal/* 通知驱动；objective + 官方统计） */
   goal: { condition: string; since: number; tokensUsed?: number; timeUsedSeconds?: number } | null = null
+  /** 无客户端空闲回收计时器（镜像 claude 的 detachRecycleMs 语义） */
+  private recycleTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(
     key: string,
@@ -400,8 +403,17 @@ export class CodexSession {
         for (const m of t?.itemDelta(method, params) ?? []) this.emit(m)
         break
       }
-      case 'serverRequest/resolved':
-        break // 审批清理由 sendApproval 处理
+      case 'serverRequest/resolved': {
+        // 审批也可能被 app-server 侧终结（中断/超时/其他客户端应答）：清掉残留条目，
+        // 否则 approvals.size 守卫永久短路 thread/status/changed，runState 卡在 requires_action
+        const rid = (params as { requestId?: string | number }).requestId
+        if (rid !== undefined && this.approvals.delete(`cx-${rid}`)) {
+          if (this.approvals.size === 0 && this.runState === 'requires_action') {
+            this.setRunState(this.currentTurnId ? 'running' : 'idle')
+          }
+        }
+        break
+      }
       case 'error': {
         const err = params.error as { message?: string } | undefined
         this.emit({
@@ -573,15 +585,16 @@ export class CodexSession {
         break
       }
       default:
-        console.log(`[codex ${this.key}] 不支持的控制请求 ${subtype}（忽略）`)
+        // 给用户可见反馈而非静默吞掉：统一 TasksPanel 的停止按钮对两后端都发 stop_task，
+        // 无声忽略会让 codex 任务卡片永远停在运行中
+        this.emitError(`codex 后端暂不支持控制请求 ${subtype}`)
     }
     return reqId
   }
 
+  /** codex 没有可等待的控制请求通道：rewind 走 thread/fork，查询走 mcpServerStatus/list，
+   *  两者都在 index.ts 提前分流，不会到这里 */
   sendControlAndWait(subtype: string, _extra: Record<string, unknown> = {}, _timeoutMs = 15_000): Promise<unknown> {
-    if (subtype === 'rewind_files') {
-      return Promise.reject(new Error('Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）'))
-    }
     return Promise.reject(new Error(`codex 后端暂不支持控制请求 ${subtype}`))
   }
 
@@ -608,12 +621,42 @@ export class CodexSession {
 
   attachClient(): void {
     this.clientCount++
+    this.cancelRecycle()
   }
   detachClient(): void {
     this.clientCount = Math.max(0, this.clientCount - 1)
+    this.scheduleRecycleIfSafe()
   }
   syncClients(count: number): void {
     this.clientCount = Math.max(0, count)
+    if (this.clientCount > 0) this.cancelRecycle()
+    else this.scheduleRecycleIfSafe()
+  }
+
+  /** 无客户端且线程空闲时调度退订：dispose 只发 thread/unsubscribe，
+   *  app-server 在 30 分钟无订阅后自行卸载线程（此前订阅永不释放，
+   *  外部 resume 该线程会永远报 -32600「线程被占用」）。
+   *  running / requires_action 绝不回收——与 claude 同律，触发时 busy 则自续一拍。 */
+  private scheduleRecycleIfSafe(): void {
+    this.cancelRecycle()
+    if (this.exited || this.clientCount > 0 || this.busy) return
+    this.recycleTimer = setTimeout(() => {
+      this.recycleTimer = undefined
+      if (this.exited || this.clientCount > 0) return
+      if (this.busy) {
+        this.scheduleRecycleIfSafe()
+        return
+      }
+      console.log(`[codex ${this.key}] 空闲退订（clients=0）`)
+      this.dispose()
+    }, config.detachRecycleMs)
+  }
+
+  private cancelRecycle(): void {
+    if (this.recycleTimer) {
+      clearTimeout(this.recycleTimer)
+      this.recycleTimer = undefined
+    }
   }
   notifyExternalGate(): void {
     // codex 进程由 runtime 统一托管，不按会话回收
@@ -621,6 +664,7 @@ export class CodexSession {
 
   dispose(): void {
     if (this.exited) return
+    this.cancelRecycle()
     this.exited = true
     // 断开订阅即可；app-server 会在 30 分钟无订阅后自行卸载线程
     if (this.threadId) {
@@ -697,6 +741,8 @@ interface EphemeralCollector {
   text: string
   usage?: Record<string, number>
   timer: Timer
+  /** 超时中断用：turn/started 报回的 turnId */
+  turnId?: string
   /** 增量回调（btw 流式展示用） */
   onDelta?: (delta: string, thinking?: boolean) => void
 }
@@ -779,7 +825,9 @@ export class CodexRuntime {
   }
 
   private feedCollector(threadId: string, c: EphemeralCollector, method: string, params: Params): void {
-    if (method === 'item/completed') {
+    if (method === 'turn/started') {
+      c.turnId = (params.turn as { id?: string } | undefined)?.id
+    } else if (method === 'item/completed') {
       const item = params.item as { type?: string; text?: string } | undefined
       if (item?.type === 'agentMessage' && item.text) c.text += item.text
     } else if (method === 'item/agentMessage/delta') {
@@ -819,7 +867,12 @@ export class CodexRuntime {
     const forkId = fork.thread.id
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        const col = this.collectors.get(forkId)
         this.collectors.delete(forkId)
+        // 超时只是调用方不等了：app-server 还在为无人消费的 ephemeral fork 烧 token，补一发中断
+        if (col?.turnId) {
+          void this.rpcRequest('turn/interrupt', { threadId: forkId, turnId: col.turnId }, 10_000).catch(() => {})
+        }
         reject(new Error('fork 问答超时'))
       }, timeoutMs)
       this.collectors.set(forkId, { resolve, reject, text: '', timer, onDelta })
@@ -938,11 +991,15 @@ export class CodexRuntime {
     const reasoning = readReasoning(threadId)
     const used = new Set<number>()
     const out: HistoryMessage[] = []
-    for (const turn of turns as Array<{ id?: string; startedAt?: number | null; completedAt?: number | null; items?: never[] }>) {
+    for (let ti = 0; ti < turns.length; ti++) {
+      const turn = turns[ti] as { id?: string; startedAt?: number | null; completedAt?: number | null; items?: never[] }
       const msgs = itemsToHistory(turn.items ?? [], typeof turn.id === 'string' ? turn.id : undefined)
       if (reasoning.length > 0) {
         const start = turn.startedAt ?? 0
-        const end = turn.completedAt ?? turn.startedAt ?? Number.MAX_SAFE_INTEGER / 1000
+        // completedAt 缺失（中断/失败的 turn）：窗口收口到下一轮起点，
+        // 否则只有 start+30s，中断前已落盘的 thinking 会被永久漏掉
+        const nextStart = (turns[ti + 1] as { startedAt?: number | null } | undefined)?.startedAt
+        const end = turn.completedAt ?? nextStart ?? Number.MAX_SAFE_INTEGER / 1000
         const hit: number[] = []
         reasoning.forEach((r, i) => {
           if (used.has(i)) return

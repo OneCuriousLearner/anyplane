@@ -348,7 +348,8 @@ export function mapThreadStatus(status: { type?: string } | undefined): 'idle' |
   return 'idle'
 }
 
-/** turn/completed → claude result 形状（usage 只取 token，费用字段恒 0 且不展示） */
+/** turn/completed → claude result 形状（usage 只取 output_tokens 并转 snake_case——
+ *  前端按 claude stream-json 口径读 usage.output_tokens，camelCase 原样透传会静默丢 token 数） */
 export function turnCompletedMsg(threadId: string, turn: Params, lastUsage?: Record<string, number>): CliMessage {
   const failed = turn.status === 'failed'
   const err = turn.error as { message?: string } | null | undefined
@@ -359,7 +360,7 @@ export function turnCompletedMsg(threadId: string, turn: Params, lastUsage?: Rec
     result: failed ? (err?.message ?? 'turn failed') : '',
     session_id: threadId,
     total_cost_usd: 0,
-    usage: lastUsage ?? {},
+    usage: lastUsage?.outputTokens != null ? { output_tokens: lastUsage.outputTokens } : {},
   }
 }
 
@@ -378,6 +379,9 @@ function pushToolPair(
     uuid: `${item.id}-r`,
     role: 'user',
     blocks: [{ kind: 'tool_result', id: item.id, text: r.text, isError: r.isError }],
+    // 显式排除出 rewind 目标：item id 不是 turnId，选它做 beforeTurnId 只会让 thread/fork 失败
+    // （claude 侧 readHistory 给每条消息都算好了 rewindable 布尔值，这里对齐）
+    rewindable: false,
   })
 }
 

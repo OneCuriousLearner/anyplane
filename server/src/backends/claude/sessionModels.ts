@@ -3,9 +3,8 @@
 // 是 API 侧 ID（可能缺 [1m] 后缀，实测 "k3" vs init 的 "k3[1m]"），不能用作窗口依据。
 // 落 ~/.anyplane/session-models.json（约定见 AGENTS.md：自产运行数据，不自动清理）。
 
-import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ccDataDir, readJsonFile } from '../../util'
+import { ccDataDir, readJsonFile, writeJsonFile } from '../../util'
 
 let storeFile: string | undefined
 let table: Record<string, string> | undefined
@@ -24,7 +23,7 @@ export function rememberSessionModel(sessionId: string, model: string): void {
   if (t[sessionId] === model) return
   t[sessionId] = model
   try {
-    writeFileSync(file(), JSON.stringify(t))
+    writeJsonFile(file(), t)
   } catch {
     // 落盘失败不阻塞会话：下次 init 会再写
   }

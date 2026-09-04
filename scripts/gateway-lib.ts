@@ -21,7 +21,9 @@ export function hostnameOf(hostHeader: string): string {
     return end >= 0 ? raw.slice(1, end) : raw
   }
   const colon = raw.lastIndexOf(':')
-  if (colon > 0 && raw.slice(colon + 1).match(/^\d+$/)) return raw.slice(0, colon)
+  // 仅单冒号才截端口：多冒号是无方括号 IPv6 字面量——'::1' 的尾段 '1' 是数字，
+  // 误截成 '::' 会让 devHost 匹配失效、路由错到生产端
+  if (colon > 0 && raw.indexOf(':') === colon && raw.slice(colon + 1).match(/^\d+$/)) return raw.slice(0, colon)
   return raw
 }
 

@@ -69,18 +69,26 @@ export function liveSessionInfo(sessionId: string): { status: SessionStatus; pid
 }
 
 function readPidFiles(): Map<string, PidFile> {
+  // 短 TTL 缓存：每个被 tail 的外部会话每 2s tick 都会经 liveSessionInfo 触发一次全目录
+  // 扫描 + 逐文件 JSON.parse + kill(pid,0) 探测，N 个会话同一 tick 共享一次扫描即可；
+  // pid 文件变化最迟 2s 可见（状态展示粒度，可接受）
+  const now = Date.now()
+  if (pidFilesCache && now - pidFilesCache.at < 2000) return pidFilesCache.map
   const dir = join(config.claudeConfigDir, 'sessions')
   const map = new Map<string, PidFile>()
-  if (!existsSync(dir)) return map
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith('.json')) continue
-    try {
-      const data = JSON.parse(readFileSync(join(dir, f), 'utf8')) as PidFile
-      if (data.sessionId && isProcessRunning(data.pid)) map.set(data.sessionId, data)
-    } catch {}
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue
+      try {
+        const data = JSON.parse(readFileSync(join(dir, f), 'utf8')) as PidFile
+        if (data.sessionId && isProcessRunning(data.pid)) map.set(data.sessionId, data)
+      } catch {}
+    }
   }
+  pidFilesCache = { at: now, map }
   return map
 }
+let pidFilesCache: { at: number; map: Map<string, PidFile> } | undefined
 
 /** message.content（string 或块数组）→ 纯文本（只取 text 块，sep 连接） */
 function textOfContent(content: unknown, sep: string): string {
@@ -155,6 +163,30 @@ function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?:
   return { title: title ?? firstPrompt, lastPrompt, cwd }
 }
 
+/** extractMeta 的 (mtimeMs, size) 记忆化：/api/sessions 每 10s 轮询会全量重扫 transcripts，
+ *  不变文件（绝大多数）的 128KB 头尾读 + 逐行 JSON.parse 全部跳过；活跃会话 mtime 必变，自动重读 */
+const metaCache = new Map<string, { mtimeMs: number; size: number; meta: ReturnType<typeof extractMeta> }>()
+
+function extractMetaCached(path: string, mtimeMs: number, size: number): ReturnType<typeof extractMeta> {
+  const hit = metaCache.get(path)
+  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) return hit.meta
+  const meta = extractMeta(path)
+  metaCache.set(path, { mtimeMs, size, meta })
+  return meta
+}
+
+/** 单个 transcript 的 meta（经 memo）。parseKey 快路径用：O(1) 单文件读替代 listSessions() 全盘扫描。
+ *  调用方须先过 splitExistingKey 的形状闸（slug/sessionId 拼进文件路径）。 */
+export function sessionMetaOf(slug: string, sessionId: string): ReturnType<typeof extractMeta> | undefined {
+  const path = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
+  try {
+    const st = statSync(path)
+    return extractMetaCached(path, st.mtimeMs, st.size)
+  } catch {
+    return undefined
+  }
+}
+
 export function listSessions(): SessionInfo[] {
   const projectsDir = join(config.claudeConfigDir, 'projects')
   const live = readPidFiles()
@@ -193,7 +225,7 @@ export function listSessions(): SessionInfo[] {
       const full = join(dir, f)
       try {
         const fst = statSync(full)
-        const meta = extractMeta(full)
+        const meta = extractMetaCached(full, fst.mtimeMs, fst.size)
         const pid = live.get(sessionId)
         const dl = pid ? undefined : daemonLiveOf(sessionId)
         out.push({

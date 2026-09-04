@@ -32,7 +32,9 @@ export function hostNameOf(hostHeader: string): string {
     return hostHeader.slice(1, close)
   }
   const i = hostHeader.lastIndexOf(':')
-  return i > 0 ? hostHeader.slice(0, i) : hostHeader
+  // 仅单冒号才截端口：多冒号是无方括号 IPv6 字面量（RFC 7230 允许无端口时裸写，
+  // 非浏览器客户端可能这么发）——'::1' 截成 ':' 会让真回环客户端吃 403
+  return i > 0 && hostHeader.indexOf(':') === i ? hostHeader.slice(0, i) : hostHeader
 }
 
 export function isLoopbackHostname(h: string): boolean {

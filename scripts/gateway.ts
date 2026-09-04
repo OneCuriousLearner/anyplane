@@ -352,7 +352,10 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
 
 function parseHostPort(s: string): { hostname: string; port: number } {
   const i = s.lastIndexOf(':')
-  return { hostname: s.slice(0, i), port: Number(s.slice(i + 1)) }
+  // 无端口时默认 22（ssh 标准端口）——slice(0, -1) 会截掉主机名末字符并给出 NaN 端口
+  if (i <= 0) return { hostname: s, port: 22 }
+  const port = Number(s.slice(i + 1))
+  return { hostname: s.slice(0, i), port: Number.isFinite(port) && port > 0 ? port : 22 }
 }
 
 function attachPeer(a: import('bun').Socket<PipeData>, b: import('bun').Socket<PipeData>) {

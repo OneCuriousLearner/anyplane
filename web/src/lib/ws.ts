@@ -114,7 +114,7 @@ export type ClientCommand =
   | { kind: 'rewind_conversation'; userMessageId: string }
   | { kind: 'rewind_both'; userMessageId: string }
   | { kind: 'btw'; question: string }
-  | { kind: 'branch' }
+  | { kind: 'branch'; name?: string }
   | { kind: 'query'; id: string; query: string; extra?: Record<string, unknown> }
 
 export class SessionSocket extends ReconnectingSocket {

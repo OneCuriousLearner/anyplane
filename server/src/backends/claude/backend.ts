@@ -6,7 +6,7 @@ import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { config } from '../../config'
 import type { ContextUsageInfo } from '../types'
-import { listSessions } from './discovery'
+import { listSessions, sessionMetaOf } from './discovery'
 import { contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
 import { sessionModelOf } from './sessionModels'
 
@@ -30,13 +30,21 @@ export interface ParsedKey {
   forkFromSessionId?: string
 }
 
-/** parseKey 靠 listSessions() 反查 cwd——slug 目录被删时 key 无法解析（已知限制）。
+/** parseKey 优先直读单个 transcript 头部反查 cwd，失败回退 listSessions() 全扫——
+ *  slug 目录被删时 key 无法解析（已知限制）。
  *  编码段损坏（非法 % 转义）按"无法解析"处理：返回 null，由调用方走既有的错误播报路径 */
 export function parseKey(key: string): ParsedKey | null {
   try {
     const parts = key.split('|')
     if (parts[0] === 's' && parts.length === 3) {
       const [, slug, sessionId] = parts
+      // 快路径：直读该 transcript 头部拿 cwd（O(1) 单文件读 + memo），
+      // 避免为首条消息 spawn/rewind 付出 listSessions() 全盘扫描；splitExistingKey 先过路径安全闸
+      if (splitExistingKey(key)) {
+        const cwd = sessionMetaOf(slug, sessionId)?.cwd
+        if (cwd) return { cwd, resumeSessionId: sessionId, slug }
+      }
+      // 回退：全量扫描（transcript 缺失/头部 64KB 内无 cwd 字段等）
       const info = listSessions().find((s) => s.slug === slug && s.sessionId === sessionId)
       if (!info?.cwd) return null
       return { cwd: info.cwd, resumeSessionId: sessionId, slug }

@@ -1,11 +1,9 @@
 import { useRef, useState } from 'react'
 import type { SessionState } from '../lib/ws'
+import { fmtTokens } from '../lib/blocks'
 import { PopupPanel } from './PopupPanel'
 
 type ContextUsage = NonNullable<SessionState['context']>
-
-const fmtTok = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
 /** 占用占比 → 颜色级（对齐官方 statusline 示例的 70/90 阈值；设计语言内只有灰阶 + 审批红） */
 function toneOf(pct: number): string {
@@ -55,7 +53,7 @@ export function ContextRing(props: {
         ref={btnRef}
         type="button"
         className={`flex h-8 shrink-0 items-center gap-1 rounded-full px-1.5 transition-colors hover:bg-surface ${tone} ${open ? 'invisible' : ''}`}
-        title={`上下文占用 ${clamped}%（${fmtTok(context.usedTokens)} / ${fmtTok(context.windowSize)} tok，点击查看详情）`}
+        title={`上下文占用 ${clamped}%（${fmtTokens(context.usedTokens)} / ${fmtTokens(context.windowSize)} tok，点击查看详情）`}
         aria-label={`上下文占用 ${clamped}%，点击查看详情`}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -87,7 +85,7 @@ export function ContextRing(props: {
           <div className="mb-1.5 flex min-w-0 items-baseline justify-between gap-2 font-mono text-[11px]">
             <span className="shrink-0 text-muted">上下文占用{props.backend === 'codex' ? '（codex）' : ''}</span>
             <span className={`min-w-0 truncate ${tone}`}>
-              {clamped}% · {fmtTok(context.usedTokens)} / {fmtTok(context.windowSize)}
+              {clamped}% · {fmtTokens(context.usedTokens)} / {fmtTokens(context.windowSize)}
             </span>
           </div>
           <div className="mb-2 h-1 overflow-hidden rounded-full bg-surface2">
@@ -102,16 +100,16 @@ export function ContextRing(props: {
                   style={{ width: `${Math.min(100, (r.tokens / context.windowSize) * 100)}%` }}
                 />
               </div>
-              <span className="w-12 shrink-0 text-right font-mono text-[10px] text-faint">{fmtTok(r.tokens)}</span>
+              <span className="w-12 shrink-0 text-right font-mono text-[10px] text-faint">{fmtTokens(r.tokens)}</span>
             </div>
           ))}
           <div className="mt-2 border-t border-ink/5 pt-1.5 font-mono text-[10px] leading-relaxed text-faint">
             {props.modelLabel && <div>模型 {props.modelLabel}</div>}
             {u && u.inputTokens + u.outputTokens > 0 && (
               <div>
-                会话累计 ↑{fmtTok(u.inputTokens)} ↓{fmtTok(u.outputTokens)}
-                {u.cacheReadTokens ? ` · cache ${fmtTok(u.cacheReadTokens)}` : ''}
-                {u.reasoningTokens ? ` · rs ${fmtTok(u.reasoningTokens)}` : ''}
+                会话累计 ↑{fmtTokens(u.inputTokens)} ↓{fmtTokens(u.outputTokens)}
+                {u.cacheReadTokens ? ` · cache ${fmtTokens(u.cacheReadTokens)}` : ''}
+                {u.reasoningTokens ? ` · rs ${fmtTokens(u.reasoningTokens)}` : ''}
               </div>
             )}
           </div>
