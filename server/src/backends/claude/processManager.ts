@@ -49,6 +49,32 @@ export interface TranscriptCallUsage {
   cacheWriteTokens: number
 }
 
+/** CLI usage JSON → TranscriptCallUsage（字段名以 stream-json transcript 为准，缺失/非数归 0）。
+ *  实时流（noteContextUsage）与离线回扫（extractUsageFromTranscriptTail）共用同一映射。 */
+export function coerceCallUsage(u: unknown): TranscriptCallUsage | undefined {
+  if (!u || typeof u !== 'object') return undefined
+  const r = u as Record<string, unknown>
+  return {
+    inputTokens: Number(r.input_tokens ?? 0) || 0,
+    outputTokens: Number(r.output_tokens ?? 0) || 0,
+    cacheReadTokens: Number(r.cache_read_input_tokens ?? 0) || 0,
+    cacheWriteTokens: Number(r.cache_creation_input_tokens ?? 0) || 0,
+  }
+}
+
+/** 单次 API 调用 usage → 环形 UI 的上下文占用。usedTokens 口径对齐官方 statusline：
+ *  input+cache，不含 output（output 单独列出）。进程内热路径与离线水合共用。 */
+export function contextUsageOf(u: TranscriptCallUsage, windowSize: number) {
+  return {
+    usedTokens: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+    windowSize,
+    outputTokens: u.outputTokens,
+    inputTokens: u.inputTokens,
+    cacheReadTokens: u.cacheReadTokens,
+    cacheWriteTokens: u.cacheWriteTokens,
+  }
+}
+
 /** 从 transcript 文本尾部倒序找最后一条主线 assistant 行的 message.usage。
  *  与实时跟踪同口径：sidechain（isSidechain:true）不计；transcript 的 usage 是完成态
  *  （output_tokens 为真实值，不像 stream 快照恒为 0）。找不到返回 undefined。 */
@@ -64,15 +90,8 @@ export function extractUsageFromTranscriptTail(text: string): TranscriptCallUsag
       continue // 尾块首行可能被截断，跳过
     }
     if (msg.type !== 'assistant' || msg.isSidechain === true) continue
-    const u = (msg.message as { usage?: unknown } | undefined)?.usage
-    if (!u || typeof u !== 'object') continue
-    const r = u as Record<string, unknown>
-    return {
-      inputTokens: Number(r.input_tokens ?? 0) || 0,
-      outputTokens: Number(r.output_tokens ?? 0) || 0,
-      cacheReadTokens: Number(r.cache_read_input_tokens ?? 0) || 0,
-      cacheWriteTokens: Number(r.cache_creation_input_tokens ?? 0) || 0,
-    }
+    const u = coerceCallUsage((msg.message as { usage?: unknown } | undefined)?.usage)
+    if (u) return u
   }
   return undefined
 }
@@ -209,26 +228,13 @@ export class ClaudeSession {
     | undefined {
     const u = this.lastCallUsage
     if (!u) return undefined
-    return {
-      usedTokens: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
-      windowSize: contextWindowOf(this.initModel ?? this.opts.model),
-      outputTokens: u.outputTokens,
-      inputTokens: u.inputTokens,
-      cacheReadTokens: u.cacheReadTokens,
-      cacheWriteTokens: u.cacheWriteTokens,
-    }
+    return contextUsageOf(u, contextWindowOf(this.initModel ?? this.opts.model))
   }
 
   /** 记录最近一次 API 调用的 usage（assistant 与 result 同口径）；按值去重，变了才广播 status */
   private noteContextUsage(u: unknown): void {
-    if (!u || typeof u !== 'object') return
-    const r = u as Record<string, unknown>
-    const next = {
-      inputTokens: Number(r.input_tokens ?? 0) || 0,
-      outputTokens: Number(r.output_tokens ?? 0) || 0,
-      cacheReadTokens: Number(r.cache_read_input_tokens ?? 0) || 0,
-      cacheWriteTokens: Number(r.cache_creation_input_tokens ?? 0) || 0,
-    }
+    const next = coerceCallUsage(u)
+    if (!next) return
     const prev = this.lastCallUsage
     if (
       prev &&
