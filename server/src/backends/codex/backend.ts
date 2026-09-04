@@ -64,9 +64,17 @@ function toSummary(t: ThreadRow): SessionSummary {
   }
 }
 
+/** /api/sessions 每个打开的标签页 10s 轮询一次；thread/list 最多 3 页 RPC，
+ *  与 live 会话共用同一条 stdio 管道——短 TTL 缓存削峰（新建线程最坏晚 5s 进列表，可接受） */
+const LIST_TTL_MS = 5000
+let listCache: { at: number; rows: SessionSummary[] } | undefined
+
 export async function listSessions(): Promise<SessionSummary[]> {
+  if (listCache && Date.now() - listCache.at < LIST_TTL_MS) return listCache.rows
   const threads = await codexRuntime.listThreads()
-  return threads.map((t) => toSummary(t as ThreadRow))
+  const rows = threads.map((t) => toSummary(t as ThreadRow))
+  listCache = { at: Date.now(), rows }
+  return rows
 }
 
 export function readHistory(threadId: string): Promise<HistoryMessage[]> {
