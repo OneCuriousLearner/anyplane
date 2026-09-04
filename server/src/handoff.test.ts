@@ -97,7 +97,7 @@ import { readFileSync } from 'node:fs';
 const before = lineageFor('s|-proj|sid-1'); // 文件都不存在时
 appendLineage(${JSON.stringify(REC_A)});
 appendLineage(${JSON.stringify(REC_B)});
-const file = JSON.parse(readFileSync(${JSON.stringify('HOME_PLACEHOLDER')} + '/.anyplane/lineage.json', 'utf8'));
+const file = JSON.parse(readFileSync(process.env.HOME + '/.anyplane/lineage.json', 'utf8'));
 console.log(JSON.stringify({
   before,
   fileIds: file.map((r) => r.id),
@@ -106,7 +106,7 @@ console.log(JSON.stringify({
   byFromResolved: lineageFor('x|thread-9').map((r) => r.id),
   byToResolved: lineageFor('s|-proj|sid-2').map((r) => r.id),
   unrelated: lineageFor('s|-proj|sid-zzz'),
-}))`.replace('HOME_PLACEHOLDER', home)
+}))`
     const out = runInSubprocess(script, home) as Record<string, unknown[]>
     expect(out.before).toEqual([])
     expect(out.fileIds).toEqual(['ha', 'hb']) // 追加顺序保持
@@ -120,7 +120,7 @@ console.log(JSON.stringify({
   test('既有血缘文件是坏 JSON → 从空重建而非崩溃（readJsonFile 静默吞错的既定语义）', () => {
     const home = freshHome()
     const script = `import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-const dir = ${JSON.stringify('HOME_PLACEHOLDER')} + '/.anyplane';
+const dir = process.env.HOME + '/.anyplane';
 mkdirSync(dir, { recursive: true });
 writeFileSync(dir + '/lineage.json', '{corrupted');
 const { appendLineage, lineageFor } = await import(${JSON.stringify(HANDOFF_URL)});
@@ -128,7 +128,7 @@ appendLineage(${JSON.stringify(REC_A)});
 console.log(JSON.stringify({
   file: JSON.parse(readFileSync(dir + '/lineage.json', 'utf8')).map((r) => r.id),
   found: lineageFor('s|-proj|sid-1').map((r) => r.id),
-}))`.replace('HOME_PLACEHOLDER', home)
+}))`
     const out = runInSubprocess(script, home) as { file: string[]; found: string[] }
     expect(out.file).toEqual(['ha']) // 旧数据丢失是既定行为（半截文件防呆注释见 util.writeJsonFile）
     expect(out.found).toEqual(['ha'])
