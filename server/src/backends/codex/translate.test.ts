@@ -174,8 +174,13 @@ describe('mapThreadStatus / turnCompletedMsg', () => {
   })
 
   test('turn/completed → result 形状', () => {
-    const ok = turnCompletedMsg('thread-1', { status: 'completed' }, { input_tokens: 10, output_tokens: 5 })
-    expect(ok).toMatchObject({ type: 'result', subtype: 'success', is_error: false, session_id: 'thread-1', usage: { input_tokens: 10 } })
+    // lastUsage 与 thread/tokenUsage/updated wire 同形（camelCase，见 runtime.ts 注释）——
+    // 旧测试传 snake_case 属误植，旧实现原样透传才碰巧通过
+    const ok = turnCompletedMsg('thread-1', { status: 'completed' }, { inputTokens: 10, outputTokens: 5 })
+    expect(ok).toMatchObject({ type: 'result', subtype: 'success', is_error: false, session_id: 'thread-1', usage: { output_tokens: 5 } })
+    // 口径钉死：result.usage 只带 output_tokens（与 claude 一致）——input 侧是多 API 调用累计，
+    // 多调用 turn 结束时虚增近翻倍，contextUsage 绝不从这里取数
+    expect((ok.usage as Record<string, unknown>).input_tokens).toBeUndefined()
 
     const bad = turnCompletedMsg('thread-1', { status: 'failed', error: { message: '模型过载' } })
     expect(bad).toMatchObject({ subtype: 'error', is_error: true, result: '模型过载' })
