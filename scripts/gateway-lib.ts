@@ -1,5 +1,13 @@
 /** 80/443 网关的纯函数：协议探测与 dev/prod 分流。不碰网络。 */
 
+import { hostNameOf } from '../server/src/util'
+
+/** Host 去端口的正本在 server/src/util（auth 跨源防护共用同一份，防语义漂移） */
+export const hostnameOf = hostNameOf
+
+/** parseSsListenPids 的正本在 server/src/portTakeover（端口接管共用同一份） */
+export { parseSsListenPids } from '../server/src/portTakeover'
+
 export type Mode = 'dev' | 'prod'
 export type WireProto = 'tls' | 'ssh' | 'http' | 'wait'
 
@@ -12,19 +20,6 @@ export function detectProtocol(buf: Uint8Array): WireProto {
   // SSH-2.0-...
   if (buf[0] === 0x53 && buf[1] === 0x53 && buf[2] === 0x48) return 'ssh'
   return 'http'
-}
-
-export function hostnameOf(hostHeader: string): string {
-  const raw = hostHeader.trim().toLowerCase()
-  if (raw.startsWith('[')) {
-    const end = raw.indexOf(']')
-    return end >= 0 ? raw.slice(1, end) : raw
-  }
-  const colon = raw.lastIndexOf(':')
-  // 仅单冒号才截端口：多冒号是无方括号 IPv6 字面量——'::1' 的尾段 '1' 是数字，
-  // 误截成 '::' 会让 devHost 匹配失效、路由错到生产端
-  if (colon > 0 && raw.indexOf(':') === colon && raw.slice(colon + 1).match(/^\d+$/)) return raw.slice(0, colon)
-  return raw
 }
 
 export function parseCookieMode(cookie: string | null | undefined): Mode | undefined {
@@ -66,17 +61,6 @@ export function modeCookie(mode: Mode, secure: boolean): string {
   const flags = ['Path=/', 'Max-Age=31536000', 'SameSite=Lax']
   if (secure) flags.push('Secure')
   return `${MODE_COOKIE}=${mode}; ${flags.join('; ')}`
-}
-
-/** 从 `ss -tlnp` 文本里抽出占用指定 TCP 端口的 pid（不误伤 :8080 对 :80）。 */
-export function parseSsListenPids(ssOut: string, port: number): number[] {
-  const pids = new Set<number>()
-  const portRe = new RegExp(`(?:[:\\]])${port}(?:\\s|$)`)
-  for (const line of ssOut.split('\n')) {
-    if (!/\bLISTEN\b/.test(line) || !portRe.test(line)) continue
-    for (const m of line.matchAll(/pid=(\d+)/g)) pids.add(Number(m[1]))
-  }
-  return [...pids]
 }
 
 export function isOwnGatewayCmd(cmdline: string): boolean {
