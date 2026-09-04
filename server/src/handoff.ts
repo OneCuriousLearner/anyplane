@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { codexRuntime } from './backends/codex/runtime'
 import type { BackendName } from './backends/types'
-import { ccDataDir, pumpLines, readJsonFile } from './util'
+import { ccDataDir, childEnv, pumpLines, readJsonFile } from './util'
 
 export type HandoffDetail = 'brief' | 'standard' | 'detailed'
 
@@ -61,7 +61,7 @@ export async function generateClaudeBrief(
       // CLAUDE.md 缺席对简报质量影响可忽略；用户 hooks 在临时 fork 上本就不该触发。
       '--bare',
     ],
-    { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env } },
+    { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: childEnv() },
   )
   return await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

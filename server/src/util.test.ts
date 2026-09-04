@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ensurePrivateDir, errorMessage, pumpLines } from './util'
+import { ensurePrivateDir, childEnv, errorMessage, pumpLines } from './util'
 
 function streamOf(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -70,6 +70,28 @@ describe('errorMessage', () => {
     expect(errorMessage('字符串错误')).toBe('字符串错误')
     expect(errorMessage(42)).toBe('42')
     expect(errorMessage(undefined)).toBe('undefined')
+  })
+})
+
+describe('childEnv（CLI 子进程环境）', () => {
+  test('剥离 ANYPLANE_TOKEN，其余继承变量与 extra 不受影响', () => {
+    const savedToken = process.env.ANYPLANE_TOKEN
+    process.env.ANYPLANE_TOKEN = 'secret-token'
+    process.env.ANYPLANE_TEST_MARKER = 'm'
+    try {
+      const env = childEnv({ CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' })
+      expect(env.ANYPLANE_TOKEN).toBeUndefined()
+      expect(env.ANYPLANE_TEST_MARKER).toBe('m') // 其余继承不受影响
+      expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('1') // extra 叠加生效
+    } finally {
+      if (savedToken === undefined) delete process.env.ANYPLANE_TOKEN
+      else process.env.ANYPLANE_TOKEN = savedToken
+      delete process.env.ANYPLANE_TEST_MARKER
+    }
+  })
+
+  test('extra 显式注入 ANYPLANE_TOKEN 也会被剥除', () => {
+    expect(childEnv({ ANYPLANE_TOKEN: 'x' }).ANYPLANE_TOKEN).toBeUndefined()
   })
 })
 

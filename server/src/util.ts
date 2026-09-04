@@ -23,6 +23,19 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/**
+ * 传给 CLI 子进程（claude/codex app-server）的环境：process.env 叠加 extra，
+ * 并剥离 anyplane 自身的服务端凭据 ANYPLANE_TOKEN——它是 /api 与 /ws 的唯一防线，
+ * 不能经 CLI → hooks/MCP server/Bash 工具这条子进程链扩散
+ *（会话内任意命令 `env` 即可读到它，进 transcript 或被外泄后即等于交出远程 API）。
+ * extra 显式注入 ANYPLANE_TOKEN 同样剥除。ANYPLANE_HOST/PORT 等非凭据不处理。
+ */
+export function childEnv(extra?: Record<string, string | undefined>): Record<string, string> {
+  const env = { ...process.env, ...extra } as Record<string, string>
+  delete env.ANYPLANE_TOKEN
+  return env
+}
+
 /** 与官方 CLI 的 projects 目录 slug 规则一致：非字母数字 → '-'（截断/hash 情形极罕见，不实现）。
  *  放在叶子层：transcript 相关模块（discovery/processManager/tailer）共用，避免依赖成环。 */
 export function sanitizePath(p: string): string {
