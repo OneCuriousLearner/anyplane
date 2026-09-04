@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  apiFetch,
   archiveSession,
   createSession,
   fetchArchived,
   fetchSessions,
   makeSessionInfo,
+  postJson,
   renameSession,
   restoreSession,
   type ArchivedEntry,
@@ -13,7 +15,6 @@ import {
 } from '../lib/api'
 import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
-import { authHeaders } from '../lib/auth'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
 import { getThemeChoice, setThemeChoice, toggleTheme, type ThemeChoice } from '../lib/theme'
@@ -248,7 +249,7 @@ export function SessionList(props: {
   // 挂载时读取推送订阅现状与 webhook 通道数
   useEffect(() => {
     void currentPushEndpoint().then(setPushEndpoint)
-    fetch('/api/push/public-key', { headers: authHeaders() })
+    apiFetch('/api/push/public-key')
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { webhooks?: number } | null) => setPushWebhooks(j?.webhooks ?? 0))
       .catch(() => {})
@@ -281,11 +282,7 @@ export function SessionList(props: {
     if (pushTestBusy) return
     setPushTestBusy(true)
     try {
-      const r = await fetch('/api/push/test', {
-        method: 'POST',
-        headers: { ...authHeaders(), 'content-type': 'application/json' },
-        body: '{}',
-      })
+      const r = await postJson('/api/push/test', {})
       const j = (await r.json()) as { ok?: boolean; sent?: number; subscriptions?: number; webhooks?: number; error?: string }
       const total = (j.subscriptions ?? 0) + (j.webhooks ?? 0)
       if (r.ok && j.ok) {

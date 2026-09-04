@@ -1,7 +1,7 @@
 // Web Push 订阅管理：订阅/退订/状态查询
 // 密钥流：服务端 VAPID 公钥 → pushManager.subscribe → 订阅对象 POST 回服务端注册表
 
-import { authHeaders } from './auth'
+import { apiError, apiFetch, postJson } from './api'
 
 /** 当前浏览器是否支持推送（Service Worker + Push API + 通知） */
 export function pushSupported(): boolean {
@@ -35,8 +35,8 @@ export async function subscribePush(): Promise<{ ok: boolean; error?: string }> 
   try {
     const perm = await Notification.requestPermission()
     if (perm !== 'granted') return { ok: false, error: '通知权限被拒绝' }
-    const pkResp = await fetch('/api/push/public-key', { headers: authHeaders() })
-    if (!pkResp.ok) return { ok: false, error: `获取推送公钥失败（HTTP ${pkResp.status}）` }
+    const pkResp = await apiFetch('/api/push/public-key')
+    if (!pkResp.ok) return { ok: false, error: `获取推送公钥失败（${(await apiError(pkResp)).message}）` }
     const { publicKey } = (await pkResp.json()) as { publicKey: string }
     const reg = await navigator.serviceWorker.ready
     const sub = await reg.pushManager.subscribe({
@@ -44,12 +44,8 @@ export async function subscribePush(): Promise<{ ok: boolean; error?: string }> 
       applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
     })
     const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh: string; auth: string } }
-    const r = await fetch('/api/push/subscriptions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
-    })
-    if (!r.ok) return { ok: false, error: `注册订阅失败（HTTP ${r.status}）` }
+    const r = await postJson('/api/push/subscriptions', { endpoint: json.endpoint, keys: json.keys })
+    if (!r.ok) return { ok: false, error: `注册订阅失败（${(await apiError(r)).message}）` }
     return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -65,9 +61,9 @@ export async function unsubscribePush(): Promise<void> {
     if (!sub) return
     const endpoint = sub.endpoint
     await sub.unsubscribe().catch(() => {})
-    await fetch('/api/push/subscriptions', {
+    await apiFetch('/api/push/subscriptions', {
       method: 'DELETE',
-      headers: { 'content-type': 'application/json', ...authHeaders() },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ endpoint }),
     }).catch(() => {})
   } catch {}
