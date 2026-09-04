@@ -11,7 +11,7 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { ContextRing } from '../components/ContextRing'
-import { nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import { fmtTokens, nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
@@ -279,6 +279,19 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       b.seen.add(h.uuid)
     }
     appendHistoryMsg(b.messages, h, b.toolIdx)
+  }
+
+  /** sidechain（子代理内部消息）不进主抄本——落进对应后台任务桶，右侧栏展示。
+   *  assistant（子代理输出）与 user（子代理 prompt / tool_result，桶内配对）两路同规则。 */
+  const appendSidechain = (rec: Record<string, unknown>): boolean => {
+    const ptui = rec.parent_tool_use_id as string | undefined
+    if (!ptui) return false
+    const h = cliSidechainToHistory(rec)
+    if (h) {
+      appendTaskMsg(ptui, h)
+      pubTasks()
+    }
+    return true
   }
 
   /** 统一终态：状态 + 清心跳 + 挂驱逐倒计时（宽限期后 1s 滴答自动移除卡片）。
@@ -637,16 +650,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     }
 
     if (msg.type === 'assistant') {
-      // sidechain（子代理内部消息）不进主抄本——落进对应后台任务桶，右侧栏展示
-      const ptui = rec.parent_tool_use_id as string | undefined
-      if (ptui) {
-        const h = cliSidechainToHistory(rec)
-        if (h) {
-          appendTaskMsg(ptui, h)
-          pubTasks()
-        }
-        return
-      }
+      if (appendSidechain(rec)) return
       const content = msg.message?.content
       const blocks = Array.isArray(content) ? content : []
       const msgId = (rec.message as { id?: string } | undefined)?.id
@@ -686,16 +690,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
     if (msg.type === 'user') {
       if (msg.isMeta) return
-      // sidechain：子代理的 prompt / tool_result，落进对应桶（tool_result 在桶内配对）
-      const ptui = rec.parent_tool_use_id as string | undefined
-      if (ptui) {
-        const h = cliSidechainToHistory(rec)
-        if (h) {
-          appendTaskMsg(ptui, h)
-          pubTasks()
-        }
-        return
-      }
+      if (appendSidechain(rec)) return
       const content = msg.message?.content
       const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
       const textBlocks: Block[] = []
@@ -1352,13 +1347,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
   const activeTaskCount = state.activeTaskCount ?? 0
-  const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
   const u = state.usage
   const usageLine =
     u && u.inputTokens + u.outputTokens > 0
-      ? `tok ↑${fmtTok(u.inputTokens)} ↓${fmtTok(u.outputTokens)}` +
-        (u.cacheReadTokens ? ` · cache ${fmtTok(u.cacheReadTokens)}` : '') +
-        (u.reasoningTokens ? ` · rs ${fmtTok(u.reasoningTokens)}` : '')
+      ? `tok ↑${fmtTokens(u.inputTokens)} ↓${fmtTokens(u.outputTokens)}` +
+        (u.cacheReadTokens ? ` · cache ${fmtTokens(u.cacheReadTokens)}` : '') +
+        (u.reasoningTokens ? ` · rs ${fmtTokens(u.reasoningTokens)}` : '')
       : undefined
   const hasPendingStartConfig =
     !state.spawned && Boolean(state.model || state.permissionMode || state.effort)
@@ -1774,7 +1768,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
                 <div className="mb-1.5 flex items-baseline justify-between font-mono text-[11px] text-ink">
                   <span>
-                    {fmtTok(contextData.totalTokens)} / {fmtTok(contextData.maxTokens)} tok ·{' '}
+                    {fmtTokens(contextData.totalTokens)} / {fmtTokens(contextData.maxTokens)} tok ·{' '}
                     {contextData.percentage.toFixed(1)}%
                   </span>
                   {contextData.model && (
@@ -1803,7 +1797,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
                       />
                     </div>
                     <span className="w-12 shrink-0 text-right font-mono text-[10px] text-faint">
-                      {fmtTok(c.tokens)}
+                      {fmtTokens(c.tokens)}
                     </span>
                   </div>
                 ))}
