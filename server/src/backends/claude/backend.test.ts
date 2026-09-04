@@ -81,11 +81,15 @@ describe('hydratedContextOf（离线水合：点开会话即有环形）', () =>
     config.claudeConfigDir = tmpRoot
     setStoreFileForTest(join(tmpRoot, 'models-2.json'))
     writeTranscript(1000, 300)
+    // 显式推进 mtime：上个测试刚以相同内容写过同一文件，Windows 文件系统
+    // 精度下 mtime 可能不变，hydratedContextOf 的 mtime 缓存会返回陈旧结果
+    const p = join(tmpRoot, 'projects', slug, `${sid}.jsonl`)
+    const t1 = new Date(Date.now() + 1000)
+    utimesSync(p, t1, t1)
     expect(hydratedContextOf(`s|${slug}|${sid}`)?.windowSize).toBe(200_000)
 
     // mtime 变化 → 重新读盘拿到新值（写文件后显式推进 mtime，避开文件系统精度）
     writeTranscript(2000, 400)
-    const p = join(tmpRoot, 'projects', slug, `${sid}.jsonl`)
     const future = new Date(Date.now() + 5000)
     utimesSync(p, future, future)
     expect(hydratedContextOf(`s|${slug}|${sid}`)?.inputTokens).toBe(2000)
