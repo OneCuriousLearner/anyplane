@@ -106,13 +106,12 @@ export function StatusPill(props: {
       return
     }
     syncPanelPos()
-    const onReposition = () => syncPanelPos()
-    window.addEventListener('resize', onReposition)
+    window.addEventListener('resize', syncPanelPos)
     // 捕获阶段：任意滚动都会让 fixed 锚点漂移，重算位置
-    window.addEventListener('scroll', onReposition, true)
+    window.addEventListener('scroll', syncPanelPos, true)
     return () => {
-      window.removeEventListener('resize', onReposition)
-      window.removeEventListener('scroll', onReposition, true)
+      window.removeEventListener('resize', syncPanelPos)
+      window.removeEventListener('scroll', syncPanelPos, true)
     }
   }, [open])
 

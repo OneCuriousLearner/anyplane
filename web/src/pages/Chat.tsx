@@ -11,7 +11,7 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { ContextRing } from '../components/ContextRing'
-import { fmtTokens, nextId, rewindPreview, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import { fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
@@ -95,11 +95,31 @@ const PHASE_LABEL: Record<string, string> = {
   compacting: '压缩上下文',
 }
 
+/** 输入行上方的会话状态文案：早退链，优先级即源码顺序。
+ *  spawned 为真时不再看 exited/tailing（保持原嵌套三元的求值顺序）。 */
+function statusLineOf(
+  state: SessionState,
+  opts: { connected: boolean; phase?: string; waiting: boolean },
+): string {
+  if (!opts.connected) return '连接中…'
+  if (opts.phase) return `${PHASE_LABEL[opts.phase] ?? opts.phase}…`
+  if (opts.waiting) return state.tailing ? '外部会话等待操作' : '等待审批'
+  const activeTaskCount = state.activeTaskCount ?? 0
+  if (activeTaskCount > 0) return `${activeTaskCount} 个后台任务运行中`
+  if (state.busy) return state.tailing ? '外部会话工作中' : '工作中'
+  if (state.spawned) return state.sessionState === 'idle' ? 'CLI 空闲' : 'CLI 运行中'
+  if (state.exited) return '进程已退出'
+  if (state.tailing) return '外部会话 · 实时跟踪中'
+  const hasPendingStartConfig = Boolean(state.model || state.permissionMode || state.effort)
+  return hasPendingStartConfig ? '配置已保存（发送消息时启动 CLI）' : '浏览中（发送消息时启动 CLI）'
+}
+
 /**
  * 历史加载与 tail 实时追加共用的消息归并：
  * tool_use ↔ tool_result 跨消息配对成卡，孤立结果降级为系统提示。
- * toolIdx：批量加载时由调用方持有的 toolUseId → 位置索引（O(1) 配对，免 O(n²) 回扫）；
- * 缺省（tail 单条追加）时线性回扫，并做不可变更新（out 与旧 state 共享 blocks 数组）。
+ * toolIdx：toolUseId → 位置索引（O(1) 配对，免 O(n²) 回扫）。tail 单条追加时
+ * 传入贯穿会话的实时索引；批量加载时由调用方持有局部索引。
+ * 配对永远做不可变更新——tail 路径的 out 与旧 state 共享消息/块对象。
  */
 function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage, toolIdx?: Map<string, { mi: number; bi: number }>): void {
   if (h.isMeta) return
@@ -111,9 +131,12 @@ function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage, toolIdx?: Map<strin
     if (!toolUseId) return false
     if (toolIdx) {
       const at = toolIdx.get(toolUseId)
-      const b = at ? out[at.mi]?.blocks[at.bi] : undefined
-      if (!at || !b || b.kind !== 'tool') return false
-      out[at.mi].blocks[at.bi] = { ...b, resultText: text, resultError: isError, pending: false }
+      const m = at ? out[at.mi] : undefined
+      const b = at ? m?.blocks[at.bi] : undefined
+      if (!at || !m || !b || b.kind !== 'tool' || b.id !== toolUseId) return false
+      const blocks = [...m.blocks]
+      blocks[at.bi] = { ...b, resultText: text, resultError: isError, pending: false }
+      out[at.mi] = { ...m, blocks }
       return true
     }
     for (let mi = out.length - 1; mi >= 0; mi--) {
@@ -250,6 +273,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const messagesRef = useRef<ChatMsg[]>([])
   const draftRef = useRef<Draft | null>(null)
   const pendingResultsRef = useRef(new Map<string, { text: string; isError: boolean }>())
+  /** toolUseId → 落地位置索引：tool_result 配对的 O(1) 快路径（失效时回退线性扫描） */
+  const toolPosRef = useRef(new Map<string, { mi: number; bi: number }>())
   /** 历史加载时服务端读到的 transcript 字节数，tail_subscribe 的起始偏移 */
   const historyOffsetRef = useRef<number | undefined>(undefined)
 
@@ -303,6 +328,16 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     maybeFetchCodexTranscript(b)
   }
 
+  /** 主线 tool_result 给运行中桶补终态：task_notification 未到的兜底，
+   *  也是外部会话（tailer 路径，无 task_notification）唯一的终态信号。 */
+  const settleBucketFromResult = (toolUseId: string | undefined, text: string, isError: boolean) => {
+    const b = toolUseId ? taskMapRef.current.get(toolUseId) : undefined
+    if (!b || b.status !== 'running') return
+    markTerminal(b, isError ? 'error' : 'done')
+    if (!b.summary && text) b.summary = text.slice(0, 500)
+    pubTasks()
+  }
+
   /** codex 子代理转录懒取：子线程不被父通知流转发，终态后经 thread/read 拉回填充 */
   const maybeFetchCodexTranscript = (b: TaskBucket) => {
     if (!isCodex || !b.agentId || b.transcriptFetched || b.messages.length > 0) return
@@ -319,7 +354,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
    * 用 SessionState.activeTasks（服务端权威运行任务表）水合桶：
    * 中途接入的客户端错过 live-only 的 task_started，没有这一步桶的首绘就会是终态。
    * 反方向：桶还 running 却不在任务表且会话空闲 → 通知在断线间隙丢了，判终态。
-   * 判死只对 claude 生效——codex 服务端不维护任务表（backgroundTasks 恒空），空表无信息。
+   * codex 服务端不维护任务表（状态里不带 activeTasks 字段），首行守卫直接跳过。
    */
   const hydrateTasks = (st: SessionState) => {
     if (!Array.isArray(st.activeTasks)) return
@@ -348,7 +383,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       b.parentToolUseId = t.parentToolUseId ?? b.parentToolUseId
       dirty = true
     }
-    if (!st.busy && !isCodex) {
+    if (!st.busy) {
       for (const b of taskMapRef.current.values()) {
         if (b.status === 'running' && !live.has(b.toolUseId)) {
           markTerminal(b, 'done')
@@ -367,7 +402,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     draftRef.current = d
     setDraft(d)
   }
-  const pushMsg = (m: ChatMsg) => setMsgs((prev) => [...prev, m])
+  const pushMsg = (m: ChatMsg) => {
+    const mi = messagesRef.current.length
+    m.blocks.forEach((b, bi) => {
+      if (b.kind === 'tool') toolPosRef.current.set(b.id, { mi, bi })
+    })
+    setMsgs((prev) => [...prev, m])
+  }
   const pushSystem = (text: string, kind: 'info' | 'error' = 'info') =>
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
 
@@ -443,6 +484,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     const toolIdx = new Map<string, { mi: number; bi: number }>()
     for (const h of resp.messages) appendHistoryMsg(out, h, toolIdx)
     setMsgs(() => out)
+    // 实时配对索引直接沿用历史加载建好的位置表（out 已成为新 state）
+    toolPosRef.current = toolIdx
 
     // 子代理侧链进桶；终态/报告以主线 Agent 工具卡的配对结果为准（tool_result 已落盘 = 已完成）
     taskMapRef.current.clear()
@@ -478,6 +521,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setMsgs(() => [])
     setDraftBoth(null)
     pendingResultsRef.current.clear()
+    toolPosRef.current.clear()
     historyOffsetRef.current = undefined
     // Chat 组件在 session 切换时会复用，清掉上一会话的运行时/待启动配置。
     // 新会话的缓存选择会由随后到达的 status 恢复。
@@ -563,17 +607,29 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const pairToolResult = (toolUseId: string | undefined, text: string, isError: boolean) => {
     if (!toolUseId) return
     let found = false
-    setMsgs((prev) =>
-      prev.map((m) => {
-        const bi = m.blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
+    const patchAt = (m: ChatMsg, bi: number): ChatMsg => {
+      const blocks = [...m.blocks]
+      const b = blocks[bi]
+      if (b.kind === 'tool') blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
+      return { ...m, blocks }
+    }
+    setMsgs((prev) => {
+      // O(1) 快路径：索引命中且校验通过（rewind 截断等会使索引失效，回退全量扫描）
+      const at = toolPosRef.current.get(toolUseId)
+      const fast = at ? prev[at.mi]?.blocks[at.bi] : undefined
+      if (at && fast?.kind === 'tool' && fast.id === toolUseId) {
+        found = true
+        const out = [...prev]
+        out[at.mi] = patchAt(out[at.mi], at.bi)
+        return out
+      }
+      return prev.map((m) => {
+        const bi = m.blocks.findIndex((x) => x.kind === 'tool' && x.id === toolUseId)
         if (bi < 0) return m
         found = true
-        const blocks = [...m.blocks]
-        const b = blocks[bi]
-        if (b.kind === 'tool') blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-        return { ...m, blocks }
-      }),
-    )
+        return patchAt(m, bi)
+      })
+    })
     if (!found) pendingResultsRef.current.set(toolUseId, { text, isError })
   }
 
@@ -696,17 +752,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       const textBlocks: Block[] = []
       for (const c of blocks) {
         if (c?.type === 'tool_result') {
-          pairToolResult(c.tool_use_id, toolResultText(c.content), c.is_error === true)
+          const resultText = toolResultText(c.content)
+          pairToolResult(c.tool_use_id, resultText, c.is_error === true)
           // 主线 Agent tool_result 是子代理的终态兜底（正常路径是 task_notification 先到）
-          const b = c.tool_use_id ? taskMapRef.current.get(c.tool_use_id) : undefined
-          if (b && b.status === 'running') {
-            markTerminal(b, c.is_error === true ? 'error' : 'done')
-            if (!b.summary) {
-              const t = toolResultText(c.content)
-              if (t) b.summary = t.slice(0, 500)
-            }
-            pubTasks()
-          }
+          settleBucketFromResult(c.tool_use_id, resultText, c.is_error === true)
         } else if (c?.type === 'text' && c.text?.trim()) {
           // /goal 的评估器反馈（Stop hook）：goal 循环内的中途评估，渲染为系统提示而非用户气泡
           if (c.text.startsWith('Stop hook feedback:')) {
@@ -743,9 +792,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           const toolUseId = rec.tool_use_id as string | undefined
           if (toolUseId) {
             const b = taskBucket(toolUseId)
-            b.agentId = (rec.task_id as string | undefined) ?? b.agentId
-            // codex 合成事件经 agent_thread_id 携带子线程 id（终态后懒拉转录用）
-            b.agentId = (rec.agent_thread_id as string | undefined) ?? b.agentId
+            // claude 用 task_id；codex 合成事件经 agent_thread_id 携带子线程 id（终态后懒拉转录用），后者优先
+            b.agentId =
+              (rec.agent_thread_id as string | undefined) ?? (rec.task_id as string | undefined) ?? b.agentId
             b.description = (rec.description as string | undefined) ?? b.description
             b.agentType = (rec.subagent_type as string | undefined) ?? (rec.task_type as string | undefined) ?? b.agentType
             b.kind = (rec.task_type as string | undefined) ?? b.kind
@@ -892,7 +941,18 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             )
             break
           }
-          case 'btw_result':
+          case 'btw_result': {
+            // 找不到 pending 卡（如校验失败路径或漏收 btw_pending）时自行建卡落地结果——
+            // 配对不变量由数据保证，不依赖服务端的消息时序
+            if (!messagesRef.current.some((m) => m.btw === ev.question && m.btwPending)) {
+              const blocks: Block[] = ev.ok
+                ? ev.text.trim()
+                  ? [{ kind: 'text', text: ev.text }]
+                  : []
+                : [{ kind: 'text', text: `⚠ ${ev.text}` }]
+              pushMsg({ id: nextId(), role: 'assistant', btw: ev.question, btwPending: false, blocks })
+              break
+            }
             setMsgs((prev) =>
               prev.map((m) => {
                 if (m.btw !== ev.question || !m.btwPending) return m
@@ -908,6 +968,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               }),
             )
             break
+          }
           case 'forked': {
             if (ev.branchOf) {
               // claude 懒分叉：b| key 导航，首条消息才真正 --fork-session；
@@ -1025,19 +1086,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             if (h.uuid && messagesRef.current.some((m) => m.id === h.uuid)) break
             setMsgs((prev) => {
               const out = [...prev]
-              appendHistoryMsg(out, h)
+              appendHistoryMsg(out, h, toolPosRef.current)
               return out
             })
             // 尾到的主线 tool_result 给已存在桶补终态——外部会话（tailer 路径）没有
             // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
             for (const blk of h.blocks) {
               if (blk.kind !== 'tool_result' || !blk.id) continue
-              const b = taskMapRef.current.get(blk.id)
-              if (b && b.status === 'running') {
-                markTerminal(b, blk.isError ? 'error' : 'done')
-                if (!b.summary && blk.text) b.summary = blk.text.slice(0, 500)
-                pubTasks()
-              }
+              settleBucketFromResult(blk.id, blk.text ?? '', blk.isError === true)
             }
             break
           }
@@ -1200,106 +1256,122 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   const send = () => {
     const text = input.trim()
-    if ((!text && pendingImages.length === 0) || !sockRef.current) return
-    // /rewind 及其官方别名 /checkpoint /undo
-    if (text === '/rewind' || text === '/checkpoint' || text === '/undo') {
-      setShowRewind(true)
-      setInput('')
-      return
-    }
-    if (/^\/btw(\s|$)/.test(text)) {
-      const q = text.slice(4).trim()
-      if (q) sockRef.current.send({ kind: 'btw', question: q })
-      else pushSystem('用法：/btw <问题>')
-      setInput('')
-      return
-    }
-    // 内建 /branch（有参时）会在 headless 下写孤立 fork 会话文件却不切换（context.resume 缺席），
-    // 必须全形拦截（含参数）；名字透传给分叉 spawn 的 -n
-    const branchMatch = text.match(/^\/(branch|fork)(?:\s+(.*))?$/)
-    if (branchMatch) {
-      if (isCodex) pushSystem('Codex 请用「回滚」面板的从此处分叉')
-      else sockRef.current.send({ kind: 'branch', ...(branchMatch[2]?.trim() ? { name: branchMatch[2].trim() } : {}) })
-      setInput('')
-      return
-    }
-    // /exit /quit headless 下会真的杀掉 CLI 进程——web 场景下多半是误触，拦下给替代指引
-    if (text === '/exit' || text === '/quit') {
-      pushSystem('此命令会终止 CLI 进程。要结束会话请回列表页归档（⌄ 按钮），进程回收由服务端空闲策略处理')
-      setInput('')
-      return
-    }
-    // codex 的斜杠命令不会被 app-server 解释（原样进模型上下文），有对应物的必须前端拦截
-    if (isCodex && text === '/compact') {
-      sockRef.current.send({ kind: 'control', subtype: 'compact' })
-      setInput('')
-      return
-    }
-    if (isCodex && text === '/context') {
-      // codex 无 get_context_usage 对应物；用状态里的累计 token 用量顶一句
-      const u = state.usage
-      pushSystem(
-        u
-          ? `◈ 线程累计：in ${u.inputTokens} / out ${u.outputTokens}${u.reasoningTokens ? ` / reasoning ${u.reasoningTokens}` : ''}（窗口占用明细请开「详情」）`
-          : '◈ 暂无用量数据（先跑一轮）',
-      )
-      setInput('')
-      return
-    }
-    if (isCodex && /^\/goal(\s|$)/.test(text)) {
-      const arg = text.slice(5).trim()
-      if (!arg) pushSystem(state.goal ? `◎ 当前目标：${state.goal.condition}` : '用法：/goal <条件>，/goal clear 清除')
-      else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) sendGoal()
-      else sendGoal(arg)
-      setInput('')
-      return
-    }
-    if (isCodex && /^\/review(\s|$)/.test(text)) {
-      // codex review/start：无参审未提交改动，带参按自定义说明审（inline 在本线程跑）
-      const instructions = text.slice(7).trim()
-      sockRef.current.send({ kind: 'control', subtype: 'review', ...(instructions ? { extra: { instructions } } : {}) })
-      pushSystem(instructions ? `◈ 审查中：${instructions}` : '◈ 审查未提交的改动中…')
-      setInput('')
-      return
-    }
-    if (isCodex && /^\/rename(\s|$)/.test(text)) {
-      const name = text.slice(7).trim()
-      if (!name) {
-        pushSystem('用法：/rename <新名字>')
+    const sock = sockRef.current
+    if ((!text && pendingImages.length === 0) || !sock) return
+
+    // 斜杠命令拦截表：顺序即优先级，命中即拦截并清空输入框。
+    // codex 的斜杠命令不会被 app-server 解释（原样进模型上下文），有对应物的必须前端拦截。
+    const interceptors: Array<{ match: (t: string) => boolean; run: (t: string) => void }> = [
+      {
+        // /rewind 及其官方别名 /checkpoint /undo
+        match: (t) => t === '/rewind' || t === '/checkpoint' || t === '/undo',
+        run: () => setShowRewind(true),
+      },
+      {
+        match: (t) => /^\/btw(\s|$)/.test(t),
+        run: (t) => {
+          const q = t.slice(4).trim()
+          if (q) sock.send({ kind: 'btw', question: q })
+          else pushSystem('用法：/btw <问题>')
+        },
+      },
+      {
+        // 内建 /branch（有参时）会在 headless 下写孤立 fork 会话文件却不切换（context.resume 缺席），
+        // 必须全形拦截（含参数）；名字透传给分叉 spawn 的 -n
+        match: (t) => /^\/(branch|fork)(\s|$)/.test(t),
+        run: (t) => {
+          const name = t.match(/^\/(?:branch|fork)(?:\s+(.*))?$/)?.[1]?.trim()
+          if (isCodex) pushSystem('Codex 请用「回滚」面板的从此处分叉')
+          else sock.send({ kind: 'branch', ...(name ? { name } : {}) })
+        },
+      },
+      {
+        // /exit /quit headless 下会真的杀掉 CLI 进程——web 场景下多半是误触，拦下给替代指引
+        match: (t) => t === '/exit' || t === '/quit',
+        run: () =>
+          pushSystem('此命令会终止 CLI 进程。要结束会话请回列表页归档（⌄ 按钮），进程回收由服务端空闲策略处理'),
+      },
+      {
+        match: (t) => isCodex && t === '/compact',
+        run: () => sock.send({ kind: 'control', subtype: 'compact' }),
+      },
+      {
+        match: (t) => isCodex && t === '/context',
+        run: () => {
+          // codex 无 get_context_usage 对应物；用状态里的累计 token 用量顶一句
+          const u = state.usage
+          pushSystem(
+            u
+              ? `◈ 线程累计：in ${u.inputTokens} / out ${u.outputTokens}${u.reasoningTokens ? ` / reasoning ${u.reasoningTokens}` : ''}（窗口占用明细请开「详情」）`
+              : '◈ 暂无用量数据（先跑一轮）',
+          )
+        },
+      },
+      {
+        match: (t) => isCodex && /^\/goal(\s|$)/.test(t),
+        run: (t) => {
+          const arg = t.slice(5).trim()
+          if (!arg) pushSystem(state.goal ? `◎ 当前目标：${state.goal.condition}` : '用法：/goal <条件>，/goal clear 清除')
+          else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) sendGoal()
+          else sendGoal(arg)
+        },
+      },
+      {
+        // codex review/start：无参审未提交改动，带参按自定义说明审（inline 在本线程跑）
+        match: (t) => isCodex && /^\/review(\s|$)/.test(t),
+        run: (t) => {
+          const instructions = t.slice(7).trim()
+          sock.send({ kind: 'control', subtype: 'review', ...(instructions ? { extra: { instructions } } : {}) })
+          pushSystem(instructions ? `◈ 审查中：${instructions}` : '◈ 审查未提交的改动中…')
+        },
+      },
+      {
+        match: (t) => isCodex && /^\/rename(\s|$)/.test(t),
+        run: (t) => {
+          const name = t.slice(7).trim()
+          if (!name) {
+            pushSystem('用法：/rename <新名字>')
+            return
+          }
+          sock.send({ kind: 'control', subtype: 'rename', extra: { name } })
+          pushSystem(`✎ 重命名线程为「${name}」`)
+        },
+      },
+      {
+        // codex /new 与 /clear 同为 thread/start 新线程：导航到 xn| 新会话页（懒启动）
+        match: (t) => isCodex && (t === '/new' || t === '/clear'),
+        run: () => {
+          const cwd = session.cwd
+          if (cwd) {
+            void createSession(cwd, 'codex').then(({ key }) =>
+              props.onNavigate?.(
+                makeSessionInfo({ key, slug: 'codex', sessionId: 'new', cwd, backend: 'codex', status: 'offline' }),
+              ),
+            )
+          } else {
+            pushSystem('⚠ 未知当前目录，无法新建线程', 'error')
+          }
+        },
+      },
+    ]
+    for (const it of interceptors) {
+      if (it.match(text)) {
+        it.run(text)
         setInput('')
         return
       }
-      sockRef.current.send({ kind: 'control', subtype: 'rename', extra: { name } })
-      pushSystem(`✎ 重命名线程为「${name}」`)
-      setInput('')
-      return
     }
-    if (isCodex && (text === '/new' || text === '/clear')) {
-      // codex /new 与 /clear 同为 thread/start 新线程：导航到 xn| 新会话页（懒启动）
-      const cwd = session.cwd
-      if (cwd) {
-        void createSession(cwd, 'codex').then(({ key }) =>
-          props.onNavigate?.(
-            makeSessionInfo({ key, slug: 'codex', sessionId: 'new', cwd, backend: 'codex', status: 'offline' }),
-          ),
-        )
-      } else {
-        pushSystem('⚠ 未知当前目录，无法新建线程', 'error')
-      }
-      setInput('')
-      return
-    }
-    const attachments = pendingImages.map(({ name, mediaType, dataBase64 }) => ({ name, mediaType, dataBase64 }))
+
     const echoBlocks: Block[] = [
       ...pendingImages.map((img) => ({ kind: 'image' as const, src: imgPreviewSrc(img) })),
       ...(text ? [{ kind: 'text' as const, text }] : []),
     ]
     pushMsg({ id: nextId(), role: 'user', blocks: echoBlocks })
-    sockRef.current.send({
+    sock.send({
       kind: 'user',
       text,
       ...(busy ? { sendMode } : {}),
-      ...(attachments.length > 0 ? { attachments } : {}),
+      ...(pendingImages.length > 0 ? { attachments: pendingImages } : {}),
     })
     setInput('')
     setPendingImages([])
@@ -1346,41 +1418,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
-  const activeTaskCount = state.activeTaskCount ?? 0
-  const u = state.usage
-  const usageLine =
-    u && u.inputTokens + u.outputTokens > 0
-      ? `tok ↑${fmtTokens(u.inputTokens)} ↓${fmtTokens(u.outputTokens)}` +
-        (u.cacheReadTokens ? ` · cache ${fmtTokens(u.cacheReadTokens)}` : '') +
-        (u.reasoningTokens ? ` · rs ${fmtTokens(u.reasoningTokens)}` : '')
-      : undefined
-  const hasPendingStartConfig =
-    !state.spawned && Boolean(state.model || state.permissionMode || state.effort)
-  const statusLine = !connected
-    ? '连接中…'
-    : phase
-      ? `${PHASE_LABEL[phase] ?? phase}…`
-      : waiting
-        ? state.tailing
-          ? '外部会话等待操作'
-          : '等待审批'
-        : activeTaskCount > 0
-          ? `${activeTaskCount} 个后台任务运行中`
-        : busy
-          ? state.tailing
-            ? '外部会话工作中'
-            : '工作中'
-          : state.spawned
-            ? state.sessionState === 'idle'
-              ? 'CLI 空闲'
-              : 'CLI 运行中'
-            : state.exited
-              ? '进程已退出'
-              : state.tailing
-                ? '外部会话 · 实时跟踪中'
-                : hasPendingStartConfig
-                  ? '配置已保存（发送消息时启动 CLI）'
-                  : '浏览中（发送消息时启动 CLI）'
+  const usageLine = usageSummary(state.usage, 'tok ')
+  const statusLine = statusLineOf(state, { connected, phase, waiting })
 
   return (
     <div className="flex h-full min-h-0 bg-bg text-ink">
@@ -2106,7 +2145,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         open={tasksOpen}
         onClose={() => setTasksOpen(false)}
         tasks={tasks}
-        onStop={(taskId) => sockRef.current?.send({ kind: 'control', subtype: 'stop_task', extra: { task_id: taskId } })}
+        onStop={
+          // codex app-server 没有 stop_task 对应物（sendControl 落 default 报错卡），不显示停止按钮
+          isCodex
+            ? undefined
+            : (taskId) => sockRef.current?.send({ kind: 'control', subtype: 'stop_task', extra: { task_id: taskId } })
+        }
       />
     </div>
   )

@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { config } from '../../config'
 import type { ContextUsageInfo } from '../types'
 import { listSessions, sessionMetaOf } from './discovery'
-import { contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
+import { contextUsageOf, contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
 import { sessionModelOf } from './sessionModels'
 
 export function keyFor(slug: string, sessionId: string): string {
@@ -119,13 +119,6 @@ function readTailContext(path: string, size: number, sessionId: string): Context
   }
   const u = extractUsageFromTranscriptTail(text)
   if (!u) return undefined
-  return {
-    usedTokens: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
-    // 离线无 initModel：靠 init 时持久化的 sessionId→model 表；没见过 live 的会话回退默认窗口
-    windowSize: contextWindowOf(sessionModelOf(sessionId)),
-    outputTokens: u.outputTokens,
-    inputTokens: u.inputTokens,
-    cacheReadTokens: u.cacheReadTokens,
-    cacheWriteTokens: u.cacheWriteTokens,
-  }
+  // 离线无 initModel：靠 init 时持久化的 sessionId→model 表；没见过 live 的会话回退默认窗口
+  return contextUsageOf(u, contextWindowOf(sessionModelOf(sessionId)))
 }

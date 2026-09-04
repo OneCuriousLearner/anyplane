@@ -5,7 +5,8 @@ import { authHeaders, notifyAuthRequired } from './auth'
 /** 401 时抛出；App 层会显示令牌输入页，调用方静默忽略即可 */
 export class AuthRequiredError extends Error {}
 
-async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+/** 带认证头的 fetch：自动拼 authHeaders()，401 时通知 App 层弹令牌页并抛 AuthRequiredError */
+export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   const r = await fetch(input, {
     ...init,
     headers: { ...authHeaders(), ...(init?.headers ?? {}) },
@@ -18,13 +19,13 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
 }
 
 /** 非 2xx 应答 → Error：优先服务端的 {error} 字段（空串视同缺失），兜底 HTTP 状态码 */
-async function apiError(r: Response): Promise<Error> {
+export async function apiError(r: Response): Promise<Error> {
   const body = (await r.json().catch(() => null)) as { error?: string } | null
   return new Error(body?.error || `HTTP ${r.status}`)
 }
 
 /** POST JSON 小封装：统一 method/headers/序列化（错误检查由调用方按需补） */
-async function postJson(path: string, body: unknown): Promise<Response> {
+export async function postJson(path: string, body: unknown): Promise<Response> {
   return apiFetch(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

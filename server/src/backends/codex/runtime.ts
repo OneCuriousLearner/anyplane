@@ -124,6 +124,18 @@ interface PendingCodexApproval {
   kind: string
 }
 
+/** app-server 的 camelCase usage 记录 → 统一形状（缺失/非数归 0；tokenUsage 与 contextUsage 共用） */
+function mapTokenUsage(u: Record<string, number> | undefined) {
+  const n = (v: unknown) => Number(v ?? 0) || 0
+  return {
+    inputTokens: n(u?.inputTokens),
+    outputTokens: n(u?.outputTokens),
+    cacheReadTokens: n(u?.cachedInputTokens),
+    cacheWriteTokens: n(u?.cacheWriteInputTokens),
+    reasoningTokens: n(u?.reasoningOutputTokens),
+  }
+}
+
 export class CodexSession {
   readonly key: string
   threadId: string | undefined
@@ -196,14 +208,7 @@ export class CodexSession {
     cacheWriteTokens: number
     reasoningTokens: number
   } {
-    const u = this.totalUsage ?? {}
-    return {
-      inputTokens: Number(u.inputTokens ?? 0) || 0,
-      outputTokens: Number(u.outputTokens ?? 0) || 0,
-      cacheReadTokens: Number(u.cachedInputTokens ?? 0) || 0,
-      cacheWriteTokens: Number(u.cacheWriteInputTokens ?? 0) || 0,
-      reasoningTokens: Number(u.reasoningOutputTokens ?? 0) || 0,
-    }
+    return mapTokenUsage(this.totalUsage)
   }
 
   /** 当前上下文窗口占用（codex 口径：last.totalTokens = 最新活跃上下文大小，对应 TUI footer
@@ -226,11 +231,7 @@ export class CodexSession {
     return {
       usedTokens: Number(u.totalTokens ?? 0) || 0,
       windowSize: w,
-      outputTokens: Number(u.outputTokens ?? 0) || 0,
-      inputTokens: Number(u.inputTokens ?? 0) || 0,
-      cacheReadTokens: Number(u.cachedInputTokens ?? 0) || 0,
-      cacheWriteTokens: Number(u.cacheWriteInputTokens ?? 0) || 0,
-      reasoningTokens: Number(u.reasoningOutputTokens ?? 0) || 0,
+      ...mapTokenUsage(u),
     }
   }
 
@@ -989,23 +990,39 @@ export class CodexRuntime {
     }
     const turns = res.thread?.turns ?? []
     const reasoning = readReasoning(threadId)
+    // 侧车 append-only 按时间递增；校验失败（手工编辑等）回退全扫，语义不变
+    const reasoningSorted = reasoning.every((r, i) => i === 0 || reasoning[i - 1].ts <= r.ts)
     const used = new Set<number>()
     const out: HistoryMessage[] = []
     for (let ti = 0; ti < turns.length; ti++) {
-      const turn = turns[ti] as { id?: string; startedAt?: number | null; completedAt?: number | null; items?: never[] }
+      const turn = turns[ti]
       const msgs = itemsToHistory(turn.items ?? [], typeof turn.id === 'string' ? turn.id : undefined)
       if (reasoning.length > 0) {
         const start = turn.startedAt ?? 0
         // completedAt 缺失（中断/失败的 turn）：窗口收口到下一轮起点，
         // 否则只有 start+30s，中断前已落盘的 thinking 会被永久漏掉
-        const nextStart = (turns[ti + 1] as { startedAt?: number | null } | undefined)?.startedAt
+        const nextStart = turns[ti + 1]?.startedAt
         const end = turn.completedAt ?? nextStart ?? Number.MAX_SAFE_INTEGER / 1000
+        const loMs = (start - 1) * 1000
+        const hiMs = end * 1000 + 30_000
         const hit: number[] = []
-        reasoning.forEach((r, i) => {
-          if (used.has(i)) return
-          const ts = r.ts / 1000
-          if (ts >= start - 1 && ts <= end + 30) hit.push(i)
-        })
+        if (reasoningSorted) {
+          // 时间窗二分定位起点后线性到终点：O(log n + 命中数)，免每 turn 全扫侧车
+          let lo = 0
+          let hi = reasoning.length
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1
+            if (reasoning[mid].ts < loMs) lo = mid + 1
+            else hi = mid
+          }
+          for (let i = lo; i < reasoning.length && reasoning[i].ts <= hiMs; i++) {
+            if (!used.has(i)) hit.push(i)
+          }
+        } else {
+          reasoning.forEach((r, i) => {
+            if (!used.has(i) && r.ts >= loMs && r.ts <= hiMs) hit.push(i)
+          })
+        }
         if (hit.length > 0) {
           const thinkingMsgs = hit.map((i) => ({
             uuid: `rs-${reasoning[i].ts}-${i}`,

@@ -37,7 +37,7 @@ import {
   seedMessage,
   type HandoffDetail,
 } from './handoff'
-import { errorMessage, hasWindowsSocketFix } from './util'
+import { errorMessage, escapeHtml, hasWindowsSocketFix } from './util'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -151,18 +151,20 @@ function sessionNameOf(key: string): string {
   return key.slice(0, 18)
 }
 
-/** 审批输入摘要：Bash 给命令、Edit/Write 给路径，其余给 JSON 截断 */
+/** 审批输入摘要（推送通知/审批页）：按工具挑裁决所需的关键字段，其余给 JSON 截断。
+ *  与 web 端 toolSummary 同族但取舍不同——审批场景 Bash 必须给 command 本体
+ *  （description 是作者给的说明文字，不能作为裁决依据；web 卡片下方另有详情区才可用它打头）。 */
 function summarizeInput(toolName: string, input: unknown): string {
   const obj = (input ?? {}) as Record<string, unknown>
   if (toolName === 'Bash') return String(obj.command ?? '').slice(0, 400)
+  if (toolName === 'Glob' || toolName === 'Grep') return String(obj.pattern ?? '')
+  if (toolName === 'WebSearch') return String(obj.query ?? '')
+  if (toolName === 'WebFetch') return String(obj.url ?? '')
+  if (toolName === 'Agent') return String(obj.description ?? obj.prompt ?? '').slice(0, 300)
   if (obj.file_path) return String(obj.file_path)
   if (obj.path) return String(obj.path)
   const json = JSON.stringify(input ?? {})
   return json.length > 300 ? json.slice(0, 300) + '…' : json
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 /**
@@ -295,6 +297,13 @@ function getHub(key: string): Hub {
   return h
 }
 
+/** 待审批重放：WS 接入（单播）与 attach（广播）共用——未裁决的审批补发给目标 */
+function replayApprovals(hub: Hub, send: (payload: unknown) => void): void {
+  for (const a of hub.pendingApprovals.values()) {
+    send({ kind: 'approval_request', ...a })
+  }
+}
+
 function broadcast(hub: Hub, payload: unknown): void {
   const text = JSON.stringify(payload)
   for (const ws of hub.clients) {
@@ -383,6 +392,35 @@ function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
   broadcast(hub, { kind: 'status', state: { ...statusOf(hub.key, undefined, true), ...extra } })
 }
 
+/** onStatusChange 的 leading+trailing 节流：并行后台任务的 task_progress 心跳每秒可触发多次，
+ *  statusOf 构造+广播是纯派生数据，窗口内合并即可。leading 立即发（busy/idle 转移零延迟），
+ *  窗口内后续变更合并为 trailing 一发——终态只是延迟 ≤300ms，不会丢失。
+ *  仅挂 onStatusChange 一路；审批/退出/attach 等事件路径仍直调 pushStatus 保证即时。 */
+const STATUS_THROTTLE_MS = 300
+const statusThrottle = new WeakMap<Hub, { timer: ReturnType<typeof setTimeout> | null; dirty: boolean }>()
+
+function throttledPushStatus(hub: Hub): void {
+  let st = statusThrottle.get(hub)
+  if (!st) {
+    st = { timer: null, dirty: false }
+    statusThrottle.set(hub, st)
+  }
+  if (st.timer) {
+    st.dirty = true
+    return
+  }
+  pushStatus(hub)
+  st.timer = setTimeout(() => {
+    st.timer = null
+    // Hub 可能已回收删除：确认还是同一个 Hub 再补发
+    if (st.dirty && hubs.get(hub.key) === hub) {
+      st.dirty = false
+      pushStatus(hub)
+    }
+  }, STATUS_THROTTLE_MS)
+  st.timer.unref?.()
+}
+
 /** codex 会话状态：与 statusOf 同形，供列表 managed 字段与 WS status 复用 */
 function codexStatusOf(key: string): Record<string, unknown> {
   const s = codexRuntime.get(key)
@@ -390,8 +428,8 @@ function codexStatusOf(key: string): Record<string, unknown> {
   const waiting = (s?.waiting ?? false) || (hub?.pendingApprovals.size ?? 0) > 0
   return {
     ...baseStatusOf(s, hub, waiting),
-    activeTaskCount: 0,
-    activeTasks: [],
+    // 不下发 activeTasks/activeTaskCount：codex 服务端不维护任务表，恒空数组会被
+    // hydrateTasks 误读为"权威空"而在空闲时判死 live 桶；字段缺席则前端跳过水合
     model: hub?.spawnOpts?.model,
     tailing: false,
     goal: s?.goal ?? null,
@@ -489,7 +527,7 @@ function sessionCallbacks(hub: Hub) {
       pushStatus(hub)
       processManager.get(hub.key)?.notifyExternalGate()
     },
-    onStatusChange: () => pushStatus(hub),
+    onStatusChange: () => throttledPushStatus(hub),
     onExit: (code: number) => {
       pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
     },
@@ -671,9 +709,7 @@ function handleClientMessage(hub: Hub, raw: string): void {
       } else {
         pushStatus(hub)
       }
-      for (const a of hub.pendingApprovals.values()) {
-        broadcast(hub, { kind: 'approval_request', ...a })
-      }
+      replayApprovals(hub, (p) => broadcast(hub, p))
       break
     }
     case 'tail_subscribe': {
@@ -1208,6 +1244,20 @@ if (!hasWindowsSocketFix() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
   process.exit(1)
 }
 
+// ---------- /api/sessions 的 git 分支缓存 ----------
+// 列表被前端轮询，每个 cwd 的分支读取是 2-3 次同步文件 IO；分支变化不需要秒级新鲜度，30s TTL。
+const BRANCH_CACHE_TTL_MS = 30_000
+const branchCache = new Map<string, { branch: string | undefined; at: number }>()
+
+function branchOfCached(cwd?: string): string | undefined {
+  if (!cwd) return undefined
+  const hit = branchCache.get(cwd)
+  if (hit && Date.now() - hit.at < BRANCH_CACHE_TTL_MS) return hit.branch
+  const branch = readGitBranch(cwd) // 普通仓库与 worktree 都支持
+  branchCache.set(cwd, { branch, at: Date.now() })
+  return branch
+}
+
 async function handleApi(req: Request, url: URL): Promise<Response | undefined> {
   // ---------- Web Push 订阅管理 ----------
   if (url.pathname === '/api/push/public-key' && req.method === 'GET') {
@@ -1292,17 +1342,10 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   }
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     const sessions = listSessions()
-    // 项目行 git 分支：按 cwd 各读一次（普通仓库与 worktree 都支持）
-    const branchOf = (cwd?: string): string | undefined => {
-      if (!cwd) return undefined
-      if (!branchCache.has(cwd)) branchCache.set(cwd, readGitBranch(cwd))
-      return branchCache.get(cwd)
-    }
-    const branchCache = new Map<string, string | undefined>()
     const claudeRows = sessions.map((s: SessionInfo) => ({
       ...s,
       backend: 'claude' as const,
-      gitBranch: branchOf(s.cwd),
+      gitBranch: branchOfCached(s.cwd),
       key: keyFor(s.slug, s.sessionId),
       // listSessions 已扫过 pid 文件，复用其结果，不为每行再扫一次（null = 已知不在线）
       managed: statusOf(
@@ -1324,7 +1367,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         sizeBytes: 0,
         status: t.status,
         backend: 'codex' as const,
-        gitBranch: branchOf(t.cwd),
+        gitBranch: branchOfCached(t.cwd),
         key: t.key,
         managed: codexStatusOf(t.key),
       }))
@@ -1658,9 +1701,7 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         processManager.get(ws.data.key)?.attachClient()
         codexRuntime.get(ws.data.key)?.attachClient()
         ws.send(JSON.stringify({ kind: 'status', state: statusOf(ws.data.key, undefined, true) }))
-        for (const a of hub.pendingApprovals.values()) {
-          ws.send(JSON.stringify({ kind: 'approval_request', ...a }))
-        }
+        replayApprovals(hub, (p) => ws.send(JSON.stringify(p)))
       },
       message(ws, raw) {
         if (ws.data.inbox) return // inbox 频道只发不收

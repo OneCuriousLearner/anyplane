@@ -47,7 +47,7 @@ export function isOwnViteProcess(desc: PidDesc, webDir: string = WEB_DIR): boole
   return /\bvite\b/.test(normCmd(desc.cmdline)) && sameDir(desc.cwd, webDir)
 }
 
-/** 从 `ss -tlnp` 文本里抽出监听指定 TCP 端口的 pid（:8080 不误伤 :80）。语义同 scripts/gateway-lib.ts */
+/** 从 `ss -tlnp` 文本里抽出监听指定 TCP 端口的 pid（:8080 不误伤 :80）。scripts/gateway-lib 也复用本函数 */
 export function parseSsListenPids(ssOut: string, port: number): number[] {
   const pids = new Set<number>()
   const portRe = new RegExp(`(?:[:\\]])${port}(?:\\s|$)`)

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { SessionState } from '../lib/ws'
-import { fmtTokens } from '../lib/blocks'
+import { fmtTokens, usageSummary } from '../lib/blocks'
 import { PopupPanel } from './PopupPanel'
 
 type ContextUsage = NonNullable<SessionState['context']>
@@ -46,6 +46,7 @@ export function ContextRing(props: {
     ...(context.reasoningTokens != null ? [{ name: 'reasoning', tokens: context.reasoningTokens }] : []),
   ]
   const u = props.usage
+  const usageLine = usageSummary(u, '会话累计 ')
 
   return (
     <>
@@ -105,13 +106,7 @@ export function ContextRing(props: {
           ))}
           <div className="mt-2 border-t border-ink/5 pt-1.5 font-mono text-[10px] leading-relaxed text-faint">
             {props.modelLabel && <div>模型 {props.modelLabel}</div>}
-            {u && u.inputTokens + u.outputTokens > 0 && (
-              <div>
-                会话累计 ↑{fmtTokens(u.inputTokens)} ↓{fmtTokens(u.outputTokens)}
-                {u.cacheReadTokens ? ` · cache ${fmtTokens(u.cacheReadTokens)}` : ''}
-                {u.reasoningTokens ? ` · rs ${fmtTokens(u.reasoningTokens)}` : ''}
-              </div>
-            )}
+            {usageLine && <div>{usageLine}</div>}
           </div>
           {props.onOpenFullDetail && (
             <button

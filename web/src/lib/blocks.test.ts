@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import {
   buildTranscriptRows,
   draftBlockToBlock,
+  fmtTokens,
   groupCollapsibleRuns,
   parseUserText,
   rewindPreview,
-  shortTokens,
   stripAnsi,
   toolDetail,
   toolResultText,
@@ -113,7 +113,7 @@ describe('toolDetail（折叠区的完整内容）', () => {
   })
 })
 
-describe('toolResultText / stripAnsi / shortTokens', () => {
+describe('toolResultText / stripAnsi / fmtTokens', () => {
   test('tool_result content 的 string 与块数组两种形态', () => {
     expect(toolResultText('纯文本')).toBe('纯文本')
     expect(toolResultText([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }])).toBe('ab')
@@ -127,11 +127,12 @@ describe('toolResultText / stripAnsi / shortTokens', () => {
     expect(stripAnsi('没有颜色')).toBe('没有颜色')
   })
 
-  test('shortTokens 千位缩写', () => {
-    expect(shortTokens(undefined)).toBe('?')
-    expect(shortTokens(999)).toBe('999')
-    expect(shortTokens(1000)).toBe('1k')
-    expect(shortTokens(231952)).toBe('232k')
+  test('fmtTokens 千位/百万位缩写', () => {
+    expect(fmtTokens(undefined)).toBe('?')
+    expect(fmtTokens(999)).toBe('999')
+    expect(fmtTokens(1000)).toBe('1.0k')
+    expect(fmtTokens(231952)).toBe('232.0k')
+    expect(fmtTokens(2_500_000)).toBe('2.5M')
   })
 })
 

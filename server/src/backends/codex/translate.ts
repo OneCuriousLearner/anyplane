@@ -223,7 +223,8 @@ function systemText(text: string): CliMessage {
 
 /** collab 子代理状态（pendingInit/running/interrupted/completed/errored/shutdown/notFound）
  *  → claude task_notification 三态；非终态返回 null 不发通知 */
-function collabTerminalStatus(status?: string): 'completed' | 'failed' | 'stopped' | null {  switch (status) {
+function collabTerminalStatus(status?: string): 'completed' | 'failed' | 'stopped' | null {
+  switch (status) {
     case 'completed':
       return 'completed'
     case 'interrupted':

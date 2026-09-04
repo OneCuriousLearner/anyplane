@@ -13,7 +13,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { detectProtocol, isOwnGatewayCmd, modeCookie, parseSsListenPids, pickMode, type Mode } from './gateway-lib'
-import { ensurePrivateDir } from '../server/src/util'
+import { loadAnyplaneConfigFile } from '../server/src/config'
+import { ensurePrivateDir, escapeHtml as htmlEscape } from '../server/src/util'
 
 type GatewayCfg = {
   httpPort: number
@@ -49,22 +50,7 @@ const HOP = new Set([
   'upgrade',
 ])
 
-function loadFileConfig(): { authToken?: string; gateway?: Record<string, unknown> } {
-  const candidates = [
-    join(process.cwd(), 'anyplane.config.json'),
-    join(import.meta.dir, '..', 'anyplane.config.json'),
-    join(homedir(), '.anyplane', 'config.json'),
-  ]
-  for (const p of candidates) {
-    if (!existsSync(p)) continue
-    try {
-      return JSON.parse(readFileSync(p, 'utf8')) as { authToken?: string; gateway?: Record<string, unknown> }
-    } catch (e) {
-      console.error(`[gateway] 解析 ${p} 失败:`, e)
-    }
-  }
-  return {}
-}
+type FileCfg = { authToken?: string; gateway?: Record<string, unknown> }
 
 function num(v: unknown, fallback: number): number {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN
@@ -85,8 +71,7 @@ function parseArgs(argv: string[]): { insecure: boolean; noReplace: boolean } {
   return { insecure: argv.includes('--insecure'), noReplace: argv.includes('--no-replace') }
 }
 
-function loadCfg(): GatewayCfg {
-  const file = loadFileConfig()
+function loadCfg(file: FileCfg): GatewayCfg {
   const g = file.gateway ?? {}
   const args = parseArgs(process.argv.slice(2))
   return {
@@ -101,10 +86,6 @@ function loadCfg(): GatewayCfg {
     insecure: args.insecure || process.env.ANYPLANE_GATEWAY_INSECURE === '1',
     replace: !args.noReplace,
   }
-}
-
-function htmlEscape(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 }
 
 function certSan(cfg: GatewayCfg): string {
@@ -543,8 +524,8 @@ function startMux(
   }
 }
 
-const fileCfg = loadFileConfig()
-const cfg = loadCfg()
+const fileCfg = loadAnyplaneConfigFile() as FileCfg
+const cfg = loadCfg(fileCfg)
 const token = process.env.ANYPLANE_TOKEN || fileCfg.authToken
 
 if (!token && !cfg.insecure) {

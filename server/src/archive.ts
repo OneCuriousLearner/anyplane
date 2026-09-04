@@ -98,14 +98,10 @@ export function listTrash(): TrashEntry[] {
       } catch {}
       let sizeBytes = 0
       try {
-        sizeBytes = statSyncSafe(p)
+        sizeBytes = statSync(p).size
       } catch {}
       out.push({ key: `s|${slug}|${sessionId}`, slug, sessionId, trashedAt, sizeBytes })
     }
   }
   return out.sort((a, b) => (b.trashedAt ?? '').localeCompare(a.trashedAt ?? ''))
-}
-
-function statSyncSafe(p: string): number {
-  return statSync(p).size
 }
