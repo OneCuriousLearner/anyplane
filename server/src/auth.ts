@@ -3,6 +3,7 @@
 // 静态前端壳不鉴权（JS 中无敏感数据），数据面与控制面全部受保护。
 
 import { config } from './config'
+import { hostNameOf } from './util'
 
 export function isLoopbackHost(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1'
@@ -23,19 +24,7 @@ export function isAuthorized(req: Request, url: URL): boolean {
 // 浏览器在 WS 握手与跨源 POST 时必定携带 Origin；非浏览器客户端（e2e 脚本/curl）不带。
 // 配置 authToken 后 token 即防线，以下检查不生效（行为与旧版完全一致）。
 
-/** Host 头去端口（兼容 [::1]:7480 形态） */
-export function hostNameOf(hostHeader: string): string {
-  if (hostHeader.startsWith('[')) {
-    const close = hostHeader.indexOf(']')
-    // 缺少闭合方括号的 IPv6 Host 头按无效处理，避免 slice(1, -1) 截断后误判为回环
-    if (close === -1) return hostHeader
-    return hostHeader.slice(1, close)
-  }
-  const i = hostHeader.lastIndexOf(':')
-  // 仅单冒号才截端口：多冒号是无方括号 IPv6 字面量（RFC 7230 允许无端口时裸写，
-  // 非浏览器客户端可能这么发）——'::1' 截成 ':' 会让真回环客户端吃 403
-  return i > 0 && hostHeader.indexOf(':') === i ? hostHeader.slice(0, i) : hostHeader
-}
+export { hostNameOf }
 
 export function isLoopbackHostname(h: string): boolean {
   // WHATWG URL 的 IPv6 hostname 保留方括号（http://[::1]:9001 → "[::1]"）

@@ -32,6 +32,26 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/** HTML 文本转义（审批确认页、网关错误页等内联手写 HTML 共用；含单引号，可安全用于属性值） */
+export function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
+}
+
+/** Host 头去端口（trim + 小写归一，兼容 [::1]:7480 形态）。
+ *  仅单冒号且冒号后是数字才截端口：多冒号是无方括号 IPv6 字面量（RFC 7230 允许裸写），
+ *  '::1' 误截成 ':' 会让真回环客户端被误判。缺少闭合方括号的按无效处理（原样返回），
+ *  避免截断后误配回环/域名。服务端跨源防护与网关分流共用本函数。 */
+export function hostNameOf(hostHeader: string): string {
+  const raw = hostHeader.trim().toLowerCase()
+  if (raw.startsWith('[')) {
+    const close = raw.indexOf(']')
+    if (close === -1) return raw
+    return raw.slice(1, close)
+  }
+  const i = raw.lastIndexOf(':')
+  return i > 0 && raw.indexOf(':') === i && /^\d+$/.test(raw.slice(i + 1)) ? raw.slice(0, i) : raw
+}
+
 /**
  * 传给 CLI 子进程（claude/codex app-server）的环境：process.env 叠加 extra，
  * 并剥离 anyplane 自身的服务端凭据 ANYPLANE_TOKEN——它是 /api 与 /ws 的唯一防线，

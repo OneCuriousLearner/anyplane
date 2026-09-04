@@ -68,7 +68,9 @@ const DEFAULTS: ServerConfig = {
   claudeConfigDir: join(homedir(), '.claude'),
 }
 
-function loadFileConfig(): Partial<ServerConfig> {
+/** 读取 anyplane 配置文件：cwd → 项目根 → ~/.anyplane/config.json，首个存在者优先。
+ *  服务端与 scripts/gateway 共用同一候选集，保证两处读到的配置一致。 */
+export function loadAnyplaneConfigFile(): Record<string, unknown> {
   // server 从 workspace 的 server/ 目录启动时，仍应支持 README 中约定的项目根配置文件。
   const projectRootConfig = join(import.meta.dir, '..', '..', 'anyplane.config.json')
   const candidates = [
@@ -79,7 +81,7 @@ function loadFileConfig(): Partial<ServerConfig> {
   for (const p of candidates) {
     if (existsSync(p)) {
       try {
-        return JSON.parse(readFileSync(p, 'utf8'))
+        return JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>
       } catch (e) {
         console.error(`[config] 解析 ${p} 失败:`, e)
       }
@@ -90,7 +92,7 @@ function loadFileConfig(): Partial<ServerConfig> {
 
 export const config: ServerConfig = {
   ...DEFAULTS,
-  ...loadFileConfig(),
+  ...(loadAnyplaneConfigFile() as Partial<ServerConfig>),
   ...(process.env.ANYPLANE_PORT ? { port: Number(process.env.ANYPLANE_PORT) } : {}),
   ...(process.env.ANYPLANE_HOST ? { host: process.env.ANYPLANE_HOST } : {}),
   ...(process.env.ANYPLANE_TOKEN ? { authToken: process.env.ANYPLANE_TOKEN } : {}),
