@@ -12,11 +12,12 @@ LISTEN   0        511              0.0.0.0:80             0.0.0.0:*       users:
 LISTEN   0        511              0.0.0.0:8080           0.0.0.0:*       users:(("python3",pid=200,fd=3))
 LISTEN   0        511            127.0.0.1:7480           0.0.0.0:*       users:(("bun",pid=300,fd=1353))
 LISTEN   0        511                [::]:443              [::]:*       users:(("bun",pid=100,fd=10),("bun",pid=101,fd=7))
+LISTEN   0        128                 *:80                   *:*       users:(("nginx",pid=1,fd=8),("nginx",pid=2,fd=8))
 `
 
 describe('parseSsListenPids', () => {
-  test('按端口精确匹配，不误伤 :8080', () => {
-    expect(parseSsListenPids(SS_SAMPLE, 80)).toEqual([100])
+  test('按端口精确匹配，不误伤 :8080；同端口跨行聚合（含 * 通配与单行多 pid）', () => {
+    expect(parseSsListenPids(SS_SAMPLE, 80).sort((a, b) => a - b)).toEqual([1, 2, 100])
     expect(parseSsListenPids(SS_SAMPLE, 8080)).toEqual([200])
     expect(parseSsListenPids(SS_SAMPLE, 7480)).toEqual([300])
   })
