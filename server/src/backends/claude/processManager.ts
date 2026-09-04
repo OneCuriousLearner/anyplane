@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type Subprocess } from 'bun'
 import { config } from '../../config'
-import { errorMessage, pumpLines, sanitizePath } from '../../util'
+import { childEnv, errorMessage, pumpLines, sanitizePath } from '../../util'
 import type { ApprovalDecision, BackgroundTask, SessionCallbacks, SpawnOptions } from '../types'
 import {
   approvalResponse,
@@ -317,13 +317,12 @@ export class ClaudeSession {
         stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe', // 吞掉 stderr，避免干扰；需要诊断时可改为 inherit
-        env: {
-          ...process.env,
+        env: childEnv({
           // headless/SDK 模式下文件检查点默认关闭，rewind_files 需要它
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
           // 启用权威 idle/running/requires_action 事件（Claude Code sessionState.ts）
           CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
-        },
+        }),
       })
     } catch (e) {
       this.exited = true

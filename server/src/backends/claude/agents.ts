@@ -6,6 +6,7 @@
 // 文档化脚本接口（对照 control.sock 逆向协议的版本锁风险，见 memory/ROADMAP 决策记录）。
 
 import { resolveClaudeCommand } from './processManager'
+import { childEnv } from '../../util'
 
 export interface DaemonAgent {
   sessionId: string
@@ -72,6 +73,7 @@ function refresh(): void {
         stdin: 'ignore',
         stdout: 'pipe',
         stderr: 'ignore',
+        env: childEnv(), // 显式传 env 剥离 ANYPLANE_TOKEN（缺省 spawn 继承全量 process.env）
       })
       const timeout = setTimeout(() => {
         try {

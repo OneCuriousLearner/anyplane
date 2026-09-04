@@ -2,7 +2,7 @@
 // 与 claude 后端的 pumpStdout 同构：逐行解析、宽松透传、未知字段不校验。
 
 import { spawn, type Subprocess } from 'bun'
-import { pumpLines } from '../../util'
+import { childEnv, pumpLines } from '../../util'
 
 export interface RpcNotification {
   method: string
@@ -64,7 +64,7 @@ export class RpcClient {
   static spawn(argv: string[], opts: { cwd?: string; env?: Record<string, string | undefined> } = {}): RpcClient {
     const proc = spawn(argv, {
       cwd: opts.cwd,
-      env: { ...process.env, ...opts.env } as Record<string, string>,
+      env: childEnv(opts.env),
       stdin: 'pipe',
       stdout: 'pipe',
       stderr: 'pipe',
