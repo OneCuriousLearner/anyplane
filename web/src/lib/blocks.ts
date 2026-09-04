@@ -348,17 +348,26 @@ export function rewindPreview(raw: string, maxSummaryLength = 160): RewindPrevie
   }
 }
 
-/** token 数简写：231952 → 232k */
-export function shortTokens(n?: number): string {
-  if (n == null) return '?'
-  if (n >= 1000) return `${Math.round(n / 1000)}k`
-  return String(n)
-}
-
-/** token 数格式化（一位小数的 k/M 简写）：上下文环形与输入行用量共用，
+/** token 数格式化（一位小数的 k/M 简写）：上下文环形、输入行用量、任务面板、compact 分隔线共用，
  *  全 UI 同口径（此前 Chat 与 ContextRing 各有一份私有实现，精度/单位已漂移） */
-export function fmtTokens(n: number): string {
+export function fmtTokens(n?: number): string {
+  if (n == null) return '?'
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
   return String(n)
+}
+
+/** 会话累计用量摘要行（`↑in ↓out · cache · rs`）：Chat 输入行与 ContextRing 详情面板共用 */
+export function usageSummary(
+  u:
+    | { inputTokens: number; outputTokens: number; cacheReadTokens?: number; reasoningTokens?: number }
+    | undefined,
+  prefix = '',
+): string | undefined {
+  if (!u || u.inputTokens + u.outputTokens <= 0) return undefined
+  return (
+    `${prefix}↑${fmtTokens(u.inputTokens)} ↓${fmtTokens(u.outputTokens)}` +
+    (u.cacheReadTokens ? ` · cache ${fmtTokens(u.cacheReadTokens)}` : '') +
+    (u.reasoningTokens ? ` · rs ${fmtTokens(u.reasoningTokens)}` : '')
+  )
 }

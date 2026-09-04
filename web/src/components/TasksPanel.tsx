@@ -14,7 +14,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Transcript } from './Transcript'
-import { shortTokens, type ChatMsg } from '../lib/blocks'
+import { fmtTokens, type ChatMsg } from '../lib/blocks'
 
 export interface TaskFeed {
   /** 主抄本中发起该任务的 tool_use 的 id（与主线工具卡同源） */
@@ -83,7 +83,7 @@ function TaskCard(props: { feed: TaskFeed; depth: number; onStop?: (taskId: stri
   const type = typeLabel(feed.agentType)
   const stats = [
     feed.usage?.tool_uses != null ? `${feed.usage.tool_uses} 次工具` : undefined,
-    feed.usage?.total_tokens != null ? `${shortTokens(feed.usage.total_tokens)} tok` : undefined,
+    feed.usage?.total_tokens != null ? `${fmtTokens(feed.usage.total_tokens)} tok` : undefined,
     fmtDuration(feed.usage?.duration_ms),
   ].filter(Boolean)
 

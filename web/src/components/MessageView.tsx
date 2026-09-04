@@ -1,9 +1,11 @@
+import { memo } from 'react'
+import { ImageAttachment } from './ImageAttachment'
 import { Markdown } from './Markdown'
 import { ActivityGroup } from './ActivityGroup'
 import {
+  fmtTokens,
   groupCollapsibleRuns,
   parseUserText,
-  shortTokens,
   type Block,
   type ChatMsg,
 } from '../lib/blocks'
@@ -52,18 +54,6 @@ function UserText(props: { text: string }) {
   )
 }
 
-/** 图片附件：侧问卡片 / user 气泡 / assistant 块三处展示共用 */
-function ImageAttachment(props: { src?: string }) {
-  return (
-    <img
-      src={props.src}
-      alt="图片附件"
-      loading="lazy"
-      className="my-1.5 max-h-64 max-w-full rounded-[10px] object-contain"
-    />
-  )
-}
-
 function contentKey(b: Block, i: number): string {
   return b.kind === 'tool' ? b.id : `${b.kind}:${i}`
 }
@@ -95,8 +85,9 @@ function BlockRuns(props: { blocks: Block[]; thinkingStreaming?: boolean; flush?
   )
 }
 
-/** 消息条目：user 右靠气泡 / assistant 按块分行；compact 表示与上一条同角色（连续块，收紧间距） */
-export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
+/** 消息条目：user 右靠气泡 / assistant 按块分行；compact 表示与上一条同角色（连续块，收紧间距）。
+ *  memo：msg 引用在所有落地路径上都不可变更新，输入击键/status 广播时跳过整条消息的 reconcile。 */
+export const MessageView = memo(function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
   const { msg, compact } = props
 
   // 侧问卡片：独立样式，正文 Markdown，思考折叠
@@ -125,7 +116,7 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
           <div className="h-px flex-1 bg-line" />
           <span className="font-mono text-[10px] tracking-widest uppercase">
             {msg.compactMeta
-              ? `上下文已压缩 ${shortTokens(msg.compactMeta.preTokens)}→${shortTokens(msg.compactMeta.postTokens)}`
+              ? `上下文已压缩 ${fmtTokens(msg.compactMeta.preTokens)}→${fmtTokens(msg.compactMeta.postTokens)}`
               : msg.blocks[0]?.kind === 'text'
                 ? msg.blocks[0].text
                 : ''}
@@ -178,4 +169,4 @@ export function MessageView(props: { msg: ChatMsg; compact?: boolean }) {
       <BlockRuns blocks={msg.blocks} />
     </div>
   )
-}
+})

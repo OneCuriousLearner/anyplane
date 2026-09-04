@@ -1,25 +1,20 @@
+import { memo, useMemo } from 'react'
 import { buildTranscriptRows, type ChatMsg, type DraftBlockLike } from '../lib/blocks'
 import { ActivityGroup } from './ActivityGroup'
+import { ImageAttachment } from './ImageAttachment'
 import { Markdown } from './Markdown'
 import { MessageView } from './MessageView'
 
-function ImageAttachment(props: { src?: string }) {
-  return (
-    <img
-      src={props.src}
-      alt="图片附件"
-      loading="lazy"
-      className="my-1.5 max-h-64 max-w-full rounded-[10px] object-contain"
-    />
-  )
-}
-
-/** 对话抄本：跨消息合并相邻思考/工具，流式草稿并进同一组。 */
-export function Transcript(props: {
+/** 对话抄本：跨消息合并相邻思考/工具，流式草稿并进同一组。
+ *  memo + useMemo：messages/draft 引用不变（输入击键、status 广播）时整棵树跳过重建。 */
+export const Transcript = memo(function Transcript(props: {
   messages: ChatMsg[]
   draft?: { blocks: readonly DraftBlockLike[] } | null
 }) {
-  const rows = buildTranscriptRows(props.messages, props.draft)
+  const rows = useMemo(
+    () => buildTranscriptRows(props.messages, props.draft),
+    [props.messages, props.draft],
+  )
   const showCursor =
     Boolean(props.draft?.blocks.length) && props.draft!.blocks.every((b) => b.kind !== 'text')
 
@@ -67,4 +62,4 @@ export function Transcript(props: {
       )}
     </>
   )
-}
+})
