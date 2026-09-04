@@ -593,6 +593,14 @@ function ensureSpawned(
     ...hub.spawnOpts,
     ...opts,
   }
+  // b| 懒分叉的一次性语义：首个 init 已把分叉产出的新 sessionId 记入 hub.sessionId，
+  // 此后 respawn/rewind 必须 resume 分叉自身。否则 spawn() 里 fork 分支优先于 resume，
+  // 会从源会话重新 fork 出全新 sessionId，静默丢弃分叉后的全部对话；rewind 路径更致命——
+  // --resume-session-at 带的 messageId 在源 transcript 里根本不存在。
+  if (spawnOpts.forkFromSessionId && hub.sessionId) {
+    delete spawnOpts.forkFromSessionId
+    spawnOpts.resumeSessionId = hub.sessionId
+  }
   hub.spawnOpts = spawnOpts
   try {
     const s = processManager.ensure(hub.key, spawnOpts, sessionCallbacks(hub))
