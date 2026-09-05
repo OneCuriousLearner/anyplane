@@ -39,6 +39,7 @@ import {
 } from './handoff'
 import { errorMessage, escapeHtml, hasWindowsSocketFix } from './util'
 import { startupVersionProbe } from './driftGuard'
+import { decisionOfRule, matchApprovalRule } from './approvalRules'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -517,6 +518,26 @@ function sessionCallbacks(hub: Hub) {
       }
     },
     onApprovalRequest: (req: { requestId: string; toolName: string; input: unknown }) => {
+      // 审批规则引擎：按序首条命中即自动裁决——不进 pending、不推送、不打扰，
+      // 但广播 approval_auto 留痕事件（UI 灰底卡 + 服务端日志），审计可回溯。
+      // 规则只做服务端裁决，绝不进入推送能力 URL 路径。
+      const auto = matchApprovalRule(config.approvalRules ?? [], req.toolName, req.input)
+      if (auto) {
+        const label = auto.rule.note ?? `approvalRules[${auto.index}]`
+        console.log(`[approval] ${hub.key} 规则自动${auto.rule.action === 'allow' ? '放行' : '拒绝'} ${req.toolName}（${label}）`)
+        broadcast(hub, {
+          kind: 'approval_auto',
+          requestId: req.requestId,
+          toolName: req.toolName,
+          input: req.input,
+          action: auto.rule.action,
+          rule: label,
+        })
+        const s = isCodexKey(hub.key) ? codexRuntime.get(hub.key) : processManager.get(hub.key)
+        if (s) s.sendApproval(req.requestId, decisionOfRule(auto.rule, req.input))
+        else console.warn(`[approval] ${hub.key} 会话句柄已不存在，自动裁决无法送达`)
+        return
+      }
       hub.pendingApprovals.set(req.requestId, req)
       broadcast(hub, {
         kind: 'approval_request',
@@ -1819,6 +1840,11 @@ try {
   startupVersionProbe()
 } catch (e) {
   console.warn('[drift] 版本探测失败（不影响服务）:', e)
+}
+
+// 审批规则引擎：加载即生效（坏规则在 config 加载时已 fail fast）
+if (config.approvalRules?.length) {
+  console.log(`[approval] 审批规则引擎已启用：${config.approvalRules.length} 条规则，按序首条命中`)
 }
 
 let shuttingDown = false

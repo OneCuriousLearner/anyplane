@@ -28,8 +28,35 @@ README 只保留最常用的几项，这里是完整配置说明。
 - `detachRecycleMs`：已收到 Claude `session_state_changed` 时，客户端全断、主会话 `idle` 且无 Claude 后台任务后多久回收子进程（默认 5 分钟）；`running` / `requires_action` / 后台任务期间绝不回收。
 - `idleTimeoutMs`：无权威状态事件时的回退回收延迟（默认 30 分钟）。
 - `claudeConfigDir`：Claude 配置目录，默认 `~/.claude`。
+- `driftAlert`：协议漂移告警（默认开）。`bun run server/scripts/check-claude-protocol.ts` / `check-codex-schema.ts` 检出漂移时经 `pushWebhooks` 推送提醒（同一 CLI 版本只告一次）；未配 `pushWebhooks` 时无效。显式 `false` 关闭。
 
 环境变量覆盖：`ANYPLANE_PORT`、`ANYPLANE_HOST`、`ANYPLANE_TOKEN`、`CLAUDE_CONFIG_DIR`。
+
+## 审批规则引擎（approvalRules）
+
+介于「每条都问人」与「全部 bypass」之间的第三档：按规则分流，命中的自动裁决，未命中的照旧问你。
+
+```json
+{
+  "approvalRules": [
+    { "match": { "tool": "Bash", "command": "^(git status|git diff|git log|bun test)" }, "action": "allow", "note": "只读命令" },
+    { "match": { "tool": "Write|Edit", "path": "**/*.test.ts" }, "action": "allow" },
+    { "match": { "tool": "WebFetch", "domain": "*.anthropic.com" }, "action": "allow" },
+    { "match": { "tool": "Bash", "command": "^rm -rf" }, "action": "deny", "note": "递归删除一律拦" }
+  ]
+}
+```
+
+- **按序匹配，首条命中生效**；全部未命中走人工审批（兜底语义不变）。
+- 匹配字段（同一规则内多个字段为 AND）：
+  - `tool`：工具名，`|` 分隔多值（如 `"Write|Edit"`）。
+  - `command`：正则，对 Bash 的 `input.command` 匹配。
+  - `path`：glob，对 `input.file_path` 匹配。两端锚定；`**/` 跨零或多层目录，`*` 不跨目录；大小写不敏感、`\` 视为 `/`（Windows 路径可直接写）。
+  - `domain`：域名后缀，对 `input.url` 的 hostname 匹配。`*.example.com` 涵盖多级子域与裸域；裸域名匹配自身与子域（`github.com` 不会误中 `notgithub.com`）。
+- `action`：`allow` 直接放行（input 原样透传，与人工点「允许」同形）；`deny` 直接拒绝，CLI 收到的拒绝理由含 `note`。
+- **坏规则启动即报错**（无效正则 / 空 match / 非法 action 会指出文件与规则下标）——安全敏感配置不静默跳过。
+- 每次自动裁决都留痕：聊天流内灰底系统卡（⚡ 规则自动放行/拒绝：工具 摘要（规则））+ 服务端日志，审计可回溯。
+- 边界：规则只在服务端裁决，**不进推送能力 URL 路径**（一键审批链接永远由人触发）；改规则需重启服务端生效（P1 暂无热重载）。
 
 ## 运行数据目录
 

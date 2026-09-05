@@ -1,6 +1,7 @@
 # 规划：协议漂移预警自动化 + 审批规则引擎
 
-> 2026-09-05 立。状态：**待确认**（确认后动手）。
+> 2026-09-05 立。状态：**第一部分（漂移预警）已完成**（2026-09-05，首战即捕获 codex 0.149.0 真实漂移）；
+> **第二部分 P1（规则引擎）已完成**（2026-09-06）。P2/P3 待排期。
 > 前置侦察：docs/tier2-recon.md 第 2 节的三件设想（claude 快照 diff、codex generate-ts diff、回放 harness）经核实**已全部落地**，本规划的增量是「自动化 + 告警」，不是从零建设。
 
 ## 一、协议漂移预警自动化
@@ -77,10 +78,12 @@ CLI 升级后**无需人记得**，协议漂移在引入风险前被发现并送
 - 未知字段/坏正则：启动即报错（fail fast），不静默吞掉。
 - codex 侧 input 已重塑为 `{command, cwd, reason}` 等形状，同一套规则天然兼容（`command` 字段同名）。
 
-**2. 介入点**：`onApprovalRequest`（index.ts:518）在 broadcast/publishInbox **之前**先过规则：
+**2. 介入点**（P1 已实现，比原计划更好的一处覆盖）：`sessionCallbacks().onApprovalRequest`——两个后端共用的回调工厂，一处介入即覆盖 claude 与 codex，无需分别埋点。在 broadcast/publishInbox **之前**先过规则：
 - `allow` → 直接 `sendApproval(allow)`，**不入 pending**；广播一条 `approval_auto` 事件（规则名+摘要）让 UI 在会话流里落一张"已由规则放行"卡（可审计，可一键停用该规则）。
 - `deny` → 同上对称处理。
 - `ask`/未命中 → 走现有全流程（pending + 广播 + 推送），不变。
+
+P1 落地偏差记录：留痕卡复用系统消息渲染（灰底小字，语义一致，未做独立组件）；「一键停用该规则」按钮未做（留给 P3 与命中率统计联动）。
 
 **3. 会话级「总是允许」（allow_session）**
 - 前端审批卡加第三按钮「本会话总是允许」→ 决策带 `updatedPermissions`（claude: destination session 的 permission suggestion；codex: 已有后门映射 acceptForSession）。
@@ -104,11 +107,12 @@ CLI 升级后**无需人记得**，协议漂移在引入风险前被发现并送
 | P2 | allow_session 决策扩展（双端）+ 审批卡第三按钮 | P1 |
 | P3 | 规则命中率统计（哪条规则最常被命中/哪些审批仍在烦你→建议新规则） | P1 运行数据 |
 
-### 验收
-- 配置 `git status` allow 规则后触发该命令审批：UI 出现"已自动放行"卡、无推送、agent 无停顿继续。
-- 配置 `rm -rf` deny 规则：审批卡出现即拒绝、agent 收到拒绝原因、UI 标红显示规则原文。
-- 坏正则启动报错指到具体行；热改配置无需重启即生效。
-- e2e-approval.ts 全量回归通过（原有人工链路零变化）。
+### 验收（P1 已全部实测通过）
+
+- ✅ 配置 path allow 规则后触发 Write 审批：UI 出现"已自动放行"卡、无推送、agent 无停顿继续（文件真实落盘）。
+- ✅ 配置 path deny 规则：无审批卡、agent 收到含规则备注的拒绝原因（文件未落盘）、UI 留痕。
+- ✅ 坏正则启动报错指到具体规则下标与文件；**热重载未做**（P1 重启生效，红线中的热重载需求挪至 P2/P3 评估）。
+- ✅ e2e-approval.ts 全量回归通过（原有人工链路零变化）；`bun test` 322 过（含 27 条规则引擎单测）。
 
 ---
 

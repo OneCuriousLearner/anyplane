@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { parseApprovalRules, type ApprovalRule } from './approvalRules'
 
 /**
  * webhook 推送通道（ntfy / Bark / Server酱 Turbo），与 Web Push 订阅并列 fan-out。
@@ -62,6 +63,13 @@ export interface ServerConfig {
    * 仅在配置了 pushWebhooks 时有效；显式 false 关闭。
    */
   driftAlert?: boolean
+  /**
+   * 审批规则引擎：按序匹配，首条命中生效，未命中走人工审批（默认兜底）。
+   * 匹配字段按工具分发：Bash → command 正则；Write/Edit/Read → file_path glob；
+   * WebFetch → url 域名后缀。坏规则（无效正则 / 空 match）启动即报错。
+   * 规则只做服务端裁决，不进推送能力 URL。详见 docs/configuration.md。
+   */
+  approvalRules?: ApprovalRule[]
 }
 
 const DEFAULTS: ServerConfig = {
@@ -85,11 +93,23 @@ export function loadAnyplaneConfigFile(): Record<string, unknown> {
   ]
   for (const p of candidates) {
     if (existsSync(p)) {
+      let raw: Record<string, unknown>
       try {
-        return JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>
+        raw = JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>
       } catch (e) {
         console.error(`[config] 解析 ${p} 失败:`, e)
+        continue
       }
+      // 审批规则是安全敏感配置：坏规则（无效正则/空 match）必须启动即失败并指明文件——
+      // 静默跳过会让用户误以为自动放行/拒绝已生效。
+      if (raw.approvalRules !== undefined) {
+        try {
+          raw.approvalRules = parseApprovalRules(raw.approvalRules)
+        } catch (e) {
+          throw new Error(`${p}: ${(e as Error).message}`)
+        }
+      }
+      return raw
     }
   }
   return {}

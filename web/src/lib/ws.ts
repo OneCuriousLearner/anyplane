@@ -8,6 +8,8 @@ export type ServerEvent =
   | { kind: 'status'; state: SessionState }
   | { kind: 'approval_request'; requestId: string; toolName: string; input: unknown }
   | { kind: 'approval_resolved'; requestId: string }
+  /** 审批规则引擎自动裁决的留痕事件（服务端已直接回复 CLI，此处只做 UI 审计卡） */
+  | { kind: 'approval_auto'; requestId: string; toolName: string; input: unknown; action: 'allow' | 'deny'; rule: string }
   | { kind: 'btw_pending'; question: string }
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
