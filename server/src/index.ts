@@ -38,6 +38,7 @@ import {
   type HandoffDetail,
 } from './handoff'
 import { errorMessage, escapeHtml, hasWindowsSocketFix } from './util'
+import { startupVersionProbe } from './driftGuard'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -1811,6 +1812,13 @@ if (!isLoopbackHost(config.host)) {
   } catch (e) {
     console.warn('[anyplane] 二维码生成失败（不影响服务）:', e)
   }
+}
+
+// 协议漂移预警：CLI 版本前进而未跑过对应检查时提醒（不阻塞启动）
+try {
+  startupVersionProbe()
+} catch (e) {
+  console.warn('[drift] 版本探测失败（不影响服务）:', e)
 }
 
 let shuttingDown = false

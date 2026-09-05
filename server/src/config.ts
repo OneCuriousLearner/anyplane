@@ -57,6 +57,11 @@ export interface ServerConfig {
   publicUrl?: string
   /** webhook 推送通道（见 PushWebhookConfig），与 Web Push 订阅同时接收 inbox 事件 */
   pushWebhooks?: PushWebhookConfig[]
+  /**
+   * 协议漂移告警：CLI 升级后协议检查发现漂移时，经 pushWebhooks 推送提醒（默认开）。
+   * 仅在配置了 pushWebhooks 时有效；显式 false 关闭。
+   */
+  driftAlert?: boolean
 }
 
 const DEFAULTS: ServerConfig = {

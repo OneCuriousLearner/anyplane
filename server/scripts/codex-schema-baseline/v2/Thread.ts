@@ -49,6 +49,10 @@ section: ThreadSection | null,
  */
 sectionEnteredAt: number | null,
 /**
+ * Canonical project assignment owned by app-server, if any.
+ */
+projectId: string | null,
+/**
  * Persisted thread history contract selected when this thread was created.
  */
 historyMode: ThreadHistoryMode,

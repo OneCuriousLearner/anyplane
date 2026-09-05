@@ -1,0 +1,43 @@
+name: Protocol drift
+
+on:
+  schedule:
+    # 每周一 02:17 UTC 跑一次（避开整点拥堵）
+    - cron: '17 2 * * 1'
+  workflow_dispatch:
+
+jobs:
+  codex-schema:
+    name: codex app-server schema drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      # codex CLI 提供 npm 分发（@openai/codex），装最新版跑 generate-ts
+      - run: npm install -g @openai/codex
+
+      - name: check drift
+        run: bun run server/scripts/check-codex-schema.ts
+
+      - name: drift detected → open issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `codex schema 漂移（${new Date().toISOString().slice(0, 10)}）`
+            const { data: existing } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "codex schema 漂移"`,
+            })
+            if (existing.items.length > 0) {
+              core.info('已有未关闭的漂移 issue，跳过重复创建')
+              return
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: 'CI 检测到 codex app-server schema 与基线漂移。运行 `bun run server/scripts/check-codex-schema.ts` 查看明细，评估后 `--update` 更新基线。',
+              labels: ['protocol-drift'],
+            })

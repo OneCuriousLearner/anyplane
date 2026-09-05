@@ -48,30 +48,43 @@ if (update || !existsSync(baselineDir)) {
     writeFileSync(p, content)
   }
   console.log(`基线已写入 ${baselineDir}（${now.size} 个类型文件）`)
+  const { markChecked } = await import('../src/driftGuard')
+  markChecked('codex')
   process.exit(0)
 }
 
 const baseline = collect(baselineDir)
 let changes = 0
+const changeSummary: string[] = []
 for (const [rel, content] of now) {
   const old = baseline.get(rel)
   if (old === undefined) {
     console.log(`⚠ 新增类型文件: ${rel}`)
     changes++
+    changeSummary.push(`新增 ${rel}`)
   } else if (old !== content) {
     const addedLines = content.split('\n').length - old.split('\n').length
     console.log(`⚠ 变更: ${rel} (${addedLines >= 0 ? '+' : ''}${addedLines} 行)`)
     changes++
+    changeSummary.push(`变更 ${rel}`)
   }
 }
 for (const rel of baseline.keys()) {
   if (!now.has(rel)) {
     console.log(`⚠ 移除类型文件: ${rel}`)
     changes++
+    changeSummary.push(`移除 ${rel}`)
   }
 }
 if (changes > 0) {
   console.log('\n发现 schema 漂移：评估后 bun run server/scripts/check-codex-schema.ts --update 更新基线')
+  const { alertDrift } = await import('../src/driftGuard')
+  await alertDrift(
+    'codex',
+    changes <= 6 ? changeSummary.join('；') : `${changes} 处变更（${changeSummary.slice(0, 4).join('；')} 等）`,
+  )
   process.exit(1)
 }
 console.log(`无漂移（${now.size} 个类型文件）`)
+const { markChecked } = await import('../src/driftGuard')
+markChecked('codex')

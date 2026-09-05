@@ -48,11 +48,14 @@ if (update || !existsSync(baselinePath)) {
   writeFileSync(baselinePath, JSON.stringify(current, null, 2))
   console.log(`基线已写入 ${baselinePath}`)
   console.log(`control_subtypes=${controlSubtypes.length} stdout_types=${stdoutTypes.length} system_subtypes=${systemSubtypes.length}`)
+  const { markChecked } = await import('../src/driftGuard')
+  markChecked('claude')
   process.exit(0)
 }
 
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')) as typeof current
 let drift = 0
+const driftSummary: string[] = []
 for (const key of ['controlSubtypes', 'stdoutTypes', 'systemSubtypes'] as const) {
   const before = new Set(baseline[key])
   const now = new Set(current[key])
@@ -63,12 +66,18 @@ for (const key of ['controlSubtypes', 'stdoutTypes', 'systemSubtypes'] as const)
     continue
   }
   drift += added.length + removed.length
+  if (added.length) driftSummary.push(`${key} 新增 ${added.length} 项`)
+  if (removed.length) driftSummary.push(`${key} 移除 ${removed.length} 项`)
   console.log(`⚠ ${key}:`)
   if (added.length) console.log(`  新增: ${added.join(', ')}`)
   if (removed.length) console.log(`  移除: ${removed.join(', ')}`)
 }
 if (drift > 0) {
   console.log('\n发现漂移：评估新增项后 bun run server/scripts/check-claude-protocol.ts --update 更新基线')
+  const { alertDrift } = await import('../src/driftGuard')
+  await alertDrift('claude', driftSummary.join('；'))
   process.exit(1)
 }
 console.log('无漂移')
+const { markChecked } = await import('../src/driftGuard')
+markChecked('claude')
