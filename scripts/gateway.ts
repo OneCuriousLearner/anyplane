@@ -322,7 +322,7 @@ const wsHandler: import('bun').WebSocketHandler<WSProxyData> = {
   },
 }
 
-type PipeData = { peer?: import('bun').Socket; buf: Uint8Array; phase: 'peek' | 'connecting' | 'proxy' }
+type PipeData = { peer?: import('bun').Socket<PipeData>; buf: Uint8Array; phase: 'peek' | 'connecting' | 'proxy' }
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
   const o = new Uint8Array(a.length + b.length)
@@ -554,13 +554,18 @@ const internalTls = Bun.serve<WSProxyData>({
   websocket: wsHandler,
 })
 
+// Bun 类型里 Server.port 可空；port:0 由系统分配，取不到等于启动失败
+const internalHttpPort = internalHttp.port
+const internalTlsPort = internalTls.port
+if (!internalHttpPort || !internalTlsPort) throw new Error('[gateway] 内部代理端口分配失败')
+
 if (cfg.replace) await replaceStaleGateway([cfg.httpPort, cfg.httpsPort])
 
-startMux(cfg.httpPort, cfg, internalHttp.port, internalTls.port)
-startMux(cfg.httpsPort, cfg, internalHttp.port, internalTls.port)
+startMux(cfg.httpPort, cfg, internalHttpPort, internalTlsPort)
+startMux(cfg.httpsPort, cfg, internalHttpPort, internalTlsPort)
 
 console.log(`[gateway] 对外 :${cfg.httpPort} (HTTP/TLS/SSH 分流) 与 :${cfg.httpsPort} (同上)`)
-console.log(`[gateway] 内部 HTTP :${internalHttp.port}  TLS :${internalTls.port}`)
+console.log(`[gateway] 内部 HTTP :${internalHttpPort}  TLS :${internalTlsPort}`)
 console.log(`[gateway] 生产 ${cfg.prodHost} → ${cfg.prodTarget}  (默认，Cookie 可切)`)
 console.log(`[gateway] 开发 ${cfg.devHost} → ${cfg.devTarget}  (域名永远开发)`)
 console.log(`[gateway] 切换  http://${cfg.prodHost}/?mode=dev  或  /?mode=prod  ；状态 /__gateway`)

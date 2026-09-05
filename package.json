@@ -51,6 +51,7 @@
     "docs:claude": "bun scripts/fetch-claude-docs.ts",
     "docs:codex": "bun scripts/fetch-codex-docs.ts",
     "test": "bun test",
+    "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build"
   },
   "workspaces": [
