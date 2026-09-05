@@ -6,7 +6,7 @@
 
 > Run your agents, on any plane.
 
-Claude Code / Codex 远程工作管理工具：在手机或桌面浏览器里，管理运行在本机/容器上的官方 Claude Code 与 Codex 会话。
+**让 agent 跑着任务，你去生活。它有事叫你，锁屏按一下就好。**
 
 **官网 [anyplane.run](https://anyplane.run)**（国内访问可试 [anyplane.cn](https://anyplane.cn)） · npm 包 [`anyplane`](https://www.npmjs.com/package/anyplane)
 
