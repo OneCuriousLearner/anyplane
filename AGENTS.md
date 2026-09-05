@@ -78,6 +78,7 @@ bun test web/            # 仅前端测试
 
 ### 前端（web/src）
 
+- 开发前端时不使用任何 emoji 以保持风格一致，统一使用图标库或自行绘制。
 - `pages/SessionList.tsx`（会话列表）+ `pages/Chat.tsx`（聊天主界面，大部分交互逻辑在这）；`App.tsx` 只是双栏布局。
 - 其他前端子系统索引：斜杠命令面板与拦截表（`Chat.tsx`）、推送订阅设置（`SessionList.tsx` + `lib/push.ts`）、推送深链 `#s=<key>`（`App.tsx`）、上下文环形与详情面板（`components/ContextRing.tsx`，输入行「添加图片」左侧，`state.context` 缺省即隐藏；70/90% 阈值变色对齐官方 statusline 示例）。
 - `lib/ws.ts` — WS 客户端（按 sessionKey 连接、自动重连），`ServerEvent` 联合类型即服务端广播的全部事件种类。

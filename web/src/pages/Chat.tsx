@@ -918,7 +918,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               (typeof inp?.url === 'string' && inp.url) ||
               ''
             pushSystem(
-              `⚡ 规则自动${ev.action === 'allow' ? '放行' : '拒绝'}：${ev.toolName}${detail ? ` ${detail.slice(0, 120)}` : ''}（${ev.rule}）`,
+              `规则自动${ev.action === 'allow' ? '放行' : '拒绝'}：${ev.toolName}${detail ? ` ${detail.slice(0, 120)}` : ''}（${ev.rule}）`,
             )
             break
           }
