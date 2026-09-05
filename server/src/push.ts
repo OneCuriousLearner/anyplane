@@ -40,10 +40,10 @@ export interface PushPayload {
   type: 'approval' | 'done' | 'error'
   title: string
   body: string
-  /** 会话 key（深链用） */
-  key: string
+  /** 会话 key（深链用）；会话无关的事件（如协议漂移预警）省略，落点降为 App 根 */
+  key?: string
   /** 会话显示名（项目目录名） */
-  session: string
+  session?: string
   requestId?: string
   /** 直接审批能力 URL（相对路径，SW 同源 fetch），以 s= 结尾由 pushToAll 按订阅补全 */
   actions?: { allow: string; deny: string }
@@ -378,14 +378,15 @@ function absoluteUrl(path: string): string | undefined {
   return base ? base + path : undefined
 }
 
-/** 会话深链（App.tsx 的 #s=<key> 格式） */
-function sessionLink(key: string): string | undefined {
+/** 会话深链（App.tsx 的 #s=<key> 格式）；无 key（会话无关事件）时不给深链 */
+function sessionLink(key: string | undefined): string | undefined {
+  if (!key) return undefined
   return absoluteUrl(`/#s=${encodeURIComponent(key)}`)
 }
 
 /** webhook 审批确认页（Bark/Server酱 的链接落点；GET 只渲染，POST 才执行） */
 function approvalPageLink(wh: PushWebhookConfig, payload: PushPayload): string | undefined {
-  if (!payload.requestId) return undefined
+  if (!payload.requestId || !payload.key) return undefined
   return absoluteUrl(
     `/api/approval-page?k=${encodeURIComponent(payload.key)}&r=${encodeURIComponent(payload.requestId)}&s=${webhookSecret(wh)}`,
   )
