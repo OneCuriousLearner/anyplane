@@ -58,6 +58,23 @@ README 只保留最常用的几项，这里是完整配置说明。
 - 每次自动裁决都留痕：聊天流内灰底系统卡（规则自动放行/拒绝：工具 摘要（规则））+ 服务端日志，审计可回溯。
 - 边界：规则只在服务端裁决，**不进推送能力 URL 路径**（一键审批链接永远由人触发）；改规则需重启服务端生效（P1 暂无热重载）。
 
+### 与两家原生审批系统的关系
+
+approvalRules **不是原生审批系统的替代品**，而是它们之后的最后一道分流。两家官方都有自己的规则能力：
+
+- **Claude**：`settings.json` 的 `permissions.allow/ask/deny`（如 `Bash(git status *)`、`WebFetch(domain:...)`，可分用户级/项目级/本地级），以及 PreToolUse hooks（挂任意程序，可放行/拒绝甚至改写输入——能力上是 approvalRules 的超集）。
+- **Codex**：execpolicy（preview，Starlark 写 `prefix_rule`，token 级前缀匹配 + `justification` 理由 + 载入自校验）、granular `approval_policy` 分品类控制、network_proxy 域名规则。
+
+**执行顺序**：原生层在 CLI 内部先判，AnyPlane 只接管原生未裁决、最终上报为审批请求的部分。所以配了原生规则的用户，那些请求根本不会出现在 approvalRules 面前。
+
+既然如此为什么还需要它？三点原生方案给不了的：
+
+1. **一份配置管两家**：原生方案要同时维护 claude 的 settings.json/hooks 与 codex 的 Starlark execpolicy，两套语法语义对不齐；approvalRules 是双后端统一的一层。
+2. **决策级留痕**：原生规则静默生效，transcript 里只有工具调用本身。`approval_auto` 系统卡记录的是"哪条规则替你点了头"——远程场景下事后翻手机审计"离开期间 agent 自动做了什么"，靠的就是它。
+3. **作用域叠加**：原生配置对所有 CLI 使用生效（包括你在终端里用）；approvalRules 只罩 AnyPlane 驱动的会话。"坐在终端前"和"在外面看手机"可以是两套松紧度。
+
+怎么选：只用单一后端且已精心维护原生配置 → 继续用原生，approvalRules 留空或仅作审计层；双后端、或不想碰两套原生语法 → 一份 approvalRules 兜底。
+
 ## 运行数据目录
 
 一切 AnyPlane 自产数据都在 `~/.anyplane/`：图片附件（`uploads/`）、会话回收站（`trash/`）、接力血缘（`lineage.json`）、Codex 思考侧车（`reasoning/`）、推送密钥与订阅（`vapid.json` / `push-subscriptions.json`）。**不自动清理，由用户自行管理。**
