@@ -5,6 +5,7 @@
 import type { CliMessage } from '../claude/protocol'
 import type { HistoryBlock, HistoryMessage } from '../types'
 import { resolveUpload } from '../../uploads'
+import { log } from '../../log'
 
 // ---------- 通知 → CliMessage（live 流） ----------
 
@@ -42,6 +43,18 @@ interface ThreadItem {
   /** subAgentActivity：子代理线程 id 与角色路径 */
   agentThreadId?: string
   agentPath?: string
+  /** hookPrompt：hook 注入的上下文片段 */
+  fragments?: Array<{ text?: string; hookRunId?: string }>
+  /** imageView：被查看图片的路径 */
+  path?: string
+  /** dynamicToolCall：工具命名空间与多模态输出、成功标记 */
+  namespace?: string | null
+  contentItems?: Array<{ type?: string; text?: string; imageUrl?: string; audioUrl?: string }> | null
+  success?: boolean | null
+  /** imageGeneration：修订后提示词、落盘路径、失败详情 */
+  revisedPrompt?: string | null
+  savedPath?: string
+  failure?: unknown
 }
 
 /** message_start + content_block_start 开头流（agentMessage 文本 / reasoning 思考共用） */
@@ -74,7 +87,12 @@ export class ThreadTranslator {
       case 'commandExecution':
       case 'fileChange':
       case 'mcpToolCall':
-      case 'webSearch': {
+      case 'webSearch':
+      // 以下三种同样是"调用 → 结果"形态，走同一张工具卡（官方 ThreadItem union 成员，
+      // 此前落进 default 被静默丢弃：用了动态工具/生图的会话在抄本里凭空缺一块）
+      case 'dynamicToolCall':
+      case 'imageGeneration':
+      case 'sleep': {
         const toolUse = this.toolUseBlock(item)
         return [
           {
@@ -109,10 +127,25 @@ export class ThreadTranslator {
       case 'commandExecution':
       case 'fileChange':
       case 'mcpToolCall':
-      case 'webSearch': {
+      case 'webSearch':
+      case 'dynamicToolCall':
+      case 'imageGeneration':
+      case 'sleep': {
         const r = toolResultFromItem(item)
         return [toolResultMsg(item.id, r.text, r.isError)]
       }
+      // hook 注入的上下文片段：不是模型产出也不是工具调用，作系统提示留痕
+      //（否则用户看到模型行为突变却找不到原因）
+      case 'hookPrompt': {
+        const text = (item.fragments ?? [])
+          .map((f) => f.text ?? '')
+          .filter(Boolean)
+          .join('\n')
+        return text ? [systemText(`◎ hook 注入上下文\n${text.slice(0, 1000)}`)] : []
+      }
+      // 查看图片：路径即全部信息，不值一张工具卡
+      case 'imageView':
+        return [systemText(`◎ 查看图片：${item.path ?? '?'}`)]
       case 'plan':
         return [
           {
@@ -177,7 +210,20 @@ export class ThreadTranslator {
         return { type: 'tool_use', id: item.id, name: 'WebSearch', input: { query: item.query ?? '' } }
       case 'collabAgentToolCall':
         return { type: 'tool_use', id: item.id, name: 'Collab', input: { tool: item.tool ?? '?', prompt: item.prompt ?? '' } }
+      case 'dynamicToolCall':
+        return {
+          type: 'tool_use',
+          id: item.id,
+          name: item.namespace ? `${item.namespace}:${item.tool ?? '?'}` : (item.tool ?? 'DynamicTool'),
+          input: item.arguments,
+        }
+      case 'imageGeneration':
+        return { type: 'tool_use', id: item.id, name: 'ImageGeneration', input: { prompt: item.revisedPrompt ?? '' } }
+      case 'sleep':
+        return { type: 'tool_use', id: item.id, name: 'Sleep', input: { durationMs: item.durationMs ?? 0 } }
       default:
+        // 未知 type 仍出卡（宽松解析原则：透传胜过丢弃），但留痕以便发现协议新增项
+        log.warn(`[codex] 未识别的 ThreadItem 类型，按通用工具卡透传`, { itemType: item.type ?? '(缺失)' })
         return { type: 'tool_use', id: item.id, name: item.type ?? '?', input: {} }
     }
   }
@@ -212,6 +258,23 @@ function toolResultFromItem(item: ThreadItem): { text: string; isError: boolean 
       const isError = item.status === 'failed' || !!item.error
       return { text: item.error ? JSON.stringify(item.error) : stringifyResult(item.result), isError }
     }
+    case 'dynamicToolCall': {
+      // contentItems 是多模态数组（inputText/inputImage/inputAudio）：取文本，其余标注类型
+      const text = (item.contentItems ?? [])
+        .map((c) =>
+          c?.type === 'inputText' ? (c.text ?? '') : c?.type === 'inputImage' ? '（图片）' : c?.type === 'inputAudio' ? '（音频）' : '',
+        )
+        .filter(Boolean)
+        .join('\n')
+      return { text: text || `（${item.status ?? '完成'}）`, isError: item.status === 'failed' || item.success === false }
+    }
+    case 'imageGeneration': {
+      const failed = item.status === 'failed' || !!item.failure
+      if (failed) return { text: stringifyResult(item.failure ?? '生成失败'), isError: true }
+      return { text: item.savedPath ? `已保存：${item.savedPath}` : stringifyResult(item.result ?? ''), isError: false }
+    }
+    case 'sleep':
+      return { text: `等待 ${Math.round((item.durationMs ?? 0) / 1000)}s`, isError: false }
     default: // webSearch 等：结果即正文，失败态不由 item.status 表达
       return { text: stringifyResult(item.result ?? item.query ?? ''), isError: false }
   }
@@ -435,11 +498,48 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
       case 'webSearch':
         pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'WebSearch', input: { query: item.query ?? '' } }, item)
         break
+      // 与 live 侧（itemStarted/itemCompleted）保持同形：否则刷新页面这些卡会凭空消失，
+      // 又变成"同一份转录经不同入口长得不一样"
+      case 'dynamicToolCall':
+        pushToolPair(
+          out,
+          uuid,
+          {
+            kind: 'tool_use',
+            id: item.id,
+            name: item.namespace ? `${item.namespace}:${item.tool ?? '?'}` : (item.tool ?? 'DynamicTool'),
+            input: item.arguments,
+          },
+          item,
+        )
+        break
+      case 'imageGeneration':
+        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'ImageGeneration', input: { prompt: item.revisedPrompt ?? '' } }, item)
+        break
+      case 'sleep':
+        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'Sleep', input: { durationMs: item.durationMs ?? 0 } }, item)
+        break
+      case 'hookPrompt': {
+        const text = (item.fragments ?? [])
+          .map((f) => f.text ?? '')
+          .filter(Boolean)
+          .join('\n')
+        if (text) out.push({ uuid, role: 'system', blocks: [{ kind: 'text', text: `◎ hook 注入上下文\n${text.slice(0, 1000)}` }] })
+        break
+      }
+      case 'imageView':
+        out.push({ uuid, role: 'system', blocks: [{ kind: 'text', text: `◎ 查看图片：${item.path ?? '?'}` }] })
+        break
       case 'contextCompaction':
         out.push({ uuid, role: 'system', subtype: 'compact_boundary', blocks: [] })
         break
       default:
-        break // collabToolCall/imageGeneration/imageView/sleep/dynamicToolCall 等暂不渲染
+        // collabAgentToolCall/subAgentActivity 走侧栏桶，主线不渲染（有意为之）；
+        // 其余未知类型留痕，便于发现协议新增项
+        if (item.type && item.type !== 'collabAgentToolCall' && item.type !== 'subAgentActivity') {
+          log.warn('[codex] 历史里出现未识别的 ThreadItem 类型，已跳过', { itemType: item.type })
+        }
+        break
     }
   }
   return out

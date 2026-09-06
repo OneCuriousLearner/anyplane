@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { config } from './config'
 import { pushWebhooksToAll } from './push'
+import { log } from './log'
 
 const STATE_PATH = join(homedir(), '.anyplane', 'protocol-checks.json')
 
@@ -32,7 +33,7 @@ function loadState(): DriftState {
       return JSON.parse(readFileSync(STATE_PATH, 'utf8')) as DriftState
     }
   } catch (e) {
-    console.warn(`[drift] 状态文件解析失败（当空处理）:`, e)
+    log.warn(`[drift] 状态文件解析失败（当空处理）:`, e)
   }
   return { checked: {} }
 }
@@ -42,7 +43,7 @@ function saveState(s: DriftState): void {
     mkdirSync(join(homedir(), '.anyplane'), { recursive: true })
     writeFileSync(STATE_PATH, JSON.stringify(s, null, 2))
   } catch (e) {
-    console.warn(`[drift] 状态写入失败:`, e)
+    log.warn(`[drift] 状态写入失败:`, e)
   }
 }
 
@@ -78,7 +79,7 @@ export function startupVersionProbe(): void {
     if (state.checked[cli] === v) continue
     const script =
       cli === 'codex' ? 'server/scripts/check-codex-schema.ts' : 'server/scripts/check-claude-protocol.ts'
-    console.warn(
+    log.warn(
       `[drift] 检测到 ${cli} 版本为「${v}」，尚未通过协议漂移检查。\n` +
         `        建议尽快执行：bun run ${script}\n` +
         `        （检查通过后本提醒自动消失）`,
@@ -97,7 +98,7 @@ export function markChecked(cli: 'claude' | 'codex'): void {
 
 /** 漂移检出时调用：控制台 +（配置 webhook 时）手机告警。同一版本只告警一次。 */
 export async function alertDrift(cli: 'claude' | 'codex', summary: string): Promise<void> {
-  console.error(`[drift] ⚠ ${cli} 协议漂移：${summary}`)
+  log.error(`[drift] ⚠ ${cli} 协议漂移：${summary}`)
   if (config.driftAlert === false) return
   if (!config.pushWebhooks?.length) return
   const v = cliVersionOf(cli) ?? 'unknown'
@@ -112,6 +113,6 @@ export async function alertDrift(cli: 'claude' | 'codex', summary: string): Prom
       body: `${cli} ${v}：${summary}。请运行检查脚本评估后更新基线。`,
     })
   } catch (e) {
-    console.warn('[drift] webhook 告警投递失败:', e)
+    log.warn('[drift] webhook 告警投递失败:', e)
   }
 }

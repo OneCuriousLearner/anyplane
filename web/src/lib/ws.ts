@@ -4,7 +4,8 @@ import { ReconnectingSocket, wsUrl } from './reconnectingSocket'
 import type { HistoryMessage } from './api'
 
 export type ServerEvent =
-  | { kind: 'cli'; msg: CliMsg }
+  /** seq：服务端为可落盘 cli 分配的单调序号（stream_event 不占号，见 SessionSocket） */
+  | { kind: 'cli'; msg: CliMsg; seq?: number }
   | { kind: 'status'; state: SessionState }
   | { kind: 'approval_request'; requestId: string; toolName: string; input: unknown }
   | { kind: 'approval_resolved'; requestId: string }
@@ -27,6 +28,8 @@ export type ServerEvent =
   | { kind: 'tail'; msg: HistoryMessage }
   /** 外部会话 transcript 被截断/重建（rewind、clear），客户端应重载历史并重新订阅 */
   | { kind: 'tail_reset' }
+  /** 重连补发有缺口：断线太久，服务端环形缓冲已挤掉起点，客户端需重载历史补全 */
+  | { kind: 'replay_gap'; fromSeq: number }
   /** /clear 等触发的对话重置：进程以新 sessionId 续跑，Hub 已重键——前端应导航到新会话页 */
   | { kind: 'moved'; targetKey: string; targetSessionId?: string; reason?: string }
   | { kind: 'error'; message: string }
@@ -102,7 +105,8 @@ export interface SessionState {
 }
 
 export type ClientCommand =
-  | { kind: 'attach'; warm?: boolean; opts?: Record<string, unknown> }
+  /** fromSeq：断线前收到的最高 cli 序号，服务端据此补发这期间错过的事件 */
+  | { kind: 'attach'; warm?: boolean; opts?: Record<string, unknown>; fromSeq?: number }
   | { kind: 'tail_subscribe'; from?: number }
   | {
       kind: 'user'
@@ -121,6 +125,9 @@ export type ClientCommand =
 
 export class SessionSocket extends ReconnectingSocket {
   private queue: ClientCommand[] = []
+  /** 已收到的最高 cli 序号（高水位）。重连时随 attach 上报，服务端据此补发断线期间的事件。
+   *  跨重连保留——这正是它的意义所在（对齐官方 bridge 的 lastTransportSequenceNum）。 */
+  private lastSeq = 0
 
   constructor(
     public key: string,
@@ -135,8 +142,21 @@ export class SessionSocket extends ReconnectingSocket {
     return wsUrl(`/ws/sessions/${encodeURIComponent(this.key)}`)
   }
 
+  /** 重连 attach 时上报的补发起点；0 表示尚未收过可落盘 cli，服务端按环从头补 */
+  get replayFrom(): number {
+    return this.lastSeq
+  }
+
+  /** 是否为本条 socket 的第二次及以后成功 open */
+  get reconnecting(): boolean {
+    return this.isReconnect
+  }
+
   protected onMessage(data: unknown): void {
-    this.onEvent(data as ServerEvent)
+    const ev = data as ServerEvent
+    // 序号单调推进：补发内容与实时流可能交错，取 max 而非直接赋值
+    if (ev?.kind === 'cli' && typeof ev.seq === 'number' && ev.seq > this.lastSeq) this.lastSeq = ev.seq
+    this.onEvent(ev)
   }
 
   protected onOpenChange(open: boolean): void {

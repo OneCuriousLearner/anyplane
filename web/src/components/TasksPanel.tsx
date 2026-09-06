@@ -12,9 +12,16 @@
 // 优先用水合下发的 parentToolUseId（服务端 toolUseParents 推导），缺省时渲染期
 // 从各桶转录里工具块的归属反推——嵌套的 Agent tool_use 出现在父任务转录中。
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Transcript } from './Transcript'
-import { fmtTokens, type ChatMsg } from '../lib/blocks'
+import { buildTranscriptRows, fmtTokens, type ChatMsg } from '../lib/blocks'
+
+/** 桶内转录：主抄本的 rows 由 Chat 持有（扩窗判定要真实行数），侧栏桶量小、
+ *  自己摊平即可，不必把 rows 一路透传下来 */
+const TaskTranscript = memo(function TaskTranscript(props: { messages: ChatMsg[] }) {
+  const rows = useMemo(() => buildTranscriptRows(props.messages), [props.messages])
+  return <Transcript rows={rows} />
+})
 
 export interface TaskFeed {
   /** 主抄本中发起该任务的 tool_use 的 id（与主线工具卡同源） */
@@ -148,7 +155,7 @@ function TaskCard(props: { feed: TaskFeed; depth: number; onStop?: (taskId: stri
               {feed.status === 'running' ? '等待转录…' : '无转录记录'}
             </div>
           )}
-          <Transcript messages={feed.messages} />
+          <TaskTranscript messages={feed.messages} />
         </div>
       )}
 

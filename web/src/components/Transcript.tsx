@@ -1,20 +1,21 @@
-import { memo, useMemo } from 'react'
-import { buildTranscriptRows, type ChatMsg, type DraftBlockLike } from '../lib/blocks'
+import { memo } from 'react'
+import type { DraftBlockLike, TranscriptRow } from '../lib/blocks'
 import { ActivityGroup } from './ActivityGroup'
 import { ImageAttachment } from './ImageAttachment'
 import { Markdown } from './Markdown'
 import { MessageView } from './MessageView'
 
 /** 对话抄本：跨消息合并相邻思考/工具，流式草稿并进同一组。
- *  memo + useMemo：messages/draft 引用不变（输入击键、status 广播）时整棵树跳过重建。 */
+ *  memo + useMemo：messages/draft 引用不变（输入击键、status 广播）时整棵树跳过重建。
+ *
+ *  长会话渲染优化（窗口化 / content-visibility）见 ROADMAP：两者都试过并回退，
+ *  根因都是与「打开会话即滚到最新」的交互，记在那里避免重复踩。 */
 export const Transcript = memo(function Transcript(props: {
-  messages: ChatMsg[]
+  /** 已摊平的渲染行，由 Chat 层 useMemo 持有（Transcript 保持纯展示） */
+  rows: readonly TranscriptRow[]
   draft?: { blocks: readonly DraftBlockLike[] } | null
 }) {
-  const rows = useMemo(
-    () => buildTranscriptRows(props.messages, props.draft),
-    [props.messages, props.draft],
-  )
+  const rows = props.rows
   const showCursor =
     Boolean(props.draft?.blocks.length) && props.draft!.blocks.every((b) => b.kind !== 'text')
 
@@ -25,13 +26,7 @@ export const Transcript = memo(function Transcript(props: {
           return <MessageView key={row.msg.id} msg={row.msg} compact={row.compact} />
         }
         if (row.type === 'activity') {
-          return (
-            <ActivityGroup
-              key={`act-${i}`}
-              items={row.items}
-              compact={row.compact}
-            />
-          )
+          return <ActivityGroup key={`act-${i}`} items={row.items} compact={row.compact} />
         }
         return (
           <div

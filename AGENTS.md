@@ -1,6 +1,7 @@
 # AGENTS.md
 
 AGENTS.md 只放读代码读不出的东西——设计哲学与决策原因；代码现状速查一律不写（保质期短且必然腐烂）。
+在实测踩坑之前，先穷尽官方的协议正本，或者基于 Terminal 真实执行 `claude` / `codex` 命令得到的结果来推断。
 
 ## 项目定位
 
@@ -60,7 +61,8 @@ bun test web/            # 仅前端测试
 - **运行数据目录（约定）**：一切 AnyPlane 自产的运行数据都放 `~/.anyplane/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）、`vapid.json` + `push-subscriptions.json`（推送密钥与订阅注册表）。**这些数据目录不做自动清理**，由用户自行管理。
 - **`push.ts`** — Web Push 分发：inbox 事件（approval/done/error）→ 自实现 VAPID（RFC 8292）+ aes128gcm 载荷（RFC 8291/8188，不依赖 web-push 库——其 node:https 发送路径假定 TLS）。审批推送携带**能力 URL**（`/api/approval-action?k&r&d&s=<per-subscription secret>`），SW 通知按钮可直接审批不打开页面；该端点绕开 authToken（秘密只经加密推送投递，且仅对 pending 中的 requestId 有效）。死订阅（404/410）自动摘除。**订阅 endpoint 白名单**（防注册 SSRF/通知窃听——inbox 事件扇出给全部订阅）：缺省主流推送服务（FCM/Mozilla/Apple/WNS）+ 回环 mock；自托管推送在配置的 `pushAllowHosts` 追加域名（`['*']` = 任意 https）；投递不跟随重定向。
   **webhook 通道**（ntfy/Bark/Server酱，配置 `pushWebhooks` + `publicUrl`）：与订阅并列 fan-out，配置即信任（无注册面无白名单），渠道方可读通知全文（非端到端加密）。能力密钥 = HMAC(vapid 私钥, 渠道标识) 派生不落状态；直接审批分级——ntfy http action 真一键 POST，Bark/Server酱 落 `GET /api/approval-page` 确认页（GET 只渲染，防预览抓取误触）。
-- **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（WS 客户端、待审批、启动偏好与 goal/重键等会话级状态），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
+- **`log.ts`** — 结构化日志：零第三方依赖，提供 `logger(scope)` 结构化接口与 `log.info/warn/error` 兼容入口（自动提取 `[scope]` 前缀为结构化字段）。支持 `ANYPLANE_LOG_LEVEL`（debug/info/warn/error）与 `ANYPLANE_LOG_FORMAT=json`，默认保持人眼可读文本。
+- **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（WS 客户端、待审批、启动偏好、下行 cli 事件 500 条环形缓冲 `cliRing` 与 `cliSeq`、以及 goal/重键等会话级状态），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
 - **认证**：`auth.ts`——配置 `authToken` 后 `/api` 与 `/ws` 一律校验（Bearer 或 `?token=`）；**绑非回环 host 必须配 token，否则拒绝启动**。静态前端壳不鉴权。**无 token 模式的两道跨源防护**（WS 无 SOP、text/plain 简单请求免 preflight，恶意网页可经浏览器打回环服务）：`Origin` 与 `Host` 须一致或同为回环（缺失放行=非浏览器客户端，`null` 拒绝=file:// 沙箱页）；非 GET `/api` 强制 `content-type: application/json`。配了 token 则两道检查不生效（token 即防线，行为与旧版一致）。
 - **审批规则引擎**：`approvalRules.ts`——`approvalRules` 配置数组按序首中，介入点在 `sessionCallbacks().onApprovalRequest`（双后端一处覆盖），命中即自动裁决不入 pending。**设计红线**：规则只在服务端裁决，绝不进入推送能力 URL 链路（一键审批永远是人触发）；坏规则启动 fail fast（静默跳过 = 用户误以为保护已生效）；每次自动裁决必须广播 `approval_auto` 留痕（UI 系统卡 + 服务端日志）。匹配字段口径与 `summarizeInput` 对齐，不另起一套。
 - **sessionKey 编码**：Claude 会话 `s|<slug>|<sessionId>`、新会话 `n|<encodeURIComponent(cwd)>`、分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息 spawn 时才 `--fork-session --resume`）；Codex 线程 `x|<threadId>`、新线程 `xn|<encodeURIComponent(cwd)>`。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）；Codex key 靠 `thread/read` 惰性解析 cwd。
@@ -69,9 +71,10 @@ bun test web/            # 仅前端测试
 - **后端抽象（backends/）**：`backends/types.ts` 定义两后端共享类型（`SessionSummary`/`HistoryMessage`/`SpawnOptions`/`SessionCallbacks` 等）；Hub 层直接 import 两个后端的模块，以 `isCodexKey` 分发，没有注册表中间层。**统一消息边界是 Claude stream-json 形状**——Codex 事件翻译为该形状，前端与 WS 协议不分叉。`ClaudeSession` 与 `CodexSession` 保持结构化同形（契约见 types.ts 末尾注释）。
   - `backends/claude/`：`processManager.ts`（CLI 子进程、NDJSON 行泵、busy 语义、空闲回收、Windows 进程树清理）、`discovery.ts`（会话发现）、`tailer.ts`（外部会话 transcript 跟踪）、`agents.ts`（`claude agents --json --all` daemon 视图 SWR 轮询——pid 文件优先、daemon 兜底，独有价值是 background agent 存活态；control.sock 逆向协议版本锁死，刻意不用）、`protocol.ts`（**宽松解析原则：未知字段/未知 type 一律透传**）。
   - `backends/codex/`：`rpc.ts`（JSON-RPC stdio 客户端，-32001 过载退避）、`runtime.ts`（**单 app-server 进程托管全部线程**，按 threadId 解复用；ephemeral fork 收集器）、`translate.ts`（ThreadItem → stream-json 翻译）、`backend.ts`。
+    **ThreadItem 覆盖以官方 union 为准**（`server/scripts/codex-schema-baseline/v2/ThreadItem.ts`，18 种）：live（`itemStarted`/`itemCompleted`）与历史（`itemsToHistory`）**必须同形**，否则刷新页面卡片凭空消失。`collabAgentToolCall`/`subAgentActivity` 有意只走侧栏桶不进主线；其余未知 type 一律 `log.warn` 留痕后透传/跳过，**不再静默丢弃**（曾丢 hookPrompt/dynamicToolCall/imageView/sleep/imageGeneration 五种，用了 hooks 或生图的会话抄本会凭空缺块）。
   - **busy 语义（重要）**：Claude 优先信任 `system/session_state_changed`；Codex 用 `thread/status/changed`（active/idle）+ 审批等待合成 requires_action。**running / requires_action 时绝不回收。**注意 **`system/init` 是每个 query turn 的首条流消息，不是 spawn 时发出**——纯控制查询（mcp_status 等）的会话在首个真实 turn 之前没有 init（模型/命令清单那刻才有）；initModel 入库即 `onStatusChange` 回放，前端在权威 idle 且不存在合法草稿时自清陈旧草稿（防服务端重启/断线后"生成中"永挂）。
-  - **上下文占用（环形 UI 数据源，重要）**：两后端同形 `contextUsage`（types.ts 契约），经 status 事件 `context` 字段下发。口径对齐官方 statusline：claude = 最后一条**主线** assistant 消息的 `message.usage`（input+cache，不含 output），**绝不能用 `result.usage` 的 input 侧——它是本 turn 各 API 调用的累计，多调用 turn 结束会虚增近翻倍**（result 只取 output_tokens：assistant 流式快照的 output 恒为 0）；codex = `thread/tokenUsage/updated` 的 `last.totalTokens`（`total` 是累计，两者别混）。窗口大小：claude 按模型启发式（`contextWindowOf`：`[1m]`→1M 否则 200k），**transcript 的 `message.model` 缺 `[1m]` 后缀**（实测 "k3" vs init 的 "k3[1m]"），故 init 时把 sessionId→model 持久化到 `~/.anyplane/session-models.json`（`sessionModels.ts`）供离线窗口判定；codex 用通知自带 `modelContextWindow`。水合两级：spawn/resume 时回扫 transcript/rollout 尾部（进程内）；**离线水合** `backend.hydratedContextOf`（attach/pushStatus 时无进程也直读 transcript，点开页面即有环形）——mtime 缓存，**列表端点严禁逐行调用**（N 行 × 文件读）。
-- **Codex 关键实现点**：审批 `requestApproval` → 统一审批卡（accept/acceptForSession/decline/cancel），`turn/start` 强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；权限模式近似映射 approvalPolicy+sandbox；**wire 枚举双轨**：`thread/start` 的 `sandbox` 是 kebab-case，`turn/start` 的 `sandboxPolicy` 是 camelCase（0.147.0 实测）；线程被其他进程持有时 resume 报 -32600（UI 显示"被占用"）；不 kill 线程进程，断开订阅后 app-server 30 分钟自动卸载。
+  - **上下文占用（环形 UI 数据源，重要）**：两后端同形 `contextUsage`（types.ts 契约），经 status 事件 `context` 字段下发。口径对齐官方 statusline：claude = 最后一条**主线** assistant 消息的 `message.usage`（input+cache，不含 output），**绝不能用 `result.usage` 的 input 侧——它是本 turn 各 API 调用的累计，多调用 turn 结束会虚增近翻倍**（result 只取 output_tokens：assistant 流式快照的 output 恒为 0）；codex = `thread/tokenUsage/updated` 的 `last.totalTokens`（`total` 是累计，两者别混）。窗口大小：claude **以官方 `get_context_usage` 控制请求的 `maxTokens` 为权威**——init 拿到 model 后，若该模型尚未习得则查一次，结果按 model 落 `~/.anyplane/context-windows.json`（`contextWindows.ts`）。**模型名不足以推断窗口**：旧启发式只认 `[1m]` 后缀（否则一律 200k），对 `k3-256k` 这类型号会把 256000 误判成 200000（浏览器实测环形从 15%/200.0k 纠正为 12%/256.0k）。启发式仅作首次见到某模型时的兜底，权威值一到即覆盖，并惠及离线水合（那里没有活进程可问）。窗口按 model 而非 sessionId 存：同模型窗口不变，见过一次即长期有效。`sessionModels.ts`（sessionId→model）仍需保留——离线水合要靠它反查模型名（**transcript 的 `message.model` 缺 `[1m]` 后缀**，实测 "k3" vs init 的 "k3[1m]"）。查询只为拿窗口，`usedTokens` 仍走每条 assistant `message.usage` 的快路径，不加每消息往返。codex 用通知自带 `modelContextWindow`。水合两级：spawn/resume 时回扫 transcript/rollout 尾部（进程内）；**离线水合** `backend.hydratedContextOf`（attach/pushStatus 时无进程也直读 transcript，点开页面即有环形）——mtime 缓存，**列表端点严禁逐行调用**（N 行 × 文件读）。
+- **Codex 关键实现点**：审批 `requestApproval` → 统一审批卡（accept/acceptForSession/decline/cancel），`turn/start` 强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；权限模式近似映射 approvalPolicy+sandbox；**wire 枚举双轨**：`thread/start` 的 `sandbox` 是 kebab-case，`turn/start` 的 `sandboxPolicy` 是 camelCase（0.147.0 实测）；线程被其他进程持有时 resume 报 -32600（UI 显示"被占用"）——writer lock 是跨进程文件锁（`$CODEX_HOME/thread-writer-locks/`），随线程卸载才释放；不 kill 线程进程，断开订阅后 app-server 在**无订阅且无活动满 `thread_unload_delay_secs` 后卸载，该默认值上游已从 30 分钟改为 60 秒**（codex 0.149 实测；`thread_unload_delay_secs = 1800` 可恢复旧行为）。卸载更快不影响体验：重新 attach 走 `thread/resume`，`hydrateContextUsage` 回扫 rollout 尾部 token_count 补回上下文（**`thread/resume` 不补发 `tokenUsage` 通知**，实测）。
 - **`handoff.ts`** — 接力编排：源会话自摘要（Claude 源在线时走 `side_question` 控制通道，离线才 spawn `--fork-session --resume --bare` 一次性问答 / Codex `thread/fork ephemeral:true`）→ 目标会话播种首条消息（简报 + 现场确认指令）→ 血缘写 `~/.anyplane/lineage.json`。进度事件推源 Hub。
 - **AI 会话标题**：首条真实 user 消息 × 首个 init 双条件齐备才触发 `generate_session_title`（`maybeGenerateTitle` 两路调用——懒 spawn 下首条消息常先于 init 到达，只挂一路会漏）；按 sessionId 去重，/clear 重键后自然再生成。CLI `persist:true` 自写 ai-title 进 transcript，discovery 标题链自动接住，**AnyPlane 侧不落任何标题状态**。
 - **`config.ts`** — 项目根目录 `anyplane.config.json`、`~/.anyplane/config.json`（均可选，但不允许放 `~/.config/`），`ANYPLANE_PORT` / `ANYPLANE_HOST` / `ANYPLANE_TOKEN` / `CLAUDE_CONFIG_DIR` 环境变量覆盖。
@@ -81,8 +84,9 @@ bun test web/            # 仅前端测试
 - 开发前端时不使用任何 emoji 以保持风格一致，统一使用图标库或自行绘制。
 - `pages/SessionList.tsx`（会话列表）+ `pages/Chat.tsx`（聊天主界面，大部分交互逻辑在这）；`App.tsx` 只是双栏布局。
 - 其他前端子系统索引：斜杠命令面板与拦截表（`Chat.tsx`）、推送订阅设置（`SessionList.tsx` + `lib/push.ts`）、推送深链 `#s=<key>`（`App.tsx`）、上下文环形与详情面板（`components/ContextRing.tsx`，输入行「添加图片」左侧，`state.context` 缺省即隐藏；70/90% 阈值变色对齐官方 statusline 示例）。
-- `lib/ws.ts` — WS 客户端（按 sessionKey 连接、自动重连），`ServerEvent` 联合类型即服务端广播的全部事件种类。
-- `lib/blocks.ts` — 消息块模型：**live 流与历史加载共用同一套块归并逻辑**。增量（stream_event delta）与 assistant 块快照按 `message.id`+块序号归并定稿，不重复渲染。tool_use/tool_result 按 id 配对成一张卡。
+- `lib/ws.ts` — WS 客户端（按 sessionKey 连接、自动重连）。每条下行 `cli` 事件带服务端分配的单调 `seq`，客户端跨重连维护 `lastSeq` 高水位并在 `attach` 时通过 `fromSeq` 触发单播补发（照搬官方 Bridge 序号游标模型）；断线太久环底被挤掉时服务端推送 `replay_gap` 引导前端重载历史。`ServerEvent` 联合类型即服务端广播的全部事件种类。
+- **`lib/ingest.ts` — 消息 ingest 归并唯一实现**：live 流、tail 实时追加、历史批量加载三路共用，彻底消灭行为分叉。tool_use ↔ tool_result 跨消息配对成卡；先到的结果全部进入 `pending` 乱序缓冲，待工具块落地时（`pushIngestMsg`/`indexToolBlocks`）补齐修复；真孤儿推迟到批次收尾或权威 idle 时浮现为提示。
+- `lib/blocks.ts` — 消息展示块模型与排版折叠：相邻思考/工具块收进 activity 组（`buildTranscriptRows`）、正文与图片打断分组；`Transcript` 保持纯展示。
 - 过滤规则：`<system-reminder>`/isMeta 不进主抄本，sidechain（子代理）消息不入主流；`compact_boundary` 渲染为分隔线。
 - 后台任务侧栏（`components/TasksPanel.tsx` + `Chat.tsx` 的桶归并）：与主线并行的任务全类型入栏——`task_type` 包括 local_agent（子代理）、local_bash（**CLI 2.1.x 会把耗时前台 Bash 自动后台化并发 task_started**，shell 卡由此而来；shell 无转录，只展示心跳/统计/终态摘要）等。桶的数据源有三——live 事件（task_started/progress/notification）、status 事件携带的服务端权威 `activeTasks` 水合（**task_started 是 live-only 不落盘**，中途接入的客户端只能靠它补建 running 桶，否则首绘即终态）、历史 `resp.subagents` 字段（**只接转录落盘但主线 tool_result 缺失的未完成 agent**——已完成的不建桶，否则老会话重进会复活一堆历史卡 30s 后齐消失，纯噪声；翻旧账走主线 Agent 工具卡）。**终态语义只有一种**：挂 `evictAfter` 宽限期（30s，镜像官方协调器面板 `PANEL_GRACE_MS`），1s 滴答驱逐、桶清空即收起侧栏，驱逐即永久（重进不再出现）。外部会话（tailer 路径）没有 task_notification，tail 尾到的主线 tool_result 是 running 桶唯一的终态信号，同样走这套驱逐。停止按钮在侧栏运行中卡片上（`stop_task`；早期输入区上方的芯片行已并入面板——大量并行时芯片会遮挡对话区）。面板默认只展示前 5 张卡（深度优先序），其余点「展开」。嵌套 agent（子代理再扇出）按父子缩进分组：血缘 = 水合下发的 `parentToolUseId`（服务端 `toolUseParents` 从侧链消息推导——嵌套的 Agent tool_use 挂在父任务转录里，且实测先于对应 task_started 到达），缺省时渲染期从各桶转录的工具块归属反推；`spawn_depth` 随 task_started 透传入桶。codex 侧由 translate.ts 把 `collabAgentToolCall`/`subAgentActivity` 合成同形状 task 事件，桶键统一为子线程 id；子代理转录不被父通知流转发（实测：运行中只见生命周期 item），前端经 `fetchCodexHistory(agentThreadId)` 轮询回填——运行中 8s 一次、终态收尾一次（uuid 去重，重复拉取无副作用）；collabAgentToolCall 同时出主线 Collab 工具卡（Begin 建卡、End 配对），否则 codex 会话主线看不到任何工具调用。
 
@@ -110,6 +114,16 @@ bun test web/            # 仅前端测试
 - 跨网段不自建公网穿透：三套免 VPS 配方（funnel/CF Tunnel/IPv6+DDNS）与安全红线见 `docs/public-access.md`。
 
 ## 文档
+
+**已知未覆盖面**：`side_question` 与 `generate_session_title` 是 CLI headless 的**私有 subtype**，
+官方 SDK 类型里没有（`PRINT_ONLY_SUBTYPES` 已登记）。**漂移检测覆盖不到它们**——上游改名或移除
+只会表现为运行时静默失效，回归防线只有 e2e（`e2e-handoff.ts` / `e2e-slash.ts`），升级 CLI 后务必跑。
+
+**协议正本优先于文档**：改协议相关代码前先查机器可读的正本，再查文档，最后才靠实测反推——
+`@anthropic-ai/claude-agent-sdk`（官方公开 npm 包）的 `sdk.d.ts` 是 claude stream-json 的类型正本
+（67 个 control subtype / 39 个顶层 type，`check-claude-protocol.ts` 即以它为漂移基线数据源）；
+`codex app-server generate-ts --experimental` 是 codex 的协议正本（`check-codex-schema.ts` 用它）。
+历史教训：上下文窗口曾靠模型名启发式反推，而官方 `get_context_usage` 一直存在且给权威 `maxTokens`。
 
 `docs/claude-code/` 是官方 Claude Code 文档的本地 Markdown 镜像（gitignore，不进仓库），**协议/CLI/SDK 相关改动的重要开发参考**。用 `bun run docs:claude` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `en/**/*.md`。
 

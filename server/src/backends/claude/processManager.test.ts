@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { config } from '../../config'
+import { rememberContextWindow, setContextWindowStoreForTest } from './contextWindows'
 import { ClaudeSession, contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
 import { setStoreFileForTest } from './sessionModels'
 
@@ -177,7 +178,7 @@ describe('ClaudeSession awaited control requests', () => {
   })
 })
 
-describe('contextWindowOf（官方 getContextWindowForModel 的 headless 近似）', () => {
+describe('contextWindowOf（权威习得值优先，启发式兜底）', () => {
   const envKey = 'CLAUDE_CODE_DISABLE_1M_CONTEXT'
   const saved = process.env[envKey]
   const restore = () => {
@@ -185,7 +186,14 @@ describe('contextWindowOf（官方 getContextWindowForModel 的 headless 近似�
     else process.env[envKey] = saved
   }
 
-  test('[1m] 后缀 → 1M（大小写不敏感），否则 200k', () => {
+  // 习得表默认落 ~/.anyplane/context-windows.json：重定向到临时文件，
+  // 否则本机真实习得的窗口会让启发式断言随环境漂移
+  beforeEach(() => {
+    setContextWindowStoreForTest(join(mkdtempSync(join(tmpdir(), 'anyplane-cw-')), 'context-windows.json'))
+  })
+  afterEach(() => setContextWindowStoreForTest(undefined))
+
+  test('未习得时回退启发式：[1m] 后缀 → 1M（大小写不敏感），否则 200k', () => {
     delete process.env[envKey]
     expect(contextWindowOf('k3[1m]')).toBe(1_000_000)
     expect(contextWindowOf('claude-sonnet-4-6[1M]')).toBe(1_000_000)
@@ -203,14 +211,52 @@ describe('contextWindowOf（官方 getContextWindowForModel 的 headless 近似�
     expect(contextWindowOf('k3[1m]')).toBe(1_000_000)
     restore()
   })
+
+  test('习得的权威值覆盖启发式——k3-256k 实测 256000，启发式会误判成 200000', () => {
+    delete process.env[envKey]
+    expect(contextWindowOf('k3-256k')).toBe(200_000) // 启发式：不含 [1m] → 200k（错）
+    rememberContextWindow('k3-256k', 256_000) // 官方 get_context_usage 的 maxTokens
+    expect(contextWindowOf('k3-256k')).toBe(256_000)
+    restore()
+  })
+
+  test('权威值也覆盖 [1m] 启发式，且非法值被拒绝', () => {
+    delete process.env[envKey]
+    rememberContextWindow('k3[1m]', 500_000)
+    expect(contextWindowOf('k3[1m]')).toBe(500_000)
+    rememberContextWindow('bad-model', 0)
+    rememberContextWindow('bad-model', Number.NaN)
+    expect(contextWindowOf('bad-model')).toBe(200_000) // 落回启发式
+    restore()
+  })
+
+  // 网关部署实测（Kimi）：CLAUDE_CODE_MAX_CONTEXT_TOKENS=256000 把 [1M] 型号压到 256k。
+  // 该 env 是 CLI 进程内状态，headless 协议看不见——模型名在两个方向上都推不出窗口，
+  // 这正是必须以 get_context_usage 为准的原因。虚高尤其危险：自动压缩阈值 223000（87%）
+  // 会被显示成 22%，环形 UI 的变色预警永远不触发。
+  test('[1M] 型号被 CLAUDE_CODE_MAX_CONTEXT_TOKENS 压窗：启发式虚高 3.9 倍，权威值纠正', () => {
+    delete process.env[envKey]
+    expect(contextWindowOf('k3[1M]')).toBe(1_000_000) // 启发式（错）
+    rememberContextWindow('k3[1M]', 256_000) // 官方 get_context_usage 实测值
+    expect(contextWindowOf('k3[1M]')).toBe(256_000)
+    restore()
+  })
 })
 
 describe('ClaudeSession contextUsage（官方 statusline current_usage 的 headless 等价物）', () => {
   // init 分支会持久化 sessionId→model：重定向到临时文件，避免污染真实 ~/.anyplane。
   // 必须在 beforeEach 里做（别的测试文件的清理会把全局 store 重置回默认路径）
   const modelsTmp = join(mkdtempSync(join(tmpdir(), 'anyplane-models-')), 'session-models.json')
-  beforeEach(() => setStoreFileForTest(modelsTmp))
-  afterEach(() => setStoreFileForTest(undefined))
+  const windowsTmp = join(mkdtempSync(join(tmpdir(), 'anyplane-cw2-')), 'context-windows.json')
+  beforeEach(() => {
+    setStoreFileForTest(modelsTmp)
+    // 窗口习得表同样隔离：本机真实习得值会让下面的启发式断言（200k/1M）随环境漂移
+    setContextWindowStoreForTest(windowsTmp)
+  })
+  afterEach(() => {
+    setStoreFileForTest(undefined)
+    setContextWindowStoreForTest(undefined)
+  })
   const makeSession = () => {
     let statusPushes = 0
     const session = new ClaudeSession('test-context-usage', { cwd: process.cwd() }, {
@@ -345,5 +391,93 @@ describe('extractUsageFromTranscriptTail（resume/fork 水合）', () => {
   test('找不到主线 usage 返回 undefined', () => {
     expect(extractUsageFromTranscriptTail('{"type":"user","message":{}}')).toBeUndefined()
     expect(extractUsageFromTranscriptTail('')).toBeUndefined()
+  })
+})
+
+describe('ClaudeSession learnContextWindow（换档竞态与失败重试）', () => {
+  const modelsTmp = join(mkdtempSync(join(tmpdir(), 'anyplane-models-')), 'session-models.json')
+  const windowsTmp = join(mkdtempSync(join(tmpdir(), 'anyplane-cw3-')), 'context-windows.json')
+  beforeEach(() => {
+    setStoreFileForTest(modelsTmp)
+    setContextWindowStoreForTest(windowsTmp)
+  })
+  afterEach(() => {
+    setStoreFileForTest(undefined)
+    setContextWindowStoreForTest(undefined)
+  })
+
+  const boot = () => {
+    const session = new ClaudeSession('test-learn-window', { cwd: process.cwd() }, {
+      onMessage: () => {},
+      onApprovalRequest: () => {},
+      onExit: () => {},
+      onStatusChange: () => {},
+    })
+    const ids: string[] = []
+    ;(session as unknown as { proc: unknown; write(message: { request_id?: string }): void }).proc = { pid: 1 }
+    ;(session as unknown as { write(message: { request_id?: string }): void }).write = (message) => {
+      if (message.request_id) ids.push(message.request_id)
+    }
+    const handleLine = (session as unknown as { handleLine(line: string): void }).handleLine.bind(session)
+    const seedUsage = () => {
+      handleLine(JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id: 'msg-u',
+          role: 'assistant',
+          content: [],
+          usage: { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 },
+        },
+      }))
+    }
+    const reply = (requestId: string, maxTokens: number, model: string) => {
+      handleLine(JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: requestId, response: { maxTokens, model } },
+      }))
+    }
+    return { session, handleLine, ids, seedUsage, reply }
+  }
+
+  test('换档后先到的旧档应答不覆盖新窗口', async () => {
+    const { session, handleLine, ids, seedUsage, reply } = boot()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'opus-model' }))
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'fable-model' }))
+    expect(ids).toHaveLength(2)
+    seedUsage()
+    reply(ids[0], 200_000, 'opus-model')
+    await Promise.resolve()
+    expect((session as unknown as { authoritativeWindow?: number }).authoritativeWindow).toBeUndefined()
+    reply(ids[1], 256_000, 'fable-model')
+    await Promise.resolve()
+    expect(session.contextUsage?.windowSize).toBe(256_000)
+  })
+
+  test('新档先到后旧档后到也不回写', async () => {
+    const { session, handleLine, ids, seedUsage, reply } = boot()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'opus-model' }))
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'fable-model' }))
+    seedUsage()
+    reply(ids[1], 256_000, 'fable-model')
+    await Promise.resolve()
+    expect(session.contextUsage?.windowSize).toBe(256_000)
+    reply(ids[0], 200_000, 'opus-model')
+    await Promise.resolve()
+    expect(session.contextUsage?.windowSize).toBe(256_000)
+  })
+
+  test('失败后清标记，下个 init 会再问一次', async () => {
+    const { session, handleLine, ids } = boot()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'k3[1m]' }))
+    expect(ids).toHaveLength(1)
+    handleLine(JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: ids[0], error: 'boom' },
+    }))
+    await Promise.resolve()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'k3[1m]' }))
+    expect(ids).toHaveLength(2)
+    expect(session.contextUsage).toBeUndefined()
   })
 })

@@ -11,7 +11,8 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { ContextRing } from '../components/ContextRing'
-import { fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
+import { buildTranscriptRows, fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
+import { appendHistoryMsg, createIngestState, flushStrayResults, indexToolBlocks, pairToolResultIn, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
@@ -115,72 +116,6 @@ function statusLineOf(
 }
 
 /**
- * 历史加载与 tail 实时追加共用的消息归并：
- * tool_use ↔ tool_result 跨消息配对成卡，孤立结果降级为系统提示。
- * toolIdx：toolUseId → 位置索引（O(1) 配对，免 O(n²) 回扫）。tail 单条追加时
- * 传入贯穿会话的实时索引；批量加载时由调用方持有局部索引。
- * 配对永远做不可变更新——tail 路径的 out 与旧 state 共享消息/块对象。
- */
-function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage, toolIdx?: Map<string, { mi: number; bi: number }>): void {
-  if (h.isMeta) return
-  if (h.role === 'system' && h.subtype === 'compact_boundary') {
-    out.push({ id: h.uuid ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: h.compactMeta, blocks: [] })
-    return
-  }
-  const pair = (toolUseId: string | undefined, text: string, isError: boolean): boolean => {
-    if (!toolUseId) return false
-    if (toolIdx) {
-      const at = toolIdx.get(toolUseId)
-      const m = at ? out[at.mi] : undefined
-      const b = at ? m?.blocks[at.bi] : undefined
-      if (!at || !m || !b || b.kind !== 'tool' || b.id !== toolUseId) return false
-      const blocks = [...m.blocks]
-      blocks[at.bi] = { ...b, resultText: text, resultError: isError, pending: false }
-      out[at.mi] = { ...m, blocks }
-      return true
-    }
-    for (let mi = out.length - 1; mi >= 0; mi--) {
-      const bi = out[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
-      if (bi < 0) continue
-      const blocks = [...out[mi].blocks]
-      const b = blocks[bi]
-      if (b.kind === 'tool') {
-        blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-        out[mi] = { ...out[mi], blocks }
-      }
-      return true
-    }
-    return false
-  }
-  const blocks: Block[] = []
-  const stray: { text: string; isError: boolean }[] = []
-  for (const hb of h.blocks) {
-    if (hb.kind === 'tool_use') {
-      const id = hb.id ?? nextId()
-      blocks.push({ kind: 'tool', id, name: hb.name ?? '?', input: hb.input })
-      toolIdx?.set(id, { mi: out.length, bi: blocks.length - 1 })
-    } else if (hb.kind === 'tool_result') {
-      if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
-    } else if (hb.kind === 'image' && hb.src) {
-      blocks.push({ kind: 'image', src: hb.src })
-    } else if (hb.kind === 'text' || hb.kind === 'thinking') {
-      blocks.push({ kind: hb.kind, text: hb.text ?? '' })
-    }
-  }
-  if (blocks.length > 0) {
-    out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, timestamp: h.timestamp, rewindable: h.rewindable })
-  }
-  for (const r of stray) {
-    out.push({
-      id: nextId(),
-      role: 'system',
-      systemKind: r.isError ? 'error' : 'info',
-      blocks: [{ kind: 'text', text: r.text.slice(0, 500) }],
-    })
-  }
-}
-
-/**
  * 把一条实时 sidechain CLI 消息（带 parent_tool_use_id 的完整 assistant/user）转成
  * HistoryMessage 形状，使其可以复用 appendHistoryMsg 落进后台任务桶。
  * 与 discovery.entryToHistoryMessage 的块映射保持一致（text/thinking/tool_use/tool_result）。
@@ -208,7 +143,9 @@ function cliSidechainToHistory(rec: Record<string, unknown>): HistoryMessage | n
 
 /** 后台任务桶：TaskFeed + 归并用的 tool 配对索引与去重集合（不发布给渲染） */
 interface TaskBucket extends TaskFeed {
-  toolIdx: Map<string, { mi: number; bi: number }>
+  toolIdx: Map<string, ToolPos>
+  /** 桶内乱序 tool_result 缓冲（与主线同规则，见 lib/ingest） */
+  pending: Map<string, PendingResult>
   seen: Set<string>
   /** codex 子线程转录已懒取过（防重取） */
   transcriptFetched?: boolean
@@ -277,6 +214,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const toolPosRef = useRef(new Map<string, { mi: number; bi: number }>())
   /** 历史加载时服务端读到的 transcript 字节数，tail_subscribe 的起始偏移 */
   const historyOffsetRef = useRef<number | undefined>(undefined)
+  /** replay_gap 正在重载历史：丢弃这段窗口内的 cli，避免和 applyHistory 对抄本抢写 */
+  const gapReloadingRef = useRef(false)
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
   const taskMapRef = useRef(new Map<string, TaskBucket>())
@@ -290,7 +229,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const taskBucket = (toolUseId: string): TaskBucket => {
     let b = taskMapRef.current.get(toolUseId)
     if (!b) {
-      b = { toolUseId, status: 'running', messages: [], toolIdx: new Map(), seen: new Set() }
+      b = { toolUseId, status: 'running', messages: [], toolIdx: new Map(), pending: new Map(), seen: new Set() }
       taskMapRef.current.set(toolUseId, b)
     }
     return b
@@ -303,7 +242,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       if (b.seen.has(h.uuid)) return
       b.seen.add(h.uuid)
     }
-    appendHistoryMsg(b.messages, h, b.toolIdx)
+    const st: IngestState = { msgs: b.messages, toolIdx: b.toolIdx, pending: b.pending }
+    appendHistoryMsg(st, h)
+    b.messages = st.msgs
   }
 
   /** sidechain（子代理内部消息）不进主抄本——落进对应后台任务桶，右侧栏展示。
@@ -403,17 +344,20 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setDraft(d)
   }
   const pushMsg = (m: ChatMsg) => {
-    const mi = messagesRef.current.length
-    m.blocks.forEach((b, bi) => {
-      if (b.kind === 'tool') toolPosRef.current.set(b.id, { mi, bi })
+    setMsgs((prev) => {
+      // 建索引的同时消费乱序缓冲：结果早于工具块落地时（live 流常见）在此补齐
+      const st: IngestState = { msgs: [...prev, m], toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
+      indexToolBlocks(st, st.msgs.length - 1)
+      return st.msgs
     })
-    setMsgs((prev) => [...prev, m])
   }
   const pushSystem = (text: string, kind: 'info' | 'error' = 'info') =>
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
 
   const isCodex = isCodexKey(session.key)
   const isExisting = isExistingKey(session.key)
+  const loadSessionHistory = () =>
+    isCodex ? fetchCodexHistory(session.sessionId) : fetchHistory(session.slug, session.sessionId)
   /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
    *  未 spawn 时只有 s|/x| key 内嵌的才是本会话 id——b| 嵌的是源会话 id，不能误显示 */
   const currentSessionId =
@@ -480,12 +424,15 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset 重载共用） */
   const applyHistory = (resp: HistoryResponse) => {
     historyOffsetRef.current = resp.fileBytes
-    const out: ChatMsg[] = []
-    const toolIdx = new Map<string, { mi: number; bi: number }>()
-    for (const h of resp.messages) appendHistoryMsg(out, h, toolIdx)
+    const st = createIngestState()
+    for (const h of resp.messages) appendHistoryMsg(st, h)
+    // 批次收尾：整批读完仍未配对的才是真孤儿（批内乱序此时已修复）
+    flushStrayResults(st)
+    const out = st.msgs
     setMsgs(() => out)
-    // 实时配对索引直接沿用历史加载建好的位置表（out 已成为新 state）
-    toolPosRef.current = toolIdx
+    // 实时配对索引与乱序缓冲直接沿用历史加载建好的（out 已成为新 state）
+    toolPosRef.current = st.toolIdx
+    pendingResultsRef.current = st.pending
 
     // 子代理侧链进桶；终态/报告以主线 Agent 工具卡的配对结果为准（tool_result 已落盘 = 已完成）
     taskMapRef.current.clear()
@@ -523,6 +470,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     pendingResultsRef.current.clear()
     toolPosRef.current.clear()
     historyOffsetRef.current = undefined
+    gapReloadingRef.current = false
     // Chat 组件在 session 切换时会复用，清掉上一会话的运行时/待启动配置。
     // 新会话的缓存选择会由随后到达的 status 恢复。
     setInitInfo({})
@@ -534,10 +482,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setTasks([])
     setTasksOpen(false)
     if (!isExisting) return
-    const loader = isCodex
-      ? fetchCodexHistory(session.sessionId)
-      : fetchHistory(session.slug, session.sessionId)
-    loader
+    loadSessionHistory()
       .then((resp) => {
         if (cancelled) return
         applyHistory(resp)
@@ -603,34 +548,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     if (blocks.length > 0) pushMsg({ id: d.msgId ?? nextId(), role: 'assistant', blocks })
   }
 
-  /** tool_result 配对到已渲染的工具卡片；工具块还在草稿里则暂存 */
+  /** tool_result 配对到已渲染的工具卡片；工具块还在草稿里则暂存（归并实现见 lib/ingest） */
   const pairToolResult = (toolUseId: string | undefined, text: string, isError: boolean) => {
     if (!toolUseId) return
-    let found = false
-    const patchAt = (m: ChatMsg, bi: number): ChatMsg => {
-      const blocks = [...m.blocks]
-      const b = blocks[bi]
-      if (b.kind === 'tool') blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-      return { ...m, blocks }
-    }
     setMsgs((prev) => {
-      // O(1) 快路径：索引命中且校验通过（rewind 截断等会使索引失效，回退全量扫描）
-      const at = toolPosRef.current.get(toolUseId)
-      const fast = at ? prev[at.mi]?.blocks[at.bi] : undefined
-      if (at && fast?.kind === 'tool' && fast.id === toolUseId) {
-        found = true
-        const out = [...prev]
-        out[at.mi] = patchAt(out[at.mi], at.bi)
-        return out
-      }
-      return prev.map((m) => {
-        const bi = m.blocks.findIndex((x) => x.kind === 'tool' && x.id === toolUseId)
-        if (bi < 0) return m
-        found = true
-        return patchAt(m, bi)
-      })
+      const r = pairToolResultIn(prev, toolPosRef.current, toolUseId, text, isError)
+      if (!r.paired) pendingResultsRef.current.set(toolUseId, { text, isError })
+      return r.msgs
     })
-    if (!found) pendingResultsRef.current.set(toolUseId, { text, isError })
   }
 
   // ---------- CLI 消息处理 ----------
@@ -895,7 +820,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               // 等审批（waiting/requires_action）期间草稿是合法的，不在此清理。
               setDraftBoth(null)
               setPhase(undefined)
-              pendingResultsRef.current.clear()
+              // turn 已终结：此刻仍未配对的 tool_result 不会再等到它的调用了，
+              // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）
+              setMsgs((prev) => {
+                const st: IngestState = { msgs: prev, toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
+                flushStrayResults(st)
+                return st.msgs
+              })
             }
             break
           case 'approval_request':
@@ -1092,6 +1023,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             })
             break
           case 'cli':
+            if (gapReloadingRef.current) break
             handleCli(ev.msg)
             break
           case 'tail': {
@@ -1099,9 +1031,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             const h = ev.msg
             if (h.uuid && messagesRef.current.some((m) => m.id === h.uuid)) break
             setMsgs((prev) => {
-              const out = [...prev]
-              appendHistoryMsg(out, h, toolPosRef.current)
-              return out
+              const st: IngestState = { msgs: prev, toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
+              appendHistoryMsg(st, h)
+              // 不在此 flush：tail 是逐条到达，tool_use 可能在后续行；孤儿在权威 idle 时统一浮现
+              return st.msgs
             })
             // 尾到的主线 tool_result 给已存在桶补终态——外部会话（tailer 路径）没有
             // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
@@ -1127,6 +1060,31 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             )
             break
           }
+          case 'replay_gap': {
+            // 断线太久，服务端环形缓冲已挤掉起点：补发会留空洞，直接重载历史。
+            // transcript 是权威事实源，重载一定能补齐（代价只是一次 HTTP）。
+            // 必须与初次加载走同一 loader——Codex 没有 Claude transcript 路径。
+            // 先挡住 cli 再清草稿：环里残留的 stream/assistant 不能在重载完成前改抄本。
+            gapReloadingRef.current = true
+            setDraftBoth(null)
+            pendingResultsRef.current.clear()
+            setPhase(undefined)
+            const gapKey = session.key
+            loadSessionHistory()
+              .then((resp) => {
+                if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
+                applyHistory(resp)
+                pushSystem('↻ 断线较久，已重新载入对话')
+              })
+              .catch(() => {
+                if (sockRef.current?.key !== gapKey) return
+                pushSystem('⚠ 重新载入对话失败，请手动刷新', 'error')
+              })
+              .finally(() => {
+                if (sockRef.current?.key === gapKey) gapReloadingRef.current = false
+              })
+            break
+          }
           case 'tail_reset': {
             // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
             setDraftBoth(null)
@@ -1145,8 +1103,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       },
       (open) => {
         setConnected(open)
+        if (!open) return
+        // 重连必须 attach：Codex x| 靠它 resume；fromSeq 为 0 也要带上，
+        // 才能取回「一条可落盘 cli 都没收到就断线」期间的环。首连走下面的 attach。
+        if (sock.reconnecting) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
         // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）
-        if (open && historyOffsetRef.current != null) {
+        if (historyOffsetRef.current != null) {
           sock.send({ kind: 'tail_subscribe', from: historyOffsetRef.current })
         }
       },
@@ -1165,9 +1127,23 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     else el.scrollTop = el.scrollHeight
   }
 
+  /** 跟随滚动的 rAF 合帧：流式输出时 draft 每个 token 都变引用，逐次 smooth scrollTo
+   *  会在移动端积出可感 jank（smooth 动画彼此打断）。合到下一帧只滚一次，
+   *  且流式期间用 auto——smooth 的缓动跟不上 token 速率，反而拖尾。 */
+  const followRaf = useRef(0)
+  const scheduleFollow = (smooth: boolean) => {
+    if (followRaf.current) return
+    followRaf.current = requestAnimationFrame(() => {
+      followRaf.current = 0
+      if (atBottomRef.current) scrollToBottom(smooth)
+    })
+  }
+  useEffect(() => () => cancelAnimationFrame(followRaf.current), [])
+
   // 贴底时才自动跟随滚动；用户上翻时保持位置（用 ↓ 按钮回到底部）
   useEffect(() => {
-    if (atBottomRef.current) scrollToBottom(true)
+    if (!atBottomRef.current) return
+    scheduleFollow(!draft) // 流式进行中走 auto，收尾/新消息才用 smooth
   }, [messages, approvals, draft])
 
   // 输入框自适应高度：随内容增长，超过 200px 后不再扩大、内部滚动。
@@ -1430,6 +1406,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     else if (rRect.bottom > cRect.bottom) c.scrollTop += rRect.bottom - cRect.bottom
   }, [slashActive, slashHints.length])
 
+  // 渲染行在 Chat 层算：Transcript 保持纯展示，重进/重渲时不重复摊平
+  const transcriptRows = useMemo(() => buildTranscriptRows(messages, draft), [messages, draft])
+
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
   const usageLine = usageSummary(state.usage, 'tok ')
@@ -1441,7 +1420,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto max-w-3xl px-[17px] pb-[300px] pt-[84px] md:px-[29px]">
-          <Transcript messages={messages} draft={draft} />
+          <Transcript rows={transcriptRows} draft={draft} />
 
           {approvals.map((a) => (
             <ApprovalCard

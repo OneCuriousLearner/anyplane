@@ -3,6 +3,7 @@
 
 import { spawn, type Subprocess } from 'bun'
 import { childEnv, pumpLines } from '../../util'
+import { log } from '../../log'
 
 export interface RpcNotification {
   method: string
@@ -155,13 +156,13 @@ export class RpcClient {
     await pumpLines(
       this.proc.stdout as ReadableStream<Uint8Array>,
       (line) => this.handleLine(line),
-      (e) => console.error('[codex-rpc] stdout 读取异常:', e),
+      (e) => log.error('[codex-rpc] stdout 读取异常:', e),
     )
   }
 
   private async pumpStderr(): Promise<void> {
     const text = await new Response(this.proc.stderr as ReadableStream<Uint8Array>).text()
-    if (text.trim()) console.error('[codex-rpc] stderr:', text.slice(0, 2000))
+    if (text.trim()) log.error('[codex-rpc] stderr:', text.slice(0, 2000))
   }
 
   private handleLine(line: string): void {
@@ -169,7 +170,7 @@ export class RpcClient {
     try {
       msg = JSON.parse(line)
     } catch {
-      console.error('[codex-rpc] 非 JSON 行:', line.slice(0, 200))
+      log.error('[codex-rpc] 非 JSON 行:', line.slice(0, 200))
       return
     }
     // 应答：有 id 且带 result/error，且无 method

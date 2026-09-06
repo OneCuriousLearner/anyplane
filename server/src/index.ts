@@ -40,6 +40,8 @@ import {
 import { errorMessage, escapeHtml, hasWindowsSocketFix } from './util'
 import { startupVersionProbe } from './driftGuard'
 import { decisionOfRule, matchApprovalRule } from './approvalRules'
+import { errFields, log } from './log'
+import { pushCliRing, replayCliSince } from './cliReplay'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -71,6 +73,10 @@ interface Hub {
   key: string
   clients: Set<import('bun').ServerWebSocket<WSData>>
   pendingApprovals: Map<string, PendingApproval>
+  /** 下行 cli 事件的单调序号（重连补发用，见 cliReplay.ts） */
+  cliSeq?: number
+  /** 最近 CLI_RING_CAP 条可落盘 cli 事件的环形缓冲（不含 stream_event） */
+  cliRing?: Array<{ seq: number; payload: Record<string, unknown> }>
   /** 未 spawn 时缓存启动偏好；已 spawn 时记录当前选择，供 UI 重连恢复 */
   spawnOpts?: Partial<SpawnOptions>
   /** 除 effort 外、需要在进程启动后按顺序写入 stdin 的环境变量 */
@@ -271,8 +277,8 @@ function fanoutPush(ev: InboxEvent): void {
       tag: `ccr-e-${ev.key}`,
     }
   }
-  void pushToAll(payload).catch((e) => console.warn('[push] fanout 异常:', e))
-  void pushWebhooksToAll(payload).catch((e) => console.warn('[push] webhook fanout 异常:', e))
+  void pushToAll(payload).catch((e) => log.warn('[push] fanout 异常:', e))
+  void pushWebhooksToAll(payload).catch((e) => log.warn('[push] webhook fanout 异常:', e))
 }
 
 /** inbox 快照：所有 Hub 的待审批与忙闲状态（新连接建立时下发） */
@@ -307,11 +313,17 @@ function replayApprovals(hub: Hub, send: (payload: unknown) => void): void {
 }
 
 function broadcast(hub: Hub, payload: unknown): void {
+  const kindForRing = (payload as { kind?: string } | null | undefined)?.kind
+  if (kindForRing === 'cli') pushCliRing(hub, payload as Record<string, unknown>)
   const text = JSON.stringify(payload)
   for (const ws of hub.clients) {
     try {
       ws.send(text)
-    } catch {}
+    } catch (e) {
+      // 向刚关闭的连接发送是竞态常态（close 处理器尚未跑到），属预期内噪声——
+      // 降到 debug 而非吞掉：排查"消息没收到"时开 ANYPLANE_LOG_LEVEL=debug 就能看见
+      log.debug(`[ws ${hub.key}] 下行发送失败（连接可能已关闭）`, errFields(e))
+    }
   }
   // 错误事件同步进全局收件箱（审批/完成由各自路径单独发布）
   const kind = (payload as { kind?: string } | null | undefined)?.kind
@@ -455,7 +467,7 @@ function maybeGenerateTitle(hub: Hub): void {
   void s
     .generateSessionTitle(text)
     .then((title) => {
-      if (title) console.log(`[title] ${sessionNameOf(hub.key)} → ${title}`)
+      if (title) log.info(`[title] ${sessionNameOf(hub.key)} → ${title}`)
     })
     .catch(() => {}) // 标题失败无害：列表回退首条消息摘要
 }
@@ -524,7 +536,7 @@ function sessionCallbacks(hub: Hub) {
       const auto = matchApprovalRule(config.approvalRules ?? [], req.toolName, req.input)
       if (auto) {
         const label = auto.rule.note ?? `approvalRules[${auto.index}]`
-        console.log(`[approval] ${hub.key} 规则自动${auto.rule.action === 'allow' ? '放行' : '拒绝'} ${req.toolName}（${label}）`)
+        log.info(`[approval] ${hub.key} 规则自动${auto.rule.action === 'allow' ? '放行' : '拒绝'} ${req.toolName}（${label}）`)
         broadcast(hub, {
           kind: 'approval_auto',
           requestId: req.requestId,
@@ -535,7 +547,7 @@ function sessionCallbacks(hub: Hub) {
         })
         const s = isCodexKey(hub.key) ? codexRuntime.get(hub.key) : processManager.get(hub.key)
         if (s) s.sendApproval(req.requestId, decisionOfRule(auto.rule, req.input))
-        else console.warn(`[approval] ${hub.key} 会话句柄已不存在，自动裁决无法送达`)
+        else log.warn(`[approval] ${hub.key} 会话句柄已不存在，自动裁决无法送达`)
         return
       }
       hub.pendingApprovals.set(req.requestId, req)
@@ -680,7 +692,7 @@ function ensureSpawned(
       hub.pendingEnv = undefined
     }
   } catch (e) {
-    console.error(`[session ${hub.key}] spawn 失败:`, e) // 原对象打日志保留堆栈
+    log.error(`[session ${hub.key}] spawn 失败:`, e) // 原对象打日志保留堆栈
     broadcastError(hub, errorMessage(e))
   }
   // resumeSessionAt 是一次性 spawn 参数（命令行 args 已在 spawn() 内同步生成）。
@@ -707,11 +719,19 @@ function rewindBusy(hub: Hub, message = '已有回滚操作正在进行'): boole
   return true
 }
 
-function handleClientMessage(hub: Hub, raw: string): void {
+function handleClientMessage(
+  hub: Hub,
+  raw: string,
+  /** 发起方连接：仅重连补发需要单播（其余一律 hub 级广播） */
+  ws?: import('bun').ServerWebSocket<WSData>,
+): void {
   let data: Record<string, unknown>
   try {
     data = JSON.parse(raw)
-  } catch {
+  } catch (e) {
+    // 曾是静默 return：协议漂移/帧截断时表现为"消息就是没了"，零线索。
+    // 客户端不可能合法发出非 JSON，这一定是 bug 或攻击面探测，按 error 留痕。
+    log.error(`[ws ${hub.key}] 上行非 JSON 帧，已丢弃`, { bytes: raw.length, head: raw.slice(0, 120), ...errFields(e) })
     return
   }
   const session = () => processManager.get(hub.key)
@@ -732,6 +752,25 @@ function handleClientMessage(hub: Hub, raw: string): void {
         pushStatus(hub)
       }
       replayApprovals(hub, (p) => broadcast(hub, p))
+      // 重连补发：客户端带上断线前的最高 seq，取回这期间错过的 cli 事件。
+      // **必须单播**：走 broadcast 会让补发内容重新入环并分配新序号（自我污染），
+      // 且已在线的其他客户端会收到重复投递。
+      const fromSeq = typeof data.fromSeq === 'number' ? data.fromSeq : undefined
+      if (fromSeq !== undefined && ws) {
+        const unicast = (p: unknown) => {
+          try {
+            ws.send(JSON.stringify(p))
+          } catch (e) {
+            log.debug(`[ws ${hub.key}] 补发单播失败`, errFields(e))
+          }
+        }
+        // 环里已挤掉起点时告知缺口，由前端重载历史补全（transcript 是权威事实源）
+        const gap = replayCliSince(hub, fromSeq, unicast)
+        if (gap) {
+          log.info(`[ws ${hub.key}] 补发存在缺口，通知客户端重载历史`, { fromSeq, ringFrom: hub.cliRing?.[0]?.seq })
+          unicast({ kind: 'replay_gap', fromSeq })
+        }
+      }
       break
     }
     case 'tail_subscribe': {
@@ -1247,22 +1286,22 @@ function logWindowsPortState(stage: string, port: number): void {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line.includes(marker))
-    console.log(
+    log.info(
       `[port-diagnostic] stage=${stage} appPid=${process.pid} port=${port} rows=${rows.length}`,
     )
-    for (const row of rows) console.log(`[port-diagnostic] ${row}`)
+    for (const row of rows) log.info(`[port-diagnostic] ${row}`)
   } catch (e) {
-    console.warn(`[port-diagnostic] stage=${stage} failed:`, e)
+    log.warn(`[port-diagnostic] stage=${stage} failed:`, e)
   }
 }
 
 const distDir = resolve(import.meta.dir, '../../web/dist')
 
 if (!hasWindowsSocketFix() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
-  console.error(
+  log.error(
     `[anyplane] Bun ${Bun.version} on Windows has the inherited-listener bug oven-sh/bun#36936.`,
   )
-  console.error('[anyplane] Run `bun upgrade` (need >= 1.4.0) and restart the terminal. Server startup refused.')
+  log.error('[anyplane] Run `bun upgrade` (need >= 1.4.0) and restart the terminal. Server startup refused.')
   process.exit(1)
 }
 
@@ -1299,7 +1338,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     } catch (e) {
       return json({ error: errorMessage(e) }, { status: 400 })
     }
-    console.log(`[push] 新订阅（共 ${subscriptionCount()}）：${body.endpoint.slice(0, 60)}…`)
+    log.info(`[push] 新订阅（共 ${subscriptionCount()}）：${body.endpoint.slice(0, 60)}…`)
     return json({ ok: true, secret })
   }
   if (url.pathname === '/api/push/subscriptions' && req.method === 'DELETE') {
@@ -1347,7 +1386,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         ? { behavior: 'allow', updatedInput: pending.input }
         : { behavior: 'deny', message: '用户在推送通知上拒绝了该操作' },
     )
-    console.log(`[push] 通知直接审批 ${decision}：${sessionNameOf(key)} · ${pending.toolName}`)
+    log.info(`[push] 通知直接审批 ${decision}：${sessionNameOf(key)} · ${pending.toolName}`)
     return json({ ok })
   }
   // webhook 通知的审批确认页（Bark/Server酱 无原生按钮：点链接进此页，按钮再 POST 到 approval-action）。
@@ -1394,7 +1433,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         managed: codexStatusOf(t.key),
       }))
     } catch (e) {
-      console.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
+      log.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
     }
     return json([...codexRows, ...claudeRows])
   }
@@ -1481,7 +1520,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         mtime: Number(t.updatedAt ?? t.createdAt ?? 0) * 1000,
       }))
     } catch (e) {
-      console.warn('[api] codex archived 列表失败:', e instanceof Error ? e.message : e)
+      log.warn('[api] codex archived 列表失败:', e instanceof Error ? e.message : e)
     }
     return json({ entries: [...codexArchived, ...claudeTrash] })
   }
@@ -1629,8 +1668,8 @@ let server: ReturnType<typeof Bun.serve<WSData>>
 
 // 绑定非回环地址却不配置 token = 把"任意目录起会话 + 任意命令执行"裸奔到网络上，拒绝启动
 if (!isLoopbackHost(config.host) && !config.authToken) {
-  console.error(`[anyplane] 拒绝启动：host=${config.host} 为非回环地址，但未配置 authToken。`)
-  console.error('[anyplane] 请在 anyplane.config.json 设置 "authToken" 或设置环境变量 ANYPLANE_TOKEN。')
+  log.error(`[anyplane] 拒绝启动：host=${config.host} 为非回环地址，但未配置 authToken。`)
+  log.error('[anyplane] 请在 anyplane.config.json 设置 "authToken" 或设置环境变量 ANYPLANE_TOKEN。')
   process.exit(1)
 }
 
@@ -1729,9 +1768,9 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         if (ws.data.inbox) return // inbox 频道只发不收
         const hub = getHub(ws.data.key)
         try {
-          handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString())
+          handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString(), ws as import('bun').ServerWebSocket<WSData>)
         } catch (e) {
-          console.error(`[ws ${hub.key}] 处理消息异常:`, e) // 原对象打日志保留堆栈
+          log.error(`[ws ${hub.key}] 处理消息异常:`, e) // 原对象打日志保留堆栈
           try {
             ws.send(JSON.stringify({ kind: 'error', message: errorMessage(e) }))
           } catch {}
@@ -1779,9 +1818,9 @@ async function bindServer(): Promise<ReturnType<typeof Bun.serve<WSData>>> {
     const msg = errorMessage(e)
     const addrInUse = msg.includes('EADDRINUSE') || (e as { code?: string }).code === 'EADDRINUSE'
     if (!addrInUse) throw e
-    console.error(`[anyplane] :${config.port} 已被占用，尝试接管本仓库残留进程…`)
+    log.error(`[anyplane] :${config.port} 已被占用，尝试接管本仓库残留进程…`)
     if ((await takeoverStaleListeners(config.port, isOwnServerProcess)) !== 'freed') throw e
-    console.log(`[anyplane] :${config.port} 残留已清理，重新绑定`)
+    log.info(`[anyplane] :${config.port} 残留已清理，重新绑定`)
     return createServer()
   }
 }
@@ -1790,12 +1829,12 @@ try {
   server = await bindServer()
 } catch (e) {
   const msg = errorMessage(e)
-  console.error(
+  log.error(
     `[anyplane] bind failed port=${config.port} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}: ${msg}`,
   )
   logWindowsPortState('bind-failed', config.port)
   if (process.platform === 'win32') {
-    console.error(
+    log.error(
       '[anyplane] 若 LISTENING PID 已不存在，通常是 Bun <=1.3.14 的 socket handle 继承问题；升级到 1.4.0+。已形成且找不到持有进程的绑定需重启 Windows 一次。',
     )
   }
@@ -1817,21 +1856,21 @@ const displayHost = isLoopbackHost(config.host)
     ? lanAddress()
     : config.host
 const accessUrl = `http://${displayHost}:${server.port}/${config.authToken ? `?token=${config.authToken}` : ''}`
-console.log(
+log.info(
   `[anyplane] listening on ${accessUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}`,
 )
-console.log(`[anyplane] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
+log.info(`[anyplane] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
 if (!config.authToken) {
-  console.log('[anyplane] 未配置 authToken，仅监听回环地址。需要局域网访问时：配置 authToken 并设置 host。')
+  log.info('[anyplane] 未配置 authToken，仅监听回环地址。需要局域网访问时：配置 authToken 并设置 host。')
 }
 
 // 局域网模式：打印扫码即入的终端二维码（URL 已带 token）
 if (!isLoopbackHost(config.host)) {
   try {
     const { default: QRCode } = await import('qrcode')
-    console.log(await QRCode.toString(accessUrl, { type: 'terminal', small: true }))
+    log.info(await QRCode.toString(accessUrl, { type: 'terminal', small: true }))
   } catch (e) {
-    console.warn('[anyplane] 二维码生成失败（不影响服务）:', e)
+    log.warn('[anyplane] 二维码生成失败（不影响服务）:', e)
   }
 }
 
@@ -1839,32 +1878,32 @@ if (!isLoopbackHost(config.host)) {
 try {
   startupVersionProbe()
 } catch (e) {
-  console.warn('[drift] 版本探测失败（不影响服务）:', e)
+  log.warn('[drift] 版本探测失败（不影响服务）:', e)
 }
 
 // 审批规则引擎：加载即生效（坏规则在 config 加载时已 fail fast）
 if (config.approvalRules?.length) {
-  console.log(`[approval] 审批规则引擎已启用：${config.approvalRules.length} 条规则，按序首条命中`)
+  log.info(`[approval] 审批规则引擎已启用：${config.approvalRules.length} 条规则，按序首条命中`)
 }
 
 let shuttingDown = false
 async function shutdown(reason: string): Promise<void> {
   if (shuttingDown) {
-    console.warn(`[anyplane] shutdown already in progress; repeated=${reason}`)
+    log.warn(`[anyplane] shutdown already in progress; repeated=${reason}`)
     return
   }
   shuttingDown = true
   const started = performance.now()
-  console.log(`[anyplane] shutdown begin reason=${reason} pid=${process.pid}`)
+  log.info(`[anyplane] shutdown begin reason=${reason} pid=${process.pid}`)
 
   // 先发起 listener/连接关闭，再清 Claude 子进程。Bun <=1.3.14（修复于 1.4.0）在 Windows
   // 会让这些子进程继承监听 handle；两边都完成前绝不能 process.exit()。
   let stopPromise: Promise<void>
   try {
-    console.log('[anyplane] server.stop(true) begin')
+    log.info('[anyplane] server.stop(true) begin')
     stopPromise = Promise.resolve(server.stop(true))
   } catch (e) {
-    console.error('[anyplane] server.stop(true) invoke failed:', e)
+    log.error('[anyplane] server.stop(true) invoke failed:', e)
     stopPromise = Promise.resolve()
   }
 
@@ -1872,34 +1911,34 @@ async function shutdown(reason: string): Promise<void> {
     processManager.disposeAll()
     codexRuntime.disposeAll()
   } catch (e) {
-    console.error('[anyplane] disposeAll 失败:', e)
+    log.error('[anyplane] disposeAll 失败:', e)
   }
 
   const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 5_000))
   const stopped = stopPromise.then(
     () => 'stopped' as const,
     (e) => {
-      console.error('[anyplane] server.stop(true) rejected:', e)
+      log.error('[anyplane] server.stop(true) rejected:', e)
       return 'failed' as const
     },
   )
   const result = await Promise.race([stopped, timeout])
-  console.log(
+  log.info(
     `[anyplane] shutdown server=${result} elapsedMs=${Math.round(performance.now() - started)}`,
   )
 
   if (result === 'timeout') {
     // 到这里 listener 已调用 stop，强退只是最后兜底；正常路径不应触发。
-    console.error('[anyplane] shutdown timed out after 5s; forcing exit')
+    log.error('[anyplane] shutdown timed out after 5s; forcing exit')
     process.exit(1)
   }
   logWindowsPortState('after-stop', config.port)
-  console.log(`[anyplane] shutdown complete elapsedMs=${Math.round(performance.now() - started)}`)
+  log.info(`[anyplane] shutdown complete elapsedMs=${Math.round(performance.now() - started)}`)
   process.exit(0)
 }
 
 process.on('SIGINT', () => void shutdown('SIGINT'))
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('exit', (code) => {
-  console.log(`[anyplane] process exit pid=${process.pid} code=${code} shuttingDown=${shuttingDown}`)
+  log.info(`[anyplane] process exit pid=${process.pid} code=${code} shuttingDown=${shuttingDown}`)
 })

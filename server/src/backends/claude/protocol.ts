@@ -13,22 +13,48 @@ export interface UserMessageInput {
   priority?: 'now' | 'next' | 'later'
 }
 
-export type ControlRequestSubtype =
-  | 'interrupt'
-  | 'set_permission_mode'
-  | 'set_model'
-  | 'set_max_thinking_tokens'
-  | 'rewind_files'
-  | 'mcp_status'
-  | 'get_settings'
-  | 'get_context_usage'
-  // MCP 管理动作：{serverName} / {serverName, enabled}（toggle 会持久化启用态到 settings）
-  | 'mcp_reconnect'
-  | 'mcp_toggle'
+/**
+ * **官方 SDK 类型里没有、只存在于 CLI headless（print.ts）实现里的 subtype。**
+ *
+ * 两条都实测可用且是核心功能的依赖（接力简报 / AI 会话标题），但它们不在
+ * `@anthropic-ai/claude-agent-sdk` 的 `sdk.d.ts` 中——由 protocol.conformance.test.ts
+ * 对账时发现并在此固化。
+ *
+ * 风险口径：**协议漂移检测覆盖不到这两项**。官方清单里既然没有它们，上游改名或
+ * 移除时 check-claude-protocol.ts 不会报任何异常，只会表现为运行时功能静默失效。
+ * 因此它们的回归防线只有 e2e（`e2e-handoff.ts` 走 side_question，AI 标题走 `e2e-slash.ts`），
+ * 升级 CLI 后务必跑一次。
+ *
+ * 若哪天官方把它们收进 SDK 类型，conformance 测试会提示把该项移出本清单。
+ */
+export const PRINT_ONLY_SUBTYPES = [
   // 进程内侧问（2.1.220 实测可用）：复用对话上下文与 prompt cache，不产生 FORK 会话
-  | 'side_question'
+  'side_question',
   // AI 会话标题（Haiku）：{description, persist} → {title|null}，persist 时 CLI 自写 ai-title 进 transcript
-  | 'generate_session_title'
+  'generate_session_title',
+] as const
+
+/** 我们会发出的 control_request subtype 全集。
+ *  **写成运行时数组而非纯类型**：protocol.conformance.test.ts 要拿它与官方清单
+ *  （@anthropic-ai/claude-agent-sdk 提取的 protocol-baseline.claude.json）对账——
+ *  纯 type 在运行时被擦除，测不了。手抄清单最大的风险就是抄了个上游没有的名字，
+ *  或上游改名后这里还留着旧的，静默失效。 */
+export const CONTROL_REQUEST_SUBTYPES = [
+  'interrupt',
+  'set_permission_mode',
+  'set_model',
+  'set_max_thinking_tokens',
+  'rewind_files',
+  'mcp_status',
+  'get_settings',
+  'get_context_usage',
+  // MCP 管理动作：{serverName} / {serverName, enabled}（toggle 会持久化启用态到 settings）
+  'mcp_reconnect',
+  'mcp_toggle',
+  ...PRINT_ONLY_SUBTYPES,
+] as const
+
+export type ControlRequestSubtype = (typeof CONTROL_REQUEST_SUBTYPES)[number]
 
 export interface ControlRequestInput {
   type: 'control_request'

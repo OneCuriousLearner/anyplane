@@ -13,6 +13,8 @@ export abstract class ReconnectingSocket {
   private ws: WebSocket | undefined
   private retry = 0
   private closed = false
+  /** 成功 open 的次数。>1 即重连（相对本条 socket 的首连） */
+  private opened = 0
 
   /** 子类提供连接路径（/ws/...） */
   protected abstract url(): string
@@ -32,13 +34,21 @@ export abstract class ReconnectingSocket {
     this.ws = ws
     ws.onopen = () => {
       this.retry = 0
+      this.opened++
       this.onOpenChange?.(true)
       this.onOpen?.()
     }
     ws.onmessage = (e) => {
+      let parsed: unknown
       try {
-        this.onMessage(JSON.parse(e.data))
-      } catch {}
+        parsed = JSON.parse(e.data)
+      } catch (err) {
+        // 曾是静默吞掉：协议漂移或帧截断时页面表现为"消息就是没来"，零日志零提示。
+        // 服务端不会发非 JSON，命中即真问题——留一条控制台错误让用户能截图反馈。
+        console.error('[ws] 下行非 JSON 帧，已丢弃', { head: String(e.data).slice(0, 120), err })
+        return
+      }
+      this.onMessage(parsed)
     }
     ws.onclose = () => {
       this.onOpenChange?.(false)
@@ -47,6 +57,11 @@ export abstract class ReconnectingSocket {
       setTimeout(() => !this.closed && this.connect(), delay)
     }
     ws.onerror = () => ws.close()
+  }
+
+  /** 是否已经至少成功连接过一次之后再次 open（用于重连 attach，避免与首连 attach 叠发） */
+  protected get isReconnect(): boolean {
+    return this.opened > 1
   }
 
   /** 仅在 open 时发送；未 open 返回 false（调用方决定排队还是丢弃） */

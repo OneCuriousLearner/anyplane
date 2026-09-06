@@ -32,6 +32,20 @@ README 只保留最常用的几项，这里是完整配置说明。
 
 环境变量覆盖：`ANYPLANE_PORT`、`ANYPLANE_HOST`、`ANYPLANE_TOKEN`、`CLAUDE_CONFIG_DIR`。
 
+## 日志
+
+默认输出保持人眼可读的 `[scope] 消息 k=v` 形态，无需配置。排查问题时有两个开关：
+
+- `ANYPLANE_LOG_LEVEL=debug|info|warn|error`（默认 `info`）。调到 `debug` 会额外打出**预期内的失败**——
+  向已关闭连接发送、探测性 RPC 失败等。「消息没收到 / 会话没反应」这类问题优先开它。
+- `ANYPLANE_LOG_FORMAT=json`：逐行 JSON（含 `ts`/`level`/`scope`），便于 grep、留存或反馈时打包上传。
+
+```bash
+ANYPLANE_LOG_LEVEL=debug ANYPLANE_LOG_FORMAT=json bun run start > anyplane.log 2>&1
+```
+
+分级口径：`debug` 预期内噪声、`info` 状态变化（spawn/回收/重键）、`warn` 降级但仍可用、`error` 功能受损。
+
 ## 审批规则引擎（approvalRules）
 
 介于「每条都问人」与「全部 bypass」之间的第三档：按规则分流，命中的自动裁决，未命中的照旧问你。

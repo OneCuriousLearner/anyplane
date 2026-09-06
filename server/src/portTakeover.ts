@@ -7,6 +7,7 @@
 
 import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { log } from './log'
 
 export interface PidDesc {
   /** 原始 cmdline（Linux /proc 的 \0 分隔未清洗，用 normCmd 后再匹配） */
@@ -155,14 +156,14 @@ export async function takeoverStaleListeners(
   if (foreign.length) {
     for (const f of foreign) {
       const cmd = f.desc ? normCmd(f.desc.cmdline).trim() || '(unknown)' : '(无法读取进程信息)'
-      console.error(`[port-takeover] :${port} 被 pid=${f.pid} 占用，不是本仓库进程：${cmd}`)
+      log.error(`[port-takeover] :${port} 被 pid=${f.pid} 占用，不是本仓库进程：${cmd}`)
     }
-    console.error('[port-takeover] 拒绝覆盖。确认后请手动结束该进程。')
+    log.error('[port-takeover] 拒绝覆盖。确认后请手动结束该进程。')
     return 'refused'
   }
 
   for (const pid of own) {
-    console.warn(`[port-takeover] :${port} 结束残留进程 pid=${pid}`)
+    log.warn(`[port-takeover] :${port} 结束残留进程 pid=${pid}`)
     try {
       process.kill(pid, 'SIGTERM')
     } catch {}
@@ -171,10 +172,10 @@ export async function takeoverStaleListeners(
   for (const pid of own) {
     try {
       process.kill(pid, 'SIGKILL')
-      console.warn(`[port-takeover] pid=${pid} 未退出，已 SIGKILL`)
+      log.warn(`[port-takeover] pid=${pid} 未退出，已 SIGKILL`)
     } catch {}
   }
   if (await waitForPortFree(port, 1000)) return 'freed'
-  console.error(`[port-takeover] :${port} SIGKILL 后仍被占用，接管失败`)
+  log.error(`[port-takeover] :${port} SIGKILL 后仍被占用，接管失败`)
   return 'refused'
 }

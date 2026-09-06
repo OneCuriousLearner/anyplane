@@ -57,7 +57,7 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
 传输：**stdio NDJSON**（ws 是 experimental，不用；unix socket 留作以后）。一个 app-server 进程托管全部 Codex 线程，服务端单例 `CodexRuntime` 按 `threadId` 解复用。
 
 - 探针先行：`server/scripts/e2e-codex.ts`——spawn `codex app-server`，initialize（`capabilities.experimentalApi: true`）→ `thread/start` → `turn/start` → 收事件 → `turn/interrupt` → `thread/resume`。本机 codex 0.147.0。
-- 用 `codex app-server generate-ts --experimental` 生成 TS schema 存 `server/src/backends/codex/schema/`（gitignore，构建时生成；锁定 codex 版本要求）。
+- 用 `codex app-server generate-ts --experimental` 生成 TS schema 存 `server/scripts/codex-schema-baseline/`（作为漂移检测权威基线）。
 - JSON-RPC 客户端：id 池、pending map、`-32001` 过载指数退避重试、initialize 握手（`clientInfo.name = "AnyPlane"`）。
 - 概念映射（已核实）：
   - 会话发现 `thread/list`（cwd/archived/searchTerm 过滤、分页）替代 slug 扫描
@@ -69,9 +69,9 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
   - 中断 `turn/interrupt`;compact `thread/compact/start`；改名 `thread/name/set`
   - 模型目录 `model/list`（含 `supportedReasoningEfforts`，消灭 `/api/config` 硬编码）
   - `/btw` = `thread/fork` + `ephemeral: true` + `turn/start`（不落盘）
-  - rewind 仅 `thread/revert`（实验性，只截对话不回文件；UI 隐藏 rewind_both）
+  - rewind：`thread/revert` 需以 paginated 线程为前提（见 ROADMAP 方向四），当前临时走 `thread/fork beforeTurnId`（UI 隐藏 rewind_both）
   - busy 时发消息：`turn/steer`（插队）或 `thread/queue/add`（排队）——与 Claude 的 `priority` 字段统一为 `sendMode`
-- 回收语义：无订阅者的 thread 由 app-server 30 分钟自动卸载（与现有 idleTimeout 语义对齐），AnyPlane 只负责断开订阅，**不 kill 进程**。
+- 回收语义：无订阅者的 thread 由 app-server 自动卸载（`thread_unload_delay_secs`，**上游默认已从 30 分钟改为 60 秒**），AnyPlane 只负责断开订阅，**不 kill 进程**。
 - 已核实的坑：
   - **workspace-write 沙箱下 `.git` 只读**（实验实测 commit 报 128)——默认 spawn 配置需放开 .git 或用 `dangerFullAccess`/自定义 permission profile;UI 要暴露这个选择。
   - paginated thread 单进程写锁：用户在 TUI/VSCode 开着同一 thread 时 `thread/resume` 报 `-32600`,UI 显示"被占用"。
