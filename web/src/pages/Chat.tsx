@@ -12,6 +12,7 @@ import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { ContextRing } from '../components/ContextRing'
 import { fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
+import { appendHistoryMsg, createIngestState, flushStrayResults, indexToolBlocks, pairToolResultIn, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
@@ -115,72 +116,6 @@ function statusLineOf(
 }
 
 /**
- * 历史加载与 tail 实时追加共用的消息归并：
- * tool_use ↔ tool_result 跨消息配对成卡，孤立结果降级为系统提示。
- * toolIdx：toolUseId → 位置索引（O(1) 配对，免 O(n²) 回扫）。tail 单条追加时
- * 传入贯穿会话的实时索引；批量加载时由调用方持有局部索引。
- * 配对永远做不可变更新——tail 路径的 out 与旧 state 共享消息/块对象。
- */
-function appendHistoryMsg(out: ChatMsg[], h: HistoryMessage, toolIdx?: Map<string, { mi: number; bi: number }>): void {
-  if (h.isMeta) return
-  if (h.role === 'system' && h.subtype === 'compact_boundary') {
-    out.push({ id: h.uuid ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: h.compactMeta, blocks: [] })
-    return
-  }
-  const pair = (toolUseId: string | undefined, text: string, isError: boolean): boolean => {
-    if (!toolUseId) return false
-    if (toolIdx) {
-      const at = toolIdx.get(toolUseId)
-      const m = at ? out[at.mi] : undefined
-      const b = at ? m?.blocks[at.bi] : undefined
-      if (!at || !m || !b || b.kind !== 'tool' || b.id !== toolUseId) return false
-      const blocks = [...m.blocks]
-      blocks[at.bi] = { ...b, resultText: text, resultError: isError, pending: false }
-      out[at.mi] = { ...m, blocks }
-      return true
-    }
-    for (let mi = out.length - 1; mi >= 0; mi--) {
-      const bi = out[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
-      if (bi < 0) continue
-      const blocks = [...out[mi].blocks]
-      const b = blocks[bi]
-      if (b.kind === 'tool') {
-        blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-        out[mi] = { ...out[mi], blocks }
-      }
-      return true
-    }
-    return false
-  }
-  const blocks: Block[] = []
-  const stray: { text: string; isError: boolean }[] = []
-  for (const hb of h.blocks) {
-    if (hb.kind === 'tool_use') {
-      const id = hb.id ?? nextId()
-      blocks.push({ kind: 'tool', id, name: hb.name ?? '?', input: hb.input })
-      toolIdx?.set(id, { mi: out.length, bi: blocks.length - 1 })
-    } else if (hb.kind === 'tool_result') {
-      if (!pair(hb.id, hb.text ?? '', hb.isError === true)) stray.push({ text: hb.text ?? '', isError: hb.isError === true })
-    } else if (hb.kind === 'image' && hb.src) {
-      blocks.push({ kind: 'image', src: hb.src })
-    } else if (hb.kind === 'text' || hb.kind === 'thinking') {
-      blocks.push({ kind: hb.kind, text: hb.text ?? '' })
-    }
-  }
-  if (blocks.length > 0) {
-    out.push({ id: h.uuid ?? nextId(), role: h.role, blocks, timestamp: h.timestamp, rewindable: h.rewindable })
-  }
-  for (const r of stray) {
-    out.push({
-      id: nextId(),
-      role: 'system',
-      systemKind: r.isError ? 'error' : 'info',
-      blocks: [{ kind: 'text', text: r.text.slice(0, 500) }],
-    })
-  }
-}
-
-/**
  * 把一条实时 sidechain CLI 消息（带 parent_tool_use_id 的完整 assistant/user）转成
  * HistoryMessage 形状，使其可以复用 appendHistoryMsg 落进后台任务桶。
  * 与 discovery.entryToHistoryMessage 的块映射保持一致（text/thinking/tool_use/tool_result）。
@@ -208,7 +143,9 @@ function cliSidechainToHistory(rec: Record<string, unknown>): HistoryMessage | n
 
 /** 后台任务桶：TaskFeed + 归并用的 tool 配对索引与去重集合（不发布给渲染） */
 interface TaskBucket extends TaskFeed {
-  toolIdx: Map<string, { mi: number; bi: number }>
+  toolIdx: Map<string, ToolPos>
+  /** 桶内乱序 tool_result 缓冲（与主线同规则，见 lib/ingest） */
+  pending: Map<string, PendingResult>
   seen: Set<string>
   /** codex 子线程转录已懒取过（防重取） */
   transcriptFetched?: boolean
@@ -290,7 +227,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const taskBucket = (toolUseId: string): TaskBucket => {
     let b = taskMapRef.current.get(toolUseId)
     if (!b) {
-      b = { toolUseId, status: 'running', messages: [], toolIdx: new Map(), seen: new Set() }
+      b = { toolUseId, status: 'running', messages: [], toolIdx: new Map(), pending: new Map(), seen: new Set() }
       taskMapRef.current.set(toolUseId, b)
     }
     return b
@@ -303,7 +240,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       if (b.seen.has(h.uuid)) return
       b.seen.add(h.uuid)
     }
-    appendHistoryMsg(b.messages, h, b.toolIdx)
+    const st: IngestState = { msgs: b.messages, toolIdx: b.toolIdx, pending: b.pending }
+    appendHistoryMsg(st, h)
+    b.messages = st.msgs
   }
 
   /** sidechain（子代理内部消息）不进主抄本——落进对应后台任务桶，右侧栏展示。
@@ -403,11 +342,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setDraft(d)
   }
   const pushMsg = (m: ChatMsg) => {
-    const mi = messagesRef.current.length
-    m.blocks.forEach((b, bi) => {
-      if (b.kind === 'tool') toolPosRef.current.set(b.id, { mi, bi })
+    setMsgs((prev) => {
+      // 建索引的同时消费乱序缓冲：结果早于工具块落地时（live 流常见）在此补齐
+      const st: IngestState = { msgs: [...prev, m], toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
+      indexToolBlocks(st, st.msgs.length - 1)
+      return st.msgs
     })
-    setMsgs((prev) => [...prev, m])
   }
   const pushSystem = (text: string, kind: 'info' | 'error' = 'info') =>
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
@@ -480,12 +420,15 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset 重载共用） */
   const applyHistory = (resp: HistoryResponse) => {
     historyOffsetRef.current = resp.fileBytes
-    const out: ChatMsg[] = []
-    const toolIdx = new Map<string, { mi: number; bi: number }>()
-    for (const h of resp.messages) appendHistoryMsg(out, h, toolIdx)
+    const st = createIngestState()
+    for (const h of resp.messages) appendHistoryMsg(st, h)
+    // 批次收尾：整批读完仍未配对的才是真孤儿（批内乱序此时已修复）
+    flushStrayResults(st)
+    const out = st.msgs
     setMsgs(() => out)
-    // 实时配对索引直接沿用历史加载建好的位置表（out 已成为新 state）
-    toolPosRef.current = toolIdx
+    // 实时配对索引与乱序缓冲直接沿用历史加载建好的（out 已成为新 state）
+    toolPosRef.current = st.toolIdx
+    pendingResultsRef.current = st.pending
 
     // 子代理侧链进桶；终态/报告以主线 Agent 工具卡的配对结果为准（tool_result 已落盘 = 已完成）
     taskMapRef.current.clear()
@@ -603,34 +546,14 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     if (blocks.length > 0) pushMsg({ id: d.msgId ?? nextId(), role: 'assistant', blocks })
   }
 
-  /** tool_result 配对到已渲染的工具卡片；工具块还在草稿里则暂存 */
+  /** tool_result 配对到已渲染的工具卡片；工具块还在草稿里则暂存（归并实现见 lib/ingest） */
   const pairToolResult = (toolUseId: string | undefined, text: string, isError: boolean) => {
     if (!toolUseId) return
-    let found = false
-    const patchAt = (m: ChatMsg, bi: number): ChatMsg => {
-      const blocks = [...m.blocks]
-      const b = blocks[bi]
-      if (b.kind === 'tool') blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
-      return { ...m, blocks }
-    }
     setMsgs((prev) => {
-      // O(1) 快路径：索引命中且校验通过（rewind 截断等会使索引失效，回退全量扫描）
-      const at = toolPosRef.current.get(toolUseId)
-      const fast = at ? prev[at.mi]?.blocks[at.bi] : undefined
-      if (at && fast?.kind === 'tool' && fast.id === toolUseId) {
-        found = true
-        const out = [...prev]
-        out[at.mi] = patchAt(out[at.mi], at.bi)
-        return out
-      }
-      return prev.map((m) => {
-        const bi = m.blocks.findIndex((x) => x.kind === 'tool' && x.id === toolUseId)
-        if (bi < 0) return m
-        found = true
-        return patchAt(m, bi)
-      })
+      const r = pairToolResultIn(prev, toolPosRef.current, toolUseId, text, isError)
+      if (!r.paired) pendingResultsRef.current.set(toolUseId, { text, isError })
+      return r.msgs
     })
-    if (!found) pendingResultsRef.current.set(toolUseId, { text, isError })
   }
 
   // ---------- CLI 消息处理 ----------
@@ -895,7 +818,13 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
               // 等审批（waiting/requires_action）期间草稿是合法的，不在此清理。
               setDraftBoth(null)
               setPhase(undefined)
-              pendingResultsRef.current.clear()
+              // turn 已终结：此刻仍未配对的 tool_result 不会再等到它的调用了，
+              // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）
+              setMsgs((prev) => {
+                const st: IngestState = { msgs: prev, toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
+                flushStrayResults(st)
+                return st.msgs
+              })
             }
             break
           case 'approval_request':
@@ -1099,9 +1028,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             const h = ev.msg
             if (h.uuid && messagesRef.current.some((m) => m.id === h.uuid)) break
             setMsgs((prev) => {
-              const out = [...prev]
-              appendHistoryMsg(out, h, toolPosRef.current)
-              return out
+              const st: IngestState = { msgs: prev, toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
+              appendHistoryMsg(st, h)
+              // 不在此 flush：tail 是逐条到达，tool_use 可能在后续行；孤儿在权威 idle 时统一浮现
+              return st.msgs
             })
             // 尾到的主线 tool_result 给已存在桶补终态——外部会话（tailer 路径）没有
             // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
