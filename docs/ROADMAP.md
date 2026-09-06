@@ -76,6 +76,47 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
    回滚操作也按 mode 选择：paginated 线程走 `thread/revert`，legacy 线程降级走 `thread/fork`。
 4. **回滚时序**：`thread/revert` 原地生效后，前端清理当前 turn 之后的消息并刷新状态，无需换 key 导航。
 
+## 方向五：Codex 实时流与思考增量对齐（Delta 通知接入，待排期）
+
+**定论**：当前 Codex 在 AnyPlane 中大多等 `item/completed` 整块到达后才显示，思考过程依赖 `~/.anyplane/reasoning/` 侧车落盘，子代理转录需前端 8 秒定时轮询。这完全可以通过接入 Codex app-server 原生的 Delta 通知全面消灭。
+
+**真源能力**：
+- `item/agentMessage/delta`：正文实时增量流式输出
+- `item/reasoning/textDelta` 与 `summaryTextDelta`：思考过程实时增量流式输出
+- `item/commandExecution/outputDelta` / `terminalInteraction`：命令执行的终端增量输出
+- `item/mcpToolCall/progress`：MCP 工具调用的执行进度通知
+
+**实施步骤**：
+1. **Runtime 订阅流分发**：在 `runtime.ts` 的 `demux` 中，将上述通知通过 `translate.ts` 翻译为统一的 `stream_event` 增量形状下发。
+2. **消除子线程轮询**：子代理产生的实时正文与思考增量通过父子事件链实时广播，废除前端 8s 轮询 `fetchCodexHistory` 机制，终态收尾拉取一次即可。
+3. **轻量化思考侧车**：实时流不再从侧车回读；侧车仅作为会话离线重载历史时的兜底补充。
+
+## 方向六：架构解耦与上帝文件重构（BackendPort 抽象，待排期）
+
+**定论**：目前 `index.ts`（1800+ 行）和 `Chat.tsx`（2000+ 行）承担了过多混合职责。双后端在 `index.ts` 中散落了 20 余处 `isCodexKey` 分支。此项为**纯架构解耦重构**，绝不与任何行为改动混杂，独立开分支推进。
+
+**实施步骤**：
+1. **服务端 BackendPort 契约**：在 `server/src/backends/` 定义真正的 `BackendPort` 抽象接口（`ensureSession`, `statusOf`, `sendControl`, `sendUserText` 等），消除 Hub 编排层的 `isCodexKey` 分支，为未来评估第三后端（如 OpenCode/Gemini）提供规范承重结构。
+2. **服务端 index.ts 拆分**：将路由分发拆为 `routes/`（REST API 路由）、`hub/`（WS 会话池生命周期）、`push/`（推送路由与通知）。
+3. **前端 Chat.tsx 拆解**：抽离 `useSessionSocket`（WS 连接与重连队列）、`useTaskBuckets`（后台任务分组管理），并将头部状态栏、输入框、详情抽屉抽为独立子组件。
+
+## 方向七：长会话虚拟列表与初始定位重构（待排期）
+
+**定论**：长会话（>200 行）全量挂载 DOM 在移动端仍有内存和渲染压力。此前试过 `content-visibility:auto` 与简单行窗口化，均因破坏「打开会话即滚到最新」的默认体验而回退（踩坑实录见下方）。
+
+**实施步骤**：
+1. **解耦初始滚动与视口扩窗**：进入会话首绘时必须使用 `auto`（无缓动动画）确保 100% 精确停在底部，以此为硬前提再开启视口切片。
+2. **扩窗触发限定用户手势**：扩窗仅允许由用户的主动向上滚轮或 touchmove 手势触发，严格禁止由数据变动触发的级联 scroll 事件引发扩窗。
+3. **超长会话自动化回归**：编写能模拟 300+ 行消息及工具调用的 fixture，在浏览器自动化环境下严格验收打开会话、流式追加、手动上翻这三段的滚动稳定性。
+
+## 方向八：自托管 Outbound Relay 与端到端加密（E2EE）评估
+
+**定论**：坚持「不自营 SaaS 云中继服务」的产品底线，但公网访问中「通知到了、锁屏按钮点不动」（蜂窝网络入站不可达）是当前最大的可用性断点。
+
+**探索方案**：
+1. **轻量自托管 Relay 脚本**：提供用户可在自己的便宜 VPS 上一键运行的极轻量反向打洞中继（仅做 TCP / WebSocket 的公网 rendezvous 与帧中转，不做业务解析）。
+2. **端到端加密（E2EE）**：AnyPlane 服务端与浏览器客户端直接协商一次性会话密钥（如 X25519 + ChaCha20-Poly1305），中继 VPS 仅转发密文，无法窥视命令与代码内容，彻底保住本地主权与隐私防线。
+
 ## 已验证但暂不做的（决策记录）
 
 - **~~daemon socket 深度集成~~（保留结论）+ ~~`claude agents --json --all` 状态增强~~** ✅ 已接入（2026-08-27）：

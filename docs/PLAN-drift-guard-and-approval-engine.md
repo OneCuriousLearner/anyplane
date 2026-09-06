@@ -1,6 +1,6 @@
 # 规划：协议漂移预警自动化 + 审批规则引擎
 
-> 2026-09-05 立。状态：**第一部分（漂移预警）已完成**（2026-09-05，首战即捕获 codex 0.149.0 真实漂移）；
+> 2026-09-05 立。状态：**第一部分（漂移预警）已完成**（2026-09-05 首战捕获 codex 0.149.0 漂移；2026-09-06 Claude 侧改用官方公开 npm 包 `@anthropic-ai/claude-agent-sdk`，双后端均已入 CI，并补全协议一致性断言）；
 > **第二部分 P1（规则引擎）已完成**（2026-09-06）。P2/P3 待排期。
 > 前置侦察：docs/tier2-recon.md 第 2 节的三件设想（claude 快照 diff、codex generate-ts diff、回放 harness）经核实**已全部落地**，本规划的增量是「自动化 + 告警」，不是从零建设。
 
@@ -10,9 +10,9 @@
 
 | 资产 | 位置 | 缺口 |
 |---|---|---|
-| codex schema diff | `server/scripts/check-codex-schema.ts`（generate-ts → 752 文件基线入库，`--update` 重建） | 手动触发；不在 package.json scripts；无 CI |
-| claude 协议 diff | `server/scripts/check-claude-protocol.ts`（快照 grep → `protocol-baseline.claude.json`） | 依赖本机快照仓库，CI 无法跑 |
-| 回放 harness | `server/scripts/replay-fixture.ts` | **默认 fixture 在仓库外**，仓库内无签入的 .jsonl；未挂进 `bun test` |
+| codex schema diff | `server/scripts/check-codex-schema.ts`（generate-ts → 781 文件基线入库，`--update` 重建） | 已挂 CI（定时每周一） |
+| claude 协议 diff | `server/scripts/check-claude-protocol.ts`（官方 npm 包 `sdk.d.ts` → `protocol-baseline.claude.json`；本地快照兜底） | 已挂 CI（定时每周一，与 codex 对称） |
+| 回放 harness | `server/scripts/fixtures/claude-turn-basic.jsonl` + `protocol.conformance.test.ts` | 已进 `bun test`，CI 常驻回归 |
 
 ### 目标
 
@@ -25,9 +25,11 @@ CLI 升级后**无需人记得**，协议漂移在引入风险前被发现并送
 - 发现版本前进且未跑过对应检查 → 控制台显著提醒（含一行复制即跑的命令），**不阻塞启动**。
 - 检查脚本成功退出后自动更新该记录。
 
-**2. CI 挂接（只做 codex 侧）**
-- `.github/workflows/protocol-drift.yml`：每周定时 + 手动触发；`npm i @openai/codex` 装最新版跑 `check-codex-schema.ts`，漂移时开 issue 或失败告警。
-- claude 侧不进 CI（依赖本地快照仓库），由版本探测在本地兜住。
+**2. CI 挂接（双后端均已挂入）**
+- `.github/workflows/protocol-drift.yml`：每周定时 + 手动触发。
+  - Codex 任务：`npm i @openai/codex` 装最新版跑 `check-codex-schema.ts`。
+  - Claude 任务：`check-claude-protocol.ts` 从官方公开 npm 包 `@anthropic-ai/claude-agent-sdk` 提取类型清单与基线对账，无需本地快照。
+  - 漂移时自动开 issue 或告警。
 
 **3. 告警投递**
 - 漂移检出时复用 `fanoutPush` 的 error 通道 → webhook（Server酱/ntfy）直达手机："codex 0.154 协议新增 3 项待评估"。
