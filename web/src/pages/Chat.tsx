@@ -1057,6 +1057,19 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             )
             break
           }
+          case 'replay_gap': {
+            // 断线太久，服务端环形缓冲已挤掉起点：补发会留空洞，直接重载历史。
+            // transcript 是权威事实源，重载一定能补齐（代价只是一次 HTTP）
+            pushSystem('↻ 断线较久，已重新载入对话')
+            const gapKey = session.key
+            fetchHistory(session.slug, session.sessionId)
+              .then((resp) => {
+                if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
+                applyHistory(resp)
+              })
+              .catch(() => pushSystem('⚠ 重新载入对话失败，请手动刷新', 'error'))
+            break
+          }
           case 'tail_reset': {
             // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
             setDraftBoth(null)
@@ -1075,8 +1088,12 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       },
       (open) => {
         setConnected(open)
+        if (!open) return
+        // 重连补发：带上断线前的最高 cli 序号，取回这期间错过的事件。
+        // 首连时 replayFrom 为 0，服务端跳过补发（attach 本身仍会推 status 与待审批）
+        if (sock.replayFrom > 0) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
         // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）
-        if (open && historyOffsetRef.current != null) {
+        if (historyOffsetRef.current != null) {
           sock.send({ kind: 'tail_subscribe', from: historyOffsetRef.current })
         }
       },

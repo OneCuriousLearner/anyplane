@@ -72,6 +72,10 @@ interface Hub {
   key: string
   clients: Set<import('bun').ServerWebSocket<WSData>>
   pendingApprovals: Map<string, PendingApproval>
+  /** 下行 cli 事件的单调序号（重连补发用，见 pushCliRing） */
+  cliSeq?: number
+  /** 最近 CLI_RING_CAP 条 cli 事件的环形缓冲 */
+  cliRing?: Array<{ seq: number; payload: Record<string, unknown> }>
   /** 未 spawn 时缓存启动偏好；已 spawn 时记录当前选择，供 UI 重连恢复 */
   spawnOpts?: Partial<SpawnOptions>
   /** 除 effort 外、需要在进程启动后按顺序写入 stdin 的环境变量 */
@@ -307,7 +311,44 @@ function replayApprovals(hub: Hub, send: (payload: unknown) => void): void {
   }
 }
 
+/** cli 事件环形缓冲容量。一个 turn 的 stream_event 密集但短，500 条够覆盖常见断线窗口
+ *  （移动端切后台/过隧道抖动），再长的断线本来就该重载历史。 */
+const CLI_RING_CAP = 500
+
+/**
+ * 下行 cli 事件补发：给每条打单调序号并留在环里，客户端重连时带 `fromSeq` 取回断线期间的部分。
+ *
+ * 为什么只缓冲 `cli`：它是唯一"错过就真没了"的流——status 是幂等快照、审批有
+ * replayApprovals、tail 有字节偏移，各自都有补偿路径，重复缓冲只会造成双份投递。
+ *
+ * 模型对齐官方 bridge：SSE 的 `from_sequence_num` 高水位 + UUID 环去重双保险
+ *（claude-code src/bridge/replBridge.ts 的 lastTransportSequenceNum、
+ *  bridgeMessaging.ts 的 recentInboundUUIDs）。这里序号是权威、uuid 去重仍留在前端兜底。
+ */
+function pushCliRing(hub: Hub, payload: Record<string, unknown>): number {
+  hub.cliSeq = (hub.cliSeq ?? 0) + 1
+  const seq = hub.cliSeq
+  payload.seq = seq
+  const ring = (hub.cliRing ??= [])
+  ring.push({ seq, payload })
+  if (ring.length > CLI_RING_CAP) ring.splice(0, ring.length - CLI_RING_CAP)
+  return seq
+}
+
+/** 重连补发：把环里 seq > fromSeq 的 cli 事件单播给该连接。
+ *  返回是否发生了「缺口」——请求的起点已被环挤掉，客户端需要重载历史才能补全。 */
+function replayCliSince(hub: Hub, fromSeq: number, send: (payload: unknown) => void): boolean {
+  const ring = hub.cliRing ?? []
+  if (ring.length === 0) return false
+  // 环底已经超过客户端的高水位 + 1 → 中间那段被挤掉了，补发会留空洞
+  const gap = ring[0].seq > fromSeq + 1
+  for (const e of ring) if (e.seq > fromSeq) send(e.payload)
+  return gap
+}
+
 function broadcast(hub: Hub, payload: unknown): void {
+  const kindForRing = (payload as { kind?: string } | null | undefined)?.kind
+  if (kindForRing === 'cli') pushCliRing(hub, payload as Record<string, unknown>)
   const text = JSON.stringify(payload)
   for (const ws of hub.clients) {
     try {
@@ -712,7 +753,12 @@ function rewindBusy(hub: Hub, message = '已有回滚操作正在进行'): boole
   return true
 }
 
-function handleClientMessage(hub: Hub, raw: string): void {
+function handleClientMessage(
+  hub: Hub,
+  raw: string,
+  /** 发起方连接：仅重连补发需要单播（其余一律 hub 级广播） */
+  ws?: import('bun').ServerWebSocket<WSData>,
+): void {
   let data: Record<string, unknown>
   try {
     data = JSON.parse(raw)
@@ -740,6 +786,25 @@ function handleClientMessage(hub: Hub, raw: string): void {
         pushStatus(hub)
       }
       replayApprovals(hub, (p) => broadcast(hub, p))
+      // 重连补发：客户端带上断线前的最高 seq，取回这期间错过的 cli 事件。
+      // **必须单播**：走 broadcast 会让补发内容重新入环并分配新序号（自我污染），
+      // 且已在线的其他客户端会收到重复投递。
+      const fromSeq = typeof data.fromSeq === 'number' ? data.fromSeq : undefined
+      if (fromSeq !== undefined && ws) {
+        const unicast = (p: unknown) => {
+          try {
+            ws.send(JSON.stringify(p))
+          } catch (e) {
+            log.debug(`[ws ${hub.key}] 补发单播失败`, errFields(e))
+          }
+        }
+        // 环里已挤掉起点时告知缺口，由前端重载历史补全（transcript 是权威事实源）
+        const gap = replayCliSince(hub, fromSeq, unicast)
+        if (gap) {
+          log.info(`[ws ${hub.key}] 补发存在缺口，通知客户端重载历史`, { fromSeq, ringFrom: hub.cliRing?.[0]?.seq })
+          unicast({ kind: 'replay_gap', fromSeq })
+        }
+      }
       break
     }
     case 'tail_subscribe': {
@@ -1737,7 +1802,7 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         if (ws.data.inbox) return // inbox 频道只发不收
         const hub = getHub(ws.data.key)
         try {
-          handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString())
+          handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString(), ws as import('bun').ServerWebSocket<WSData>)
         } catch (e) {
           log.error(`[ws ${hub.key}] 处理消息异常:`, e) // 原对象打日志保留堆栈
           try {
