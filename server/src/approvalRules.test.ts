@@ -1,5 +1,5 @@
 // 审批规则引擎单测：解析校验（fail fast）、glob/域名匹配器、按序首中、决策形状。
-// 设计依据：docs/PLAN-drift-guard-and-approval-engine.md 第二节。
+// 设计依据：docs/plans/drift-guard-and-approval-engine.md 第二节。
 
 import { describe, expect, test } from 'bun:test'
 import {
@@ -63,7 +63,7 @@ describe('globMatch：路径匹配（锚定、大小写不敏感）', () => {
   })
 
   test('Windows 反斜杠与大小写归一', () => {
-    expect(globMatch('D:/Coder/**', 'D:\\Coder\\Agents\\anyplane\\x.ts')).toBe(true)
+    expect(globMatch('E:/proj/**', 'E:\\proj\\sub\\x.ts')).toBe(true)
     expect(globMatch('c:/users/**', 'C:\\Users\\foo\\y.ts')).toBe(true)
   })
 

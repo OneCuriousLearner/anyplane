@@ -2,7 +2,7 @@
 
 > 实验日期：2026-09-02  
 > 实验会话：`0848de41-770b-4e48-883a-1f44766ffc74`  
-> 源码参考：`/data/workspace/claude-code/src/utils/tasks.ts`、`src/hooks/useTasksV2.ts`、`src/tools/TaskCreateTool`、`src/tools/TaskUpdateTool`、`src/tools/TaskListTool`
+> 源码参考：claude-code 源码快照（本地参考仓库，不入库）的 `src/utils/tasks.ts`、`src/hooks/useTasksV2.ts`、`src/tools/TaskCreateTool`、`src/tools/TaskUpdateTool`、`src/tools/TaskListTool`
 
 ## 1. 目的与范围
 

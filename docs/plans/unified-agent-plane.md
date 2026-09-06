@@ -127,7 +127,7 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
 
 ---
 
-## 附录：接力可行性实验记录（2026-08-17,/data/workspace/handoff-lab)
+## 附录：接力可行性实验记录（2026-08-17，独立实验目录 handoff-lab）
 
 **流程**:Claude 建项目（add/list + 口头设计 search 语法）→ fork 自写简报 → Codex(deepseek-v4-flash）进场实现 search → Codex 继续（list --tag + 口头设计 export 格式）→ Codex 写简报 → Claude 进场实现 export → 独立验证。
 

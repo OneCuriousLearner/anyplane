@@ -102,5 +102,6 @@ AnyPlane 的本质是把「在本机起会话」开放给能访问该端口的�
 ## 开发与贡献
 
 - 架构决策与开发约定见 [AGENTS.md](AGENTS.md)；发版流程见 [docs/releasing.md](docs/releasing.md)。
+- 长文本文档（调研/规划/审计）放 `docs/`，各子目录角色见 [docs/README.md](docs/README.md)；**入库文档不要描述本地仓库路径、密钥位置等机器相关信息**，确有需要写 `*.local.md`（不进 git）。
 - 端到端验证脚本在 `server/scripts/`（需服务端已启动，会真实调用 claude/codex CLI）。
 - 官方文档本地镜像：`bun run docs:claude` / `bun run docs:codex`，写入 gitignore 的 `docs/claude-code/` 与 `docs/codex/`。

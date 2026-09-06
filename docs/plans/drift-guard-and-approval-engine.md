@@ -2,7 +2,7 @@
 
 > 2026-09-05 立。状态：**第一部分（漂移预警）已完成**（2026-09-05 首战捕获 codex 0.149.0 漂移；2026-09-06 Claude 侧改用官方公开 npm 包 `@anthropic-ai/claude-agent-sdk`，双后端均已入 CI，并补全协议一致性断言）；
 > **第二部分 P1（规则引擎）已完成**（2026-09-06）。P2/P3 待排期。
-> 前置侦察：docs/tier2-recon.md 第 2 节的三件设想（claude 快照 diff、codex generate-ts diff、回放 harness）经核实**已全部落地**，本规划的增量是「自动化 + 告警」，不是从零建设。
+> 前置侦察：docs/research/2026-08-20-tier2-recon.md 第 2 节的三件设想（claude 快照 diff、codex generate-ts diff、回放 harness）经核实**已全部落地**，本规划的增量是「自动化 + 告警」，不是从零建设。
 
 ## 一、协议漂移预警自动化
 

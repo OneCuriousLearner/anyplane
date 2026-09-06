@@ -23,16 +23,16 @@ describe('isCodexKey / isExistingKey', () => {
 
 describe('slugOf（与服务端 discovery.sanitizePath 一致）', () => {
   test('非字母数字全部转 -', () => {
-    expect(slugOf('/data/workspace/anyplane')).toBe('-data-workspace-anyplane')
+    expect(slugOf('/srv/anyplane')).toBe('-srv-anyplane')
     expect(slugOf('C:\\Users\\name\\项目')).toBe('C--Users-name---')
   })
 })
 
 describe('sessionFromKey', () => {
   test('s| 三段式 → claude 离线会话', () => {
-    const s = sessionFromKey('s|-data-workspace|01a03cac-3fdc-7b80-9c5d-f14ba518f4dc')
+    const s = sessionFromKey('s|-srv|01a03cac-3fdc-7b80-9c5d-f14ba518f4dc')
     expect(s).toMatchObject({
-      slug: '-data-workspace',
+      slug: '-srv',
       sessionId: '01a03cac-3fdc-7b80-9c5d-f14ba518f4dc',
       status: 'offline',
       backend: 'claude',
@@ -45,10 +45,10 @@ describe('sessionFromKey', () => {
   })
 
   test('b| 三段式 → 懒分叉：cwd 解码 + slug 重算', () => {
-    const s = sessionFromKey('b|%2Fdata%2Fworkspace%2Fanyplane|source-sid')
+    const s = sessionFromKey('b|%2Fsrv%2Fanyplane|source-sid')
     expect(s).toMatchObject({
-      cwd: '/data/workspace/anyplane',
-      slug: '-data-workspace-anyplane',
+      cwd: '/srv/anyplane',
+      slug: '-srv-anyplane',
       sessionId: 'source-sid',
       backend: 'claude',
     })

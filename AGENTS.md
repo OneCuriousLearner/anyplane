@@ -129,7 +129,7 @@ bun test web/            # 仅前端测试
 
 `docs/codex/` 是官方 Codex / ChatGPT Learn 文档的本地 Markdown 镜像（gitignore，不进仓库；`GPT's suggestion.md` 除外）。**app-server / CLI / Skills / MCP 相关改动的重要开发参考**。用 `bun run docs:codex` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `docs/**/*.md`（关键页：`docs/app-server.md`、`docs/developer-commands.md`、`docs/non-interactive-mode.md`）。
 
-**长文本文档（审计报告/调研记录/规划）放 `docs/` 目录**（如 `docs/audits/2026-08-slash-commands.md` 斜杠命令全景审计、`ROADMAP.md` 后续规划），AGENTS.md 只保留最关键结论并引用路径。
+**长文本文档（审计报告/调研记录/规划）放 `docs/` 目录**，各子目录角色与命名约定见 `docs/README.md` 文档地图（如 `docs/audits/2026-08-slash-commands.md` 斜杠命令全景审计、`docs/plans/` 实施计划、`docs/research/` 调研存档、`ROADMAP.md` 后续规划），AGENTS.md 只保留最关键结论并引用路径。
 
 README 面向安装用户只保留常用项；用户向参考文档放 `docs/`：配置全集与推送 webhook 细节见 `docs/configuration.md`，域名网关与远程容器部署见 `docs/gateway.md`——改配置项/网关行为时同步这两份。
 

@@ -6,7 +6,7 @@ import { isCodexKey, keyFor, keyForNew, parseKey, splitThreadId } from './backen
 describe('keyFor / keyForNew / isCodexKey', () => {
   test('编码形状', () => {
     expect(keyFor('0198f4d2-7d1e-7e80-a1b2-c3d4e5f60708')).toBe('x|0198f4d2-7d1e-7e80-a1b2-c3d4e5f60708')
-    expect(keyForNew('/data/workspace/anyplane')).toBe('xn|%2Fdata%2Fworkspace%2Fanyplane')
+    expect(keyForNew('/srv/anyplane')).toBe('xn|%2Fsrv%2Fanyplane')
   })
 
   test('isCodexKey 与 claude key 互斥', () => {
@@ -23,7 +23,7 @@ describe('keyFor / keyForNew / isCodexKey', () => {
 describe('parseKey', () => {
   test('x| → resumeThreadId；xn| → 解码 cwd', () => {
     expect(parseKey('x|thread-1')).toEqual({ resumeThreadId: 'thread-1' })
-    expect(parseKey('xn|%2Fdata%2Fworkspace')).toEqual({ cwd: '/data/workspace' })
+    expect(parseKey('xn|%2Fsrv')).toEqual({ cwd: '/srv' })
   })
 
   test('中文与空格等需要转义的 cwd 往返无损', () => {

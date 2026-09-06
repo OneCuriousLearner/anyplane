@@ -1,5 +1,5 @@
 // 接力（handoff）：源会话 fork 自摘要 → 目标会话播种简报 → 血缘记录。
-// 已在 handoff-lab 实验验证：两家的"对话内隐藏设计"可经简报无损传递（见 docs/PLAN 附录）。
+// 已在 handoff-lab 实验验证：两家的"对话内隐藏设计"可经简报无损传递（见 docs/plans/unified-agent-plane.md 附录）。
 
 import { spawn } from 'bun'
 import { join } from 'node:path'

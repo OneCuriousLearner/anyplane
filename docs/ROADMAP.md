@@ -1,6 +1,6 @@
 # AnyPlane 后续规划（ROADMAP）
 
-> 2026-08-24 立。前置：统一 Agent 控制面 8 阶段计划已全部完成（见 `PLAN-unified-agent-plane.md`）。
+> 2026-08-24 立。前置：统一 Agent 控制面 8 阶段计划已全部完成（见 [plans/unified-agent-plane.md](plans/unified-agent-plane.md)）。
 > 本文档收录已讨论定论、待排期的方向；每条附决策依据，避免将来重新论证。
 
 ## 定位备忘（为什么做这些）

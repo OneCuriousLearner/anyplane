@@ -1,5 +1,5 @@
 // 审批规则引擎：把「每条都问人 / 全部放行」升级为按规则分流。
-// 设计见 docs/PLAN-drift-guard-and-approval-engine.md 第二节。
+// 设计见 docs/plans/drift-guard-and-approval-engine.md 第二节。
 //
 // 规则有序、首条命中生效、兜底走人工（ask）。匹配字段按工具分发：
 //   Bash → input.command（正则）；Write/Edit/Read 等 → input.file_path（glob）；

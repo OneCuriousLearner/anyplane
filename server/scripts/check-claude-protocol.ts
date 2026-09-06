@@ -4,7 +4,7 @@
 // 数据源优先级：
 //   ① 官方公开 npm 包 @anthropic-ai/claude-agent-sdk 的 sdk.d.ts（**CI 用这条**）——
 //      公开发行物、随 CLI 版本同步、无需本地快照，覆盖面比任何手抄清单都全。
-//   ② 本地源码快照（CLAUDE.local.md 记录的 claude-code 仓库）——仅作离线兜底；
+//   ② 本地源码快照（显式路径参数传入的 claude-code 仓库）——仅作离线兜底；
 //      它是 source-map 重建产物，**不进 CI、不得 vendor 进本仓库**。
 //
 // 用法：bun run server/scripts/check-claude-protocol.ts [快照路径] [--update]
@@ -89,9 +89,7 @@ if (args[0]) {
   try {
     extracted = fromNpm()
   } catch (e) {
-    const fallback = ['/data/workspace/claude-code', join(process.env.HOME ?? '', 'claude-code')].find((p) =>
-      existsSync(p),
-    )
+    const fallback = [join(process.env.HOME ?? '', 'claude-code')].find((p) => existsSync(p))
     if (!fallback) {
       console.error(`取官方 SDK 包失败且无本地快照可兜底: ${e instanceof Error ? e.message : e}`)
       process.exit(1)

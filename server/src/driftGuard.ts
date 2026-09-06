@@ -1,5 +1,5 @@
 // 协议漂移预警：CLI 版本探测 + 后台检查 + 告警投递。
-// 设计见 docs/PLAN-drift-guard-and-approval-engine.md 第一节。
+// 设计见 docs/plans/drift-guard-and-approval-engine.md 第一节。
 //
 // 工作方式：
 //   1. 服务端启动时读 claude/codex 版本，与 ~/.anyplane/protocol-checks.json 记录比对；

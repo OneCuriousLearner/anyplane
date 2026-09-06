@@ -2,7 +2,7 @@
 // 用法：bun run server/scripts/e2e-codex.ts [cwd]
 // 目标：验证本机 codex 的握手、事件序列与 usage 形状，为 backends/codex 实现定稿。
 
-const cwd = process.argv[2] ?? '/data/workspace/handoff-lab'
+const cwd = process.argv[2] ?? process.cwd()
 
 interface RpcMsg {
   id?: number | string
