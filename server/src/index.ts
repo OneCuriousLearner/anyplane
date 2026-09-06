@@ -4,17 +4,17 @@ import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { hostAllowed, isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
-import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
+import { keyFor, keyForNew, parseKey, splitExistingKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { resolveTierModelNames } from './backends/claude/modelNames'
 import { processManager } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
-import { TranscriptTailer } from './backends/claude/tailer'
-import { isCodexKey, keyForNew as codexKeyForNew, listSessions as listCodexSessions, parseKey as codexParseKey, readHistory as readCodexHistory, splitThreadId } from './backends/codex/backend'
-import { codexRuntime, type CodexSession } from './backends/codex/runtime'
-import { portFor } from './backends/port'
+import type { TranscriptTailer } from './backends/claude/tailer'
+import { isCodexKey, keyForNew as codexKeyForNew, listSessions as listCodexSessions, readHistory as readCodexHistory, splitThreadId } from './backends/codex/backend'
+import { codexRuntime } from './backends/codex/runtime'
+import { initBackendPorts, portFor } from './backends/port'
 import type { ApprovalDecision, SpawnOptions } from './backends/types'
-import { config, defaultPermissionMode } from './config'
+import { config } from './config'
 import { isOwnServerProcess, takeoverStaleListeners } from './portTakeover'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
 import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
@@ -32,9 +32,6 @@ import {
 } from './push'
 import {
   appendLineage,
-  briefPrompt,
-  generateClaudeBrief,
-  generateCodexBrief,
   lineageFor,
   seedMessage,
   type HandoffDetail,
@@ -104,6 +101,18 @@ export interface Hub {
 }
 
 const hubs = new Map<string, Hub>()
+
+// BackendPort 适配器的回调注入（装配层一次性注册；适配器禁止 import 本模块。
+// 被引用的均为函数声明，依赖 hoisting 而非 ESM 加载顺序）
+initBackendPorts({
+  broadcast,
+  broadcastError,
+  pushStatus,
+  sessionCallbacks,
+  getHub,
+  sessionNameOf,
+  rewindBusy,
+})
 
 // ---------- 全局收件箱（/ws/inbox）：跨会话审批/完成/错误汇总 ----------
 
@@ -381,28 +390,6 @@ function throttledPushStatus(hub: Hub): void {
   st.timer.unref?.()
 }
 
-/**
- * 官方 AI 标题（generate_session_title）：首条真实 user 消息 × 首个 init 双条件齐备即触发。
- * 两路调用——user 消息时（sessionId 已知）与 init 到达时（消息已记账）；按 sessionId 去重，
- * /clear 重键后的新会话自然再生成一次。CLI persist 把 ai-title 写进 transcript，
- * discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，列表轮询内出现。
- */
-function maybeGenerateTitle(hub: Hub): void {
-  const sid = hub.sessionId
-  const text = hub.pendingTitleText
-  if (!sid || !text || hub.titleGeneratedFor === sid) return
-  const s = processManager.get(hub.key)
-  if (!s) return
-  hub.titleGeneratedFor = sid
-  hub.pendingTitleText = undefined
-  void s
-    .generateSessionTitle(text)
-    .then((title) => {
-      if (title) log.info(`[title] ${sessionNameOf(hub.key)} → ${title}`)
-    })
-    .catch(() => {}) // 标题失败无害：列表回退首条消息摘要
-}
-
 /** 两个后端共用的会话回调：CLI/翻译层消息广播、审批入 Hub 表、状态推动 */
 function sessionCallbacks(hub: Hub) {
   return {
@@ -446,7 +433,7 @@ function sessionCallbacks(hub: Hub) {
       // 每个 init 都更新会话身份（首次 spawn 与 /clear 重键共用；rekey 分支不落 return，会走到这里）
       if (msg.type === 'system' && msg.subtype === 'init') {
         hub.sessionId = String(msg.session_id ?? '') || undefined
-        maybeGenerateTitle(hub) // 首条消息可能已记账在等 sessionId
+        portFor(hub.key).maybeGenerateTitle(hub) // 首条消息可能已记账在等 sessionId（codex no-op）
       }
       broadcast(hub, { kind: 'cli', msg })
       // turn 收尾是收件箱的核心提醒信号（agent 跑完了）
@@ -499,150 +486,6 @@ function sessionCallbacks(hub: Hub) {
   }
 }
 
-/** codex 会话懒启动：attach(x|) 或首条 user 消息时 resume/start 线程 */
-async function ensureCodexSession(hub: Hub, opts?: Partial<SpawnOptions>): Promise<CodexSession | undefined> {
-  const parsed = codexParseKey(hub.key)
-  if (!parsed) {
-    broadcastError(hub, '无法解析 codex 会话 key')
-    return undefined
-  }
-  const spawnOpts = {
-    cwd: parsed.cwd,
-    resumeThreadId: parsed.resumeThreadId,
-    permissionMode: defaultPermissionMode(),
-    ...hub.spawnOpts,
-    ...opts,
-  }
-  hub.spawnOpts = spawnOpts
-  const s = codexRuntime.ensure(hub.key, spawnOpts, sessionCallbacks(hub))
-  s.syncClients(hub.clients.size)
-  try {
-    await s.start()
-  } catch (e) {
-    broadcastError(hub, errorMessage(e))
-    pushStatus(hub)
-    return undefined
-  }
-  pushStatus(hub)
-  return s
-}
-
-// ---------- transcript tailer（外部会话实时跟踪） ----------
-
-function stopTailer(hub: Hub): void {
-  hub.tailer?.stop()
-  hub.tailer = undefined
-}
-
-function throttledTailStatus(hub: Hub): void {
-  const now = Date.now()
-  if (now - (hub.tailStatusAt ?? 0) < 2000) return
-  hub.tailStatusAt = now
-  pushStatus(hub)
-}
-
-function startTailer(hub: Hub, from?: number): void {
-  if (hub.tailer) return
-  const ek = splitExistingKey(hub.key)
-  if (!ek) return // 新会话还没有 transcript
-  if (processManager.get(hub.key)) return // 已 spawn：live 流覆盖，无需 tail
-  const path = join(config.claudeConfigDir, 'projects', ek.slug, `${ek.sessionId}.jsonl`)
-  hub.tailer = new TranscriptTailer(path, from, {
-    onMessage: (msg) => {
-      broadcast(hub, { kind: 'tail', msg })
-      throttledTailStatus(hub)
-    },
-    onReset: () => {
-      stopTailer(hub)
-      broadcast(hub, { kind: 'tail_reset' })
-      pushStatus(hub)
-    },
-    onTick: () => throttledTailStatus(hub),
-  })
-  hub.tailer.start()
-  pushStatus(hub)
-}
-
-function rewindConversation(hub: Hub, userMessageId: string, scope: 'conversation' | 'both'): void {
-  const current = processManager.get(hub.key)
-  const parsed = parseKey(hub.key)
-  const sid = current?.sessionId ?? parsed?.resumeSessionId
-  if (!parsed || !sid) {
-    broadcastError(hub, '无法回滚：未知会话 ID')
-    return
-  }
-  // 先从 map 摘掉再 kill，避免旧 onExit 污染新会话。
-  processManager.dispose(hub.key)
-  hub.spawnOpts = { ...hub.spawnOpts, cwd: parsed.cwd, resumeSessionId: sid, resumeSessionAt: userMessageId }
-  ensureSpawned(hub, undefined, parsed)
-  const respawned = processManager.get(hub.key)
-  if (!respawned || respawned.exited) {
-    // ensureSpawned 已广播具体的 spawn 错误；不能向客户端虚报回滚成功。
-    return
-  }
-  broadcast(hub, { kind: 'rewound', userMessageId, scope })
-}
-
-function ensureSpawned(
-  hub: Hub,
-  opts?: Partial<SpawnOptions>,
-  parsedHint?: ParsedKey,
-): void {
-  // parseKey 会反查 listSessions()（一次文件系统扫描）；调用方已解析过时直接复用
-  const parsed = parsedHint ?? parseKey(hub.key)
-  if (!parsed) {
-    broadcastError(hub, '无法解析会话（项目目录不存在？）')
-    return
-  }
-  const spawnOpts: SpawnOptions = {
-    cwd: parsed.cwd,
-    resumeSessionId: parsed.resumeSessionId,
-    forkFromSessionId: parsed.forkFromSessionId,
-    permissionMode: defaultPermissionMode(),
-    ...hub.spawnOpts,
-    ...opts,
-  }
-  // b| 懒分叉的一次性语义：首个 init 已把分叉产出的新 sessionId 记入 hub.sessionId，
-  // 此后 respawn/rewind 必须 resume 分叉自身。否则 spawn() 里 fork 分支优先于 resume，
-  // 会从源会话重新 fork 出全新 sessionId，静默丢弃分叉后的全部对话；rewind 路径更致命——
-  // --resume-session-at 带的 messageId 在源 transcript 里根本不存在。
-  if (spawnOpts.forkFromSessionId && hub.sessionId) {
-    delete spawnOpts.forkFromSessionId
-    spawnOpts.resumeSessionId = hub.sessionId
-  }
-  hub.spawnOpts = spawnOpts
-  try {
-    const s = processManager.ensure(hub.key, spawnOpts, sessionCallbacks(hub))
-    // spawn 成功（或已有存活进程）：live 流接管，停掉 transcript tailer 避免重复推送
-    stopTailer(hub)
-    // 懒 spawn：WS 可能在进程创建前已 open，对齐客户端引用计数
-    s.syncClients(hub.clients.size)
-    // 自定义 env 必须排在首条 user 消息之前写入；stdin 保证顺序。
-    if (hub.pendingEnv && Object.keys(hub.pendingEnv).length > 0) {
-      s.write({ type: 'update_environment_variables', variables: hub.pendingEnv })
-      hub.pendingEnv = undefined
-    }
-  } catch (e) {
-    log.error(`[session ${hub.key}] spawn 失败:`, e) // 原对象打日志保留堆栈
-    broadcastError(hub, errorMessage(e))
-  }
-  // resumeSessionAt 是一次性 spawn 参数（命令行 args 已在 spawn() 内同步生成）。
-  // 无论本次成败都不能留在 hub.spawnOpts 里，否则之后空闲回收后的普通 respawn
-  // 会带着它再次截断同一条消息，静默丢弃回滚之后的新对话。
-  delete hub.spawnOpts.resumeSessionAt
-  pushStatus(hub)
-}
-
-/** claude 会话的就绪检查：未运行则触发懒 spawn；仍未就绪返回 undefined（ensureSpawned 已广播具体错误） */
-function ensureClaudeSession(hub: Hub): ReturnType<typeof processManager.get> {
-  let s = processManager.get(hub.key)
-  if (!s || s.exited) {
-    ensureSpawned(hub)
-    s = processManager.get(hub.key)
-  }
-  return s && !s.exited ? s : undefined
-}
-
 /** 回滚进行中拒绝新操作：返回 true 表示已拒绝（错误已广播） */
 function rewindBusy(hub: Hub, message = '已有回滚操作正在进行'): boolean {
   if (!hub.rewindPending) return false
@@ -665,23 +508,11 @@ function handleClientMessage(
     log.error(`[ws ${hub.key}] 上行非 JSON 帧，已丢弃`, { bytes: raw.length, head: raw.slice(0, 120), ...errFields(e) })
     return
   }
-  const session = () => processManager.get(hub.key)
   switch (data.kind) {
     case 'attach': {
       // 浏览历史只握手，不 spawn。发消息 / 切 model·mode·effort / rewind / btw 时再启动 CLI。
-      // 若客户端显式传 warm:true，则预热 resume（用于主动续聊）。
-      // codex：x| 会话 attach 即 resume（订阅实时事件）；xn| 新会话保持懒启动。
-      if (isCodexKey(hub.key)) {
-        if (data.warm === true || data.opts || hub.key.startsWith('x|')) {
-          void ensureCodexSession(hub, data.opts as Partial<SpawnOptions> | undefined)
-        } else {
-          pushStatus(hub)
-        }
-      } else if (data.warm === true || data.opts) {
-        ensureSpawned(hub, data.opts as Partial<SpawnOptions> | undefined)
-      } else {
-        pushStatus(hub)
-      }
+      // 各后端的 attach 策略（warm 预热、codex x| 即 resume）见适配器 onAttach。
+      portFor(hub.key).onAttach(hub, data)
       replayApprovals(hub, (p) => broadcast(hub, p))
       // 重连补发：客户端带上断线前的最高 seq，取回这期间错过的 cli 事件。
       // **必须单播**：走 broadcast 会让补发内容重新入环并分配新序号（自我污染），
@@ -705,11 +536,9 @@ function handleClientMessage(
       break
     }
     case 'tail_subscribe': {
-      // 客户端加载完历史后订阅 transcript 追加（from = 历史读取时的文件字节数，无缝衔接）
-      // codex 的实时流走 app-server 订阅，无 tailer 概念
-      if (!isCodexKey(hub.key)) {
-        startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
-      }
+      // 客户端加载完历史后订阅 transcript 追加（from = 历史读取时的文件字节数，无缝衔接）；
+      // codex 的实时流走 app-server 订阅，无 tailer 概念（适配器内 no-op）
+      portFor(hub.key).startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
       break
     }
     case 'user': {
@@ -723,55 +552,22 @@ function handleClientMessage(
         mediaType: String(a.mediaType ?? 'image/png'),
         dataBase64: String(a.dataBase64 ?? ''),
       }))
-      if (isCodexKey(hub.key)) {
-        void (async () => {
-          let s = codexRuntime.get(hub.key)
-          if (!s || s.exited || !s.sessionId) {
-            s = await ensureCodexSession(hub)
-          }
-          if (!s || s.exited) return // ensureCodexSession 已广播具体错误
-          try {
-            s.sendUserText(String(data.text ?? ''), sendMode, attachments)
-            pushStatus(hub)
-          } catch (e) {
-            broadcastError(hub, `发送失败: ${errorMessage(e)}`)
-            pushStatus(hub)
-          }
-        })()
-        return
-      }
-      const s = ensureClaudeSession(hub)
-      if (!s) return // ensureSpawned 已广播具体错误
-      try {
-        // sendMode 直通：claude 侧 steer=priority 'now'（中断处理）、queue=服务端排队
-        const text = String(data.text ?? '')
-        s.sendUserText(text, sendMode, attachments)
-        // /goal 是 claude 的本地斜杠命令（2.1.139+）：goal 状态不进 stream-json，
-        // 这里从出站文本跟踪 chip 状态；result 到达时清除（见 onMessage）
-        const goalMatch = text.match(/^\/goal\s*(.*)$/i)
-        if (goalMatch) {
-          const arg = goalMatch[1].trim()
-          if (!arg) {
-            // /goal 无参 = 查询状态，本地输出，不改变跟踪
-          } else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) {
-            hub.goal = undefined
-          } else {
-            hub.goal = { condition: arg, since: Date.now() }
-          }
+      const text = String(data.text ?? '')
+      void (async () => {
+        const port = portFor(hub.key)
+        const s = await port.ensureForSend(hub)
+        if (!s) return // 适配器已广播具体错误
+        try {
+          // sendMode 直通：claude 侧 steer=priority 'now'（中断处理）、queue=服务端排队
+          s.sendUserText(text, sendMode, attachments)
+          // 后端特定的发送后跟踪（claude：/goal 出站跟踪 + 标题素材记账；codex 无）
+          port.afterUserSent?.(hub, text)
+          pushStatus(hub)
+        } catch (e) {
+          broadcastError(hub, `发送失败: ${errorMessage(e)}`)
           pushStatus(hub)
         }
-        // 记录首条真实 user 消息作为标题素材（斜杠首消息不算会话主题，跳过）；
-        // 实际触发在 maybeGenerateTitle——需要 sessionId（init 可能尚未到达）。
-        // 条件显式写：titleGeneratedFor 与 sessionId 同 undefined 时也必须放行（全新 Hub）
-        if (text.trim() && !text.startsWith('/') && !(hub.titleGeneratedFor && hub.titleGeneratedFor === hub.sessionId)) {
-          hub.pendingTitleText ??= text
-          maybeGenerateTitle(hub)
-        }
-        pushStatus(hub)
-      } catch (e) {
-        broadcastError(hub, `发送失败: ${errorMessage(e)}`)
-        pushStatus(hub)
-      }
+      })()
       break
     }
     case 'control': {
@@ -790,46 +586,7 @@ function handleClientMessage(
       if (subtype === 'set_permission_mode' && extra.mode) {
         hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
       }
-      // codex：interrupt/set_model/set_permission_mode/compact 直接翻译；其余控制请求暂无对应物
-      if (isCodexKey(hub.key)) {
-        const s = codexRuntime.get(hub.key)
-        if (s && !s.exited) {
-          s.sendControl(subtype, extra)
-        }
-        pushStatus(hub)
-        return
-      }
-      // 中断：未启动则无需操作
-      if (subtype === 'interrupt') {
-        const s = session()
-        if (s && !s.exited) {
-          try {
-            s.sendControl(subtype, extra)
-          } catch (e) {
-            broadcastError(hub, `中断失败: ${errorMessage(e)}`)
-          }
-          pushStatus(hub)
-        }
-        return
-      }
-      let s = session()
-      if (!s || s.exited) {
-        if (subtype === 'set_model' || subtype === 'set_permission_mode') {
-          pushStatus(hub)
-          return
-        }
-        // 其他控制可能没有 CLI 参数等价物，仍需进程承接。
-        ensureSpawned(hub)
-        s = session()
-      }
-      if (!s || s.exited) return
-      try {
-        s.sendControl(subtype, extra)
-        pushStatus(hub)
-      } catch (e) {
-        broadcastError(hub, `控制请求失败: ${errorMessage(e)}`)
-        pushStatus(hub)
-      }
+      portFor(hub.key).deliverControl(hub, subtype, extra)
       break
     }
     case 'update_env': {
@@ -838,116 +595,27 @@ function handleClientMessage(
       const variables = (data.variables as Record<string, string>) ?? {}
       const effort = variables.CLAUDE_CODE_EFFORT_LEVEL
       if (effort) hub.spawnOpts = { ...hub.spawnOpts, effort }
-      if (isCodexKey(hub.key)) {
-        // codex：映射为 reasoning effort（CodexSession.write 内部翻译）
-        const s = codexRuntime.get(hub.key)
-        if (s && !s.exited) {
-          s.write({ type: 'update_environment_variables', variables })
-        }
-        pushStatus(hub)
-        return
-      }
-      const otherVariables = Object.fromEntries(
-        Object.entries(variables).filter(([key]) => key !== 'CLAUDE_CODE_EFFORT_LEVEL'),
-      )
-      const s = session()
-      if (!s || s.exited) {
-        if (Object.keys(otherVariables).length > 0) {
-          hub.pendingEnv = { ...hub.pendingEnv, ...otherVariables }
-        }
-        pushStatus(hub)
-        return
-      }
-      try {
-        s.write({ type: 'update_environment_variables', variables })
-        pushStatus(hub)
-      } catch (e) {
-        broadcastError(hub, `更新环境变量失败: ${errorMessage(e)}`)
-        pushStatus(hub)
-      }
+      portFor(hub.key).updateEnv(hub, variables)
       break
     }
     case 'branch': {
       // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session），
-      // codex 走既有 thread/fork（RewindPicker 的"从此处分叉"）；这里只处理 claude。
-      if (isCodexKey(hub.key)) {
-        broadcastError(hub, 'Codex 请用回滚面板的「从此处分叉」')
-        return
-      }
-      const parsed = parseKey(hub.key)
-      const srcSid = session()?.sessionId ?? parsed?.resumeSessionId ?? parsed?.forkFromSessionId
-      if (!parsed || !srcSid) {
-        broadcastError(hub, '分叉需要已有会话（先发过至少一条消息）')
-        return
-      }
-      const branchKey = keyForBranch(parsed.cwd, srcSid)
-      // 预建 Hub 并缓存分叉源：首条 user 消息 ensureSpawned 时经 parseKey 拿到 forkFromSessionId
-      const branchHub = getHub(branchKey)
-      // /branch <名字>：透传给分叉 spawn 的 -n（列表页可区分分支用途）
-      const branchName = String(data.name ?? '').trim()
-      if (branchName) branchHub.spawnOpts = { ...branchHub.spawnOpts, sessionName: branchName }
-      broadcast(hub, { kind: 'forked', targetKey: branchKey, branchOf: srcSid, ...(branchName ? { name: branchName } : {}) })
+      // codex 走既有 thread/fork（RewindPicker 的"从此处分叉"，适配器内拒绝并引导）
+      portFor(hub.key).branch(hub, String(data.name ?? ''))
       break
     }
     case 'rewind_conversation': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
-      if (isCodexKey(hub.key)) {
-        // codex：分叉语义——thread/fork(beforeTurnId) 复制该轮之前的历史为新线程，
-        // 原线程不动。userMessageId 即历史的轮首 userMessage 的 turnId。
-        const tid = codexRuntime.get(hub.key)?.sessionId ?? codexParseKey(hub.key)?.resumeThreadId
-        if (!tid) {
-          broadcastError(hub, 'codex 会话未就绪，无法分叉')
-          return
-        }
-        void codexRuntime
-          .forkAt(tid, at)
-          .then((newId) => {
-            broadcast(hub, {
-              kind: 'forked',
-              targetKey: `x|${newId}`,
-              targetSessionId: newId,
-              fromTurnId: at,
-            })
-          })
-          .catch((e) => broadcastError(hub, `分叉失败: ${errorMessage(e)}`))
-        return
-      }
-      if (rewindBusy(hub)) return
-      rewindConversation(hub, at, 'conversation')
+      // claude=原地截断重 spawn；codex=thread/fork 分叉语义（rewindPending 守卫在适配器内）
+      portFor(hub.key).rewindConversation(hub, at)
       break
     }
     case 'rewind_both': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
-      if (isCodexKey(hub.key)) {
-        broadcastError(hub, 'Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）')
-        return
-      }
-      if (rewindBusy(hub)) return
-      const s = ensureClaudeSession(hub)
-      if (!s) return
-
-      // 官方 TUI 的“恢复代码和对话”也是两个动作。这里必须先收到文件
-      // checkpoint 成功响应，才允许销毁旧进程并以 resume-session-at 截断对话。
-      // rewind_files 没有 CLI 侧超时，大项目恢复可达分钟级，给足 120s。
-      hub.rewindPending = true
-      pushStatus(hub, { rewindPending: true })
-      void s.sendControlAndWait('rewind_files', { user_message_id: at }, 120_000)
-        .then(() => {
-          if (processManager.get(hub.key) !== s || s.exited) {
-            broadcastError(hub, '恢复文件后会话已变化，未回滚对话')
-            return
-          }
-          rewindConversation(hub, at, 'both')
-        })
-        .catch((error) => {
-          broadcastError(hub, `回滚文件失败，未回滚对话：${errorMessage(error)}`)
-        })
-        .finally(() => {
-          hub.rewindPending = false
-          pushStatus(hub, { rewindPending: false })
-        })
+      // 组合回滚：claude 先 rewind_files 再截断；codex 无文件检查点（适配器内拒绝）
+      portFor(hub.key).rewindBoth(hub, at)
       break
     }
     case 'btw': {
@@ -956,70 +624,19 @@ function handleClientMessage(
       // btw_pending 必须先于校验失败分支发出：前端卡片由它创建，
       // 否则校验失败的 btw_result 找不到卡（按 question 配对）被静默丢弃，用户零反馈
       if (question) broadcast(hub, { kind: 'btw_pending', question })
-      if (isCodexKey(hub.key)) {
-        const parsed = codexParseKey(hub.key)
-        const tid = codexRuntime.get(hub.key)?.sessionId ?? parsed?.resumeThreadId
-        if (!question || !tid) {
-          broadcast(hub, { kind: 'btw_result', ok: false, question, text: '侧问需要已有会话（先发过至少一条消息）' })
-          return
-        }
-        void codexRuntime
-          .runEphemeralQuestion(tid, question, 180_000, (delta, thinking) => {
-            broadcast(hub, { kind: 'btw_delta', question, delta, thinking: thinking || undefined })
-          })
-          .then((r) => broadcast(hub, { kind: 'btw_result', ok: true, question, text: r.text }))
-          .catch((e) =>
-            broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${errorMessage(e)}` }),
-          )
-        return
-      }
-      // claude：官方 side_question 控制通道（进程内轻量 fork，共享 prompt cache，
-      // 不产生磁盘 FORK 会话）。无流式增量，应答单次返回。
-      const parsed = parseKey(hub.key)
-      const sid = session()?.sessionId ?? parsed?.resumeSessionId ?? parsed?.forkFromSessionId
-      if (!question || !parsed || !sid) {
-        broadcast(hub, { kind: 'btw_result', ok: false, question, text: '侧问需要已有会话（先发过至少一条消息）' })
-        return
-      }
-      const s = ensureClaudeSession(hub)
-      if (!s) return // ensureSpawned 已广播具体错误
-      s.sideQuestion(question)
-        .then((text) => broadcast(hub, { kind: 'btw_result', ok: true, question, text }))
-        .catch((e) =>
-          broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${errorMessage(e)}` }),
-        )
+      portFor(hub.key).btw(hub, question)
       break
     }
     case 'query': {
       // 带应答的控制请求通道：只读查询（mcp_status / get_settings / get_context_usage）
       // 与 MCP 管理动作（mcp_reconnect / mcp_toggle，经 extra 传参）共用；
-      // codex 仅 mcp_status 有对应物 mcpServerStatus/list（动作类一律拒绝）
+      // codex 仅 mcp_status 有对应物 mcpServerStatus/list（动作类一律拒绝，见适配器）
       const id = String(data.id ?? '')
       const query = String(data.query ?? '')
       const extra = (data.extra as Record<string, unknown> | undefined) ?? {}
       const reply = (payload: Record<string, unknown>) => broadcast(hub, { kind: 'query_result', id, ...payload })
       if (!id || !query) return
-      if (isCodexKey(hub.key)) {
-        if (query !== 'mcp_status') {
-          reply({ ok: false, error: `codex 后端暂不支持 ${query}` })
-          return
-        }
-        void codexRuntime
-          .rpcRequest('mcpServerStatus/list', {})
-          .then((d) => reply({ ok: true, data: d }))
-          .catch((e) => reply({ ok: false, error: errorMessage(e) }))
-        return
-      }
-      const s = ensureClaudeSession(hub)
-      if (!s) {
-        reply({ ok: false, error: '进程未运行' })
-        return
-      }
-      // 重连/启用是完整 MCP 握手，慢于普通查询，给足超时
-      const timeoutMs = query === 'mcp_reconnect' || query === 'mcp_toggle' ? 30_000 : 15_000
-      s.sendControlAndWait(query, extra, timeoutMs)
-        .then((d) => reply({ ok: true, data: d }))
-        .catch((e) => reply({ ok: false, error: errorMessage(e) }))
+      portFor(hub.key).query(hub, query, extra, reply)
       break
     }
     case 'approval': {
@@ -1064,81 +681,33 @@ function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision
  */
 function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: HandoffDetail): string | undefined {
   const sourceHub = hubs.get(fromKey)
-  const fromBackend = isCodexKey(fromKey) ? ('codex' as const) : ('claude' as const)
+  const fromPort = portFor(fromKey)
+  const fromBackend = fromPort.name
   if (fromBackend === toBackend) return '接力目标必须与源会话是不同后端'
 
-  // 源解析：cwd + 会话 id（codex 的 x| key 不含 cwd，需在异步路径里 thread/read 解析）
-  let cwd: string | undefined
-  let sourceId: string | undefined
-  if (fromBackend === 'claude') {
-    const parsed = parseKey(fromKey)
-    cwd = parsed?.cwd
-    sourceId = processManager.get(fromKey)?.sessionId ?? parsed?.resumeSessionId
-    if (!cwd) return '无法确定源会话目录'
-  } else {
-    const parsed = codexParseKey(fromKey)
-    cwd = parsed?.cwd
-    sourceId = parsed?.resumeThreadId
-  }
-  if (!sourceId) return '源会话还没有任何消息，无法接力'
+  // 源解析：cwd + 会话 id（codex 的 x| key 不含 cwd，需在异步路径里惰性解析）
+  const src = fromPort.handoffSource(fromKey)
+  if (fromBackend === 'claude' && !src.cwd) return '无法确定源会话目录'
+  if (!src.sourceId) return '源会话还没有任何消息，无法接力'
 
-  const sid = sourceId
+  const sid = src.sourceId
   void (async () => {
     try {
       // codex x| key：cwd 需要 thread/read 惰性解析
-      const sourceCwd = cwd ?? (await codexRuntime.threadCwd(sid))
+      const sourceCwd = src.cwd ?? (await fromPort.handoffCwdOf(fromKey, sid))
       if (!sourceCwd) throw new Error('无法确定源会话目录（thread/read 未返回 cwd）')
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_pending', toBackend })
       // 1. 源会话 fork 自摘要
       //    claude 源在线时走 side_question 控制通道（进程内 fork，零冷启动、不留 FORK 会话）；
       //    离线才 spawn 一次性 --fork-session --bare 进程
-      const { text: brief, usage } = await (async () => {
-        if (fromBackend === 'claude') {
-          const live = processManager.get(fromKey)
-          if (live && !live.exited) {
-            try {
-              const text = await live.sideQuestion(briefPrompt(detail))
-              if (text.trim()) return { text, usage: undefined }
-            } catch {
-              // side_question 失败回落 fork spawn（如 CLI 版本过旧无此通道）
-            }
-          }
-          return generateClaudeBrief(sourceCwd, sid, detail)
-        }
-        return generateCodexBrief(sid, detail)
-      })()
+      const { text: brief, usage } = await fromPort.forkBriefForHandoff(fromKey, sourceCwd, sid, detail)
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_brief', brief })
 
-      // 2. 目标会话播种（服务端直接发送首条消息）
+      // 2. 目标会话播种（服务端直接发送首条消息；启动失败抛错）
       const targetKey = toBackend === 'codex' ? codexKeyForNew(sourceCwd) : keyForNew(sourceCwd)
       const targetHub = getHub(targetKey)
       const seed = seedMessage(sourceCwd, fromBackend, brief)
-      let targetSessionId: string | undefined
-      if (toBackend === 'codex') {
-        const s = await ensureCodexSession(targetHub)
-        if (!s || s.exited) throw new Error('目标 codex 会话启动失败')
-        s.sendUserText(seed)
-        targetSessionId = s.sessionId
-      } else {
-        ensureSpawned(targetHub)
-        const s = processManager.get(targetKey)
-        if (!s || s.exited) throw new Error('目标 claude 会话启动失败')
-        s.sendUserText(seed)
-        targetSessionId = s.sessionId
-      }
-      // claude 的 sessionId 在 init 时才就绪：短轮询等待，随后回填真实 key（血缘导航用）
-      if (toBackend === 'claude' && !targetSessionId) {
-        const deadline = Date.now() + 30_000
-        // 每轮重新取句柄：等待期间旧进程可能退出并被重生，旧引用拿不到新 sessionId
-        for (;;) {
-          const cur = processManager.get(targetKey)
-          if (!cur || cur.sessionId || cur.exited || Date.now() >= deadline) {
-            targetSessionId = cur?.sessionId
-            break
-          }
-          await Bun.sleep(500)
-        }
-      }
+      const targetSessionId = await portFor(targetKey).seedHandoffTarget(targetHub, seed)
       const toResolvedKey =
         toBackend === 'codex'
           ? targetSessionId
@@ -1150,11 +719,11 @@ function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: Hand
       const fromResolvedKey = (() => {
         if (fromBackend === 'claude') {
           if (fromKey.startsWith('s|')) return fromKey
-          const sidNow = processManager.get(fromKey)?.sessionId
+          const sidNow = fromPort.sessionOf(fromKey)?.sessionId
           return sidNow ? keyFor(sanitizePath(sourceCwd), sidNow) : undefined
         }
         if (fromKey.startsWith('x|')) return fromKey
-        const tidNow = codexRuntime.get(fromKey)?.sessionId
+        const tidNow = fromPort.sessionOf(fromKey)?.sessionId
         return tidNow ? `x|${tidNow}` : undefined
       })()
 
@@ -1731,7 +1300,7 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         port.sessionOf(hub.key)?.detachClient()
         const alive = port.hasLiveSession(hub.key)
         if (hub.clients.size === 0) {
-          stopTailer(hub)
+          port.stopTailer(hub)
           if (!alive) hubs.delete(hub.key)
         }
       },

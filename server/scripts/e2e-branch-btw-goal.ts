@@ -1,8 +1,8 @@
 // 验证链路：btw(side_question) → branch(懒分叉) → /goal 状态跟踪
-// 用法：bun run server/scripts/e2e-branch-btw-goal.ts
+// 用法：bun run server/scripts/e2e-branch-btw-goal.ts [cwd]（默认 /tmp；Windows 需显式传存在的目录）
 import { connect, exitWithSummary, makeNote } from './e2e-lib'
 
-const cwd = '/tmp'
+const cwd = process.argv[2] ?? '/tmp'
 const nKey = `n|${encodeURIComponent(cwd)}`
 const { note, results } = makeNote()
 

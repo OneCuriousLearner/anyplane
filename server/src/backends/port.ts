@@ -11,10 +11,37 @@
 //  deferred 使用对方绑定（implements 为 type-only 已擦除），模块求值期无 TDZ 读取。
 
 import type { Hub } from '../index'
+import type { HandoffDetail } from '../handoff'
 import { isCodexKey } from './codex/backend'
 import { claudePort } from './claude/port'
 import { codexPort } from './codex/port'
-import type { ApprovalDecision, BackendName } from './types'
+import type { ApprovalDecision, BackendName, SessionCallbacks, SpawnOptions } from './types'
+
+/** 适配器回调编排层的服务面（装配层 initBackendPorts 注入一次；适配器禁止 import index.ts） */
+export interface HubServices {
+  broadcast(hub: Hub, payload: unknown): void
+  broadcastError(hub: Hub, message: string): void
+  pushStatus(hub: Hub, extra?: Record<string, unknown>): void
+  sessionCallbacks(hub: Hub): SessionCallbacks
+  getHub(key: string): Hub
+  /** 会话显示名（推送/日志用）；实现在 push 域，由装配层注入 */
+  sessionNameOf(key: string): string
+  /** 回滚进行中拒绝新操作：返回 true 表示已拒绝（错误已广播） */
+  rewindBusy(hub: Hub, message?: string): boolean
+}
+
+let services: HubServices | undefined
+
+/** 装配层（index.ts）一次性注入；不依赖 ESM import 顺序副作用 */
+export function initBackendPorts(s: HubServices): void {
+  services = s
+}
+
+/** 适配器取回调服务；未装配即调用是编程错误，fail fast */
+export function hubServices(): HubServices {
+  if (!services) throw new Error('[port] initBackendPorts 未在装配层调用')
+  return services
+}
 
 /** 浏览器上传的图片附件（base64）；codex 侧落盘后走 localImage */
 export interface ImageAttachment {
@@ -71,6 +98,60 @@ export interface BackendPort {
   notifyExternalGate(key: string): void
   /** 会话状态派生（两后端函数体分别在各自适配器内；公共字段走 baseStatusOf） */
   statusOf(key: string, cx: StatusContext): Record<string, unknown>
+
+  /** attach 分流：claude 懒启动（warm/opts 才 spawn）；codex x| 即 resume、xn| 懒启动 */
+  onAttach(hub: Hub, msg: Record<string, unknown>): void
+  /** 懒启动/续跑会话。时序红线：claude 实现的函数体到 return 前禁止出现 await——
+   *  调用方依赖 spawn/stopTailer/syncClients/pendingEnv 写入与调用同拍完成 */
+  ensure(hub: Hub, opts?: Partial<SpawnOptions>): Promise<SessionHandle | undefined>
+  /** 发送路径的就绪检查：未运行则触发懒启动；未就绪返回 undefined（错误已广播）。
+   *  时序红线同 ensure（claude 实现零 await）。 */
+  ensureForSend(hub: Hub): Promise<SessionHandle | undefined>
+  /** 发送成功后的后端特定跟踪（claude：/goal 出站跟踪 + 标题素材记账）；codex 不实现 */
+  afterUserSent?(hub: Hub, text: string): void
+  /** 官方 AI 标题双条件触发（claude）；codex no-op */
+  maybeGenerateTitle(hub: Hub): void
+  /** transcript 实时跟踪（claude 外部会话）；codex 无 tailer 概念，no-op */
+  startTailer(hub: Hub, from?: number): void
+  stopTailer(hub: Hub): void
+  /** 对话回滚：claude=原地截断重 spawn；codex=thread/fork 分叉语义 */
+  rewindConversation(hub: Hub, userMessageId: string): void
+  /** 组合回滚（文件+对话）：claude 先 rewind_files 再截断；codex 无文件检查点，拒绝 */
+  rewindBoth(hub: Hub, userMessageId: string): void
+
+  // ---------- 消息域（model/mode 缓存与 rewindPending 守卫留在 hub 层，此处为后端投递） ----------
+  /** 通用控制请求：codex 直接翻译（interrupt/set_model/set_permission_mode/compact）；
+   *  claude 未 spawn 时除 set_model/set_permission_mode（有启动参数等价物）外触发懒启动 */
+  deliverControl(hub: Hub, subtype: string, extra: Record<string, unknown>): void
+  /** 环境变量（effort 已在上层缓存进 spawnOpts）：claude 未 spawn 时并入 pendingEnv；
+   *  codex 映射 reasoning effort */
+  updateEnv(hub: Hub, variables: Record<string, string>): void
+  /** 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session）；codex 拒绝（引导走回滚面板） */
+  branch(hub: Hub, name: string): void
+  /** 侧问：借用当前会话上下文的一次性问答（btw_pending 已由上层先行广播） */
+  btw(hub: Hub, question: string): void
+  /** 带应答的只读查询/MCP 管理动作；codex 仅 mcp_status 有对应物 */
+  query(
+    hub: Hub,
+    query: string,
+    extra: Record<string, unknown>,
+    reply: (payload: Record<string, unknown>) => void,
+  ): void
+
+  // ---------- handoff（接力） ----------
+  /** 接力源解析：cwd（codex x| key 不含，可能缺省）+ 会话 id */
+  handoffSource(key: string): { cwd?: string; sourceId?: string }
+  /** cwd 的惰性补全：codex 走 thread/read；claude 重查 parseKey */
+  handoffCwdOf(key: string, sourceId: string): Promise<string | undefined>
+  /** 源会话 fork 自摘要：claude 在线走 side_question、离线一次性 fork spawn；codex ephemeral fork */
+  forkBriefForHandoff(
+    fromKey: string,
+    cwd: string,
+    sourceId: string,
+    detail: HandoffDetail,
+  ): Promise<{ text: string; usage?: Record<string, number> }>
+  /** 目标会话播种首条消息，返回目标 sessionId（claude 含 init 前 30s 轮询）；启动失败抛错 */
+  seedHandoffTarget(hub: Hub, seed: string): Promise<string | undefined>
 }
 
 /** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */
