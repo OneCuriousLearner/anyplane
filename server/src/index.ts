@@ -171,6 +171,7 @@ function summarizeInput(toolName: string, input: unknown): string {
   if (toolName === 'Agent') return String(obj.description ?? obj.prompt ?? '').slice(0, 300)
   if (obj.file_path) return String(obj.file_path)
   if (obj.path) return String(obj.path)
+  if (obj.grantRoot) return String(obj.grantRoot)
   const json = JSON.stringify(input ?? {})
   return json.length > 300 ? json.slice(0, 300) + '…' : json
 }

@@ -448,7 +448,13 @@ export class CodexSession {
         break
       case 'item/fileChange/requestApproval':
         toolName = 'Edit'
-        input = { reason: params.reason, grantRoot: params.grantRoot }
+        // grantRoot 是审批时唯一稳定路径（文件列表在 item/completed 才有）。
+        // 同时写入 file_path，让 approvalRules / summarizeInput 与 Claude Write 同口径。
+        input = {
+          reason: params.reason,
+          grantRoot: params.grantRoot,
+          file_path: typeof params.grantRoot === 'string' ? params.grantRoot : undefined,
+        }
         break
       case 'item/permissions/requestApproval':
         toolName = 'Permissions'

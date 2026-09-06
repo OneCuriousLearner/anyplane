@@ -65,15 +65,12 @@ export function parseApprovalRules(raw: unknown): ApprovalRule[] {
 // ---------- 匹配 ----------
 
 /** 工具输入字段提取（与 index.ts summarizeInput 的按工具分发对齐，不另起一套） */
-function extractField(toolName: string, input: unknown, field: 'command' | 'path' | 'domain'): string | null {
+function extractField(toolName: string, input: unknown, field: 'command' | 'domain'): string | null {
   if (!input || typeof input !== 'object') return null
   const obj = input as Record<string, unknown>
   switch (field) {
     case 'command':
       return typeof obj.command === 'string' ? obj.command : null
-    case 'path':
-      // claude Write/Edit/Read → file_path；codex Edit 重塑后也可能带 file_path 或 grantRoot
-      return typeof obj.file_path === 'string' ? obj.file_path : null
     case 'domain': {
       if (typeof obj.url !== 'string') return null
       try {
@@ -83,6 +80,36 @@ function extractField(toolName: string, input: unknown, field: 'command' | 'path
       }
     }
   }
+}
+
+/** 收集所有路径候选：claude `file_path`、通用 `path`、codex `grantRoot` / `paths[]`。
+ *  去重保序。一条审批可能同时改多个文件——allow 要全部命中，deny 命中任一即拦。 */
+export function extractPaths(input: unknown): string[] {
+  if (!input || typeof input !== 'object') return []
+  const obj = input as Record<string, unknown>
+  const out: string[] = []
+  const add = (v: unknown) => {
+    if (typeof v === 'string' && v) out.push(v)
+  }
+  add(obj.file_path)
+  add(obj.path)
+  add(obj.grantRoot)
+  if (Array.isArray(obj.paths)) for (const p of obj.paths) add(p)
+  return [...new Set(out)]
+}
+
+/** allow 必须整行命中（`git status && rm` 不得吃掉 `^git status`）；
+ *  deny 按用户正则原样（前缀即收紧，`^rm -rf` 能拦住带路径的删除）。 */
+export function commandMatches(pattern: string, cmd: string, action: 'allow' | 'deny'): boolean {
+  let re: RegExp
+  try {
+    re = new RegExp(pattern)
+  } catch {
+    return false
+  }
+  if (action === 'deny') return re.test(cmd)
+  const m = re.exec(cmd)
+  return !!m && m.index === 0 && m[0].length === cmd.length
 }
 
 /** 极简 glob（两端锚定，与 minimatch 惯例一致）：`**\/` 跨零或多路径段，`**` 任意，`*` 段内任意。
@@ -143,11 +170,15 @@ export function matchApprovalRule(
     if (m.tool !== undefined && !toolMatches(m.tool, toolName)) continue
     if (m.command !== undefined) {
       const cmd = extractField(toolName, input, 'command')
-      if (cmd === null || !new RegExp(m.command).test(cmd)) continue
+      if (cmd === null || !commandMatches(m.command, cmd, rule.action)) continue
     }
     if (m.path !== undefined) {
-      const p = extractField(toolName, input, 'path')
-      if (p === null || !globMatch(m.path, p)) continue
+      const paths = extractPaths(input)
+      if (paths.length === 0) continue
+      // allow：每个路径都要落在 glob 内（夹带 .env 就不能靠 src/** 放行）
+      // deny：任一路径命中即拦（file_path + grantRoot 只中一个也算）
+      const hit = rule.action === 'deny' ? paths.some((p) => globMatch(m.path!, p)) : paths.every((p) => globMatch(m.path!, p))
+      if (!hit) continue
     }
     if (m.domain !== undefined) {
       const d = extractField(toolName, input, 'domain')

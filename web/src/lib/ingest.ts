@@ -153,6 +153,39 @@ export function appendHistoryMsg(state: IngestState, h: HistoryMessage): void {
  * 批次收尾：仍未配对的缓冲结果降级为孤立系统提示。
  * 只在一批加载/一次 tail flush 结束时调用——批内乱序此时已自然修复，剩下的才是真孤儿。
  */
+/** live / 补发去重键：uuid、assistant message.id、工具块 id 任一已在抄本即视为已见。
+ *  历史走 HTTP、重连 fromSeq=0 回放整环时，这是防止重复气泡的唯一兜底。 */
+export function liveMessageKeys(input: {
+  uuid?: string
+  messageId?: string
+  toolIds?: string[]
+}): string[] {
+  const keys: string[] = []
+  if (input.uuid) keys.push(input.uuid)
+  if (input.messageId) keys.push(input.messageId)
+  for (const t of input.toolIds ?? []) if (t) keys.push(`tool:${t}`)
+  return keys
+}
+
+export function transcriptKeys(msgs: ChatMsg[]): Set<string> {
+  const s = new Set<string>()
+  for (const m of msgs) {
+    if (m.id) s.add(m.id)
+    for (const b of m.blocks) {
+      if (b.kind === 'tool' && b.id) s.add(`tool:${b.id}`)
+    }
+  }
+  return s
+}
+
+export function hitsSeen(seen: Set<string>, keys: string[]): boolean {
+  return keys.length > 0 && keys.some((k) => seen.has(k))
+}
+
+export function rememberKeys(seen: Set<string>, keys: string[]): void {
+  for (const k of keys) seen.add(k)
+}
+
 export function flushStrayResults(state: IngestState): void {
   if (state.pending.size === 0) return
   for (const [, r] of state.pending) {

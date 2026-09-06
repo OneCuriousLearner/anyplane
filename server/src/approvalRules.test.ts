@@ -3,8 +3,10 @@
 
 import { describe, expect, test } from 'bun:test'
 import {
+  commandMatches,
   decisionOfRule,
   domainMatch,
+  extractPaths,
   globMatch,
   matchApprovalRule,
   parseApprovalRules,
@@ -153,6 +155,62 @@ describe('matchApprovalRule：按序首中、AND 语义', () => {
 
   test('无规则 → null（走人工 ask）', () => {
     expect(matchApprovalRule([], 'Bash', { command: 'ls' })).toBeNull()
+  })
+
+  test('allow 的 command 必须整行命中：链式命令不能吃掉前缀规则', () => {
+    const r: ApprovalRule[] = [{ match: { tool: 'Bash', command: '^(git status|git diff|git log|bun test)' }, action: 'allow' }]
+    expect(matchApprovalRule(r, 'Bash', { command: 'git status' })?.rule.action).toBe('allow')
+    expect(matchApprovalRule(r, 'Bash', { command: 'bun test' })?.rule.action).toBe('allow')
+    expect(matchApprovalRule(r, 'Bash', { command: 'git status && rm -rf /' })).toBeNull()
+    expect(matchApprovalRule(r, 'Bash', { command: 'git status; reboot' })).toBeNull()
+    expect(matchApprovalRule(r, 'Bash', { command: 'bun test -- && curl evil' })).toBeNull()
+  })
+
+  test('deny 的 command 仍按前缀：^rm -rf 能拦住带路径的删除', () => {
+    const r: ApprovalRule[] = [{ match: { tool: 'Bash', command: '^rm -rf' }, action: 'deny' }]
+    expect(matchApprovalRule(r, 'Bash', { command: 'rm -rf /tmp/x' })?.rule.action).toBe('deny')
+  })
+
+  test('codex grantRoot / paths[] 参与 path 匹配', () => {
+    const denyEnv: ApprovalRule[] = [
+      { match: { path: '**/.env' }, action: 'deny' },
+      { match: { tool: 'Write|Edit' }, action: 'allow' },
+    ]
+    // Claude：file_path 命中 deny
+    expect(matchApprovalRule(denyEnv, 'Write', { file_path: 'src/.env' })?.rule.action).toBe('deny')
+    // Codex fileChange：grantRoot 不是 .env 本身，但 paths 里有 .env → deny
+    expect(
+      matchApprovalRule(denyEnv, 'Edit', { grantRoot: 'D:/proj', paths: ['src/.env'] })?.rule.action,
+    ).toBe('deny')
+    // 只有 grantRoot=项目根：path deny 不命中，落到 tool allow（审批时无文件列表的已知边界）
+    expect(matchApprovalRule(denyEnv, 'Edit', { grantRoot: 'D:/proj', file_path: 'D:/proj' })?.rule.action).toBe(
+      'allow',
+    )
+  })
+
+  test('allow 的 path 要求全部路径命中：夹带规则外文件则不放行', () => {
+    const r: ApprovalRule[] = [{ match: { tool: 'Edit', path: 'src/**' }, action: 'allow' }]
+    expect(matchApprovalRule(r, 'Edit', { file_path: 'src/a.ts' })?.rule.action).toBe('allow')
+    expect(matchApprovalRule(r, 'Edit', { paths: ['src/a.ts', 'secret/.env'] })).toBeNull()
+    expect(matchApprovalRule(r, 'Edit', { grantRoot: 'D:/proj' })).toBeNull()
+  })
+})
+
+describe('commandMatches / extractPaths', () => {
+  test('allow 整行 vs deny 前缀', () => {
+    expect(commandMatches('^git status', 'git status', 'allow')).toBe(true)
+    expect(commandMatches('^git status', 'git status && rm', 'allow')).toBe(false)
+    expect(commandMatches('^rm -rf', 'rm -rf /tmp', 'deny')).toBe(true)
+  })
+
+  test('extractPaths 收齐 file_path / path / grantRoot / paths', () => {
+    expect(extractPaths({ file_path: 'a.ts', grantRoot: 'D:/p', paths: ['b.ts', 'a.ts'] })).toEqual([
+      'a.ts',
+      'D:/p',
+      'b.ts',
+    ])
+    expect(extractPaths({})).toEqual([])
+    expect(extractPaths(undefined)).toEqual([])
   })
 })
 

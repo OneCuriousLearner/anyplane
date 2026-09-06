@@ -55,6 +55,9 @@ describe('cli 事件环形缓冲与补发', () => {
     const r = replaySince(h, 2)
     expect(r.sent.map((p) => (p.msg as { n: number }).n)).toEqual([3, 4])
     expect(r.gap).toBe(false)
+    expect(r.sent.every((p) => p.replay === true)).toBe(true)
+    // 不污染环内原件：live 广播过的 payload 不应被打上 replay
+    expect(h.cliRing?.every((e) => e.payload.replay !== true)).toBe(true)
   })
 
   test('高水位已是最新时补发为空（重连但没错过任何事件）', () => {

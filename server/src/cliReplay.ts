@@ -47,6 +47,6 @@ export function replayCliSince(state: CliRingState, fromSeq: number, send: (payl
   const ring = state.cliRing ?? []
   if (ring.length === 0) return false
   const gap = ring[0].seq > fromSeq + 1
-  for (const e of ring) if (e.seq > fromSeq) send(e.payload)
+  for (const e of ring) if (e.seq > fromSeq) send({ ...e.payload, replay: true })
   return gap
 }

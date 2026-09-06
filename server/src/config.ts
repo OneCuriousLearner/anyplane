@@ -66,7 +66,8 @@ export interface ServerConfig {
   driftAlert?: boolean
   /**
    * 审批规则引擎：按序匹配，首条命中生效，未命中走人工审批（默认兜底）。
-   * 匹配字段按工具分发：Bash → command 正则；Write/Edit/Read → file_path glob；
+   * 匹配字段按工具分发：Bash → command 正则（allow 整行、deny 原样）；
+   * Write/Edit/Read → file_path / grantRoot / paths glob；
    * WebFetch → url 域名后缀。坏规则（无效正则 / 空 match）启动即报错。
    * 规则只做服务端裁决，不进推送能力 URL。详见 docs/configuration.md。
    */

@@ -12,7 +12,7 @@ import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { ContextRing } from '../components/ContextRing'
 import { buildTranscriptRows, fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
-import { appendHistoryMsg, createIngestState, flushStrayResults, indexToolBlocks, pairToolResultIn, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
+import { appendHistoryMsg, createIngestState, flushStrayResults, hitsSeen, indexToolBlocks, liveMessageKeys, pairToolResultIn, rememberKeys, transcriptKeys, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
@@ -216,6 +216,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const historyOffsetRef = useRef<number | undefined>(undefined)
   /** replay_gap 正在重载历史：丢弃这段窗口内的 cli，避免和 applyHistory 对抄本抢写 */
   const gapReloadingRef = useRef(false)
+  /** 已见消息身份（uuid / message.id / tool:id）。HTTP 历史与 live/补发重叠时靠它去重 */
+  const seenIdsRef = useRef(new Set<string>())
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
   const taskMapRef = useRef(new Map<string, TaskBucket>())
@@ -348,6 +350,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       // 建索引的同时消费乱序缓冲：结果早于工具块落地时（live 流常见）在此补齐
       const st: IngestState = { msgs: [...prev, m], toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
       indexToolBlocks(st, st.msgs.length - 1)
+      rememberKeys(seenIdsRef.current, [...transcriptKeys([m])])
       return st.msgs
     })
   }
@@ -433,6 +436,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     // 实时配对索引与乱序缓冲直接沿用历史加载建好的（out 已成为新 state）
     toolPosRef.current = st.toolIdx
     pendingResultsRef.current = st.pending
+    seenIdsRef.current = transcriptKeys(out)
 
     // 子代理侧链进桶；终态/报告以主线 Agent 工具卡的配对结果为准（tool_result 已落盘 = 已完成）
     taskMapRef.current.clear()
@@ -469,6 +473,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setDraftBoth(null)
     pendingResultsRef.current.clear()
     toolPosRef.current.clear()
+    seenIdsRef.current.clear()
     historyOffsetRef.current = undefined
     gapReloadingRef.current = false
     // Chat 组件在 session 切换时会复用，清掉上一会话的运行时/待启动配置。
@@ -559,7 +564,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   }
 
   // ---------- CLI 消息处理 ----------
-  const handleCli = (msg: CliMsg) => {
+  const handleCli = (msg: CliMsg, replay = false) => {
     const rec = msg as Record<string, unknown>
 
     // 流式增量事件（Anthropic API SSE 透传）
@@ -637,8 +642,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       const msgId = (rec.message as { id?: string } | undefined)?.id
       const d = draftRef.current
       if (!d || msgId !== d.msgId) {
-        // 去重兜底：同 msgId 的 assistant 消息已落过（旧事件序/重放/快照迟到）时不再落第二条
-        if (msgId && messagesRef.current.some((m) => m.id === msgId && m.role === 'assistant')) return
+        const toolIds = blocks.filter((c) => c?.type === 'tool_use' && c.id).map((c) => String(c.id))
+        const keys = liveMessageKeys({ uuid: msg.uuid, messageId: msgId, toolIds })
+        // uuid / message.id / 工具块 id 任一已在抄本（HTTP 历史或先前 live）即跳过——
+        // 旧实现只比 message.id，而落盘 id 是 uuid，Codex 甚至没有 uuid，重连补发会重复气泡
+        if (hitsSeen(seenIdsRef.current, keys)) return
         // 没有对应草稿（如中途接入）：直接落为完整消息
         const direct: Block[] = []
         for (const c of blocks) {
@@ -647,7 +655,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           else if (c?.type === 'tool_use')
             direct.push({ kind: 'tool', id: c.id ?? nextId(), name: c.name ?? '?', input: c.input, pending: true })
         }
-        if (direct.length > 0) pushMsg({ id: msg.uuid ?? nextId(), role: 'assistant', blocks: direct })
+        if (direct.length > 0) pushMsg({ id: msg.uuid ?? msgId ?? nextId(), role: 'assistant', blocks: direct })
         return
       }
       // 块快照：把草稿中对应的增量块定稿（去重关键：同 message.id 同 kind 按序匹配）
@@ -691,7 +699,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           textBlocks.push({ kind: 'text', text: c.text })
         }
       }
-      if (textBlocks.length > 0) pushMsg({ id: msg.uuid ?? nextId(), role: 'user', blocks: textBlocks })
+      if (textBlocks.length > 0) {
+        const keys = liveMessageKeys({ uuid: msg.uuid })
+        if (hitsSeen(seenIdsRef.current, keys)) return
+        pushMsg({ id: msg.uuid ?? nextId(), role: 'user', blocks: textBlocks })
+      }
       return
     }
 
@@ -729,7 +741,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             // 桌面端自动拉开侧栏（移动端屏幕小，只亮顶栏按钮）
             if (window.matchMedia('(min-width: 768px)').matches) setTasksOpen(true)
           }
-          pushSystem(`⚙ 后台任务启动：${String(rec.description ?? '')}`)
+          if (!replay) pushSystem(`⚙ 后台任务启动：${String(rec.description ?? '')}`)
           break
         }
         case 'task_progress': {
@@ -766,10 +778,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             b.usage = (rec.usage as TaskFeed['usage'] | undefined) ?? b.usage
             pubTasks()
           }
-          pushSystem(`⚙ 后台任务完成${summary ? `：${summary.slice(0, 200)}` : ''}`)
+          if (!replay) pushSystem(`⚙ 后台任务完成${summary ? `：${summary.slice(0, 200)}` : ''}`)
           break
         }
         case 'compact_boundary': {
+          if (replay) break
           const meta = (rec.compactMetadata ?? {}) as { preTokens?: number; postTokens?: number }
           pushMsg({ id: nextId(), role: 'system', systemKind: 'divider', compactMeta: meta, blocks: [] })
           break
@@ -781,6 +794,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     if (msg.type === 'result') {
       commitDraft()
       setPhase(undefined)
+      // 补发的旧 result 已在 HTTP 历史里，再落「本轮」会在底部堆出一串重复页脚
+      if (replay) return
+      if (msg.uuid && hitsSeen(seenIdsRef.current, [msg.uuid])) return
+      if (msg.uuid) rememberKeys(seenIdsRef.current, [msg.uuid])
       const isErr = rec.is_error === true
       const dur = typeof rec.duration_ms === 'number' ? `${Math.round(rec.duration_ms / 1000)}s` : undefined
       const usage = rec.usage as { output_tokens?: number } | undefined
@@ -846,6 +863,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             const detail =
               (typeof inp?.command === 'string' && inp.command) ||
               (typeof inp?.file_path === 'string' && inp.file_path) ||
+              (typeof inp?.grantRoot === 'string' && inp.grantRoot) ||
               (typeof inp?.url === 'string' && inp.url) ||
               ''
             pushSystem(
@@ -1024,7 +1042,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             break
           case 'cli':
             if (gapReloadingRef.current) break
-            handleCli(ev.msg)
+            handleCli(ev.msg, ev.replay === true)
             break
           case 'tail': {
             // 外部会话 transcript 追加：与历史共用同一套归并；uuid 去重兜底（重连续订可能重放）

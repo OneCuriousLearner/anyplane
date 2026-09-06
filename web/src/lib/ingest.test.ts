@@ -5,9 +5,13 @@ import {
   appendHistoryMsg,
   createIngestState,
   flushStrayResults,
+  hitsSeen,
   ingestToolResult,
+  liveMessageKeys,
   pairToolResultIn,
   pushIngestMsg,
+  rememberKeys,
+  transcriptKeys,
 } from './ingest'
 
 const toolUse = (id: string, name = 'Bash'): HistoryMessage => ({
@@ -200,5 +204,35 @@ describe('ingest 性质测试：任意事件序下最终形态恒等', () => {
     pushIngestMsg(s, { id: 'm1', role: 'assistant', blocks: [{ kind: 'tool', id: 't9', name: 'Bash' }] })
     expect(s.pending.size).toBe(0)
     expect(toolBlocksOf(s.msgs)[0]).toMatchObject({ resultText: 'early', pending: false })
+  })
+})
+
+describe('live/补发去重键', () => {
+  test('历史抄本登记 uuid 与工具块 id', () => {
+    const s = createIngestState()
+    appendHistoryMsg(s, toolUse('t1'))
+    const seen = transcriptKeys(s.msgs)
+    expect(seen.has('u-t1')).toBe(true)
+    expect(seen.has('tool:t1')).toBe(true)
+  })
+
+  test('Claude：历史 uuid 与 live message.id 不是同一个——用 uuid 仍能去重', () => {
+    const seen = new Set(['hist-uuid'])
+    const keys = liveMessageKeys({ uuid: 'hist-uuid', messageId: 'msg_01ABC' })
+    expect(hitsSeen(seen, keys)).toBe(true)
+  })
+
+  test('Codex：历史 uuid=item.id，live 用 tool-${id} 作 message.id——靠工具块 id 去重', () => {
+    const seen = transcriptKeys([{ id: 'item-1', role: 'assistant', blocks: [{ kind: 'tool', id: 'item-1', name: 'Edit' }] }])
+    const keys = liveMessageKeys({ messageId: 'tool-item-1', toolIds: ['item-1'] })
+    expect(hitsSeen(seen, keys)).toBe(true)
+  })
+
+  test('全新消息不命中；remember 之后命中', () => {
+    const seen = new Set<string>()
+    const keys = liveMessageKeys({ uuid: 'u1', messageId: 'm1', toolIds: ['t1'] })
+    expect(hitsSeen(seen, keys)).toBe(false)
+    rememberKeys(seen, keys)
+    expect(hitsSeen(seen, keys)).toBe(true)
   })
 })

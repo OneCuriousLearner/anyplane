@@ -68,7 +68,7 @@ CLI 升级后**无需人记得**，协议漂移在引入风险前被发现并送
 ```json
 {
   "approvalRules": [
-    { "match": { "tool": "Bash", "command": "^(git status|git diff|git log|ls\\b)" }, "action": "allow" },
+    { "match": { "tool": "Bash", "command": "^(git status|git diff|git log|ls)$" }, "action": "allow" },
     { "match": { "tool": "Write|Edit", "path": "src/**" }, "action": "allow" },
     { "match": { "tool": "Bash", "command": "\\brm\\s+-rf\\b" }, "action": "deny" },
     { "match": { "tool": "WebFetch", "domain": "*.anthropic.com" }, "action": "allow" }

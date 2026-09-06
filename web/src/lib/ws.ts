@@ -5,7 +5,7 @@ import type { HistoryMessage } from './api'
 
 export type ServerEvent =
   /** seq：服务端为可落盘 cli 分配的单调序号（stream_event 不占号，见 SessionSocket） */
-  | { kind: 'cli'; msg: CliMsg; seq?: number }
+  | { kind: 'cli'; msg: CliMsg; seq?: number; replay?: boolean }
   | { kind: 'status'; state: SessionState }
   | { kind: 'approval_request'; requestId: string; toolName: string; input: unknown }
   | { kind: 'approval_resolved'; requestId: string }
