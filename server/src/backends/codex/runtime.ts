@@ -635,8 +635,12 @@ export class CodexSession {
   }
 
   /** 无客户端且线程空闲时调度退订：dispose 只发 thread/unsubscribe，
-   *  app-server 在 30 分钟无订阅后自行卸载线程（此前订阅永不释放，
-   *  外部 resume 该线程会永远报 -32600「线程被占用」）。
+   *  app-server 在**无订阅且无活动满 `thread_unload_delay_secs`（默认 60 秒）**后卸载线程
+   *  （此前订阅永不释放，外部 resume 该线程会永远报 -32600「线程被占用」——writer lock 是
+   *  跨进程文件锁，随卸载才释放）。**注意该默认值上游已从 30 分钟改为 60 秒**，用户可在
+   *  ~/.codex/config.toml 设 `thread_unload_delay_secs = 1800` 恢复旧行为。
+   *  卸载后重新 attach 走 thread/resume 并由 hydrateContextUsage 回扫 rollout 补上下文，
+   *  故加速卸载不影响体验，只是 resume 更频繁。
    *  running / requires_action 绝不回收——与 claude 同律，触发时 busy 则自续一拍。 */
   private scheduleRecycleIfSafe(): void {
     this.cancelRecycle()
@@ -667,7 +671,7 @@ export class CodexSession {
     if (this.exited) return
     this.cancelRecycle()
     this.exited = true
-    // 断开订阅即可；app-server 会在 30 分钟无订阅后自行卸载线程
+    // 断开订阅即可；app-server 会在无订阅且无活动满 thread_unload_delay_secs（默认 60s）后卸载
     if (this.threadId) {
       void this.runtime.rpcRequest('thread/unsubscribe', { threadId: this.threadId }).catch(() => {})
       this.runtime.unregisterThread(this.threadId, this)

@@ -71,7 +71,7 @@ type UnifiedDecision = 'allow' | 'allow_session' | 'deny' | 'cancel'
   - `/btw` = `thread/fork` + `ephemeral: true` + `turn/start`（不落盘）
   - rewind 仅 `thread/revert`（实验性，只截对话不回文件；UI 隐藏 rewind_both）
   - busy 时发消息：`turn/steer`（插队）或 `thread/queue/add`（排队）——与 Claude 的 `priority` 字段统一为 `sendMode`
-- 回收语义：无订阅者的 thread 由 app-server 30 分钟自动卸载（与现有 idleTimeout 语义对齐），AnyPlane 只负责断开订阅，**不 kill 进程**。
+- 回收语义：无订阅者的 thread 由 app-server 自动卸载（`thread_unload_delay_secs`，**上游默认已从 30 分钟改为 60 秒**），AnyPlane 只负责断开订阅，**不 kill 进程**。
 - 已核实的坑：
   - **workspace-write 沙箱下 `.git` 只读**（实验实测 commit 报 128)——默认 spawn 配置需放开 .git 或用 `dangerFullAccess`/自定义 permission profile;UI 要暴露这个选择。
   - paginated thread 单进程写锁：用户在 TUI/VSCode 开着同一 thread 时 `thread/resume` 报 `-32600`,UI 显示"被占用"。
