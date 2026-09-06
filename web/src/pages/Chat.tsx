@@ -214,6 +214,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const toolPosRef = useRef(new Map<string, { mi: number; bi: number }>())
   /** 历史加载时服务端读到的 transcript 字节数，tail_subscribe 的起始偏移 */
   const historyOffsetRef = useRef<number | undefined>(undefined)
+  /** replay_gap 正在重载历史：丢弃这段窗口内的 cli，避免和 applyHistory 对抄本抢写 */
+  const gapReloadingRef = useRef(false)
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
   const taskMapRef = useRef(new Map<string, TaskBucket>())
@@ -354,6 +356,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   const isCodex = isCodexKey(session.key)
   const isExisting = isExistingKey(session.key)
+  const loadSessionHistory = () =>
+    isCodex ? fetchCodexHistory(session.sessionId) : fetchHistory(session.slug, session.sessionId)
   /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
    *  未 spawn 时只有 s|/x| key 内嵌的才是本会话 id——b| 嵌的是源会话 id，不能误显示 */
   const currentSessionId =
@@ -466,6 +470,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     pendingResultsRef.current.clear()
     toolPosRef.current.clear()
     historyOffsetRef.current = undefined
+    gapReloadingRef.current = false
     // Chat 组件在 session 切换时会复用，清掉上一会话的运行时/待启动配置。
     // 新会话的缓存选择会由随后到达的 status 恢复。
     setInitInfo({})
@@ -477,10 +482,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setTasks([])
     setTasksOpen(false)
     if (!isExisting) return
-    const loader = isCodex
-      ? fetchCodexHistory(session.sessionId)
-      : fetchHistory(session.slug, session.sessionId)
-    loader
+    loadSessionHistory()
       .then((resp) => {
         if (cancelled) return
         applyHistory(resp)
@@ -1021,6 +1023,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             })
             break
           case 'cli':
+            if (gapReloadingRef.current) break
             handleCli(ev.msg)
             break
           case 'tail': {
@@ -1059,15 +1062,27 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           }
           case 'replay_gap': {
             // 断线太久，服务端环形缓冲已挤掉起点：补发会留空洞，直接重载历史。
-            // transcript 是权威事实源，重载一定能补齐（代价只是一次 HTTP）
-            pushSystem('↻ 断线较久，已重新载入对话')
+            // transcript 是权威事实源，重载一定能补齐（代价只是一次 HTTP）。
+            // 必须与初次加载走同一 loader——Codex 没有 Claude transcript 路径。
+            // 先挡住 cli 再清草稿：环里残留的 stream/assistant 不能在重载完成前改抄本。
+            gapReloadingRef.current = true
+            setDraftBoth(null)
+            pendingResultsRef.current.clear()
+            setPhase(undefined)
             const gapKey = session.key
-            fetchHistory(session.slug, session.sessionId)
+            loadSessionHistory()
               .then((resp) => {
                 if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
                 applyHistory(resp)
+                pushSystem('↻ 断线较久，已重新载入对话')
               })
-              .catch(() => pushSystem('⚠ 重新载入对话失败，请手动刷新', 'error'))
+              .catch(() => {
+                if (sockRef.current?.key !== gapKey) return
+                pushSystem('⚠ 重新载入对话失败，请手动刷新', 'error')
+              })
+              .finally(() => {
+                if (sockRef.current?.key === gapKey) gapReloadingRef.current = false
+              })
             break
           }
           case 'tail_reset': {

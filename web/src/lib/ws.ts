@@ -4,7 +4,7 @@ import { ReconnectingSocket, wsUrl } from './reconnectingSocket'
 import type { HistoryMessage } from './api'
 
 export type ServerEvent =
-  /** seq：服务端为每条 cli 事件分配的单调序号，断线重连时作为补发起点（见 SessionSocket） */
+  /** seq：服务端为可落盘 cli 分配的单调序号（stream_event 不占号，见 SessionSocket） */
   | { kind: 'cli'; msg: CliMsg; seq?: number }
   | { kind: 'status'; state: SessionState }
   | { kind: 'approval_request'; requestId: string; toolName: string; input: unknown }

@@ -41,6 +41,7 @@ import { errorMessage, escapeHtml, hasWindowsSocketFix } from './util'
 import { startupVersionProbe } from './driftGuard'
 import { decisionOfRule, matchApprovalRule } from './approvalRules'
 import { errFields, log } from './log'
+import { pushCliRing, replayCliSince } from './cliReplay'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -72,9 +73,9 @@ interface Hub {
   key: string
   clients: Set<import('bun').ServerWebSocket<WSData>>
   pendingApprovals: Map<string, PendingApproval>
-  /** 下行 cli 事件的单调序号（重连补发用，见 pushCliRing） */
+  /** 下行 cli 事件的单调序号（重连补发用，见 cliReplay.ts） */
   cliSeq?: number
-  /** 最近 CLI_RING_CAP 条 cli 事件的环形缓冲 */
+  /** 最近 CLI_RING_CAP 条可落盘 cli 事件的环形缓冲（不含 stream_event） */
   cliRing?: Array<{ seq: number; payload: Record<string, unknown> }>
   /** 未 spawn 时缓存启动偏好；已 spawn 时记录当前选择，供 UI 重连恢复 */
   spawnOpts?: Partial<SpawnOptions>
@@ -309,41 +310,6 @@ function replayApprovals(hub: Hub, send: (payload: unknown) => void): void {
   for (const a of hub.pendingApprovals.values()) {
     send({ kind: 'approval_request', ...a })
   }
-}
-
-/** cli 事件环形缓冲容量。一个 turn 的 stream_event 密集但短，500 条够覆盖常见断线窗口
- *  （移动端切后台/过隧道抖动），再长的断线本来就该重载历史。 */
-const CLI_RING_CAP = 500
-
-/**
- * 下行 cli 事件补发：给每条打单调序号并留在环里，客户端重连时带 `fromSeq` 取回断线期间的部分。
- *
- * 为什么只缓冲 `cli`：它是唯一"错过就真没了"的流——status 是幂等快照、审批有
- * replayApprovals、tail 有字节偏移，各自都有补偿路径，重复缓冲只会造成双份投递。
- *
- * 模型对齐官方 bridge：SSE 的 `from_sequence_num` 高水位 + UUID 环去重双保险
- *（claude-code src/bridge/replBridge.ts 的 lastTransportSequenceNum、
- *  bridgeMessaging.ts 的 recentInboundUUIDs）。这里序号是权威、uuid 去重仍留在前端兜底。
- */
-function pushCliRing(hub: Hub, payload: Record<string, unknown>): number {
-  hub.cliSeq = (hub.cliSeq ?? 0) + 1
-  const seq = hub.cliSeq
-  payload.seq = seq
-  const ring = (hub.cliRing ??= [])
-  ring.push({ seq, payload })
-  if (ring.length > CLI_RING_CAP) ring.splice(0, ring.length - CLI_RING_CAP)
-  return seq
-}
-
-/** 重连补发：把环里 seq > fromSeq 的 cli 事件单播给该连接。
- *  返回是否发生了「缺口」——请求的起点已被环挤掉，客户端需要重载历史才能补全。 */
-function replayCliSince(hub: Hub, fromSeq: number, send: (payload: unknown) => void): boolean {
-  const ring = hub.cliRing ?? []
-  if (ring.length === 0) return false
-  // 环底已经超过客户端的高水位 + 1 → 中间那段被挤掉了，补发会留空洞
-  const gap = ring[0].seq > fromSeq + 1
-  for (const e of ring) if (e.seq > fromSeq) send(e.payload)
-  return gap
 }
 
 function broadcast(hub: Hub, payload: unknown): void {
