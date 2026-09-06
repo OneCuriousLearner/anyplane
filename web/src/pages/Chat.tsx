@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type HistoryMessage, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
+import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type HistoryResponse, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
 import { SessionSocket, type CliMsg, type ServerEvent, type SessionState } from '../lib/ws'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { ChatHeader } from '../components/ChatHeader'
@@ -7,14 +7,15 @@ import { Composer, imgPreviewSrc } from '../components/Composer'
 import { DetailDrawer, type ContextDataLite, type McpServerInfo, type SettingsDataLite } from '../components/DetailDrawer'
 import { RewindPicker } from '../components/RewindPicker'
 import { Transcript } from '../components/Transcript'
-import { TasksPanel, type TaskFeed } from '../components/TasksPanel'
+import { TasksPanel } from '../components/TasksPanel'
 import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { buildTranscriptRows, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
-import { statusLineOf, cliSidechainToHistory } from '../lib/chatText'
+import { statusLineOf } from '../lib/chatText'
 import { interceptSlash, type SlashAction } from '../lib/slashIntercept'
-import { appendHistoryMsg, createIngestState, flushStrayResults, hitsSeen, indexToolBlocks, liveMessageKeys, pairToolResultIn, rememberKeys, transcriptKeys, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
+import { appendHistoryMsg, createIngestState, flushStrayResults, hitsSeen, indexToolBlocks, liveMessageKeys, pairToolResultIn, rememberKeys, transcriptKeys, type IngestState } from '../lib/ingest'
 import { isCodexKey, isExistingKey } from '../lib/key'
+import { useTaskBuckets } from '../hooks/useTaskBuckets'
 
 interface Approval {
   requestId: string
@@ -37,25 +38,10 @@ interface Draft {
   blocks: DraftBlock[]
 }
 
-/** 后台任务桶：TaskFeed + 归并用的 tool 配对索引与去重集合（不发布给渲染） */
-interface TaskBucket extends TaskFeed {
-  toolIdx: Map<string, ToolPos>
-  /** 桶内乱序 tool_result 缓冲（与主线同规则，见 lib/ingest） */
-  pending: Map<string, PendingResult>
-  seen: Set<string>
-  /** codex 子线程转录已懒取过（防重取） */
-  transcriptFetched?: boolean
-}
-
-/**
- * 终态卡片的展示宽限期：镜像官方协调器面板的 PANEL_GRACE_MS
- *（claude-code src/utils/task/framework.ts:28）——完成后留 30s 供扫一眼报告，随后驱逐。
- * 报告摘要仍留在主线 Agent 工具卡与系统消息里，驱逐不丢信息。
- */
-const PANEL_GRACE_MS = 30_000
-
 export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: (s: SessionInfo) => void }) {
   const { session } = props
+  const isCodex = isCodexKey(session.key)
+  const isExisting = isExistingKey(session.key)
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
   const [state, setState] = useState<SessionState>({ spawned: false, busy: false })
@@ -112,122 +98,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const seenIdsRef = useRef(new Set<string>())
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
-  const taskMapRef = useRef(new Map<string, TaskBucket>())
-  const [tasks, setTasks] = useState<TaskFeed[]>([])
-  const [tasksOpen, setTasksOpen] = useState(false)
-
-  /** 发布桶快照：浅拷贝桶对象与消息数组，让 React 感知变化（事件为逐 turn 粒度，量小） */
-  const pubTasks = () =>
-    setTasks([...taskMapRef.current.values()].map((b) => ({ ...b, messages: [...b.messages] })))
-
-  const taskBucket = (toolUseId: string): TaskBucket => {
-    let b = taskMapRef.current.get(toolUseId)
-    if (!b) {
-      b = { toolUseId, status: 'running', messages: [], toolIdx: new Map(), pending: new Map(), seen: new Set() }
-      taskMapRef.current.set(toolUseId, b)
-    }
-    return b
-  }
-
-  const appendTaskMsg = (toolUseId: string, h: HistoryMessage) => {
-    const b = taskBucket(toolUseId)
-    // 历史加载与 live 追加可能重叠（落盘与 WS 投递交界），按 uuid 去重
-    if (h.uuid) {
-      if (b.seen.has(h.uuid)) return
-      b.seen.add(h.uuid)
-    }
-    const st: IngestState = { msgs: b.messages, toolIdx: b.toolIdx, pending: b.pending }
-    appendHistoryMsg(st, h)
-    b.messages = st.msgs
-  }
-
-  /** sidechain（子代理内部消息）不进主抄本——落进对应后台任务桶，右侧栏展示。
-   *  assistant（子代理输出）与 user（子代理 prompt / tool_result，桶内配对）两路同规则。 */
-  const appendSidechain = (rec: Record<string, unknown>): boolean => {
-    const ptui = rec.parent_tool_use_id as string | undefined
-    if (!ptui) return false
-    const h = cliSidechainToHistory(rec)
-    if (h) {
-      appendTaskMsg(ptui, h)
-      pubTasks()
-    }
-    return true
-  }
-
-  /** 统一终态：状态 + 清心跳 + 挂驱逐倒计时（宽限期后 1s 滴答自动移除卡片）。
-   *  live 与历史终态一视同仁——历史卡默示展示 30s 即足，长期驻留会让老会话侧栏越堆越多。 */
-  const markTerminal = (b: TaskBucket, status: TaskFeed['status']) => {
-    b.status = status
-    b.activity = undefined
-    b.evictAfter = Date.now() + PANEL_GRACE_MS
-    maybeFetchCodexTranscript(b)
-  }
-
-  /** 主线 tool_result 给运行中桶补终态：task_notification 未到的兜底，
-   *  也是外部会话（tailer 路径，无 task_notification）唯一的终态信号。 */
-  const settleBucketFromResult = (toolUseId: string | undefined, text: string, isError: boolean) => {
-    const b = toolUseId ? taskMapRef.current.get(toolUseId) : undefined
-    if (!b || b.status !== 'running') return
-    markTerminal(b, isError ? 'error' : 'done')
-    if (!b.summary && text) b.summary = text.slice(0, 500)
-    pubTasks()
-  }
-
-  /** codex 子代理转录懒取：子线程不被父通知流转发，终态后经 thread/read 拉回填充 */
-  const maybeFetchCodexTranscript = (b: TaskBucket) => {
-    if (!isCodex || !b.agentId || b.transcriptFetched || b.messages.length > 0) return
-    b.transcriptFetched = true
-    fetchCodexHistory(b.agentId)
-      .then((resp) => {
-        for (const h of resp.messages) appendTaskMsg(b.toolUseId, h)
-        pubTasks()
-      })
-      .catch(() => {})
-  }
-
-  /**
-   * 用 SessionState.activeTasks（服务端权威运行任务表）水合桶：
-   * 中途接入的客户端错过 live-only 的 task_started，没有这一步桶的首绘就会是终态。
-   * 反方向：桶还 running 却不在任务表且会话空闲 → 通知在断线间隙丢了，判终态。
-   * codex 服务端不维护任务表（状态里不带 activeTasks 字段），首行守卫直接跳过。
-   */
-  const hydrateTasks = (st: SessionState) => {
-    if (!Array.isArray(st.activeTasks)) return
-    let dirty = false
-    const live = new Set<string>()
-    for (const t of st.activeTasks) {
-      if (!t.toolUseId) continue
-      live.add(t.toolUseId)
-      const existing = taskMapRef.current.get(t.toolUseId)
-      if (existing) {
-        // 终态不被水合覆盖；running 的补心跳信息
-        if (existing.status === 'running' && t.lastToolName && existing.lastToolName !== t.lastToolName) {
-          existing.lastToolName = t.lastToolName
-          dirty = true
-        }
-        continue
-      }
-      const b = taskBucket(t.toolUseId)
-      b.status = 'running'
-      b.agentId = t.id // stop_task 需要 task_id，水合路径此前只建桶不记 agentId
-      b.description = t.description ?? b.description
-      b.agentType = t.taskType ?? b.agentType
-      b.kind = t.taskType ?? b.kind
-      b.lastToolName = t.lastToolName ?? b.lastToolName
-      b.depth = t.depth ?? b.depth
-      b.parentToolUseId = t.parentToolUseId ?? b.parentToolUseId
-      dirty = true
-    }
-    if (!st.busy) {
-      for (const b of taskMapRef.current.values()) {
-        if (b.status === 'running' && !live.has(b.toolUseId)) {
-          markTerminal(b, 'done')
-          dirty = true
-        }
-      }
-    }
-    if (dirty) pubTasks()
-  }
+  // 桶状态与辅助群已下沉 hooks/useTaskBuckets.ts（F3）：api 为每渲染重建的普通对象——
+  // 内部全走 ref/稳定 setState/isCodex（会话内不变），与此前过期闭包语义等价
+  const { tasks, tasksOpen, setTasksOpen, api: taskApi } = useTaskBuckets({ isCodex })
 
   const setMsgs = (up: (prev: ChatMsg[]) => ChatMsg[]) => {
     messagesRef.current = up(messagesRef.current)
@@ -249,8 +122,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const pushSystem = (text: string, kind: 'info' | 'error' = 'info') =>
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
 
-  const isCodex = isCodexKey(session.key)
-  const isExisting = isExistingKey(session.key)
   const loadSessionHistory = () =>
     isCodex ? fetchCodexHistory(session.sessionId) : fetchHistory(session.slug, session.sessionId)
   /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
@@ -300,27 +171,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     seenIdsRef.current = transcriptKeys(out)
 
     // 子代理侧链进桶；终态/报告以主线 Agent 工具卡的配对结果为准（tool_result 已落盘 = 已完成）
-    taskMapRef.current.clear()
-    // 先扫主线找「已完成」的 Agent 调用（转录落盘即终态），它们在历史加载时**不建桶**——
-    // 侧栏只放运行中与刚完成的卡，复活一堆 30s 后齐消失是噪声；翻旧账走主线 Agent 工具卡
-    const finished = new Set<string>()
-    for (const m of out) {
-      for (const blk of m.blocks) {
-        if (blk.kind === 'tool' && (blk.name === 'Agent' || blk.name === 'Task') && blk.pending === false && blk.id) {
-          finished.add(blk.id)
-        }
-      }
-    }
-    for (const s of resp.subagents ?? []) {
-      const id = s.toolUseId ?? s.agentId
-      if (!id || finished.has(id)) continue // 已完成的在历史里不复活
-      const b = taskBucket(id)
-      b.agentId = s.agentId ?? b.agentId
-      b.agentType = s.agentType ?? b.agentType
-      b.description = s.description ?? b.description
-      for (const h of s.messages) appendTaskMsg(b.toolUseId, h)
-    }
-    pubTasks()
+    //（清桶 + 未完成 subagent 回填的实现已随桶下沉 hooks/useTaskBuckets.ts）
+    taskApi.resetFromHistory(out, resp)
 
     // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队
     // codex 的实时流走 app-server 订阅（attach 即 resume），无 tailer
@@ -344,9 +196,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setEffort(undefined)
     setApprovals([])
     setPhase(undefined)
-    taskMapRef.current.clear()
-    setTasks([])
-    setTasksOpen(false)
+    taskApi.clear()
     if (!isExisting) return
     loadSessionHistory()
       .then((resp) => {
@@ -360,25 +210,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       cancelled = true
     }
   }, [session.key])
-
-  // ---------- 终态卡片的 TTL 驱逐（仿官方协调器面板：1s 滴答扫 evictAfter） ----------
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now()
-      let dirty = false
-      for (const [id, b] of taskMapRef.current) {
-        if (b.evictAfter != null && now >= b.evictAfter) {
-          // 报告摘要仍留在主线 Agent 工具卡与「⚙ 后台任务完成」系统消息里，驱逐不丢信息
-          taskMapRef.current.delete(id)
-          dirty = true
-        }
-      }
-      if (dirty) pubTasks()
-      // 桶清空时收起侧栏——此时会话无运行中任务（running 桶永不驱逐），收起的都是终态卡
-      if (dirty && taskMapRef.current.size === 0) setTasksOpen(false)
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [])
 
   // ---------- 流式草稿 ----------
 
@@ -497,7 +328,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     }
 
     if (msg.type === 'assistant') {
-      if (appendSidechain(rec)) return
+      if (taskApi.appendSidechain(rec)) return
       const content = msg.message?.content
       const blocks = Array.isArray(content) ? content : []
       const msgId = (rec.message as { id?: string } | undefined)?.id
@@ -540,7 +371,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
     if (msg.type === 'user') {
       if (msg.isMeta) return
-      if (appendSidechain(rec)) return
+      if (taskApi.appendSidechain(rec)) return
       const content = msg.message?.content
       const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
       const textBlocks: Block[] = []
@@ -549,7 +380,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           const resultText = toolResultText(c.content)
           pairToolResult(c.tool_use_id, resultText, c.is_error === true)
           // 主线 Agent tool_result 是子代理的终态兜底（正常路径是 task_notification 先到）
-          settleBucketFromResult(c.tool_use_id, resultText, c.is_error === true)
+          taskApi.settleBucketFromResult(c.tool_use_id, resultText, c.is_error === true)
         } else if (c?.type === 'text' && c.text?.trim()) {
           // /goal 的评估器反馈（Stop hook）：goal 循环内的中途评估，渲染为系统提示而非用户气泡
           if (c.text.startsWith('Stop hook feedback:')) {
@@ -586,59 +417,22 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         case 'thinking_tokens':
           break // 增量 token 估算，不展示
         case 'task_started': {
-          // 生命周期事件是桶的主注册点（tool_use_id ↔ task_id 映射在此建立）
-          const toolUseId = rec.tool_use_id as string | undefined
-          if (toolUseId) {
-            const b = taskBucket(toolUseId)
-            // claude 用 task_id；codex 合成事件经 agent_thread_id 携带子线程 id（终态后懒拉转录用），后者优先
-            b.agentId =
-              (rec.agent_thread_id as string | undefined) ?? (rec.task_id as string | undefined) ?? b.agentId
-            b.description = (rec.description as string | undefined) ?? b.description
-            b.agentType = (rec.subagent_type as string | undefined) ?? (rec.task_type as string | undefined) ?? b.agentType
-            b.kind = (rec.task_type as string | undefined) ?? b.kind
-            b.depth = (rec.spawn_depth as number | undefined) ?? b.depth
-            b.status = 'running'
-            pubTasks()
-            // 桌面端自动拉开侧栏（移动端屏幕小，只亮顶栏按钮）
-            if (window.matchMedia('(min-width: 768px)').matches) setTasksOpen(true)
-          }
+          // 生命周期事件是桶的主注册点（实现在 hooks/useTaskBuckets.ts）
+          taskApi.taskStarted(rec)
           if (!replay) pushSystem(`⚙ 后台任务启动：${String(rec.description ?? '')}`)
           break
         }
         case 'task_progress': {
-          // 心跳：拟人化动作描述 + 用量，解决"长 turn 安静期像卡住"的体感
-          // 桶不存在也补建——中途接入错过 task_started 时，心跳就是首个可见信号
-          const toolUseId = rec.tool_use_id as string | undefined
-          if (toolUseId) {
-            const b = taskBucket(toolUseId)
-            b.activity = (rec.description as string | undefined) ?? b.activity
-            b.lastToolName = (rec.last_tool_name as string | undefined) ?? b.lastToolName
-            b.usage = (rec.usage as TaskFeed['usage'] | undefined) ?? b.usage
-            pubTasks()
-          }
+          taskApi.taskProgress(rec)
           break
         }
         case 'task_updated': {
-          // 终态 patch（completed/stopped/failed）；只带 task_id，经 agentId 映射回桶
-          const taskId = rec.task_id as string | undefined
-          const patch = rec.patch as { status?: string } | undefined
-          const b = [...taskMapRef.current.values()].find((x) => x.agentId === taskId)
-          if (b && patch?.status && patch.status !== 'running' && b.status === 'running') {
-            markTerminal(b, patch.status === 'completed' ? 'done' : patch.status === 'stopped' ? 'stopped' : 'error')
-            pubTasks()
-          }
+          taskApi.taskUpdated(rec)
           break
         }
         case 'task_notification': {
           const summary = typeof rec.summary === 'string' ? rec.summary : ''
-          const toolUseId = rec.tool_use_id as string | undefined
-          if (toolUseId) {
-            const b = taskBucket(toolUseId)
-            markTerminal(b, rec.status === 'completed' ? 'done' : rec.status === 'stopped' ? 'stopped' : 'error')
-            b.summary = summary || b.summary
-            b.usage = (rec.usage as TaskFeed['usage'] | undefined) ?? b.usage
-            pubTasks()
-          }
+          taskApi.taskNotification(rec)
           if (!replay) pushSystem(`⚙ 后台任务完成${summary ? `：${summary.slice(0, 200)}` : ''}`)
           break
         }
@@ -687,7 +481,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             if (typeof ev.state.permissionMode === 'string') setPermMode(ev.state.permissionMode)
             if (typeof ev.state.effort === 'string') setEffort(ev.state.effort)
             // 服务端权威运行任务表水合任务桶（中途接入补建 / 断线丢通知判死）
-            hydrateTasks(ev.state)
+            taskApi.hydrateTasks(ev.state)
             // 进程已退出时固化/清理未完成的流式草稿，避免半截内容悬挂
             if (ev.state.exited) {
               commitDraft()
@@ -919,7 +713,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
             for (const blk of h.blocks) {
               if (blk.kind !== 'tool_result' || !blk.id) continue
-              settleBucketFromResult(blk.id, blk.text ?? '', blk.isError === true)
+              taskApi.settleBucketFromResult(blk.id, blk.text ?? '', blk.isError === true)
             }
             break
           }
