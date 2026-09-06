@@ -6,6 +6,12 @@ on:
     - cron: '17 2 * * 1'
   workflow_dispatch:
 
+# 仓库 Actions 默认 GITHUB_TOKEN 是 read-only；不显式开 issues:write，
+# 漂移开 issue 会 403。写了 permissions 后未列出的 scope 归 none，checkout 必须带 contents:read。
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   codex-schema:
     name: codex app-server schema drift
@@ -24,23 +30,13 @@ jobs:
       - name: drift detected → open issue
         if: failure()
         uses: actions/github-script@v7
+        env:
+          DRIFT_TITLE_PREFIX: codex schema 漂移
+          DRIFT_BODY: CI 检测到 codex app-server schema 与基线漂移。运行 `bun run server/scripts/check-codex-schema.ts` 查看明细，评估后 `--update` 更新基线。
         with:
           script: |
-            const title = `codex schema 漂移（${new Date().toISOString().slice(0, 10)}）`
-            const { data: existing } = await github.rest.search.issuesAndPullRequests({
-              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "codex schema 漂移"`,
-            })
-            if (existing.items.length > 0) {
-              core.info('已有未关闭的漂移 issue，跳过重复创建')
-              return
-            }
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body: 'CI 检测到 codex app-server schema 与基线漂移。运行 `bun run server/scripts/check-codex-schema.ts` 查看明细，评估后 `--update` 更新基线。',
-              labels: ['protocol-drift'],
-            })
+            const open = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/open-drift-issue.cjs`)
+            await open({ github, context, core })
 
   claude-protocol:
     name: claude stream-json 协议 drift
@@ -51,27 +47,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       # 数据源是官方公开包 @anthropic-ai/claude-agent-sdk 的 sdk.d.ts，脚本内部 npm pack 取，
-      # 无需预装。本地源码快照只是离线兜底，不进 CI。
+      # 无需预装。本地快照只是离线兜底，不进 CI。
       - name: check drift
         run: bun run server/scripts/check-claude-protocol.ts
 
       - name: drift detected → open issue
         if: failure()
         uses: actions/github-script@v7
+        env:
+          DRIFT_TITLE_PREFIX: claude 协议漂移
+          DRIFT_BODY: CI 检测到 claude stream-json 协议清单与基线漂移（数据源：@anthropic-ai/claude-agent-sdk）。运行 `bun run server/scripts/check-claude-protocol.ts` 查看明细，评估后 `--update` 更新基线。
         with:
           script: |
-            const title = `claude 协议漂移（${new Date().toISOString().slice(0, 10)}）`
-            const { data: existing } = await github.rest.search.issuesAndPullRequests({
-              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "claude 协议漂移"`,
-            })
-            if (existing.items.length > 0) {
-              core.info('已有未关闭的漂移 issue，跳过重复创建')
-              return
-            }
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body: 'CI 检测到 claude stream-json 协议清单与基线漂移（数据源：@anthropic-ai/claude-agent-sdk）。运行 `bun run server/scripts/check-claude-protocol.ts` 查看明细，评估后 `--update` 更新基线。',
-              labels: ['protocol-drift'],
-            })
+            const open = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/open-drift-issue.cjs`)
+            await open({ github, context, core })
