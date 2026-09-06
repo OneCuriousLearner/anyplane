@@ -88,6 +88,9 @@ export interface StatusContext {
   hydrateContext?: boolean
 }
 
+/** REST 管理面结果：路由层原样映射为 HTTP 响应（状态码逐字保留） */
+export type RouteResult = { ok: true } | { ok: false; error: string; status: number }
+
 export interface BackendPort {
   readonly name: BackendName
   /** 当前存活（或已退出待回收）的会话句柄；取代编排层散落的 isCodexKey ? codexRuntime.get : processManager.get */
@@ -152,6 +155,11 @@ export interface BackendPort {
   ): Promise<{ text: string; usage?: Record<string, number> }>
   /** 目标会话播种首条消息，返回目标 sessionId（claude 含 init 前 30s 轮询）；启动失败抛错 */
   seedHandoffTarget(hub: Hub, seed: string): Promise<string | undefined>
+
+  // ---------- REST 管理面（归档/恢复/改名） ----------
+  archive(key: string): Promise<RouteResult>
+  restore(key: string): Promise<RouteResult>
+  rename(key: string, title: string): Promise<RouteResult>
 }
 
 /** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */

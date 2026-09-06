@@ -9,11 +9,12 @@ import {
   baseStatusOf,
   hubServices,
   type BackendPort,
+  type RouteResult,
   type SessionHandle,
   type StatusContext,
 } from '../port'
 import type { SpawnOptions } from '../types'
-import { parseKey as codexParseKey } from './backend'
+import { parseKey as codexParseKey, splitThreadId } from './backend'
 import { codexRuntime, type CodexSession } from './runtime'
 
 class CodexPort implements BackendPort {
@@ -211,6 +212,41 @@ class CodexPort implements BackendPort {
     if (!s || s.exited) throw new Error('目标 codex 会话启动失败')
     s.sendUserText(seed)
     return s.sessionId
+  }
+
+  // ---------- REST 管理面（官方 RPC：loaded/stored thread 均可） ----------
+
+  async archive(key: string): Promise<RouteResult> {
+    const threadId = splitThreadId(key)
+    if (!threadId) return { ok: false, error: '无法解析 threadId', status: 400 }
+    try {
+      await codexRuntime.rpcRequest('thread/archive', { threadId })
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: errorMessage(e), status: 500 }
+    }
+  }
+
+  async restore(key: string): Promise<RouteResult> {
+    const threadId = splitThreadId(key)
+    if (!threadId) return { ok: false, error: '无法解析 threadId', status: 400 }
+    try {
+      await codexRuntime.rpcRequest('thread/unarchive', { threadId })
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: errorMessage(e), status: 500 }
+    }
+  }
+
+  async rename(key: string, title: string): Promise<RouteResult> {
+    const threadId = splitThreadId(key)
+    if (!threadId) return { ok: false, error: '无法解析 threadId', status: 400 }
+    try {
+      await codexRuntime.rpcRequest('thread/name/set', { threadId, name: title })
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: errorMessage(e), status: 500 }
+    }
   }
 }
 

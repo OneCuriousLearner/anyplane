@@ -1,22 +1,22 @@
 // anyplane 服务端入口：REST + WebSocket + 静态托管
 
-import { appendFileSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { hostAllowed, isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
-import { keyFor, keyForNew, parseKey, splitExistingKey } from './backends/claude/backend'
-import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
+import { keyFor, keyForNew, parseKey } from './backends/claude/backend'
+import { listSessions, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { resolveTierModelNames } from './backends/claude/modelNames'
 import { processManager } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
 import type { TranscriptTailer } from './backends/claude/tailer'
-import { isCodexKey, keyForNew as codexKeyForNew, listSessions as listCodexSessions, readHistory as readCodexHistory, splitThreadId } from './backends/codex/backend'
+import { keyForNew as codexKeyForNew, listSessions as listCodexSessions, readHistory as readCodexHistory } from './backends/codex/backend'
 import { codexRuntime } from './backends/codex/runtime'
 import { initBackendPorts, portFor } from './backends/port'
 import type { ApprovalDecision, SpawnOptions } from './backends/types'
 import { config } from './config'
 import { isOwnServerProcess, takeoverStaleListeners } from './portTakeover'
-import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
+import { listTrash } from './archive'
 import { FsBrowseError, listDirectories, readGitBranch } from './fsbrowse'
 import { resolveUpload } from './uploads'
 import {
@@ -958,41 +958,14 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
   if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {
     const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
-    try {
-      if (isCodexKey(body.key)) {
-        const threadId = splitThreadId(body.key)
-        if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
-        await codexRuntime.rpcRequest('thread/archive', { threadId })
-        return json({ ok: true })
-      }
-      const ek = splitExistingKey(body.key)
-      if (!ek) return json({ error: '仅支持已有会话' }, { status: 400 })
-      if (processManager.get(body.key) || liveSessionInfo(ek.sessionId)) {
-        return json({ error: '会话正在运行，无法归档' }, { status: 409 })
-      }
-      archiveClaudeSession(ek.slug, ek.sessionId)
-      return json({ ok: true })
-    } catch (e) {
-      return json({ error: errorMessage(e) }, { status: 500 })
-    }
+    const r = await portFor(body.key).archive(body.key)
+    return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
   }
   if (url.pathname === '/api/sessions/restore' && req.method === 'POST') {
     const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
-    try {
-      if (isCodexKey(body.key)) {
-        const threadId = splitThreadId(body.key)
-        if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
-        await codexRuntime.rpcRequest('thread/unarchive', { threadId })
-        return json({ ok: true })
-      }
-      const ek = splitExistingKey(body.key)
-      if (!ek) return json({ error: '仅支持 claude 会话恢复' }, { status: 400 })
-      restoreClaudeSession(ek.slug, ek.sessionId)
-      return json({ ok: true })
-    } catch (e) {
-      return json({ error: errorMessage(e) }, { status: 500 })
-    }
+    const r = await portFor(body.key).restore(body.key)
+    return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
   }
   // 归档/回收站列表：codex archived + claude trash 合并
   if (url.pathname === '/api/sessions/archived' && req.method === 'GET') {
@@ -1028,33 +1001,10 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
     const body = await readJsonBody<{ key?: string; title?: string }>(req)
     const title = body.title?.trim()
     if (!body.key || !title) return json({ error: '缺少 key 或 title' }, { status: 400 })
-    // codex：官方 API，loaded/stored thread 均可
-    if (isCodexKey(body.key)) {
-      const threadId = splitThreadId(body.key)
-      if (!threadId) return json({ error: '无法解析 threadId' }, { status: 400 })
-      try {
-        await codexRuntime.rpcRequest('thread/name/set', { threadId, name: title })
-        return json({ ok: true })
-      } catch (e) {
-        return json({ error: errorMessage(e) }, { status: 500 })
-      }
-    }
-    // claude：仅离线会话（在线会话的 transcript 由 CLI 持有，改名走其内部路径）
-    const ek = splitExistingKey(body.key)
-    if (!ek) return json({ error: '仅支持已有 claude 会话' }, { status: 400 })
-    const { slug, sessionId } = ek
-    if (processManager.get(body.key) || liveSessionInfo(sessionId)) {
-      return json({ error: '会话正在运行，请在 CLI 退出后改名' }, { status: 409 })
-    }
-    const file = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
-    if (!existsSync(file)) return json({ error: 'transcript 不存在' }, { status: 404 })
-    try {
-      // 与官方 /rename 相同的条目形状；discovery 读取时后者优先
-      appendFileSync(file, JSON.stringify({ type: 'custom-title', sessionId, customTitle: title }) + '\n')
-      return json({ ok: true })
-    } catch (e) {
-      return json({ error: errorMessage(e) }, { status: 500 })
-    }
+    // codex 走官方 thread/name/set；claude 仅离线会话（transcript 追加 custom-title），
+    // 两路实现见各自适配器
+    const r = await portFor(body.key).rename(body.key, title)
+    return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
   }
   if (url.pathname === '/api/handoff' && req.method === 'POST') {
     const body = await readJsonBody<{ fromKey?: string; toBackend?: string; detail?: HandoffDetail }>(req)

@@ -1,7 +1,9 @@
 // claude 后端适配器：把 processManager/discovery 的能力包装成 BackendPort。
 // 方法体多为 index.ts 原 claude 分支的逐字搬迁——重构红线是零行为改动。
 
+import { appendFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { archiveClaudeSession, restoreClaudeSession } from '../../archive'
 import { config, defaultPermissionMode } from '../../config'
 import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
@@ -11,6 +13,7 @@ import {
   baseStatusOf,
   hubServices,
   type BackendPort,
+  type RouteResult,
   type SessionHandle,
   type StatusContext,
 } from '../port'
@@ -448,6 +451,52 @@ class ClaudePort implements BackendPort {
       }
     }
     return s.sessionId
+  }
+
+  // ---------- REST 管理面（归档/恢复/改名） ----------
+
+  async archive(key: string): Promise<RouteResult> {
+    const ek = splitExistingKey(key)
+    if (!ek) return { ok: false, error: '仅支持已有会话', status: 400 }
+    try {
+      if (processManager.get(key) || liveSessionInfo(ek.sessionId)) {
+        return { ok: false, error: '会话正在运行，无法归档', status: 409 }
+      }
+      archiveClaudeSession(ek.slug, ek.sessionId)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: errorMessage(e), status: 500 }
+    }
+  }
+
+  async restore(key: string): Promise<RouteResult> {
+    const ek = splitExistingKey(key)
+    if (!ek) return { ok: false, error: '仅支持 claude 会话恢复', status: 400 }
+    try {
+      restoreClaudeSession(ek.slug, ek.sessionId)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: errorMessage(e), status: 500 }
+    }
+  }
+
+  /** 仅离线会话（在线会话的 transcript 由 CLI 持有，改名走其内部路径） */
+  async rename(key: string, title: string): Promise<RouteResult> {
+    const ek = splitExistingKey(key)
+    if (!ek) return { ok: false, error: '仅支持已有 claude 会话', status: 400 }
+    const { slug, sessionId } = ek
+    if (processManager.get(key) || liveSessionInfo(sessionId)) {
+      return { ok: false, error: '会话正在运行，请在 CLI 退出后改名', status: 409 }
+    }
+    const file = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
+    if (!existsSync(file)) return { ok: false, error: 'transcript 不存在', status: 404 }
+    try {
+      // 与官方 /rename 相同的条目形状；discovery 读取时后者优先
+      appendFileSync(file, JSON.stringify({ type: 'custom-title', sessionId, customTitle: title }) + '\n')
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: errorMessage(e), status: 500 }
+    }
   }
 }
 
