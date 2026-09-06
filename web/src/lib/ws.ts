@@ -142,9 +142,14 @@ export class SessionSocket extends ReconnectingSocket {
     return wsUrl(`/ws/sessions/${encodeURIComponent(this.key)}`)
   }
 
-  /** 重连 attach 时上报的补发起点；0 表示本会话尚未收过任何 cli 事件（首连，无需补发） */
+  /** 重连 attach 时上报的补发起点；0 表示尚未收过可落盘 cli，服务端按环从头补 */
   get replayFrom(): number {
     return this.lastSeq
+  }
+
+  /** 是否为本条 socket 的第二次及以后成功 open */
+  get reconnecting(): boolean {
+    return this.isReconnect
   }
 
   protected onMessage(data: unknown): void {

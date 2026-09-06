@@ -13,6 +13,8 @@ export abstract class ReconnectingSocket {
   private ws: WebSocket | undefined
   private retry = 0
   private closed = false
+  /** 成功 open 的次数。>1 即重连（相对本条 socket 的首连） */
+  private opened = 0
 
   /** 子类提供连接路径（/ws/...） */
   protected abstract url(): string
@@ -32,6 +34,7 @@ export abstract class ReconnectingSocket {
     this.ws = ws
     ws.onopen = () => {
       this.retry = 0
+      this.opened++
       this.onOpenChange?.(true)
       this.onOpen?.()
     }
@@ -54,6 +57,11 @@ export abstract class ReconnectingSocket {
       setTimeout(() => !this.closed && this.connect(), delay)
     }
     ws.onerror = () => ws.close()
+  }
+
+  /** 是否已经至少成功连接过一次之后再次 open（用于重连 attach，避免与首连 attach 叠发） */
+  protected get isReconnect(): boolean {
+    return this.opened > 1
   }
 
   /** 仅在 open 时发送；未 open 返回 false（调用方决定排队还是丢弃） */

@@ -1104,9 +1104,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       (open) => {
         setConnected(open)
         if (!open) return
-        // 重连补发：带上断线前的最高 cli 序号，取回这期间错过的事件。
-        // 首连时 replayFrom 为 0，服务端跳过补发（attach 本身仍会推 status 与待审批）
-        if (sock.replayFrom > 0) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
+        // 重连必须 attach：Codex x| 靠它 resume；fromSeq 为 0 也要带上，
+        // 才能取回「一条可落盘 cli 都没收到就断线」期间的环。首连走下面的 attach。
+        if (sock.reconnecting) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
         // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）
         if (historyOffsetRef.current != null) {
           sock.send({ kind: 'tail_subscribe', from: historyOffsetRef.current })
