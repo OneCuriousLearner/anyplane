@@ -1,0 +1,127 @@
+// 其余 REST 路由：fs/list、handoff、lineage、uploads、history（claude/codex）、
+// codex/models、config、claude/model-names。
+
+import { readHistory, sanitizePath } from '../backends/claude/discovery'
+import { resolveTierModelNames } from '../backends/claude/modelNames'
+import { readHistory as readCodexHistory } from '../backends/codex/backend'
+import { codexRuntime } from '../backends/codex/runtime'
+import { config } from '../config'
+import { FsBrowseError, listDirectories } from '../fsbrowse'
+import { lineageFor, type HandoffDetail } from '../handoff'
+import { runHandoff } from '../hub/handoff'
+import { resolveUpload } from '../uploads'
+import { errorMessage } from '../util'
+import { json, readJsonBody } from './http'
+
+export async function handleMiscRoutes(req: Request, url: URL): Promise<Response | undefined> {
+  if (url.pathname === '/api/fs/list' && req.method === 'GET') {
+    // searchParams.get 已完成 URL 解码，禁止再 decodeURIComponent（含 % 的路径会被二次解码破坏）
+    const target = url.searchParams.get('path') ?? ''
+    try {
+      return json(listDirectories(target))
+    } catch (e) {
+      if (e instanceof FsBrowseError) return json({ error: e.message }, { status: e.status })
+      return json({ error: errorMessage(e) }, { status: 500 })
+    }
+  }
+  if (url.pathname === '/api/handoff' && req.method === 'POST') {
+    const body = await readJsonBody<{ fromKey?: string; toBackend?: string; detail?: HandoffDetail }>(req)
+    if (!body.fromKey) return json({ error: '缺少 fromKey' }, { status: 400 })
+    if (body.toBackend !== 'claude' && body.toBackend !== 'codex') {
+      return json({ error: 'toBackend 必须是 claude 或 codex' }, { status: 400 })
+    }
+    const detail: HandoffDetail =
+      body.detail === 'brief' || body.detail === 'detailed' ? body.detail : 'standard'
+    const error = runHandoff(body.fromKey, body.toBackend, detail)
+    if (error) return json({ error }, { status: 400 })
+    return json({ ok: true })
+  }
+  if (url.pathname === '/api/lineage' && req.method === 'GET') {
+    const key = url.searchParams.get('key') ?? ''
+    const records = lineageFor(key)
+    // 为链上每个 key 附带导航所需的节点元数据（前端接力链渲染用）
+    const nodes: Record<string, Record<string, unknown>> = {}
+    for (const r of records) {
+      for (const k of [r.fromKey, r.toKey, r.fromResolvedKey, r.toResolvedKey]) {
+        if (!k || nodes[k]) continue
+        const parts = k.split('|')
+        if (parts[0] === 's' && parts.length === 3) {
+          nodes[k] = { key: k, backend: 'claude', slug: parts[1], sessionId: parts[2], cwd: r.cwd }
+        } else if (parts[0] === 'x' && parts.length === 2) {
+          nodes[k] = { key: k, backend: 'codex', slug: 'codex', sessionId: parts[1], cwd: r.cwd }
+        } else if (parts[0] === 'n' || parts[0] === 'xn') {
+          nodes[k] = {
+            key: k,
+            backend: parts[0] === 'xn' ? 'codex' : 'claude',
+            slug: parts[0] === 'xn' ? 'codex' : sanitizePath(decodeURIComponent(parts[1] ?? '')),
+            sessionId: 'new',
+            cwd: r.cwd,
+          }
+        } else if (parts[0] === 'b' && parts.length === 3) {
+          // 懒分叉源（分叉后从未 spawn 或被回收，fromResolvedKey 缺省时记录里仍是 b| key）：
+          // 缺节点会让前端接力链按钮 disabled（死按钮）；sessionId 内嵌的是分叉源 id
+          nodes[k] = {
+            key: k,
+            backend: 'claude',
+            slug: sanitizePath(decodeURIComponent(parts[1] ?? '')),
+            sessionId: parts[2],
+            cwd: r.cwd,
+          }
+        }
+      }
+    }
+    return json({ records, nodes })
+  }
+  // 上传图片：仅 ~/.anyplane/uploads/ 内的 hash 命名文件（resolveUpload 边界校验）
+  const uploadMatch = url.pathname.match(/^\/api\/uploads\/([^/]+)$/)
+  if (uploadMatch && req.method === 'GET') {
+    const path = resolveUpload(uploadMatch[1])
+    if (!path) return json({ error: 'not found' }, { status: 404 })
+    const ext = path.split('.').pop() ?? ''
+    const mime =
+      ({ jpg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' })[ext] ??
+      'application/octet-stream'
+    return new Response(Bun.file(path), {
+      headers: { 'content-type': mime, 'cache-control': 'public, max-age=31536000, immutable' },
+    })
+  }
+  const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
+  if (histMatch && req.method === 'GET') {
+    const [, slug, sessionId] = histMatch
+    // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移
+    return json(readHistory(slug, sessionId))
+  }
+  // codex 历史：thread/read includeTurns（只读），无 tailer 偏移概念
+  const codexHistMatch = url.pathname.match(/^\/api\/codex\/history\/([^/]+)$/)
+  if (codexHistMatch && req.method === 'GET') {
+    try {
+      const messages = await readCodexHistory(codexHistMatch[1])
+      return json({ messages, fileBytes: 0 })
+    } catch (e) {
+      return json({ error: errorMessage(e) }, { status: 500 })
+    }
+  }
+  // codex 模型目录（model/list）：模型 id/显示名/effort 列表/默认 effort
+  if (url.pathname === '/api/codex/models' && req.method === 'GET') {
+    try {
+      const models = await codexRuntime.listModels()
+      return json({ models })
+    } catch (e) {
+      return json({ error: errorMessage(e) }, { status: 500 })
+    }
+  }
+  if (url.pathname === '/api/config' && req.method === 'GET') {
+    return json({
+      permissionPolicy: config.permissionPolicy,
+      permissionModes: ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'],
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      models: ['haiku', 'sonnet', 'opus', 'fable'],
+      authRequired: !!config.authToken,
+    })
+  }
+  // 各档实际配置的模型名（StatusPill 透传显示；每次调用实时读盘，配置改动即见）
+  if (url.pathname === '/api/claude/model-names' && req.method === 'GET') {
+    return json({ models: resolveTierModelNames(url.searchParams.get('cwd') ?? undefined) })
+  }
+  return undefined
+}
