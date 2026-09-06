@@ -69,7 +69,20 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
   control.sock 深度集成维持原结论不做：协议 proto 版本锁死，只能 opportunistic 增强，不当基石。
 - **codex token_budget**：thread/goal/set 协议字段已透传，UI 不做——token ≠ 钱，预算心智账户建不起来；等真实无人值守批处理场景出现再点亮。
 - **codex `permissions` named-profile 迁移**：`sandboxPolicy` 未 deprecated，不急；迁移时注意 `sandboxPolicy` 与 `permissions` 互斥不能同发。升级 codex 前跑 `bun run server/scripts/check-codex-schema.ts`。
-- **codex `thread/revert`**：仓库里有（实验性，按 turn id 截断 durable history），0.148 未发布；发布后替代 RewindPicker 的 fork 截断做"真回滚"。
+- **codex `thread/revert`**：**已发布且非实验**（0.149 实测：协议宏无 `#[experimental]`，有独立集成测试，README 已文档化）。
+  语义正是想要的：原地截断 durable history 到 `beforeTurnId` 之前、**线程 id 不变**、会中断进行中的 turn 并发 `thread/reverted`，
+  比现在的 `thread/fork` 强（fork 每次回滚都留一条垃圾线程，且 sessionKey 变化需要导航）。
+
+  **但当前用不了，卡在前置条件**：`thread/revert` 仅支持 paginated 线程
+  （`thread_processor.rs`：非 paginated 直接 `invalid_request("thread/revert only supports paginated threads")`），
+  而 `ThreadHistoryMode` 的 **默认值是 `Legacy`**（`protocol.rs` 的 `#[default] Legacy`），
+  AnyPlane 的 `thread/start` 未传 `history_mode`，建出来的全是 legacy 线程。
+
+  **要用它必须先迁移历史读取路径**：`thread/start` 传 `history_mode: "paginated"`，
+  且 `readHistory` 从 `thread/read includeTurns:true`（legacy 专用，官方已标 deprecated）
+  改为 `thread/turns/list` + `thread/items/list` 分页。这同时能解决大 rollout 打开慢的问题，
+  但是独立一块工作量，不要顺手做——两种 history_mode 的线程会长期并存（用户既有会话都是 legacy），
+  迁移后 `readHistory` 必须按 `thread.history_mode` 分流，回滚也要按模式选 revert / fork。
 - **~~MCP 管理面板~~** ✅ 已完成（2026-08-27）：claude 详情抽屉 MCP tab 结构化面板（状态/工具数/scope/配置摘要/错误），
   重连（mcp_reconnect）与启停（mcp_toggle，持久化 settings 与 TUI 同语义）；query 通道加 extra 传参复用为动作通道。
   codex 侧维持 mcpServerStatus/list 只读直出。浏览器实测重连/禁用/启用全通过。
