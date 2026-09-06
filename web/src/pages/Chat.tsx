@@ -12,37 +12,14 @@ import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { ContextRing } from '../components/ContextRing'
 import { buildTranscriptRows, fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
+import { copyText, statusLineOf, cliSidechainToHistory } from '../lib/chatText'
+import { interceptSlash, type SlashAction } from '../lib/slashIntercept'
 import { appendHistoryMsg, createIngestState, flushStrayResults, hitsSeen, indexToolBlocks, liveMessageKeys, pairToolResultIn, rememberKeys, transcriptKeys, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 
 const MORE_ITEM =
   'flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface hover:text-ink'
-
-/** 复制到剪贴板：clipboard API 仅在安全上下文可用，http 局域网访问走 textarea 回退 */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-  } catch {
-    // 权限拒绝等 → 走回退
-  }
-  try {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    ta.remove()
-    return ok
-  } catch {
-    return false
-  }
-}
 
 interface Approval {
   requestId: string
@@ -89,56 +66,6 @@ interface DraftBlock {
 interface Draft {
   msgId?: string
   blocks: DraftBlock[]
-}
-
-const PHASE_LABEL: Record<string, string> = {
-  requesting: '请求中',
-  compacting: '压缩上下文',
-}
-
-/** 输入行上方的会话状态文案：早退链，优先级即源码顺序。
- *  spawned 为真时不再看 exited/tailing（保持原嵌套三元的求值顺序）。 */
-function statusLineOf(
-  state: SessionState,
-  opts: { connected: boolean; phase?: string; waiting: boolean },
-): string {
-  if (!opts.connected) return '连接中…'
-  if (opts.phase) return `${PHASE_LABEL[opts.phase] ?? opts.phase}…`
-  if (opts.waiting) return state.tailing ? '外部会话等待操作' : '等待审批'
-  const activeTaskCount = state.activeTaskCount ?? 0
-  if (activeTaskCount > 0) return `${activeTaskCount} 个后台任务运行中`
-  if (state.busy) return state.tailing ? '外部会话工作中' : '工作中'
-  if (state.spawned) return state.sessionState === 'idle' ? 'CLI 空闲' : 'CLI 运行中'
-  if (state.exited) return '进程已退出'
-  if (state.tailing) return '外部会话 · 实时跟踪中'
-  const hasPendingStartConfig = Boolean(state.model || state.permissionMode || state.effort)
-  return hasPendingStartConfig ? '配置已保存（发送消息时启动 CLI）' : '浏览中（发送消息时启动 CLI）'
-}
-
-/**
- * 把一条实时 sidechain CLI 消息（带 parent_tool_use_id 的完整 assistant/user）转成
- * HistoryMessage 形状，使其可以复用 appendHistoryMsg 落进后台任务桶。
- * 与 discovery.entryToHistoryMessage 的块映射保持一致（text/thinking/tool_use/tool_result）。
- */
-function cliSidechainToHistory(rec: Record<string, unknown>): HistoryMessage | null {
-  const type = rec.type
-  if (type !== 'assistant' && type !== 'user') return null
-  const content = (rec.message as { content?: unknown } | undefined)?.content
-  const blocks: { kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'; text?: string; name?: string; id?: string; input?: unknown; isError?: boolean }[] = []
-  if (typeof content === 'string') {
-    if (content.trim()) blocks.push({ kind: 'text', text: content })
-  } else if (Array.isArray(content)) {
-    for (const c of content as Record<string, unknown>[]) {
-      if (c?.type === 'text' && typeof c.text === 'string' && c.text.trim()) blocks.push({ kind: 'text', text: c.text })
-      else if (c?.type === 'thinking' && typeof c.thinking === 'string' && c.thinking.trim())
-        blocks.push({ kind: 'thinking', text: c.thinking })
-      else if (c?.type === 'tool_use') blocks.push({ kind: 'tool_use', name: c.name as string, id: c.id as string, input: c.input })
-      else if (c?.type === 'tool_result')
-        blocks.push({ kind: 'tool_result', id: c.tool_use_id as string, text: toolResultText(c.content), isError: c.is_error === true })
-    }
-  }
-  if (blocks.length === 0) return null
-  return { uuid: rec.uuid as string | undefined, role: type, blocks, timestamp: rec.timestamp as string | undefined }
 }
 
 /** 后台任务桶：TaskFeed + 归并用的 tool 配对索引与去重集合（不发布给渲染） */
@@ -1262,112 +1189,82 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
   }
 
+  /** 斜杠拦截动作的副作用执行器（拦截表本身已数据化下沉 lib/slashIntercept.ts，含判例注释） */
+  const runSlashAction = (a: SlashAction) => {
+    const sock = sockRef.current
+    switch (a.type) {
+      case 'openRewind':
+        setShowRewind(true)
+        return
+      case 'btw':
+        if (a.question) sock?.send({ kind: 'btw', question: a.question })
+        else pushSystem('用法：/btw <问题>')
+        return
+      case 'branch':
+        if (isCodex) pushSystem('Codex 请用「回滚」面板的从此处分叉')
+        else sock?.send({ kind: 'branch', ...(a.name ? { name: a.name } : {}) })
+        return
+      case 'exitHint':
+        pushSystem('此命令会终止 CLI 进程。要结束会话请回列表页归档（⌄ 按钮），进程回收由服务端空闲策略处理')
+        return
+      case 'compact':
+        sock?.send({ kind: 'control', subtype: 'compact' })
+        return
+      case 'context': {
+        // codex 无 get_context_usage 对应物；用状态里的累计 token 用量顶一句
+        const u = state.usage
+        pushSystem(
+          u
+            ? `◈ 线程累计：in ${u.inputTokens} / out ${u.outputTokens}${u.reasoningTokens ? ` / reasoning ${u.reasoningTokens}` : ''}（窗口占用明细请开「详情」）`
+            : '◈ 暂无用量数据（先跑一轮）',
+        )
+        return
+      }
+      case 'goal':
+        if (a.clear) sendGoal()
+        else if (a.condition) sendGoal(a.condition)
+        else pushSystem(state.goal ? `◎ 当前目标：${state.goal.condition}` : '用法：/goal <条件>，/goal clear 清除')
+        return
+      case 'review':
+        sock?.send({ kind: 'control', subtype: 'review', ...(a.instructions ? { extra: { instructions: a.instructions } } : {}) })
+        pushSystem(a.instructions ? `◈ 审查中：${a.instructions}` : '◈ 审查未提交的改动中…')
+        return
+      case 'rename':
+        if (!a.name) {
+          pushSystem('用法：/rename <新名字>')
+          return
+        }
+        sock?.send({ kind: 'control', subtype: 'rename', extra: { name: a.name } })
+        pushSystem(`✎ 重命名线程为「${a.name}」`)
+        return
+      case 'newThread': {
+        const cwd = session.cwd
+        if (cwd) {
+          void createSession(cwd, 'codex').then(({ key }) =>
+            props.onNavigate?.(
+              makeSessionInfo({ key, slug: 'codex', sessionId: 'new', cwd, backend: 'codex', status: 'offline' }),
+            ),
+          )
+        } else {
+          pushSystem('⚠ 未知当前目录，无法新建线程', 'error')
+        }
+        return
+      }
+    }
+  }
+
   const send = () => {
     const text = input.trim()
     const sock = sockRef.current
     if ((!text && pendingImages.length === 0) || !sock) return
 
-    // 斜杠命令拦截表：顺序即优先级，命中即拦截并清空输入框。
+    // 斜杠命令拦截：表与判例在 lib/slashIntercept.ts（顺序即优先级），命中即拦截并清空输入框。
     // codex 的斜杠命令不会被 app-server 解释（原样进模型上下文），有对应物的必须前端拦截。
-    const interceptors: Array<{ match: (t: string) => boolean; run: (t: string) => void }> = [
-      {
-        // /rewind 及其官方别名 /checkpoint /undo
-        match: (t) => t === '/rewind' || t === '/checkpoint' || t === '/undo',
-        run: () => setShowRewind(true),
-      },
-      {
-        match: (t) => /^\/btw(\s|$)/.test(t),
-        run: (t) => {
-          const q = t.slice(4).trim()
-          if (q) sock.send({ kind: 'btw', question: q })
-          else pushSystem('用法：/btw <问题>')
-        },
-      },
-      {
-        // 内建 /branch（有参时）会在 headless 下写孤立 fork 会话文件却不切换（context.resume 缺席），
-        // 必须全形拦截（含参数）；名字透传给分叉 spawn 的 -n
-        match: (t) => /^\/(branch|fork)(\s|$)/.test(t),
-        run: (t) => {
-          const name = t.match(/^\/(?:branch|fork)(?:\s+(.*))?$/)?.[1]?.trim()
-          if (isCodex) pushSystem('Codex 请用「回滚」面板的从此处分叉')
-          else sock.send({ kind: 'branch', ...(name ? { name } : {}) })
-        },
-      },
-      {
-        // /exit /quit headless 下会真的杀掉 CLI 进程——web 场景下多半是误触，拦下给替代指引
-        match: (t) => t === '/exit' || t === '/quit',
-        run: () =>
-          pushSystem('此命令会终止 CLI 进程。要结束会话请回列表页归档（⌄ 按钮），进程回收由服务端空闲策略处理'),
-      },
-      {
-        match: (t) => isCodex && t === '/compact',
-        run: () => sock.send({ kind: 'control', subtype: 'compact' }),
-      },
-      {
-        match: (t) => isCodex && t === '/context',
-        run: () => {
-          // codex 无 get_context_usage 对应物；用状态里的累计 token 用量顶一句
-          const u = state.usage
-          pushSystem(
-            u
-              ? `◈ 线程累计：in ${u.inputTokens} / out ${u.outputTokens}${u.reasoningTokens ? ` / reasoning ${u.reasoningTokens}` : ''}（窗口占用明细请开「详情」）`
-              : '◈ 暂无用量数据（先跑一轮）',
-          )
-        },
-      },
-      {
-        match: (t) => isCodex && /^\/goal(\s|$)/.test(t),
-        run: (t) => {
-          const arg = t.slice(5).trim()
-          if (!arg) pushSystem(state.goal ? `◎ 当前目标：${state.goal.condition}` : '用法：/goal <条件>，/goal clear 清除')
-          else if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) sendGoal()
-          else sendGoal(arg)
-        },
-      },
-      {
-        // codex review/start：无参审未提交改动，带参按自定义说明审（inline 在本线程跑）
-        match: (t) => isCodex && /^\/review(\s|$)/.test(t),
-        run: (t) => {
-          const instructions = t.slice(7).trim()
-          sock.send({ kind: 'control', subtype: 'review', ...(instructions ? { extra: { instructions } } : {}) })
-          pushSystem(instructions ? `◈ 审查中：${instructions}` : '◈ 审查未提交的改动中…')
-        },
-      },
-      {
-        match: (t) => isCodex && /^\/rename(\s|$)/.test(t),
-        run: (t) => {
-          const name = t.slice(7).trim()
-          if (!name) {
-            pushSystem('用法：/rename <新名字>')
-            return
-          }
-          sock.send({ kind: 'control', subtype: 'rename', extra: { name } })
-          pushSystem(`✎ 重命名线程为「${name}」`)
-        },
-      },
-      {
-        // codex /new 与 /clear 同为 thread/start 新线程：导航到 xn| 新会话页（懒启动）
-        match: (t) => isCodex && (t === '/new' || t === '/clear'),
-        run: () => {
-          const cwd = session.cwd
-          if (cwd) {
-            void createSession(cwd, 'codex').then(({ key }) =>
-              props.onNavigate?.(
-                makeSessionInfo({ key, slug: 'codex', sessionId: 'new', cwd, backend: 'codex', status: 'offline' }),
-              ),
-            )
-          } else {
-            pushSystem('⚠ 未知当前目录，无法新建线程', 'error')
-          }
-        },
-      },
-    ]
-    for (const it of interceptors) {
-      if (it.match(text)) {
-        it.run(text)
-        setInput('')
-        return
-      }
+    const action = interceptSlash(text, { isCodex })
+    if (action) {
+      runSlashAction(action)
+      setInput('')
+      return
     }
 
     const echoBlocks: Block[] = [
