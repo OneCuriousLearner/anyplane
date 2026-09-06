@@ -4,7 +4,7 @@
 import { defaultPermissionMode } from '../../config'
 import { generateCodexBrief, type HandoffDetail } from '../../handoff'
 import { errorMessage } from '../../util'
-import type { Hub } from '../../index'
+import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
   hubServices,

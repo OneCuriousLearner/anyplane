@@ -8,7 +8,7 @@ import { config, defaultPermissionMode } from '../../config'
 import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
 import { errorMessage } from '../../util'
-import type { Hub } from '../../index'
+import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
   hubServices,

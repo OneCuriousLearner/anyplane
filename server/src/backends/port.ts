@@ -10,7 +10,7 @@
 //（portFor 需要适配器实例，适配器需要 baseStatusOf/类型）。两侧都只在方法体内
 //  deferred 使用对方绑定（implements 为 type-only 已擦除），模块求值期无 TDZ 读取。
 
-import type { Hub } from '../index'
+import type { Hub } from '../hub/types'
 import type { HandoffDetail } from '../handoff'
 import { isCodexKey } from './codex/backend'
 import { claudePort } from './claude/port'
@@ -63,6 +63,9 @@ export interface SessionHandle {
   readonly connectedClients: number
   readonly tokenUsage: unknown
   readonly contextUsage: unknown
+  /** 会话 cwd（codex 句柄有 getter；claude 缺席——x| key 的 sessionNameOf 反查用，
+   *  可选属性使 ClaudeSession 无需改动即结构化兼容） */
+  readonly cwd?: string
   sendUserText(text: string, sendMode?: 'steer' | 'queue', images?: ImageAttachment[]): void
   sendApproval(requestId: string, decision: ApprovalDecision): void
   sendControl(subtype: string, extra?: Record<string, unknown>): void
