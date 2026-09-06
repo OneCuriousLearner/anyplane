@@ -4,14 +4,16 @@ import { appendFileSync, existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { hostAllowed, isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
-import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, hydratedContextOf, type ParsedKey } from './backends/claude/backend'
+import { keyFor, keyForBranch, keyForNew, parseKey, splitExistingKey, type ParsedKey } from './backends/claude/backend'
 import { listSessions, liveSessionInfo, readHistory, sanitizePath, type SessionInfo } from './backends/claude/discovery'
 import { resolveTierModelNames } from './backends/claude/modelNames'
-import { processManager, type ApprovalDecision, type SpawnOptions } from './backends/claude/processManager'
+import { processManager } from './backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from './backends/claude/protocol'
 import { TranscriptTailer } from './backends/claude/tailer'
 import { isCodexKey, keyForNew as codexKeyForNew, listSessions as listCodexSessions, parseKey as codexParseKey, readHistory as readCodexHistory, splitThreadId } from './backends/codex/backend'
 import { codexRuntime, type CodexSession } from './backends/codex/runtime'
+import { portFor } from './backends/port'
+import type { ApprovalDecision, SpawnOptions } from './backends/types'
 import { config, defaultPermissionMode } from './config'
 import { isOwnServerProcess, takeoverStaleListeners } from './portTakeover'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
@@ -69,7 +71,7 @@ interface WSDataInbox {
 
 type WSData = WSDataSession | WSDataInbox
 
-interface Hub {
+export interface Hub {
   key: string
   clients: Set<import('bun').ServerWebSocket<WSData>>
   pendingApprovals: Map<string, PendingApproval>
@@ -337,70 +339,13 @@ function broadcastError(hub: Hub, message: string): void {
   broadcast(hub, { kind: 'error', message })
 }
 
-/** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */
-function baseStatusOf(
-  s:
-    | {
-        exited: boolean
-        busy: boolean
-        waiting: boolean
-        sessionState: string
-        sessionId: string | undefined
-        connectedClients: number
-        tokenUsage: unknown
-        contextUsage: unknown
-      }
-    | undefined,
-  hub: Hub | undefined,
-  waiting: boolean,
-): Record<string, unknown> {
-  return {
-    spawned: !!s && !s.exited,
-    busy: (s?.busy ?? false) || waiting,
-    waiting,
-    sessionState: s?.sessionState ?? 'idle',
-    sessionId: s?.sessionId,
-    clients: s?.connectedClients ?? hub?.clients.size ?? 0,
-    usage: s?.tokenUsage,
-    context: s?.contextUsage,
-    permissionMode: hub?.spawnOpts?.permissionMode,
-    effort: hub?.spawnOpts?.effort,
-  }
-}
-
 /** liveHint：调用方（/api/sessions）刚做过 pid 扫描时传入复用，避免每行各扫一次；
  *  显式 null 表示"已知不在线"（跳过扫描），undefined 才现扫。
  *  hydrateContext：仅单会话 attach/pushStatus 路径开启（离线时读 transcript 尾部补
- *  上下文占用）；列表端点禁止开启（N 行 × 文件读）。 */
+ *  上下文占用）；列表端点禁止开启（N 行 × 文件读）。
+ *  实现已按后端收敛进适配器（backends/port.ts 的 portFor 分发；公共字段见 baseStatusOf）。 */
 function statusOf(key: string, liveHint?: { status: string; pid: number } | null, hydrateContext = false): Record<string, unknown> {
-  if (isCodexKey(key)) return codexStatusOf(key)
-  const s = processManager.get(key)
-  const hub = hubs.get(key)
-  const pending = hub?.pendingApprovals.size ?? 0
-  // 未被本服务 spawn 的会话：读 pid 文件，把外部 CLI 的实时状态反映到 busy/waiting
-  let live: { status: string; pid: number } | undefined
-  if (!s || s.exited) {
-    const ek = splitExistingKey(key)
-    if (ek) live = liveHint === undefined ? liveSessionInfo(ek.sessionId) : (liveHint ?? undefined)
-  }
-  const waiting = (s?.waiting ?? false) || pending > 0 || live?.status === 'waiting'
-  const st = baseStatusOf(s, hub, waiting)
-  if (live?.status === 'busy') st.busy = true // 审批等待与外部进程 busy 都算 busy，防止误回收
-  // 离线/未 spawn 水合：直读 transcript 尾部，点开会话即有上下文环形（无需先发消息）；
-  // live 值存在时恒优先（spawn 内水合与实时跟踪是同源数据的更新版）
-  if (hydrateContext && st.context == null) st.context = hydratedContextOf(key)
-  return {
-    ...st,
-    activeTaskCount: s?.activeTaskCount ?? 0,
-    activeTasks: s?.backgroundTasks ?? [],
-    slashCommands: s?.slashCommands,
-    // spawnOpts.model 是用户显式选择（未 spawn 时的待应用值）；initModel 是进程 init 报告的解析后 ID。
-    // 后者让重连 attach 的页面不必等下一轮就能显示模型（StatusPill 再经 modelNames 映射成配置名）
-    model: hub?.spawnOpts?.model ?? s?.initModel,
-    tailing: !!hub?.tailer,
-    liveStatus: live?.status,
-    goal: hub?.goal ?? null,
-  }
+  return portFor(key).statusOf(key, { hub: hubs.get(key), liveHint, hydrateContext })
 }
 
 function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
@@ -434,21 +379,6 @@ function throttledPushStatus(hub: Hub): void {
     }
   }, STATUS_THROTTLE_MS)
   st.timer.unref?.()
-}
-
-/** codex 会话状态：与 statusOf 同形，供列表 managed 字段与 WS status 复用 */
-function codexStatusOf(key: string): Record<string, unknown> {
-  const s = codexRuntime.get(key)
-  const hub = hubs.get(key)
-  const waiting = (s?.waiting ?? false) || (hub?.pendingApprovals.size ?? 0) > 0
-  return {
-    ...baseStatusOf(s, hub, waiting),
-    // 不下发 activeTasks/activeTaskCount：codex 服务端不维护任务表，恒空数组会被
-    // hydrateTasks 误读为"权威空"而在空闲时判死 live 桶；字段缺席则前端跳过水合
-    model: hub?.spawnOpts?.model,
-    tailing: false,
-    goal: s?.goal ?? null,
-  }
 }
 
 /**
@@ -1431,7 +1361,7 @@ async function handleApi(req: Request, url: URL): Promise<Response | undefined> 
         backend: 'codex' as const,
         gitBranch: branchOfCached(t.cwd),
         key: t.key,
-        managed: codexStatusOf(t.key),
+        managed: statusOf(t.key),
       }))
     } catch (e) {
       log.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
@@ -1760,8 +1690,7 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         }
         const hub = getHub(ws.data.key)
         hub.clients.add(ws)
-        processManager.get(ws.data.key)?.attachClient()
-        codexRuntime.get(ws.data.key)?.attachClient()
+        portFor(ws.data.key).sessionOf(ws.data.key)?.attachClient()
         ws.send(JSON.stringify({ kind: 'status', state: statusOf(ws.data.key, undefined, true) }))
         replayApprovals(hub, (p) => ws.send(JSON.stringify(p)))
       },
@@ -1798,10 +1727,9 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
         // 不变量：任何后端的会话句柄存活期间，其 Hub 必须存活——
         // 否则重连时复用旧会话，其回调会把事件广播进已删除的 Hub（消息黑洞）。
         // 用 hub.key 而非 ws.data.key：重键后进程注册在新 key 下
-        const codex = isCodexKey(hub.key)
-        const s = codex ? codexRuntime.get(hub.key) : processManager.get(hub.key)
-        s?.detachClient()
-        const alive = codex ? !!s && !s.exited : !!s
+        const port = portFor(hub.key)
+        port.sessionOf(hub.key)?.detachClient()
+        const alive = port.hasLiveSession(hub.key)
         if (hub.clients.size === 0) {
           stopTailer(hub)
           if (!alive) hubs.delete(hub.key)
