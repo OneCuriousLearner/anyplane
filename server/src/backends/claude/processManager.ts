@@ -23,6 +23,7 @@ import {
   type CliMessage,
   type StdinMessage,
 } from './protocol'
+import { learnedContextWindow, rememberContextWindow } from './contextWindows'
 import { rememberSessionModel } from './sessionModels'
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 re-export 兼容既有 import 路径
@@ -31,11 +32,13 @@ export type { ApprovalDecision, SpawnOptions } from '../types'
 /** Claude Code session_state_changed 三态 */
 export type SessionRunState = 'idle' | 'running' | 'requires_action'
 
-/** 上下文窗口大小：官方 getContextWindowForModel 的 headless 近似——[1m] 后缀 → 1M，
- *  CLAUDE_CODE_DISABLE_1M_CONTEXT 为真时恒 200k，否则默认 200k。
- *  capability 表/实验 flag 是 CLI 进程内状态，headless 协议不可见（官方口径见
- *  docs/claude-code/en/statusline.md 的 context_window.context_window_size）。 */
+/** 离线窗口大小推断（无活进程时用；live 会话一律以 get_context_usage 的权威值为准）。
+ *  依次尝试：① 该模型上次 live 时习得的权威值 ② [1m] 后缀启发式——**默认部署下这是准的**
+ *  （claude 按 200K/1M 映射），CLAUDE_CODE_DISABLE_1M_CONTEXT 为真时恒 200k。
+ *  启发式的盲区是 CLI 进程内覆盖（env 上限 / 自定义 catalog / 网关型号），headless 看不见。 */
 export function contextWindowOf(model: string | undefined): number {
+  const learned = learnedContextWindow(model)
+  if (learned) return learned
   const disabled = /^(1|true|yes)$/i.test(process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT ?? '')
   if (!disabled && model && /\[1m\]/i.test(model)) return 1_000_000
   return 200_000
@@ -164,6 +167,11 @@ export class ClaudeSession {
   /** 最近一次主线 API 调用的 usage（官方 statusline 的 context_window.current_usage 口径；
    *  数据源：assistant 消息的 message.usage + result.usage，sidechain 不计） */
   private lastCallUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } | undefined
+  /** 官方 get_context_usage 报告的窗口大小（本会话权威值，优先于任何推断） */
+  private authoritativeWindow: number | undefined
+  /** 已问过 get_context_usage 的模型 ID：init 每 turn 都来需去重，但中途 set_model
+   *  换档会改变窗口（如 opus:k3-256k → fable:k3[1M]），换了就得重问 */
+  private contextWindowQueriedFor: string | undefined
   /** 等待 CLI 确认的外发 control request，例如组合 rewind 的第一步。 */
   private pendingControlRequests = new Map<string, {
     resolve: (response: unknown) => void
@@ -228,7 +236,9 @@ export class ClaudeSession {
     | undefined {
     const u = this.lastCallUsage
     if (!u) return undefined
-    return contextUsageOf(u, contextWindowOf(this.initModel ?? this.opts.model))
+    // live 会话以本会话问来的权威值为准；未答复/失败时才落回离线推断（习得值→启发式）
+    const window = this.authoritativeWindow ?? contextWindowOf(this.initModel ?? this.opts.model)
+    return contextUsageOf(u, window)
   }
 
   /** 记录最近一次 API 调用的 usage（assistant 与 result 同口径）；按值去重，变了才广播 status */
@@ -247,6 +257,38 @@ export class ClaudeSession {
     }
     this.lastCallUsage = next
     this.cb.onStatusChange?.()
+  }
+
+  /** 向 CLI 查一次官方 get_context_usage，把权威窗口大小（maxTokens）记进习得表。
+   *  只在该模型尚未习得时发起——窗口大小不随会话变化，每模型一次即可，避免给每个
+   *  会话平白加一次 RPC。失败不影响会话：contextWindowOf 会回退启发式，下个会话再试。
+   *  刻意不走 usedTokens：那条快路径靠每条 assistant 的 message.usage，无需额外往返。 */
+  private learnContextWindow(model: string): void {
+    // init 是**每个 turn** 的首条流消息，不是 spawn 一次——按模型去重，否则每轮一次 RPC
+    if (this.contextWindowQueriedFor === model) return
+    if (!this.proc || this.exited) return // 无活进程可问（如 tailer 路径的外部会话）
+    this.contextWindowQueriedFor = model
+    this.authoritativeWindow = undefined // 换档期间先落回推断，别拿旧档窗口画新档
+    // 刻意不查习得表就跳过：习得值只是离线兜底，live 会话每次重问才能在用户改了
+    // CLAUDE_CODE_MAX_CONTEXT_TOKENS / model catalog 后自愈。代价是每会话一次往返。
+    void this.sendControlAndWait('get_context_usage', {}, 10_000).then(
+      (raw) => {
+        const r = raw as { maxTokens?: unknown; model?: unknown } | undefined
+        const max = Number(r?.maxTokens)
+        if (!Number.isFinite(max) || max <= 0) return
+        this.authoritativeWindow = max
+        // 以应答里的 model 为准：档位别名（sonnet/opus/fable）解析后的真实 ID 才是习得表的键
+        const key = typeof r?.model === 'string' && r.model ? r.model : model
+        rememberContextWindow(key, max)
+        console.log(`[session ${this.key}] 上下文窗口权威值 model=${key} maxTokens=${max}`)
+        // 环形 UI 可能已用启发式画过一版，拿到权威值立刻纠正
+        this.cb.onStatusChange?.()
+      },
+      (e) => {
+        // 失败即长期回退启发式：不重试，避免每轮一次失败 RPC 拖慢会话
+        console.warn(`[session ${this.key}] get_context_usage 失败（回退启发式窗口）:`, errorMessage(e))
+      },
+    )
   }
 
   /** resume/fork 水合：回扫源 transcript 尾部，把最后一条主线 assistant 的 usage 播种为
@@ -599,6 +641,7 @@ export class ClaudeSession {
         this.initModel = msg.model
         // 持久化一份给离线水合：transcript 的 message.model 缺 [1m] 后缀，窗口启发式只能靠这里
         if (this.sessionId) rememberSessionModel(this.sessionId, msg.model)
+        this.learnContextWindow(msg.model)
       }
       console.log(`[session ${this.key}] init session_id=${this.sessionId}`)
       // initModel/sessionId 入库即回放：先于 init 到达的 attach 拿到的状态里 model 还是空的
