@@ -1,9 +1,10 @@
 // 主抄本 ingest hook：消息列表 + 流式草稿 + 7 个配对/去重 ref + handleCli/applyHistory。
-// F4 从 pages/Chat.tsx 切出。
-// 纪律：事件处理器在 React 渲染外触发（WS 回调），内部一律走 ref + setState +
-// opts 注入的稳定 setter（React setState 引用恒定）——api 对象每渲染重建但永不过期。
-// E3（session.key 历史加载 effect）留 Chat 组合层：reset 先于建连的顺序纪律在那；
-// phase/initInfo/permMode 是 cli 流驱动的会话元数据，状态留 Chat、setter 注入本 hook。
+// F4 从 pages/Chat.tsx 切出；F5 把 cli 流驱动的会话元数据（phase/initInfo/permMode/effort）
+// 一并内化——主要写入方本来就是本 hook 的 init/status/result 分支，setter 经 api 暴露给
+// WS status 事件（useSessionSocket）与 E3 清空段（组合层）共用。
+// 纪律：事件处理器在 React 渲染外触发（WS 回调），内部一律走 ref + setState——
+// api 对象每渲染重建但永不过期。
+// E3（session.key 历史加载 effect）留 Chat 组合层：reset 先于建连的顺序纪律在那。
 
 import { useRef, useState } from 'react'
 import type { HistoryResponse } from '../lib/api'
@@ -39,6 +40,11 @@ export interface Draft {
 }
 
 export interface TranscriptIngestApi {
+  // cli 流驱动的会话元数据 setter（WS status 事件与组合层清空段共用）
+  setPhase: React.Dispatch<React.SetStateAction<string | undefined>>
+  setPermMode: React.Dispatch<React.SetStateAction<string | undefined>>
+  setInitInfo: React.Dispatch<React.SetStateAction<{ model?: string; slashCommands?: string[] }>>
+  setEffort: React.Dispatch<React.SetStateAction<string | undefined>>
   setMsgs(up: (prev: ChatMsg[]) => ChatMsg[]): void
   setDraftBoth(d: Draft | null): void
   pushMsg(m: ChatMsg): void
@@ -64,13 +70,23 @@ export function useTranscriptIngest(opts: {
   isCodex: boolean
   sockRef: React.RefObject<SessionSocket | undefined>
   taskApi: TaskBucketsApi
-  setPhase: React.Dispatch<React.SetStateAction<string | undefined>>
-  setPermMode: React.Dispatch<React.SetStateAction<string | undefined>>
-  setInitInfo: React.Dispatch<React.SetStateAction<{ model?: string; slashCommands?: string[] }>>
-}): { messages: ChatMsg[]; draft: Draft | null; api: TranscriptIngestApi } {
-  const { isCodex, sockRef, taskApi, setPhase, setPermMode, setInitInfo } = opts
+}): {
+  messages: ChatMsg[]
+  draft: Draft | null
+  phase: string | undefined
+  initInfo: { model?: string; slashCommands?: string[] }
+  permMode: string | undefined
+  effort: string | undefined
+  api: TranscriptIngestApi
+} {
+  const { isCodex, sockRef, taskApi } = opts
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
+  // cli 流驱动的会话元数据（init/status 分支写入；WS status 事件与 E3 清空经 api setter 共用）
+  const [phase, setPhase] = useState<string>()
+  const [initInfo, setInitInfo] = useState<{ model?: string; slashCommands?: string[] }>({})
+  const [permMode, setPermMode] = useState<string>()
+  const [effort, setEffort] = useState<string>()
 
   // ref 镜像：事件处理器在 React 渲染外触发，直接基于 ref 计算，避免过期闭包/updater 双重调用
   const messagesRef = useRef<ChatMsg[]>([])
@@ -397,7 +413,15 @@ export function useTranscriptIngest(opts: {
   return {
     messages,
     draft,
+    phase,
+    initInfo,
+    permMode,
+    effort,
     api: {
+      setPhase,
+      setPermMode,
+      setInitInfo,
+      setEffort,
       setMsgs,
       setDraftBoth,
       pushMsg,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
-import { SessionSocket, type ServerEvent, type SessionState } from '../lib/ws'
+import { SessionSocket } from '../lib/ws'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { ChatHeader } from '../components/ChatHeader'
 import { Composer, imgPreviewSrc } from '../components/Composer'
@@ -13,31 +13,18 @@ import { CodexMark } from '../components/CodexMark'
 import { buildTranscriptRows, nextId, rewindPreview, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
 import { statusLineOf } from '../lib/chatText'
 import { interceptSlash, type SlashAction } from '../lib/slashIntercept'
-import { appendHistoryMsg, flushStrayResults, type IngestState } from '../lib/ingest'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { useTaskBuckets } from '../hooks/useTaskBuckets'
 import { useTranscriptIngest } from '../hooks/useTranscriptIngest'
-
-interface Approval {
-  requestId: string
-  toolName: string
-  input: unknown
-}
+import { useSessionSocket, type QueryResultEvent } from '../hooks/useSessionSocket'
 
 export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: (s: SessionInfo) => void }) {
   const { session } = props
   const isCodex = isCodexKey(session.key)
   const isExisting = isExistingKey(session.key)
   const [input, setInput] = useState('')
-  const [state, setState] = useState<SessionState>({ spawned: false, busy: false })
-  const [connected, setConnected] = useState(false)
-  const [approvals, setApprovals] = useState<Approval[]>([])
   const [cfg, setCfg] = useState<ServerConfigInfo>()
   const [showRewind, setShowRewind] = useState(false)
-  const [phase, setPhase] = useState<string>()
-  const [initInfo, setInitInfo] = useState<{ model?: string; slashCommands?: string[] }>({})
-  const [permMode, setPermMode] = useState<string>()
-  const [effort, setEffort] = useState<string>()
   const [codexModels, setCodexModels] = useState<CodexModelInfo[]>()
   const [lineage, setLineage] = useState<LineageResponse>()
   const [handoffBusy, setHandoffBusy] = useState(false)
@@ -73,24 +60,55 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   // 内部全走 ref/稳定 setState/isCodex（会话内不变），与此前过期闭包语义等价
   const { tasks, tasksOpen, setTasksOpen, api: taskApi } = useTaskBuckets({ isCodex })
 
-  // ---------- 主抄本 ingest（消息/流式草稿/配对索引；F4 下沉 hooks/useTranscriptIngest.ts） ----------
-  // api 为每渲染重建的普通对象：内部全走 ref/稳定 setState/注入的稳定 setter，过期闭包语义等价
-  const { messages, draft, api: ingestApi } = useTranscriptIngest({
+  // ---------- 主抄本 ingest（消息/流式草稿/配对索引 + cli 流驱动的会话元数据；F4/F5 下沉 hooks/useTranscriptIngest.ts） ----------
+  // api 为每渲染重建的普通对象：内部全走 ref/稳定 setState，过期闭包语义等价
+  const { messages, draft, phase, initInfo, permMode, effort, api: ingestApi } = useTranscriptIngest({
     isCodex,
     sockRef,
     taskApi,
-    setPhase,
-    setPermMode,
-    setInitInfo,
   })
 
   const loadSessionHistory = () =>
     isCodex ? fetchCodexHistory(session.sessionId) : fetchHistory(session.slug, session.sessionId)
-  /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
-   *  未 spawn 时只有 s|/x| key 内嵌的才是本会话 id——b| 嵌的是源会话 id，不能误显示 */
-  const currentSessionId =
-    state.sessionId ??
-    (session.key.startsWith('s|') || session.key.startsWith('x|') ? session.sessionId : undefined)
+
+  // ---------- 详情查询（query 通道；应答的详情域分发留组合层） ----------
+  const runQuery = (query: string, title: string) => {
+    querySeq.current += 1
+    setDetailTitle(title)
+    setDetailContent('加载中…')
+    sockRef.current?.send({ kind: 'query', id: `q-${querySeq.current}`, query })
+  }
+
+  /** query_result 详情域分发：MCP 动作应答辨认 + 结构化面板（F5 从 WS 分发切出，语义逐字） */
+  const onQueryResult = (ev: QueryResultEvent) => {
+    // MCP 管理动作应答（按 query id 辨认）：清忙态、给反馈、成功后刷新清单
+    if (pendingMcpActionRef.current && ev.id === pendingMcpActionRef.current) {
+      pendingMcpActionRef.current = null
+      setMcpBusy(null)
+      if (ev.ok) {
+        ingestApi.pushSystem('✓ MCP 操作完成')
+        runQuery('mcp_status', 'MCP 状态')
+      } else {
+        ingestApi.pushSystem(`⚠ MCP 操作失败: ${ev.error ?? '未知错误'}`, 'error')
+      }
+      return
+    }
+    // 始终保留原始 JSON（非结构化 tab 的主视图 + 设置面板的折叠原件）
+    const raw = ev.ok
+      ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
+      : `⚠ ${ev.error ?? '查询失败'}`
+    setDetailContent(raw)
+    // 按应答形状分发到结构化面板（claude 专属；codex 一律 JSON 直出）。
+    // 形状不匹配的 tab 清空对应结构化态，渲染链自然落回 <pre>
+    const d = ev.ok && !isCodex ? (ev.data as Record<string, unknown>) : undefined
+    setMcpServers(Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : null)
+    setContextData(
+      d && Array.isArray(d.categories) && typeof d.totalTokens === 'number'
+        ? (d as unknown as ContextDataLite)
+        : null,
+    )
+    setSettingsData(d && d.applied && Array.isArray(d.sources) ? (d as unknown as SettingsDataLite) : null)
+  }
 
   // codex 模型目录（model/list）：模型/effort 档位/默认值
   useEffect(() => {
@@ -124,11 +142,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     ingestApi.reset()
     // Chat 组件在 session 切换时会复用，清掉上一会话的运行时/待启动配置。
     // 新会话的缓存选择会由随后到达的 status 恢复。
-    setInitInfo({})
-    setPermMode(undefined)
-    setEffort(undefined)
+    ingestApi.setInitInfo({})
+    ingestApi.setPermMode(undefined)
+    ingestApi.setEffort(undefined)
     setApprovals([])
-    setPhase(undefined)
+    ingestApi.setPhase(undefined)
     taskApi.clear()
     if (!isExisting) return
     loadSessionHistory()
@@ -144,329 +162,29 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     }
   }, [session.key])
 
-  // ---------- WS 连接 ----------
+  // ---------- 会话 WS（连接生命周期 + ServerEvent 分发；F5 下沉 hooks/useSessionSocket.ts） ----------
+  // 调用位置即 effect 注册顺序：E3 历史加载（reset 先于建连）必须在 WS effect 之前注册，
+  // 故本调用放在 E3 之后——顺序纪律钉死，勿上移。
+  const { state, connected, approvals, setApprovals } = useSessionSocket({
+    session,
+    sockRef,
+    ingestApi,
+    taskApi,
+    loadSessionHistory,
+    onNavigate: props.onNavigate,
+    onCloseRewind: () => setShowRewind(false),
+    onQueryResult,
+  })
+
+  /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
+   *  未 spawn 时只有 s|/x| key 内嵌的才是本会话 id——b| 嵌的是源会话 id，不能误显示 */
+  const currentSessionId =
+    state.sessionId ??
+    (session.key.startsWith('s|') || session.key.startsWith('x|') ? session.sessionId : undefined)
+
+  // ---------- 服务配置（Composer StatusPill 用；与 socket 生命周期无关——原与建连同 effect 同步先后执行，独立后同 commit 按序执行，行为等价） ----------
   useEffect(() => {
     fetchConfig().then(setCfg).catch(() => {})
-    const sock = new SessionSocket(
-      session.key,
-      (ev: ServerEvent) => {
-        switch (ev.kind) {
-          case 'status':
-            setState(ev.state)
-            if (typeof ev.state.model === 'string') {
-              setInitInfo((prev) => ({ ...prev, model: ev.state.model }))
-            }
-            if (typeof ev.state.permissionMode === 'string') setPermMode(ev.state.permissionMode)
-            if (typeof ev.state.effort === 'string') setEffort(ev.state.effort)
-            // 服务端权威运行任务表水合任务桶（中途接入补建 / 断线丢通知判死）
-            taskApi.hydrateTasks(ev.state)
-            // 进程已退出时固化/清理未完成的流式草稿，避免半截内容悬挂
-            if (ev.state.exited) {
-              ingestApi.commitDraft()
-              setPhase(undefined)
-            } else if (ev.state.sessionState === 'idle' && !ev.state.busy && !ev.state.waiting && ingestApi.draftRef.current) {
-              // 自愈：权威 idle 到达时清掉陈旧流式草稿。服务端重启/断线期间 turn 终结时
-              // 客户端拿不到终结事件，"生成中"会永远挂着（实测：watch 重载后复现）。
-              // 等审批（waiting/requires_action）期间草稿是合法的，不在此清理。
-              ingestApi.setDraftBoth(null)
-              setPhase(undefined)
-              // turn 已终结：此刻仍未配对的 tool_result 不会再等到它的调用了，
-              // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）
-              ingestApi.setMsgs((prev) => {
-                const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
-                flushStrayResults(st)
-                return st.msgs
-              })
-            }
-            break
-          case 'approval_request':
-            setApprovals((prev) =>
-              prev.some((a) => a.requestId === ev.requestId)
-                ? prev
-                : [...prev, { requestId: ev.requestId, toolName: ev.toolName, input: ev.input }],
-            )
-            break
-          case 'approval_resolved':
-            setApprovals((prev) => prev.filter((a) => a.requestId !== ev.requestId))
-            break
-          case 'approval_auto': {
-            // 规则引擎自动裁决的审计留痕：不进审批队列，只落一条系统卡。
-            // 摘要字段提取与服务端 summarizeInput 同口径（command / file_path / url）。
-            const inp = ev.input as Record<string, unknown> | undefined
-            const detail =
-              (typeof inp?.command === 'string' && inp.command) ||
-              (typeof inp?.file_path === 'string' && inp.file_path) ||
-              (typeof inp?.grantRoot === 'string' && inp.grantRoot) ||
-              (typeof inp?.url === 'string' && inp.url) ||
-              ''
-            ingestApi.pushSystem(
-              `规则自动${ev.action === 'allow' ? '放行' : '拒绝'}：${ev.toolName}${detail ? ` ${detail.slice(0, 120)}` : ''}（${ev.rule}）`,
-            )
-            break
-          }
-          case 'error':
-            ingestApi.pushSystem(`⚠ ${ev.message}`, 'error')
-            break
-          case 'btw_pending':
-            // 创建侧问卡片（发送方与其他客户端都以此为准）
-            if (!ingestApi.messagesRef.current.some((m) => m.btw === ev.question && m.btwPending)) {
-              ingestApi.pushMsg({ id: nextId(), role: 'assistant', btw: ev.question, btwPending: true, blocks: [] })
-            }
-            break
-          case 'btw_delta': {
-            const target = ingestApi.messagesRef.current.find((m) => m.btw === ev.question && m.btwPending)
-            if (!target) break
-            ingestApi.setMsgs((prev) =>
-              prev.map((m) => {
-                if (m.id !== target.id) return m
-                const blocks = [...m.blocks]
-                const kind = ev.thinking ? 'thinking' : 'text'
-                const i = blocks.findIndex((b) => b.kind === kind)
-                if (i >= 0) {
-                  const b = blocks[i]
-                  if (b.kind === 'text' || b.kind === 'thinking') {
-                    blocks[i] = { ...b, text: b.text + ev.delta }
-                  }
-                } else {
-                  blocks.push({ kind, text: ev.delta })
-                }
-                // thinking 在 text 之前
-                blocks.sort((a, b) => (a.kind === 'thinking' ? -1 : 0) - (b.kind === 'thinking' ? -1 : 0))
-                return { ...m, blocks }
-              }),
-            )
-            break
-          }
-          case 'btw_result': {
-            // 找不到 pending 卡（如校验失败路径或漏收 btw_pending）时自行建卡落地结果——
-            // 配对不变量由数据保证，不依赖服务端的消息时序
-            if (!ingestApi.messagesRef.current.some((m) => m.btw === ev.question && m.btwPending)) {
-              const blocks: Block[] = ev.ok
-                ? ev.text.trim()
-                  ? [{ kind: 'text', text: ev.text }]
-                  : []
-                : [{ kind: 'text', text: `⚠ ${ev.text}` }]
-              ingestApi.pushMsg({ id: nextId(), role: 'assistant', btw: ev.question, btwPending: false, blocks })
-              break
-            }
-            ingestApi.setMsgs((prev) =>
-              prev.map((m) => {
-                if (m.btw !== ev.question || !m.btwPending) return m
-                if (ev.ok) {
-                  // 用完整结果替换正文（增量可能因快照归并而不全）
-                  const thinking = m.blocks.find((b) => b.kind === 'thinking')
-                  const blocks: Block[] = []
-                  if (thinking) blocks.push(thinking)
-                  if (ev.text.trim()) blocks.push({ kind: 'text', text: ev.text })
-                  return { ...m, blocks, btwPending: false }
-                }
-                return { ...m, blocks: [...m.blocks, { kind: 'text', text: `⚠ ${ev.text}` }], btwPending: false }
-              }),
-            )
-            break
-          }
-          case 'forked': {
-            if (ev.branchOf) {
-              // claude 懒分叉：b| key 导航，首条消息才真正 --fork-session；
-              // 历史视图直接读源会话 transcript（分支将原样继承它）
-              ingestApi.pushSystem(
-                `⎇ 已创建分支${ev.name ? `「${ev.name}」` : ''}：新会话携带当前全部历史，原会话保持不动`,
-              )
-              props.onNavigate?.(
-                makeSessionInfo({
-                  key: ev.targetKey,
-                  slug: session.slug,
-                  sessionId: ev.branchOf,
-                  cwd: session.cwd,
-                  backend: 'claude',
-                }),
-              )
-              break
-            }
-            // codex 分叉回滚完成：原线程不动，跳到携带截断历史的新线程
-            ingestApi.pushSystem('⎇ 已分叉：新会话携带所选消息之前的历史，原会话保持不动')
-            setShowRewind(false)
-            props.onNavigate?.(
-              makeSessionInfo({
-                key: ev.targetKey,
-                slug: 'codex',
-                // codex 分叉路径服务端始终携带 targetSessionId（branchOf 不存在时）
-                sessionId: ev.targetSessionId ?? '',
-                cwd: session.cwd,
-                backend: 'codex',
-                managed: { spawned: true, busy: false, clients: 0 },
-              }),
-            )
-            break
-          }
-          case 'handoff_pending':
-            ingestApi.pushSystem(`⇄ 源会话正在生成交接简报（→ ${ev.toBackend === 'codex' ? 'Codex' : 'Claude'}）…`)
-            break
-          case 'handoff_brief':
-            break // 简报在 handoff_done 时一并展示
-          case 'handoff_done': {
-            ingestApi.pushMsg({
-              id: nextId(),
-              role: 'system',
-              systemKind: 'info',
-              blocks: [{ kind: 'text', text: `⇄ 接力简报（已播种给 ${ev.toBackend === 'codex' ? 'Codex' : 'Claude'} 新会话）：\n\n${ev.brief}` }],
-            })
-            props.onNavigate?.(
-              makeSessionInfo({
-                key: ev.targetKey,
-                slug: ev.toBackend === 'codex' ? 'codex' : session.slug,
-                // 目标已 spawn 时 targetKey 是 resolved key（s|/x|）：必须带真实 id，
-                // 否则 codex 侧 fetchCodexHistory('new') 必失败、历史视图永远空白
-                sessionId: ev.targetSessionId ?? 'new',
-                cwd: session.cwd,
-                backend: ev.toBackend,
-                status: 'busy',
-                managed: { spawned: true, busy: true, clients: 0 },
-              }),
-            )
-            break
-          }
-          case 'handoff_error':
-            ingestApi.pushSystem(`⚠ 接力失败: ${ev.message}`, 'error')
-            break
-          case 'query_result': {
-            // MCP 管理动作应答（按 query id 辨认）：清忙态、给反馈、成功后刷新清单
-            if (pendingMcpActionRef.current && ev.id === pendingMcpActionRef.current) {
-              pendingMcpActionRef.current = null
-              setMcpBusy(null)
-              if (ev.ok) {
-                ingestApi.pushSystem('✓ MCP 操作完成')
-                runQuery('mcp_status', 'MCP 状态')
-              } else {
-                ingestApi.pushSystem(`⚠ MCP 操作失败: ${ev.error ?? '未知错误'}`, 'error')
-              }
-              break
-            }
-            // 始终保留原始 JSON（非结构化 tab 的主视图 + 设置面板的折叠原件）
-            const raw = ev.ok
-              ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
-              : `⚠ ${ev.error ?? '查询失败'}`
-            setDetailContent(raw)
-            // 按应答形状分发到结构化面板（claude 专属；codex 一律 JSON 直出）。
-            // 形状不匹配的 tab 清空对应结构化态，渲染链自然落回 <pre>
-            const d = ev.ok && !isCodex ? (ev.data as Record<string, unknown>) : undefined
-            setMcpServers(Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : null)
-            setContextData(
-              d && Array.isArray(d.categories) && typeof d.totalTokens === 'number'
-                ? (d as unknown as ContextDataLite)
-                : null,
-            )
-            setSettingsData(d && d.applied && Array.isArray(d.sources) ? (d as unknown as SettingsDataLite) : null)
-            break
-          }
-          case 'rewound':
-            // 回滚会销毁并重生 CLI 进程（dispose 先摘 map 再 kill，onExit 不会触发），
-            // 进行中的流式草稿/待配对工具结果/相位指示全部失效，必须一并清理，
-            // 否则陈旧草稿会挂在回滚标签之下。
-            ingestApi.setDraftBoth(null)
-            ingestApi.pendingResultsRef.current.clear()
-            setPhase(undefined)
-            ingestApi.setMsgs((prev) => {
-              const idx = prev.findIndex((m) => m.id === ev.userMessageId)
-              const base = idx >= 0 ? prev.slice(0, idx + 1) : prev
-              const label = ev.scope === 'both' ? '↩ 对话和文件已回滚' : '↩ 对话已回滚'
-              return [...base, { id: nextId(), role: 'system', blocks: [{ kind: 'text', text: label }] }]
-            })
-            break
-          case 'cli':
-            if (ingestApi.gapReloadingRef.current) break
-            ingestApi.handleCli(ev.msg, ev.replay === true)
-            break
-          case 'tail': {
-            // 外部会话 transcript 追加：与历史共用同一套归并；uuid 去重兜底（重连续订可能重放）
-            const h = ev.msg
-            if (h.uuid && ingestApi.messagesRef.current.some((m) => m.id === h.uuid)) break
-            ingestApi.setMsgs((prev) => {
-              const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
-              appendHistoryMsg(st, h)
-              // 不在此 flush：tail 是逐条到达，tool_use 可能在后续行；孤儿在权威 idle 时统一浮现
-              return st.msgs
-            })
-            // 尾到的主线 tool_result 给已存在桶补终态——外部会话（tailer 路径）没有
-            // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
-            for (const blk of h.blocks) {
-              if (blk.kind !== 'tool_result' || !blk.id) continue
-              taskApi.settleBucketFromResult(blk.id, blk.text ?? '', blk.isError === true)
-            }
-            break
-          }
-          case 'moved': {
-            // /clear 对话重置：进程已换新 sessionId 续跑，Hub 重键完毕——跳到新会话页
-            //（旧 transcript 在磁盘原样保留，列表页可见）
-            const parts = ev.targetKey.split('|')
-            props.onNavigate?.(
-              makeSessionInfo({
-                key: ev.targetKey,
-                slug: parts[1] ?? session.slug,
-                sessionId: ev.targetSessionId ?? 'new',
-                cwd: session.cwd,
-                backend: 'claude',
-                managed: { spawned: true, busy: false, clients: 0 },
-              }),
-            )
-            break
-          }
-          case 'replay_gap': {
-            // 断线太久，服务端环形缓冲已挤掉起点：补发会留空洞，直接重载历史。
-            // transcript 是权威事实源，重载一定能补齐（代价只是一次 HTTP）。
-            // 必须与初次加载走同一 loader——Codex 没有 Claude transcript 路径。
-            // 先挡住 cli 再清草稿：环里残留的 stream/assistant 不能在重载完成前改抄本。
-            ingestApi.gapReloadingRef.current = true
-            ingestApi.setDraftBoth(null)
-            ingestApi.pendingResultsRef.current.clear()
-            setPhase(undefined)
-            const gapKey = session.key
-            loadSessionHistory()
-              .then((resp) => {
-                if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
-                ingestApi.applyHistory(resp)
-                ingestApi.pushSystem('↻ 断线较久，已重新载入对话')
-              })
-              .catch(() => {
-                if (sockRef.current?.key !== gapKey) return
-                ingestApi.pushSystem('⚠ 重新载入对话失败，请手动刷新', 'error')
-              })
-              .finally(() => {
-                if (sockRef.current?.key === gapKey) ingestApi.gapReloadingRef.current = false
-              })
-            break
-          }
-          case 'tail_reset': {
-            // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
-            ingestApi.setDraftBoth(null)
-            ingestApi.pendingResultsRef.current.clear()
-            const keyAtFetch = session.key
-            fetchHistory(session.slug, session.sessionId)
-              .then((resp) => {
-                // 异步返回时用户可能已切走：socket 已换成新会话的，弃掉过期结果
-                if (sockRef.current?.key !== keyAtFetch) return
-                ingestApi.applyHistory(resp)
-              })
-              .catch(() => {})
-            break
-          }
-        }
-      },
-      (open) => {
-        setConnected(open)
-        if (!open) return
-        // 重连必须 attach：Codex x| 靠它 resume；fromSeq 为 0 也要带上，
-        // 才能取回「一条可落盘 cli 都没收到就断线」期间的环。首连走下面的 attach。
-        if (sock.reconnecting) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
-        // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）
-        if (ingestApi.historyOffsetRef.current != null) {
-          sock.send({ kind: 'tail_subscribe', from: ingestApi.historyOffsetRef.current })
-        }
-      },
-    )
-    sockRef.current = sock
-    sock.send({ kind: 'attach' })
-    return () => sock.close()
   }, [session.key])
 
   // 只滚消息列表容器。禁止 scrollIntoView：它会连带滚动 overflow 祖先，
@@ -506,12 +224,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   }
 
   // ---------- 发送 ----------
-  const runQuery = (query: string, title: string) => {
-    querySeq.current += 1
-    setDetailTitle(title)
-    setDetailContent('加载中…')
-    sockRef.current?.send({ kind: 'query', id: `q-${querySeq.current}`, query })
-  }
 
   /** 各档实际配置的模型名（StatusPill 打开时实时拉取；null = 未拉取/失败 → 降级 tier 名） */
   const [modelNames, setModelNames] = useState<Record<string, TierModelName> | null>(null)
@@ -554,11 +266,11 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   // ---------- StatusPill 共享处理器（claude/codex 两个胶囊的 mode/effort 同构；model 因本地回显差异分开） ----------
   const handleSetMode = (m: string) => {
-    setPermMode(m)
+    ingestApi.setPermMode(m)
     sockRef.current?.send({ kind: 'control', subtype: 'set_permission_mode', extra: { mode: m } })
   }
   const handleSetEffort = (e: string) => {
-    setEffort(e)
+    ingestApi.setEffort(e)
     sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
   }
 
@@ -813,7 +525,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         modelNames={modelNames}
         onPanelOpen={loadModelNames}
         onSetClaudeModel={(m) => {
-          setInitInfo((prev) => ({ ...prev, model: m }))
+          ingestApi.setInitInfo((prev) => ({ ...prev, model: m }))
           sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
         }}
         onSetMode={handleSetMode}
