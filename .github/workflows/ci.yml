@@ -14,7 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         # 跟随 latest stable；Windows 本地开发要求 >= 1.4.0（socket 继承 bug，见 AGENTS.md）
