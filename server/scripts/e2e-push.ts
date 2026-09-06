@@ -1,7 +1,8 @@
 // E2E-Web Push：mock push service + 自造订阅密钥，验证推送全链路
 // 覆盖：订阅注册 → 真实审批触发推送 → VAPID JWT 校验 → RFC 8291/8188 解密 →
 //       能力 URL 直接审批 → 410 死订阅自动清理
-// 用法：bun run server/scripts/e2e-push.ts（需服务端已启动；会真实 spawn 一次 claude 触发审批）
+// 用法：bun run server/scripts/e2e-push.ts [cwd]（需服务端已启动；会真实 spawn 一次 claude 触发审批）
+// cwd 默认 /tmp（POSIX）；Windows 需显式传存在的目录
 import {
   createHmac,
   createPublicKey,
@@ -112,7 +113,8 @@ try {
   note(typeof secret === 'string' && secret.length > 20, '服务端返回能力密钥')
 
   // 2. 起 claude 会话，触发真实审批
-  const key = `n|${encodeURIComponent('/tmp')}`
+  const testCwd = process.argv[2] ?? '/tmp'
+  const key = `n|${encodeURIComponent(testCwd)}`
   const ws = new WebSocket(`${WS_BASE}/ws/sessions/${encodeURIComponent(key)}${TOKEN_Q}`)
   let resolved = false
   let sawResolvedEvent = false
@@ -126,7 +128,7 @@ try {
   ws.send(
     JSON.stringify({
       kind: 'user',
-      text: '请立即用 Write 工具创建文件 /tmp/ccr-push-test.txt，内容写 push-ok。只做这一件事，不要问任何问题。',
+      text: `请立即用 Write 工具创建文件 ${testCwd}/ccr-push-test.txt，内容写 push-ok。只做这一件事，不要问任何问题。`,
     }),
   )
 
@@ -175,7 +177,8 @@ try {
     !!payload.actions?.allow.endsWith(secret) && !!payload.actions.deny.endsWith(secret),
     '能力 URL 按订阅补全了 secret',
   )
-  note(payload.body.includes('/tmp/ccr-push-test.txt'), '推送正文含审批详情（详细内容策略）', payload.body.slice(0, 60))
+  // 只断言文件名：CLI 落盘的路径分隔符由工具规范化（Windows 全反斜杠），不宜断言拼接形态
+  note(payload.body.includes('ccr-push-test.txt'), '推送正文含审批详情（详细内容策略）', payload.body.slice(0, 60))
 
   // 6. 直接审批：POST 能力 URL（无 authToken——模拟 SW 环境）
   const allowResp = await fetch(`${BASE}${payload.actions!.allow}`, { method: 'POST' })
@@ -200,7 +203,7 @@ try {
   })
   gonePaths.add('/push/B')
   const countBefore = ((await (await fetch(`${BASE}/api/push/public-key`)).json()) as { subscriptions: number }).subscriptions
-  ws.send(JSON.stringify({ kind: 'user', text: '再用 Write 把文件 /tmp/ccr-push-test2.txt 内容写成 push-ok2。只做这一件事。' }))
+  ws.send(JSON.stringify({ kind: 'user', text: `再用 Write 把文件 ${testCwd}/ccr-push-test2.txt 内容写成 push-ok2。只做这一件事。` }))
   let pushB: Captured | undefined
   for (let i = 0; i < 120 && !pushB; i++) {
     await new Promise((r) => setTimeout(r, 1000))

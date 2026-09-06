@@ -463,7 +463,7 @@ function sessionCallbacks(hub: Hub) {
           action: auto.rule.action,
           rule: label,
         })
-        const s = isCodexKey(hub.key) ? codexRuntime.get(hub.key) : processManager.get(hub.key)
+        const s = portFor(hub.key).sessionOf(hub.key)
         if (s) s.sendApproval(req.requestId, decisionOfRule(auto.rule, req.input))
         else log.warn(`[approval] ${hub.key} 会话句柄已不存在，自动裁决无法送达`)
         return
@@ -477,7 +477,7 @@ function sessionCallbacks(hub: Hub) {
       })
       publishInbox({ type: 'approval', key: hub.key, requestId: req.requestId, toolName: req.toolName, input: req.input })
       pushStatus(hub)
-      processManager.get(hub.key)?.notifyExternalGate()
+      portFor(hub.key).notifyExternalGate(hub.key)
     },
     onStatusChange: () => throttledPushStatus(hub),
     onExit: (code: number) => {
@@ -653,8 +653,8 @@ function handleClientMessage(
  */
 function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
   if (!hub.pendingApprovals.delete(requestId)) return false
-  const codex = isCodexKey(hub.key)
-  const s = codex ? codexRuntime.get(hub.key) : processManager.get(hub.key)
+  const port = portFor(hub.key)
+  const s = port.sessionOf(hub.key)
   if (s && !s.exited) {
     try {
       s.sendApproval(requestId, decision)
@@ -665,7 +665,7 @@ function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision
     // 会话已退出/未就绪：决定无处投递（上游请求将自行超时），本地照常解析并告知用户
     broadcastError(hub, '会话未在运行，审批未能送达（该请求会在上游自行超时）')
   }
-  if (!codex) s?.notifyExternalGate()
+  port.notifyExternalGate(hub.key)
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   pushStatus(hub)
