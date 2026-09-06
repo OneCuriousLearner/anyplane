@@ -253,13 +253,97 @@ describe('itemsToHistory', () => {
     expect(msgs[0]!.blocks).toEqual([{ kind: 'text', text: '看这个\n[图片]\n[skill: review]\n[README.md]\n[音频]' }])
   })
 
-  test('contextCompaction → system 分隔；未知 item 类型不渲染', () => {
+  test('contextCompaction → system 分隔；子代理项走侧栏不进主线', () => {
     const msgs = itemsToHistory([
       { id: 'x1', type: 'contextCompaction' },
-      { id: 'x2', type: 'collabToolCall' },
-      { id: 'x3', type: 'imageGeneration' },
+      // collabAgentToolCall/subAgentActivity 有意不进主线（侧栏桶负责）
+      { id: 'x2', type: 'collabAgentToolCall' },
+      { id: 'x3', type: 'subAgentActivity' },
     ])
     expect(msgs).toEqual([{ uuid: 'x1', role: 'system', subtype: 'compact_boundary', blocks: [] }])
+  })
+
+  // 这五种是官方 ThreadItem union 成员，此前 live 与历史双双静默丢弃——
+  // 用了 hooks / 动态工具 / 生图的会话在抄本里凭空缺一块，且无任何提示
+  test('dynamicToolCall → namespace:tool 工具卡，多模态输出取文本、图音标注', () => {
+    const msgs = itemsToHistory([
+      {
+        id: 'd1',
+        type: 'dynamicToolCall',
+        namespace: 'ns',
+        tool: 'lookup',
+        arguments: { q: 1 },
+        status: 'completed',
+        contentItems: [{ type: 'inputText', text: '结果正文' }, { type: 'inputImage', imageUrl: 'x' }],
+      },
+    ])
+    expect(msgs[0].blocks[0]).toMatchObject({ kind: 'tool_use', name: 'ns:lookup' })
+    expect(msgs[1].blocks[0]).toMatchObject({ kind: 'tool_result', text: '结果正文\n（图片）', isError: false })
+  })
+
+  test('dynamicToolCall 失败态：status=failed 或 success=false 均标失败；无 namespace 用裸 tool 名', () => {
+    const a = itemsToHistory([{ id: 'd2', type: 'dynamicToolCall', tool: 'solo', status: 'failed' }])
+    expect(a[0].blocks[0]).toMatchObject({ name: 'solo' })
+    expect(a[1].blocks[0]).toMatchObject({ isError: true })
+    const b = itemsToHistory([{ id: 'd3', type: 'dynamicToolCall', tool: 't', status: 'completed', success: false }])
+    expect(b[1].blocks[0]).toMatchObject({ isError: true })
+  })
+
+  test('imageGeneration → 成功给 savedPath，失败标错', () => {
+    const ok = itemsToHistory([{ id: 'g1', type: 'imageGeneration', status: 'completed', revisedPrompt: '一只猫', savedPath: '/tmp/a.png' }])
+    expect(ok[0].blocks[0]).toMatchObject({ kind: 'tool_use', name: 'ImageGeneration', input: { prompt: '一只猫' } })
+    expect(ok[1].blocks[0]).toMatchObject({ text: '已保存：/tmp/a.png', isError: false })
+    const bad = itemsToHistory([{ id: 'g2', type: 'imageGeneration', status: 'failed', failure: '违规' }])
+    expect(bad[1].blocks[0]).toMatchObject({ isError: true })
+  })
+
+  test('sleep → 工具卡，时长按秒展示', () => {
+    const msgs = itemsToHistory([{ id: 's1', type: 'sleep', durationMs: 2500 }])
+    expect(msgs[0].blocks[0]).toMatchObject({ kind: 'tool_use', name: 'Sleep', input: { durationMs: 2500 } })
+    expect(msgs[1].blocks[0]).toMatchObject({ text: '等待 3s' })
+  })
+
+  test('hookPrompt → 系统提示（拼接片段）；空片段整条跳过', () => {
+    const msgs = itemsToHistory([
+      { id: 'h1', type: 'hookPrompt', fragments: [{ text: '第一段' }, { text: '第二段' }] },
+      { id: 'h2', type: 'hookPrompt', fragments: [] },
+    ])
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]).toMatchObject({ role: 'system' })
+    expect(msgs[0].blocks[0]).toMatchObject({ text: '◎ hook 注入上下文\n第一段\n第二段' })
+  })
+
+  test('imageView → 系统提示带路径', () => {
+    const msgs = itemsToHistory([{ id: 'v1', type: 'imageView', path: '/tmp/pic.png' }])
+    expect(msgs[0].blocks[0]).toMatchObject({ text: '◎ 查看图片：/tmp/pic.png' })
+  })
+})
+
+describe('live 侧新增 ThreadItem 与历史同形', () => {
+  const t = () => new ThreadTranslator()
+
+  test('dynamicToolCall/imageGeneration/sleep 在 live 侧同样出工具卡并配对结果', () => {
+    for (const item of [
+      { id: 'd1', type: 'dynamicToolCall', namespace: 'ns', tool: 'lookup', status: 'completed', contentItems: [{ type: 'inputText', text: 'ok' }] },
+      { id: 'g1', type: 'imageGeneration', status: 'completed', savedPath: '/tmp/a.png' },
+      { id: 's1', type: 'sleep', durationMs: 1000 },
+    ]) {
+      const tr = t()
+      const started = tr.itemStarted(item)
+      expect(started[0]).toMatchObject({ type: 'assistant' })
+      const completed = tr.itemCompleted(item)
+      expect(completed[0]).toMatchObject({ type: 'user' })
+    }
+  })
+
+  test('hookPrompt/imageView 在 live 侧走系统提示，不出工具卡', () => {
+    const tr = t()
+    expect(tr.itemStarted({ id: 'h1', type: 'hookPrompt', fragments: [{ text: 'x' }] })).toEqual([])
+    expect(tr.itemCompleted({ id: 'h1', type: 'hookPrompt', fragments: [{ text: 'x' }] })[0]).toMatchObject({
+      type: 'system',
+      subtype: 'status',
+    })
+    expect(tr.itemCompleted({ id: 'v1', type: 'imageView', path: '/p.png' })[0]).toMatchObject({ type: 'system' })
   })
 })
 
