@@ -11,7 +11,7 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { PopupPanel } from '../components/PopupPanel'
 import { ContextRing } from '../components/ContextRing'
-import { fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
+import { buildTranscriptRows, fmtTokens, nextId, rewindPreview, toolResultText, usageSummary, type Block, type ChatMsg } from '../lib/blocks'
 import { appendHistoryMsg, createIngestState, flushStrayResults, indexToolBlocks, pairToolResultIn, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
@@ -1095,9 +1095,23 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     else el.scrollTop = el.scrollHeight
   }
 
+  /** 跟随滚动的 rAF 合帧：流式输出时 draft 每个 token 都变引用，逐次 smooth scrollTo
+   *  会在移动端积出可感 jank（smooth 动画彼此打断）。合到下一帧只滚一次，
+   *  且流式期间用 auto——smooth 的缓动跟不上 token 速率，反而拖尾。 */
+  const followRaf = useRef(0)
+  const scheduleFollow = (smooth: boolean) => {
+    if (followRaf.current) return
+    followRaf.current = requestAnimationFrame(() => {
+      followRaf.current = 0
+      if (atBottomRef.current) scrollToBottom(smooth)
+    })
+  }
+  useEffect(() => () => cancelAnimationFrame(followRaf.current), [])
+
   // 贴底时才自动跟随滚动；用户上翻时保持位置（用 ↓ 按钮回到底部）
   useEffect(() => {
-    if (atBottomRef.current) scrollToBottom(true)
+    if (!atBottomRef.current) return
+    scheduleFollow(!draft) // 流式进行中走 auto，收尾/新消息才用 smooth
   }, [messages, approvals, draft])
 
   // 输入框自适应高度：随内容增长，超过 200px 后不再扩大、内部滚动。
@@ -1360,6 +1374,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     else if (rRect.bottom > cRect.bottom) c.scrollTop += rRect.bottom - cRect.bottom
   }, [slashActive, slashHints.length])
 
+  // 渲染行在 Chat 层算：Transcript 保持纯展示，重进/重渲时不重复摊平
+  const transcriptRows = useMemo(() => buildTranscriptRows(messages, draft), [messages, draft])
+
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
   const usageLine = usageSummary(state.usage, 'tok ')
@@ -1371,7 +1388,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto max-w-3xl px-[17px] pb-[300px] pt-[84px] md:px-[29px]">
-          <Transcript messages={messages} draft={draft} />
+          <Transcript rows={transcriptRows} draft={draft} />
 
           {approvals.map((a) => (
             <ApprovalCard

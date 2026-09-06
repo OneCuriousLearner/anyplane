@@ -90,6 +90,31 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
   （`maybeGenerateTitle`，按 sessionId 去重，/clear 后新会话再生成）；CLI persist 写 ai-title 进 transcript，
   discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，无需 AnyPlane 侧落状态。实测 4 项全过。
 
+## 抄本窗口化 / 虚拟列表（做过一版，回退了，记下踩坑）
+
+现状：抄本全量挂载。已落地的只有**跟随滚动 rAF 合帧**（流式输出曾每 token 一次
+smooth scrollTo，移动端积 jank）——这条是纯收益、已实测。
+
+**另外两条试过都回退了，根因是同一个：与「打开会话即滚到最新」打架。**
+
+`content-visibility:auto`（跳过视口外排版绘制）：视口外行按 `contain-intrinsic-size`
+占位，首绘时 `scrollHeight` 被显著低估，滚到底会落空——实测打开长会话停在对话中段
+并弹出「回到底部」按钮。绘制收益不值得换掉主行为。要用必须连初始定位一起重做
+（例如初始定位完成前不启用、或对尾部若干行豁免）。
+
+**窗口化（只渲染尾部 N 行、上翻扩窗）** 回退原因：
+
+- 扩窗判定**不能用消息数**：活动分组把多条消息并成一行，rows 与 messages 差着量级，
+  用消息数会导致条件恒真、持续扩窗
+- 首绘时 `scrollTop` 恒为 0，若不加「初始定位已完成」守卫，会立刻扩窗并把视图钉在顶部，
+  与自动滚到底互相打架
+- 加了守卫后仍观察到初始位置不在底部：跟随滚动的 rAF 与新内容 commit 的时序，
+  叠加 `behavior:'smooth'` 的动画目标会用到过期 scrollHeight
+
+结论：要做就得连「初始定位」一起重设计——初始用 `auto` 直达底部并在 layout 阶段完成，
+扩窗只由**用户主动输入**（wheel/touchmove）触发而非任意 scroll 事件。
+**验收必须拿真实长会话**（> 200 行）跑，本仓库现有会话都不到 50 行，测不出来。
+
 ## 更远的地平线（只记录，不动手）
 
 两家官方都在建各自的 agent 互联（claude 2.1.224 跨会话 SendMessage/ListAgents；codex remoteControl/pairing），
