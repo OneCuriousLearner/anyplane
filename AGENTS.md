@@ -113,6 +113,10 @@ bun test web/            # 仅前端测试
 
 ## 文档
 
+**已知未覆盖面**：`side_question` 与 `generate_session_title` 是 CLI headless 的**私有 subtype**，
+官方 SDK 类型里没有（`PRINT_ONLY_SUBTYPES` 已登记）。**漂移检测覆盖不到它们**——上游改名或移除
+只会表现为运行时静默失效，回归防线只有 e2e（`e2e-handoff.ts` / `e2e-slash.ts`），升级 CLI 后务必跑。
+
 **协议正本优先于文档**：改协议相关代码前先查机器可读的正本，再查文档，最后才靠实测反推——
 `@anthropic-ai/claude-agent-sdk`（官方公开 npm 包）的 `sdk.d.ts` 是 claude stream-json 的类型正本
 （67 个 control subtype / 39 个顶层 type，`check-claude-protocol.ts` 即以它为漂移基线数据源）；
