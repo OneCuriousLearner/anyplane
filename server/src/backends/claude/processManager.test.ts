@@ -393,3 +393,91 @@ describe('extractUsageFromTranscriptTail（resume/fork 水合）', () => {
     expect(extractUsageFromTranscriptTail('')).toBeUndefined()
   })
 })
+
+describe('ClaudeSession learnContextWindow（换档竞态与失败重试）', () => {
+  const modelsTmp = join(mkdtempSync(join(tmpdir(), 'anyplane-models-')), 'session-models.json')
+  const windowsTmp = join(mkdtempSync(join(tmpdir(), 'anyplane-cw3-')), 'context-windows.json')
+  beforeEach(() => {
+    setStoreFileForTest(modelsTmp)
+    setContextWindowStoreForTest(windowsTmp)
+  })
+  afterEach(() => {
+    setStoreFileForTest(undefined)
+    setContextWindowStoreForTest(undefined)
+  })
+
+  const boot = () => {
+    const session = new ClaudeSession('test-learn-window', { cwd: process.cwd() }, {
+      onMessage: () => {},
+      onApprovalRequest: () => {},
+      onExit: () => {},
+      onStatusChange: () => {},
+    })
+    const ids: string[] = []
+    ;(session as unknown as { proc: unknown; write(message: { request_id?: string }): void }).proc = { pid: 1 }
+    ;(session as unknown as { write(message: { request_id?: string }): void }).write = (message) => {
+      if (message.request_id) ids.push(message.request_id)
+    }
+    const handleLine = (session as unknown as { handleLine(line: string): void }).handleLine.bind(session)
+    const seedUsage = () => {
+      handleLine(JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id: 'msg-u',
+          role: 'assistant',
+          content: [],
+          usage: { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 },
+        },
+      }))
+    }
+    const reply = (requestId: string, maxTokens: number, model: string) => {
+      handleLine(JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: requestId, response: { maxTokens, model } },
+      }))
+    }
+    return { session, handleLine, ids, seedUsage, reply }
+  }
+
+  test('换档后先到的旧档应答不覆盖新窗口', async () => {
+    const { session, handleLine, ids, seedUsage, reply } = boot()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'opus-model' }))
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'fable-model' }))
+    expect(ids).toHaveLength(2)
+    seedUsage()
+    reply(ids[0], 200_000, 'opus-model')
+    await Promise.resolve()
+    expect((session as unknown as { authoritativeWindow?: number }).authoritativeWindow).toBeUndefined()
+    reply(ids[1], 256_000, 'fable-model')
+    await Promise.resolve()
+    expect(session.contextUsage?.windowSize).toBe(256_000)
+  })
+
+  test('新档先到后旧档后到也不回写', async () => {
+    const { session, handleLine, ids, seedUsage, reply } = boot()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'opus-model' }))
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'fable-model' }))
+    seedUsage()
+    reply(ids[1], 256_000, 'fable-model')
+    await Promise.resolve()
+    expect(session.contextUsage?.windowSize).toBe(256_000)
+    reply(ids[0], 200_000, 'opus-model')
+    await Promise.resolve()
+    expect(session.contextUsage?.windowSize).toBe(256_000)
+  })
+
+  test('失败后清标记，下个 init 会再问一次', async () => {
+    const { session, handleLine, ids } = boot()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'k3[1m]' }))
+    expect(ids).toHaveLength(1)
+    handleLine(JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: ids[0], error: 'boom' },
+    }))
+    await Promise.resolve()
+    handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'k3[1m]' }))
+    expect(ids).toHaveLength(2)
+    expect(session.contextUsage).toBeUndefined()
+  })
+})

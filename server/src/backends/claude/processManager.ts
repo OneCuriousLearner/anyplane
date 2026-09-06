@@ -274,6 +274,8 @@ export class ClaudeSession {
     // CLAUDE_CODE_MAX_CONTEXT_TOKENS / model catalog 后自愈。代价是每会话一次往返。
     void this.sendControlAndWait('get_context_usage', {}, 10_000).then(
       (raw) => {
+        // 换档后旧档应答可能后到：只接受「仍是这次问的模型」的结果
+        if (this.contextWindowQueriedFor !== model) return
         const r = raw as { maxTokens?: unknown; model?: unknown } | undefined
         const max = Number(r?.maxTokens)
         if (!Number.isFinite(max) || max <= 0) return
@@ -286,7 +288,8 @@ export class ClaudeSession {
         this.cb.onStatusChange?.()
       },
       (e) => {
-        // 失败即长期回退启发式：不重试，避免每轮一次失败 RPC 拖慢会话
+        // 清标记让下个 turn 的 init 再问一次；持续失败的代价是每轮一次 RPC，好过窗口永久失真
+        if (this.contextWindowQueriedFor === model) this.contextWindowQueriedFor = undefined
         log.warn(`[session ${this.key}] get_context_usage 失败（回退启发式窗口）:`, errorMessage(e))
       },
     )
