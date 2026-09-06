@@ -20,6 +20,7 @@ import {
   ThreadTranslator,
   type HistoryMessage,
 } from './translate'
+import { log } from '../../log'
 
 type Params = Record<string, unknown>
 
@@ -652,7 +653,7 @@ export class CodexSession {
         this.scheduleRecycleIfSafe()
         return
       }
-      console.log(`[codex ${this.key}] 空闲退订（clients=0）`)
+      log.info(`[codex ${this.key}] 空闲退订（clients=0）`)
       this.dispose()
     }, config.detachRecycleMs)
   }
@@ -775,7 +776,7 @@ export class CodexRuntime {
       rpc.onNotification = (n) => this.demux(n.method, n.params as Params)
       rpc.onServerRequest = (r) => this.demuxRequest(r.id, r.method, r.params as Params)
       rpc.onExit = (code) => {
-        console.error(`[codex] app-server 退出 code=${code}`)
+        log.error(`[codex] app-server 退出 code=${code}`)
         this.rpc = undefined
         for (const s of this.sessions.values()) s.handleProcessExit()
       }
@@ -786,7 +787,7 @@ export class CodexRuntime {
       if (typeof initRes.codexHome === 'string') this.reportedHome = initRes.codexHome
       rpc.notify('initialized', {})
       this.rpc = rpc
-      console.log('[codex] app-server 已启动并完成握手')
+      log.info('[codex] app-server 已启动并完成握手')
       return rpc
     })()
     try {
@@ -805,7 +806,7 @@ export class CodexRuntime {
     try {
       this.rpc?.respond(id, result)
     } catch (e) {
-      console.error('[codex] 审批应答失败:', e)
+      log.error('[codex] 审批应答失败:', e)
     }
   }
 

@@ -6,6 +6,7 @@ import { appendFileSync, existsSync, statSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ensurePrivateDir } from '../../util'
+import { log } from '../../log'
 
 export interface ReasoningEntry {
   /** Unix ms */
@@ -27,7 +28,7 @@ export function appendReasoning(threadId: string, entry: ReasoningEntry): void {
   try {
     appendFileSync(pathOf(threadId), JSON.stringify(entry) + '\n')
   } catch (e) {
-    console.warn('[codex] reasoning 侧车写入失败:', e)
+    log.warn('[codex] reasoning 侧车写入失败:', e)
   }
 }
 

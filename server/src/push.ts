@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import { isLoopbackHostname } from './auth'
 import { config, type PushWebhookConfig } from './config'
 import { ccDataDir, readJsonFile, writeJsonFile } from './util'
+import { log } from './log'
 
 export interface PushSubscriptionRow {
   endpoint: string
@@ -70,7 +71,7 @@ function loadVapid(): VapidKeys {
     } else {
       // 文件损坏（崩溃半截写/手改）不能静默 throw——重新生成密钥对；
       // 旧订阅的 VAPID 校验会失败，推送服务返回 404/410 后被自动摘除重订阅
-      if (existsSync(path)) console.warn('[push] vapid.json 损坏，重新生成密钥对（既有订阅将失效并被摘除）')
+      if (existsSync(path)) log.warn('[push] vapid.json 损坏，重新生成密钥对（既有订阅将失效并被摘除）')
       const pair = generateKeyPairSync('ec', { namedCurve: 'P-256' })
       const pub = pair.publicKey.export({ format: 'jwk' }) as { x: string; y: string }
       const priv = pair.privateKey.export({ format: 'jwk' }) as { d: string }
@@ -179,7 +180,7 @@ function loadSubs(): PushSubscriptionRow[] {
     const stored = existsSync(path) ? readJsonFile<PushSubscriptionRow[]>(path) : undefined
     // 损坏文件回退空表而非 throw（启动期 throw 会拖垮整个推送分发）；
     // 浏览器下次订阅会重新登记
-    if (existsSync(path) && !Array.isArray(stored)) console.warn('[push] push-subscriptions.json 损坏，按空订阅表继续')
+    if (existsSync(path) && !Array.isArray(stored)) log.warn('[push] push-subscriptions.json 损坏，按空订阅表继续')
     subs = Array.isArray(stored) ? stored : []
   }
   return subs
@@ -324,10 +325,10 @@ export async function pushToAll(payload: PushPayload): Promise<{ sent: number; p
         } else if (status >= 200 && status < 300) {
           sent++
         } else {
-          console.warn(`[push] 投递失败 (HTTP ${status})：${row.endpoint.slice(0, 60)}`)
+          log.warn(`[push] 投递失败 (HTTP ${status})：${row.endpoint.slice(0, 60)}`)
         }
       } catch (e) {
-        console.warn(`[push] 投递失败 (network):`, e instanceof Error ? e.message : e)
+        log.warn(`[push] 投递失败 (network):`, e instanceof Error ? e.message : e)
       }
     }),
   )
@@ -493,16 +494,16 @@ export async function pushWebhooksToAll(payload: PushPayload): Promise<{ sent: n
       try {
         const status = await sendWebhook(wh, payload)
         if (status === undefined) {
-          console.warn(`[push] webhook ${webhookId(wh)} 类型未知，跳过`)
+          log.warn(`[push] webhook ${webhookId(wh)} 类型未知，跳过`)
           return
         }
         if (status >= 200 && status < 300) {
           sent++
         } else {
-          console.warn(`[push] webhook ${webhookId(wh)} 投递失败 (HTTP ${status})`)
+          log.warn(`[push] webhook ${webhookId(wh)} 投递失败 (HTTP ${status})`)
         }
       } catch (e) {
-        console.warn(`[push] webhook ${webhookId(wh)} 投递失败:`, e instanceof Error ? e.message : e)
+        log.warn(`[push] webhook ${webhookId(wh)} 投递失败:`, e instanceof Error ? e.message : e)
       }
     }),
   )

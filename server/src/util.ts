@@ -3,6 +3,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { log } from './log'
 
 /** anyplane 运行数据根目录（~/.anyplane/，约定见 AGENTS.md）；权限收紧由 ensurePrivateDir 完成 */
 export function ccDataDir(): string {
@@ -137,6 +138,6 @@ export async function pumpLines(
     if (buf.trim()) onLine(buf.trim())
   } catch (e) {
     if (onError) onError(e)
-    else console.error('[pumpLines] 读取异常:', e)
+    else log.error('[pumpLines] 读取异常:', e)
   }
 }

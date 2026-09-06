@@ -25,6 +25,7 @@ import {
 } from './protocol'
 import { learnedContextWindow, rememberContextWindow } from './contextWindows'
 import { rememberSessionModel } from './sessionModels'
+import { log } from '../../log'
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 re-export 兼容既有 import 路径
 export type { ApprovalDecision, SpawnOptions } from '../types'
@@ -280,13 +281,13 @@ export class ClaudeSession {
         // 以应答里的 model 为准：档位别名（sonnet/opus/fable）解析后的真实 ID 才是习得表的键
         const key = typeof r?.model === 'string' && r.model ? r.model : model
         rememberContextWindow(key, max)
-        console.log(`[session ${this.key}] 上下文窗口权威值 model=${key} maxTokens=${max}`)
+        log.info(`[session ${this.key}] 上下文窗口权威值 model=${key} maxTokens=${max}`)
         // 环形 UI 可能已用启发式画过一版，拿到权威值立刻纠正
         this.cb.onStatusChange?.()
       },
       (e) => {
         // 失败即长期回退启发式：不重试，避免每轮一次失败 RPC 拖慢会话
-        console.warn(`[session ${this.key}] get_context_usage 失败（回退启发式窗口）:`, errorMessage(e))
+        log.warn(`[session ${this.key}] get_context_usage 失败（回退启发式窗口）:`, errorMessage(e))
       },
     )
   }
@@ -358,7 +359,7 @@ export class ClaudeSession {
     if (this.opts.sessionName) args.push('-n', this.opts.sessionName)
     if (this.opts.permissionMode) args.push('--permission-mode', this.opts.permissionMode)
 
-    console.log(`[session ${this.key}] spawn: ${cmd} ${args.join(' ')}`)
+    log.info(`[session ${this.key}] spawn: ${cmd} ${args.join(' ')}`)
     try {
       this.proc = spawn([cmd, ...args], {
         cwd: this.opts.cwd,
@@ -379,7 +380,7 @@ export class ClaudeSession {
       throw new Error(`无法启动 claude CLI (${cmd}): ${detail}`)
     }
     const proc = this.proc
-    console.log(`[session ${this.key}] spawned pid=${proc.pid} parent=${process.pid}`)
+    log.info(`[session ${this.key}] spawned pid=${proc.pid} parent=${process.pid}`)
     this.exited = false
     this.exitEmitted = false
     this.sawStateEvents = false
@@ -405,7 +406,7 @@ export class ClaudeSession {
     void proc.exited.then((code) => {
       // 进程已被 dispose/替换时忽略
       if (this.proc !== proc && this.exitEmitted) return
-      console.log(`[session ${this.key}] exited code=${code}`)
+      log.info(`[session ${this.key}] exited code=${code}`)
       this.emitExit(code)
     })
   }
@@ -528,11 +529,11 @@ export class ClaudeSession {
   dispose(): void {
     this.cancelRecycle()
     const pid = this.proc?.pid
-    console.log(`[session ${this.key}] dispose pid=${pid ?? 'none'} exited=${this.exited}`)
+    log.info(`[session ${this.key}] dispose pid=${pid ?? 'none'} exited=${this.exited}`)
     try {
       this.proc?.kill()
     } catch (e) {
-      console.warn(`[session ${this.key}] proc.kill failed pid=${pid}:`, e)
+      log.warn(`[session ${this.key}] proc.kill failed pid=${pid}:`, e)
     }
     // Windows：强制杀掉整棵进程树，避免 Ctrl+C 后 claude 子进程残留拖住端口
     if (process.platform === 'win32' && pid) {
@@ -542,11 +543,11 @@ export class ClaudeSession {
           stderr: 'pipe',
           stdin: 'ignore',
         })
-        console.log(
+        log.info(
           `[session ${this.key}] taskkill pid=${pid} exitCode=${killed.exitCode} stderr=${killed.stderr.toString().trim() || '-'}`,
         )
       } catch (e) {
-        console.warn(`[session ${this.key}] taskkill failed pid=${pid}:`, e)
+        log.warn(`[session ${this.key}] taskkill failed pid=${pid}:`, e)
       }
     }
     this.proc = undefined
@@ -586,7 +587,7 @@ export class ClaudeSession {
     try {
       this.sendUserText(next.text, undefined, next.images)
     } catch (e) {
-      console.warn(`[session ${this.key}] 排队消息发送失败:`, e)
+      log.warn(`[session ${this.key}] 排队消息发送失败:`, e)
       this.queuedTexts.unshift(next)
     }
   }
@@ -599,7 +600,7 @@ export class ClaudeSession {
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined
       if (this.exited || this.clientCount > 0 || this.busy) return
-      console.log(
+      log.info(
         `[session ${this.key}] 空闲回收（clients=0, state=${this.sessionState}, sawState=${this.sawStateEvents}）`,
       )
       this.dispose()
@@ -611,14 +612,14 @@ export class ClaudeSession {
     await pumpLines(
       this.proc.stdout as ReadableStream<Uint8Array>,
       (line) => this.handleLine(line),
-      (e) => console.error(`[session ${this.key}] stdout 读取异常:`, e),
+      (e) => log.error(`[session ${this.key}] stdout 读取异常:`, e),
     )
   }
 
   private async pumpStderr(): Promise<void> {
     if (!this.proc) return
     const text = await new Response(this.proc.stderr as ReadableStream<Uint8Array>).text()
-    if (text.trim()) console.error(`[session ${this.key}] stderr:`, text.slice(0, 4000))
+    if (text.trim()) log.error(`[session ${this.key}] stderr:`, text.slice(0, 4000))
   }
 
   /** 测试钩子：不 spawn 直接注入 NDJSON 行（scripts/replay-fixture.test.ts 回放与单测用） */
@@ -631,7 +632,7 @@ export class ClaudeSession {
     try {
       msg = JSON.parse(line)
     } catch {
-      console.error(`[session ${this.key}] 非 JSON 行:`, line.slice(0, 200))
+      log.error(`[session ${this.key}] 非 JSON 行:`, line.slice(0, 200))
       return
     }
     if (isInitMessage(msg)) {
@@ -643,7 +644,7 @@ export class ClaudeSession {
         if (this.sessionId) rememberSessionModel(this.sessionId, msg.model)
         this.learnContextWindow(msg.model)
       }
-      console.log(`[session ${this.key}] init session_id=${this.sessionId}`)
+      log.info(`[session ${this.key}] init session_id=${this.sessionId}`)
       // initModel/sessionId 入库即回放：先于 init 到达的 attach 拿到的状态里 model 还是空的
       this.cb.onStatusChange?.()
     }
@@ -658,7 +659,7 @@ export class ClaudeSession {
           this.fallbackBusy = false
           this.flushQueue()
         }
-        console.log(`[session ${this.key}] session_state=${st}`)
+        log.info(`[session ${this.key}] session_state=${st}`)
         this.cb.onStatusChange?.()
         this.scheduleRecycleIfSafe()
       }
@@ -689,7 +690,7 @@ export class ClaudeSession {
         parentToolUseId: toolUseId ? this.toolUseParents.get(toolUseId) : undefined,
         startedAt: Date.now(),
       })
-      console.log(`[session ${this.key}] task_started id=${msg.task_id} type=${msg.task_type ?? '-'} active=${this.activeTasks.size}`)
+      log.info(`[session ${this.key}] task_started id=${msg.task_id} type=${msg.task_type ?? '-'} active=${this.activeTasks.size}`)
       this.cb.onStatusChange?.()
       this.scheduleRecycleIfSafe()
     }
@@ -706,7 +707,7 @@ export class ClaudeSession {
     if (msg.type === 'system' && msg.subtype === 'task_notification' && typeof msg.task_id === 'string') {
       const removed = this.activeTasks.delete(msg.task_id)
       if (removed) {
-        console.log(`[session ${this.key}] task_finished id=${msg.task_id} status=${msg.status ?? '-'} active=${this.activeTasks.size}`)
+        log.info(`[session ${this.key}] task_finished id=${msg.task_id} status=${msg.status ?? '-'} active=${this.activeTasks.size}`)
         this.cb.onStatusChange?.()
         this.scheduleRecycleIfSafe()
       }
@@ -849,7 +850,7 @@ export class ProcessManager {
   disposeAll(): void {
     const all = [...this.sessions.values()]
     this.sessions.clear()
-    console.log(`[processManager] disposeAll sessions=${all.length}`)
+    log.info(`[processManager] disposeAll sessions=${all.length}`)
     for (const s of all) s.dispose()
   }
 }

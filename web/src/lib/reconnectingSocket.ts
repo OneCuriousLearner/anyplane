@@ -36,9 +36,16 @@ export abstract class ReconnectingSocket {
       this.onOpen?.()
     }
     ws.onmessage = (e) => {
+      let parsed: unknown
       try {
-        this.onMessage(JSON.parse(e.data))
-      } catch {}
+        parsed = JSON.parse(e.data)
+      } catch (err) {
+        // 曾是静默吞掉：协议漂移或帧截断时页面表现为"消息就是没来"，零日志零提示。
+        // 服务端不会发非 JSON，命中即真问题——留一条控制台错误让用户能截图反馈。
+        console.error('[ws] 下行非 JSON 帧，已丢弃', { head: String(e.data).slice(0, 120), err })
+        return
+      }
+      this.onMessage(parsed)
     }
     ws.onclose = () => {
       this.onOpenChange?.(false)

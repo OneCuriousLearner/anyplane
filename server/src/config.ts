@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parseApprovalRules, type ApprovalRule } from './approvalRules'
+import { log } from './log'
 
 /**
  * webhook 推送通道（ntfy / Bark / Server酱 Turbo），与 Web Push 订阅并列 fan-out。
@@ -97,7 +98,7 @@ export function loadAnyplaneConfigFile(): Record<string, unknown> {
       try {
         raw = JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>
       } catch (e) {
-        console.error(`[config] 解析 ${p} 失败:`, e)
+        log.error(`[config] 解析 ${p} 失败:`, e)
         continue
       }
       // 审批规则是安全敏感配置：坏规则（无效正则/空 match）必须启动即失败并指明文件——
