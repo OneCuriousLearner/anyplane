@@ -61,6 +61,21 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 | Cloudflare Tunnel | 免费 | CF 边缘终止 TLS（可见明文），换来 Access 认证层 | 要稳定域名 + WAF 时选 |
 | 家宽 IPv6 + DDNS | 零 | 无第三方 | 国内家宽多有公网 v6；注意运营商入站过滤与自身防火墙 |
 
+## 方向四：Codex 迁移 Paginated 历史模式与 thread/revert（待排期）
+
+**定论**：`thread/revert` 已经发布且非实验，原地截断 durable history + 保持 thread id + 会话 key 不变，
+体验远好于现在的 `thread/fork`（当前每次回滚产生一条孤立垃圾线程，且 sessionKey 变化需要重定向导航）。
+但 `thread/revert` 仅支持 `history_mode: "paginated"` 的线程，而上游默认是 `legacy`，
+因此必须系统性迁移历史读取链路。
+
+**实施步骤**：
+1. **新线程创建**：`thread/start` 显式传 `history_mode: "paginated"`。
+2. **历史读取分页重构**：`readHistory` 从已 deprecated 的 `thread/read includeTurns: true`
+   迁移为 `thread/turns/list` + `thread/items/list` 分页，同时解决超大 rollout 读取慢的问题。
+3. **双轨兼容分流**：既有历史会话仍为 legacy，`readHistory` 须按 `thread.history_mode` 自动分流；
+   回滚操作也按 mode 选择：paginated 线程走 `thread/revert`，legacy 线程降级走 `thread/fork`。
+4. **回滚时序**：`thread/revert` 原地生效后，前端清理当前 turn 之后的消息并刷新状态，无需换 key 导航。
+
 ## 已验证但暂不做的（决策记录）
 
 - **~~daemon socket 深度集成~~（保留结论）+ ~~`claude agents --json --all` 状态增强~~** ✅ 已接入（2026-08-27）：
@@ -69,20 +84,7 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
   control.sock 深度集成维持原结论不做：协议 proto 版本锁死，只能 opportunistic 增强，不当基石。
 - **codex token_budget**：thread/goal/set 协议字段已透传，UI 不做——token ≠ 钱，预算心智账户建不起来；等真实无人值守批处理场景出现再点亮。
 - **codex `permissions` named-profile 迁移**：`sandboxPolicy` 未 deprecated，不急；迁移时注意 `sandboxPolicy` 与 `permissions` 互斥不能同发。升级 codex 前跑 `bun run server/scripts/check-codex-schema.ts`。
-- **codex `thread/revert`**：**已发布且非实验**（0.149 实测：协议宏无 `#[experimental]`，有独立集成测试，README 已文档化）。
-  语义正是想要的：原地截断 durable history 到 `beforeTurnId` 之前、**线程 id 不变**、会中断进行中的 turn 并发 `thread/reverted`，
-  比现在的 `thread/fork` 强（fork 每次回滚都留一条垃圾线程，且 sessionKey 变化需要导航）。
-
-  **但当前用不了，卡在前置条件**：`thread/revert` 仅支持 paginated 线程
-  （`thread_processor.rs`：非 paginated 直接 `invalid_request("thread/revert only supports paginated threads")`），
-  而 `ThreadHistoryMode` 的 **默认值是 `Legacy`**（`protocol.rs` 的 `#[default] Legacy`），
-  AnyPlane 的 `thread/start` 未传 `history_mode`，建出来的全是 legacy 线程。
-
-  **要用它必须先迁移历史读取路径**：`thread/start` 传 `history_mode: "paginated"`，
-  且 `readHistory` 从 `thread/read includeTurns:true`（legacy 专用，官方已标 deprecated）
-  改为 `thread/turns/list` + `thread/items/list` 分页。这同时能解决大 rollout 打开慢的问题，
-  但是独立一块工作量，不要顺手做——两种 history_mode 的线程会长期并存（用户既有会话都是 legacy），
-  迁移后 `readHistory` 必须按 `thread.history_mode` 分流，回滚也要按模式选 revert / fork。
+- **codex `thread/revert` 与 paginated 迁移背景**：见上方「方向四」。
 - **~~MCP 管理面板~~** ✅ 已完成（2026-08-27）：claude 详情抽屉 MCP tab 结构化面板（状态/工具数/scope/配置摘要/错误），
   重连（mcp_reconnect）与启停（mcp_toggle，持久化 settings 与 TUI 同语义）；query 通道加 extra 传参复用为动作通道。
   codex 侧维持 mcpServerStatus/list 只读直出。浏览器实测重连/禁用/启用全通过。
