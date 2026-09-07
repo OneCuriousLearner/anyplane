@@ -2,7 +2,14 @@
 // 重点锁定：live 流事件序（快照先于 stop）、tool_use/tool_result 配对 id、
 // reasoning 镜像去重、历史首条 userMessage 的 rewindable 标记。
 import { describe, expect, test } from 'bun:test'
-import { itemsToHistory, mapThreadStatus, reasoningText, ThreadTranslator, turnCompletedMsg } from './translate'
+import {
+  itemsToHistory,
+  mapThreadStatus,
+  partialToolResultMsg,
+  reasoningText,
+  ThreadTranslator,
+  turnCompletedMsg,
+} from './translate'
 
 describe('ThreadTranslator agentMessage 生命周期', () => {
   test('started → delta → completed 的事件序对齐 claude 真实序（快照先于 stop）', () => {
@@ -52,6 +59,22 @@ describe('ThreadTranslator agentMessage 生命周期', () => {
     // 不相关 method / 缺 itemId → 空
     expect(t.itemDelta('item/unknown/delta', { itemId: 'r1', delta: 'x' })).toEqual([])
     expect(t.itemDelta('item/agentMessage/delta', {})).toEqual([])
+  })
+
+  test('summaryPartAdded：只在见过 summaryTextDelta 的 item 上补段落分隔', () => {
+    const t = new ThreadTranslator()
+    // 未见过 summary delta 的 item（如只发 textDelta 的供应商）：partAdded 不产生事件
+    expect(t.itemDelta('item/reasoning/summaryPartAdded', { itemId: 'r1', summaryIndex: 1 })).toEqual([])
+
+    t.itemDelta('item/reasoning/summaryTextDelta', { itemId: 'r2', delta: '第一段' })
+    const sep = t.itemDelta('item/reasoning/summaryPartAdded', { itemId: 'r2', summaryIndex: 1 })
+    expect(sep).toEqual([
+      {
+        type: 'stream_event',
+        event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '\n\n' } },
+        message: { id: 'r2' },
+      },
+    ])
   })
 
   test('缺 id/type 的残缺 item 不产生事件', () => {
@@ -347,8 +370,7 @@ describe('live 侧新增 ThreadItem 与历史同形', () => {
   })
 })
 
-describe('子代理生命周期翻译（collabAgentToolCall / subAgentActivity）', () => {
-  // 桶键统一为子线程 id（agentThreadId），两条事件线在前端归并成同一张卡；
+describe('子代理生命周期翻译（collabAgentToolCall / subAgentActivity）', () => {  // 桶键统一为子线程 id（agentThreadId），两条事件线在前端归并成同一张卡；
   // 终态枚举严格用 claude 三值（completed/failed/stopped），前端映射直接生效。
   const t = () => new ThreadTranslator()
 
@@ -481,5 +503,118 @@ describe('子代理生命周期翻译（collabAgentToolCall / subAgentActivity�
     ])
     // subAgentActivity 不是工具调用，不进主线卡
     expect(tr.itemStarted({ id: 'e6', type: 'subAgentActivity', kind: 'started', agentThreadId: 'th-1', agentPath: 'p' })).toEqual([])
+  })
+})
+
+describe('partialToolResultMsg（工具流式部分结果）', () => {
+  test('与终态 tool_result 同形 + partial 标记（前端保持运行态，cliRing 不占号）', () => {
+    expect(partialToolResultMsg('c1', 'tick-1\n')).toEqual({
+      type: 'user',
+      partial: true,
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'tick-1\n', is_error: false }],
+      },
+    })
+  })
+})
+
+describe('childItemMsgs（子线程 item → sidechain 桶转录）', () => {
+  const t = () => new ThreadTranslator()
+
+  test('agentMessage/reasoning/userMessage → 单条 sidechain，parent_tool_use_id=子线程 id', () => {
+    const tr = t()
+    expect(tr.childItemMsgs('th-1', { id: 'm1', type: 'agentMessage', text: '子代理正文' })).toEqual([
+      {
+        type: 'assistant',
+        uuid: 'm1',
+        parent_tool_use_id: 'th-1',
+        message: { role: 'assistant', content: [{ type: 'text', text: '子代理正文' }] },
+      },
+    ])
+    expect(tr.childItemMsgs('th-1', { id: 'r1', type: 'reasoning', summary: ['想一下'], content: [] })).toEqual([
+      {
+        type: 'assistant',
+        uuid: 'r1',
+        parent_tool_use_id: 'th-1',
+        message: { role: 'assistant', content: [{ type: 'thinking', thinking: '想一下' }] },
+      },
+    ])
+    expect(
+      tr.childItemMsgs('th-1', { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '数一数' }] }),
+    ).toEqual([
+      {
+        type: 'user',
+        uuid: 'u1',
+        parent_tool_use_id: 'th-1',
+        message: { role: 'user', content: [{ type: 'text', text: '数一数' }] },
+      },
+    ])
+  })
+
+  test('空文本的 agentMessage/reasoning/userMessage 不产生消息', () => {
+    const tr = t()
+    expect(tr.childItemMsgs('th-1', { id: 'm1', type: 'agentMessage', text: '  ' })).toEqual([])
+    expect(tr.childItemMsgs('th-1', { id: 'r1', type: 'reasoning', summary: [], content: [] })).toEqual([])
+    expect(tr.childItemMsgs('th-1', { id: 'u1', type: 'userMessage', content: [] })).toEqual([])
+    expect(tr.childItemMsgs('th-1', {})).toEqual([])
+  })
+
+  test('commandExecution → tool_use + tool_result 成对（uuid 与历史同口径：item.id / item.id-r）', () => {
+    const msgs = t().childItemMsgs('th-1', {
+      id: 'c1',
+      type: 'commandExecution',
+      command: 'ls',
+      status: 'completed',
+      exitCode: 0,
+      aggregatedOutput: 'ok',
+    })
+    expect(msgs).toHaveLength(2)
+    expect(msgs[0]).toMatchObject({ type: 'assistant', uuid: 'c1', parent_tool_use_id: 'th-1' })
+    expect(msgs[1]).toMatchObject({
+      type: 'user',
+      uuid: 'c1-r',
+      parent_tool_use_id: 'th-1',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'ok', is_error: false }] },
+    })
+  })
+
+  test('孙代理 collab 工具卡以接收方线程 id 出块（前端嵌套血缘按工具块归属反推）', () => {
+    const msgs = t().childItemMsgs('th-1', {
+      id: 'call-1',
+      type: 'collabAgentToolCall',
+      tool: 'spawnAgent',
+      status: 'completed',
+      receiverThreadIds: ['th-2'],
+      prompt: '孙任务',
+      agentsStates: { 'th-2': { status: 'running' } },
+    })
+    expect(msgs[0]).toMatchObject({
+      message: { content: [{ type: 'tool_use', id: 'th-2', name: 'Collab' }] },
+    })
+    expect(msgs[1]).toMatchObject({
+      message: { content: [{ tool_use_id: 'th-2', is_error: false }] },
+    })
+    // 无接收方（spawn 失败）回退 call id，失败可见
+    const failed = t().childItemMsgs('th-1', { id: 'call-2', type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'failed' })
+    expect(failed[0]).toMatchObject({ message: { content: [{ id: 'call-2' }] } })
+    expect(failed[1]).toMatchObject({ message: { content: [{ is_error: true }] } })
+  })
+
+  test('subAgentActivity/hookPrompt 等非转录类型不进桶', () => {
+    const tr = t()
+    expect(tr.childItemMsgs('th-1', { id: 'e1', type: 'subAgentActivity', kind: 'started', agentThreadId: 'th-2' })).toEqual([])
+    expect(tr.childItemMsgs('th-1', { id: 'h1', type: 'hookPrompt', fragments: [{ text: 'x' }] })).toEqual([])
+  })
+})
+
+describe('childItemMsgs 首条 userMessage 的 turnId 锚点', () => {
+  test('firstUserTurnId 存在时 uuid=turnId（与 history rewindable 锚点同键），否则 item.id', () => {
+    const tr = new ThreadTranslator()
+    const item = { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '数一数' }] }
+    const withTurn = tr.childItemMsgs('th-1', item, { firstUserTurnId: 'turn-9' })
+    expect(withTurn[0]).toMatchObject({ uuid: 'turn-9', parent_tool_use_id: 'th-1' })
+    const without = tr.childItemMsgs('th-1', item)
+    expect(without[0]).toMatchObject({ uuid: 'u1' })
   })
 })

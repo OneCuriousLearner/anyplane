@@ -27,6 +27,7 @@ describe('reasoningStore', () => {
     ])
   })
 
+
   test('坏行/缺字段/空文本被容忍跳过，不影响其余行', () => {
     appendFileSync(file(), 'not json at all\n')
     appendFileSync(file(), '{"broken":\n')
@@ -38,5 +39,14 @@ describe('reasoningStore', () => {
       { ts: 2000, turnId: null, text: '再想一下' },
       { ts: 4000, turnId: 't2', text: '有效条目' },
     ])
+  })
+
+  test('itemId 字段往返（live/历史去重锚点）；缺省行兼容读取', () => {
+    appendReasoning(THREAD, { ts: 5000, turnId: 't9', text: '带锚点', itemId: 'r-item-1' })
+    const all = readReasoning(THREAD)
+    const hit = all.find((e) => e.ts === 5000)
+    expect(hit).toEqual({ ts: 5000, turnId: 't9', text: '带锚点', itemId: 'r-item-1' })
+    // 旧格式（无 itemId）读取后 itemId 为 undefined，不破坏既有条目
+    expect(all.find((e) => e.ts === 1000)?.itemId).toBeUndefined()
   })
 })

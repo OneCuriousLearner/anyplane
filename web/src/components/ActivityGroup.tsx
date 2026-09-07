@@ -63,7 +63,7 @@ export function ActivityGroup(props: {
             {item.block.kind === 'thinking' ? (
               <Thinking text={item.block.text} streaming={item.streaming} embedded />
             ) : (
-              <ToolCard tool={item.block} embedded />
+              <ToolCard tool={item.block} streaming={item.streaming} embedded />
             )}
           </div>
         ))}

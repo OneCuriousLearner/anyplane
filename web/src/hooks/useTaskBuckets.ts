@@ -115,9 +115,11 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     pubTasks()
   }
 
-  /** codex 子代理转录懒取：子线程不被父通知流转发，终态后经 thread/read 拉回填充 */
+  /** codex 子代理转录终态兜底拉取：live 转发（父子事件链）覆盖运行期，但中途接入的客户端
+   *  可能缺早期 item（cliRing 挤掉/注册前事件跳过）——终态经 thread/read 全量拉一次补齐。
+   *  uuid 与 live 同口径，去重幂等；代价仅终态一次 RPC。桶非空不再是跳过理由（live 已使其常真）。 */
   const maybeFetchCodexTranscript = (b: TaskBucket) => {
-    if (!isCodex || !b.agentId || b.transcriptFetched || b.messages.length > 0) return
+    if (!isCodex || !b.agentId || b.transcriptFetched) return
     b.transcriptFetched = true
     fetchCodexHistory(b.agentId)
       .then((resp) => {
@@ -184,6 +186,8 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     b.agentType = (rec.subagent_type as string | undefined) ?? (rec.task_type as string | undefined) ?? b.agentType
     b.kind = (rec.task_type as string | undefined) ?? b.kind
     b.depth = (rec.spawn_depth as number | undefined) ?? b.depth
+    // 嵌套血缘：claude 由水合下发；codex 孙代理的 task_started 直接携带（服务端事件链已知父子）
+    b.parentToolUseId = (rec.parent_tool_use_id as string | undefined) ?? b.parentToolUseId
     b.status = 'running'
     pubTasks()
     if (window.matchMedia('(min-width: 768px)').matches) setTasksOpen(true)

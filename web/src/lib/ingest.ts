@@ -33,10 +33,14 @@ export function createIngestState(msgs: ChatMsg[] = []): IngestState {
   return { msgs, toolIdx: new Map(), pending: new Map() }
 }
 
-function patched(m: ChatMsg, bi: number, text: string, isError: boolean): ChatMsg {
+function patched(m: ChatMsg, bi: number, text: string, isError: boolean, keepPending = false): ChatMsg {
   const blocks = [...m.blocks]
   const b = blocks[bi]
-  if (b?.kind === 'tool') blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
+  if (b?.kind === 'tool') {
+    blocks[bi] = keepPending
+      ? { ...b, resultText: text, resultError: isError }
+      : { ...b, resultText: text, resultError: isError, pending: false }
+  }
   return { ...m, blocks }
 }
 
@@ -64,6 +68,37 @@ export function pairToolResultIn(
     if (bi < 0) continue
     const out = [...msgs]
     out[mi] = patched(out[mi], bi, text, isError)
+    return { msgs: out, paired: true }
+  }
+  return { msgs, paired: false }
+}
+
+/**
+ * codex 工具输出的流式部分结果（partial tool_result）：更新卡片文本但**保持运行态**
+ * （pending 不动、不改 resultError、不进乱序缓冲——部分结果不配对的直接丢弃，
+ *  下一拍 partial 或终态结果会自愈，缓冲反而可能把过期部分结果补到终态之后）。
+ */
+export function pairToolResultPartialIn(
+  msgs: ChatMsg[],
+  toolIdx: Map<string, ToolPos> | undefined,
+  toolUseId: string | undefined,
+  text: string,
+): { msgs: ChatMsg[]; paired: boolean } {
+  if (!toolUseId) return { msgs, paired: false }
+  const at = toolIdx?.get(toolUseId)
+  const hit = at ? msgs[at.mi]?.blocks[at.bi] : undefined
+  if (at && hit?.kind === 'tool' && hit.id === toolUseId && hit.pending === true) {
+    const out = [...msgs]
+    out[at.mi] = patched(out[at.mi], at.bi, text, false, true)
+    return { msgs: out, paired: true }
+  }
+  for (let mi = msgs.length - 1; mi >= 0; mi--) {
+    const bi = msgs[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
+    if (bi < 0) continue
+    const blk = msgs[mi].blocks[bi]
+    if (blk.kind !== 'tool' || blk.pending !== true) break // 已有终态，部分结果过期
+    const out = [...msgs]
+    out[mi] = patched(out[mi], bi, text, false, true)
     return { msgs: out, paired: true }
   }
   return { msgs, paired: false }

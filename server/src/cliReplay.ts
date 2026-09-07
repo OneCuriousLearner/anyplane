@@ -26,8 +26,12 @@ export interface CliRingState {
 /** 可落盘的 cli 才入环、才占序号。stream_event 现场广播但不占环。 */
 export function shouldRingCli(payload: Record<string, unknown>): boolean {
   if (payload.kind !== 'cli') return false
-  const msg = payload.msg as { type?: string } | undefined
-  return msg?.type !== 'stream_event'
+  const msg = payload.msg as { type?: string; partial?: boolean } | undefined
+  if (msg?.type === 'stream_event') return false
+  // codex 工具输出的部分结果（partial tool_result）：高频增量，与 stream_event 同理不占环——
+  // 重连由终态 tool_result（aggregatedOutput 权威全文）兜底，环位留给可落盘事件
+  if (msg?.partial === true) return false
+  return true
 }
 
 export function pushCliRing(state: CliRingState, payload: Record<string, unknown>): number | undefined {

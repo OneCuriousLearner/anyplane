@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toolDetail, toolSummary, type ToolBlock } from '../lib/blocks'
 
-/** 工具调用卡片：一行 trace（图标+名称+摘要+结果状态），点击展开参数与结果 */
-export function ToolCard(props: { tool: ToolBlock; className?: string; embedded?: boolean }) {
+/** 工具调用卡片：一行 trace（图标+名称+摘要+结果状态），点击展开参数与结果。
+ *  streaming（codex 命令输出部分结果流入中）：强制展开，与 Thinking 流式同款行为。 */
+export function ToolCard(props: { tool: ToolBlock; streaming?: boolean; className?: string; embedded?: boolean }) {
   const { tool } = props
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(Boolean(props.streaming))
+  useEffect(() => {
+    setOpen(Boolean(props.streaming))
+  }, [props.streaming])
   const summary = toolSummary(tool.name, tool.input)
 
   return (

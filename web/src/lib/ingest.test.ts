@@ -236,3 +236,33 @@ describe('live/补发去重键', () => {
     expect(hitsSeen(seen, keys)).toBe(true)
   })
 })
+
+describe('pairToolResultPartialIn（codex 流式部分结果）', () => {
+  test('部分结果更新文本但保持 pending 运行态', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    pushIngestMsg(s, { id: 'm1', role: 'assistant', blocks: [{ kind: 'tool', id: 't1', name: 'Bash', pending: true }] })
+    const r = pairToolResultPartialIn(s.msgs, s.toolIdx, 't1', 'tick-1\n')
+    expect(r.paired).toBe(true)
+    const [b] = toolBlocksOf(r.msgs)
+    expect(b).toMatchObject({ id: 't1', resultText: 'tick-1\n', pending: true })
+  })
+
+  test('终态结果落地后部分结果视为过期丢弃', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    pushIngestMsg(s, { id: 'm1', role: 'assistant', blocks: [{ kind: 'tool', id: 't1', name: 'Bash', pending: true }] })
+    const fin = pairToolResultIn(s.msgs, s.toolIdx, 't1', 'final', false)
+    const r = pairToolResultPartialIn(fin.msgs, s.toolIdx, 't1', 'stale-partial')
+    expect(r.paired).toBe(false)
+    expect(toolBlocksOf(r.msgs)[0].resultText).toBe('final')
+  })
+
+  test('工具块未落地时部分结果直接丢弃（不进乱序缓冲）', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    const r = pairToolResultPartialIn(s.msgs, s.toolIdx, 'ghost', 'x')
+    expect(r.paired).toBe(false)
+    expect(s.pending.size).toBe(0)
+  })
+})

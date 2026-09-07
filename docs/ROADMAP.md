@@ -76,20 +76,34 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
    回滚操作也按 mode 选择：paginated 线程走 `thread/revert`，legacy 线程降级走 `thread/fork`。
 4. **回滚时序**：`thread/revert` 原地生效后，前端清理当前 turn 之后的消息并刷新状态，无需换 key 导航。
 
-## 方向五：Codex 实时流与思考增量对齐（Delta 通知接入，待排期）
+## 方向五：Codex 实时流与思考增量对齐（Delta 通知接入）——✅ 已完成（2026-09-07）
 
 **定论**：当前 Codex 在 AnyPlane 中大多等 `item/completed` 整块到达后才显示，思考过程依赖 `~/.anyplane/reasoning/` 侧车落盘，子代理转录需前端 8 秒定时轮询。这完全可以通过接入 Codex app-server 原生的 Delta 通知全面消灭。
 
-**真源能力**：
-- `item/agentMessage/delta`：正文实时增量流式输出
-- `item/reasoning/textDelta` 与 `summaryTextDelta`：思考过程实时增量流式输出
-- `item/commandExecution/outputDelta` / `terminalInteraction`：命令执行的终端增量输出
-- `item/mcpToolCall/progress`：MCP 工具调用的执行进度通知
+**探针实测（codex 0.148.0，k3 供应商）**——三项推翻旧结论的实测：
+- `item/agentMessage/delta`、`item/reasoning/textDelta` 真实到达且量大（单 turn 思考 delta 8000+）；`summaryTextDelta` 该供应商不发。
+- `item/commandExecution/outputDelta` 逐秒实时到达（命令真正跑起来时）；`terminalInteraction`、`item/mcpToolCall/progress` 按 schema 接入。
+- **子线程事件直接推到父连接**（0.148 实测，含嵌套孙线程、thread/resume 之后同样成立）——AGENTS.md 旧结论"子代理转录不被父通知流转发"已过时；无需 resume 子线程，demux 路由转发即可。
 
-**实施步骤**：
-1. **Runtime 订阅流分发**：在 `runtime.ts` 的 `demux` 中，将上述通知通过 `translate.ts` 翻译为统一的 `stream_event` 增量形状下发。
-2. **消除子线程轮询**：子代理产生的实时正文与思考增量通过父子事件链实时广播，废除前端 8s 轮询 `fetchCodexHistory` 机制，终态收尾拉取一次即可。
-3. **轻量化思考侧车**：实时流不再从侧车回读；侧车仅作为会话离线重载历史时的兜底补充。
+**已交付**（PR 见 git log）：
+- 服务端：`item/reasoning/summaryPartAdded`（摘要分段补 `\n\n`，仅见过 summary delta 时）；
+  `outputDelta`/`terminalInteraction` 尾部追加、`mcpToolCall/progress` 取最新，300ms 追尾合并为
+  **partial tool_result**（`partial:true` 标记——前端更新卡片文本但保持运行态；cliRing 不占序号，
+  重连由终态 `aggregatedOutput` 兜底；缓冲尾留 32KB）。
+- collab 父子事件链转发：`subAgentActivity started`/`collabAgentToolCall` End 注册子线程路由，
+  子线程 `item/completed` 翻译为 claude sidechain 形状（`parent_tool_use_id`=子线程 id，uuid 与
+  历史同口径）进侧栏桶；孙代理 `task_started` 携带 `parent_tool_use_id`+`spawn_depth` 血缘；
+  子线程 reasoning 同写侧车（侧车条目新增 `itemId` 锚点，live/历史去重不叠加，顺带修复主线
+  思考块重连补发可能重复的隐患）。子线程 delta/tokenUsage/turn 级事件不进桶（桶无草稿概念）。
+- 前端：`pairToolResultPartialIn`（保 pending、过期丢弃、不进乱序缓冲）；工具卡 streaming
+  时强制展开（Thinking 同款行为）；`taskStarted` 读取 `parent_tool_use_id`。
+- 验证：`bun test` 434 全过（新增 24 项）；`server/scripts/e2e-codex-streaming.ts` 真实
+  server+模型全链路（A 正文/思考增量先于 result；B partial 先于终态且终态完整；C 侧链转录
+  先于 task_notification）；浏览器实测。
+- 侧车维持原角色（离线历史兜底，live 从不读它）；**终态拉取无条件保留一次**（审查发现：
+  live 转发使"桶非空即跳过"守卫常真，中途接入的客户端会永久缺早期 item——uuid 去重已幂等，
+  代价仅终态一次 RPC）。
+- 已知边界：attach 中途接入运行中的 collab 子线程，注册前事件跳过（warn 留痕），终态拉取兜底。
 
 ## 方向六：架构解耦与上帝文件重构（BackendPort 抽象）——✅ 已完成（2026-09-07）
 

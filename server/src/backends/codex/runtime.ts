@@ -13,9 +13,12 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Glob } from 'bun'
 import {
+  collabAgentMsgs,
   itemsToHistory,
   mapThreadStatus,
+  partialToolResultMsg,
   reasoningText,
+  subAgentActivityMsgs,
   turnCompletedMsg,
   ThreadTranslator,
   type HistoryMessage,
@@ -125,6 +128,25 @@ interface PendingCodexApproval {
   kind: string
 }
 
+/** 工具流式部分结果的合并窗口：outputDelta 按字节块到达（高频时每 token 一批），
+ *  300ms 追尾合并成一次 partial 下发；终态 item/completed 的 aggregatedOutput 是权威替换 */
+const OUTPUT_PARTIAL_MS = 300
+/** 部分结果只保留尾部（长跑命令刷日志场景防内存/带宽无界增长；终态全文由 completed 给） */
+const OUTPUT_PARTIAL_CAP = 32 * 1024
+
+interface OutputBuf {
+  text: string
+  /** accumulate=命令输出追加；latest=进度消息取最新 */
+  mode: 'accumulate' | 'latest'
+  dirty: boolean
+}
+
+/** 侧车回插消息的 uuid：itemId（0.148+ 落盘）优先——与 live 流 committed 思考块同 id，
+ *  前端 seen 去重后重连补发/终态拉取不叠加；旧数据回退 rs-<ts>-<i> 合成 id */
+export function reasoningSidecarUuid(entry: { ts: number; itemId?: string }, index: number): string {
+  return entry.itemId ?? `rs-${entry.ts}-${index}`
+}
+
 /** app-server 的 camelCase usage 记录 → 统一形状（缺失/非数归 0；tokenUsage 与 contextUsage 共用） */
 function mapTokenUsage(u: Record<string, number> | undefined) {
   const n = (v: unknown) => Number(v ?? 0) || 0
@@ -158,6 +180,13 @@ export class CodexSession {
   goal: { condition: string; since: number; tokensUsed?: number; timeUsedSeconds?: number } | null = null
   /** 无客户端空闲回收计时器（镜像 claude 的 detachRecycleMs 语义） */
   private recycleTimer: ReturnType<typeof setTimeout> | undefined
+  /** 工具流式部分结果缓冲（itemId → 累积文本/最新进度），300ms 追尾合并下发 */
+  private outputBufs = new Map<string, OutputBuf>()
+  private outputFlushTimer: ReturnType<typeof setTimeout> | undefined
+  /** 子线程已标记"首条 userMessage"的 turn 键（`${childId}:${turnId}`）：
+   *  history 把每轮首条 userMessage 以 turnId 为 uuid（rewindable 锚点），
+   *  live 转发必须同键，否则终态拉取时提示词在桶里重复一份 */
+  private childMarkedTurns = new Set<string>()
 
   constructor(
     key: string,
@@ -327,6 +356,74 @@ export class CodexSession {
 
   // ---------- 事件入口（runtime 按 threadId 分发） ----------
 
+  /**
+   * 子线程（collab 子代理）事件转发：0.148 起 app-server 把子线程实时事件推到父连接
+   * （实测含嵌套孙线程、resume 后同样成立）。桶转录按 item/completed 粒度即达秒级实时；
+   * delta/tokenUsage/status/turn 级事件不进桶（前端桶没有草稿概念，终态拉取兜底）。
+   * depth 为该子线程在事件链里的嵌套深度（直接子代理=1）。
+   */
+  handleChildNotification(childThreadId: string, depth: number, method: string, params: Params): void {
+    if (this.exited || method !== 'item/completed') return
+    const item = params.item as
+      | {
+          type?: string
+          id?: string
+          summary?: string[]
+          content?: unknown
+          kind?: string
+          agentThreadId?: string
+          receiverThreadIds?: string[]
+        }
+      | undefined
+    if (!item?.id || !item.type) return
+    // 孙代理注册（先于转录翻译：孙线程首批事件紧随 started 到达，路由表必须先就位）
+    if (item.type === 'subAgentActivity') {
+      if (item.kind === 'started' && item.agentThreadId) this.runtime.registerChild(item.agentThreadId, this, depth + 1)
+    } else if (item.type === 'collabAgentToolCall') {
+      for (const gtid of item.receiverThreadIds ?? []) {
+        if (gtid) this.runtime.registerChild(gtid, this, depth + 1)
+      }
+    }
+    const t = this.translator
+    if (!t) return
+    // 孙代理生命周期：task_started 补嵌套血缘字段（父桶键 + 深度），前端 flattenTasks 直接归组
+    if (item.type === 'subAgentActivity' || item.type === 'collabAgentToolCall') {
+      const lifecycle = item.type === 'collabAgentToolCall' ? collabAgentMsgs(item as never) : subAgentActivityMsgs(item as never)
+      for (const m of lifecycle) {
+        if (m.subtype === 'task_started') {
+          m.parent_tool_use_id = childThreadId
+          m.spawn_depth = depth + 1
+        }
+        this.emit(m)
+      }
+      if (item.type === 'subAgentActivity') return // 非工具项，无桶转录
+    }
+    // 每轮首条 userMessage 以 turnId 为 uuid（与 history 的 rewindable 锚点同键，终态拉取去重）
+    let firstUserTurnId: string | undefined
+    const turnId = typeof params.turnId === 'string' ? params.turnId : undefined
+    if (item.type === 'userMessage' && turnId) {
+      const k = `${childThreadId}:${turnId}`
+      if (!this.childMarkedTurns.has(k)) {
+        this.childMarkedTurns.add(k)
+        firstUserTurnId = turnId
+      }
+    }
+    for (const m of t.childItemMsgs(childThreadId, item as never, { firstUserTurnId })) this.emit(m)
+    // 子线程 rollout 同样不持久化 reasoning：侧车落盘，终态拉取历史时回插
+    //（uuid 与 live 转发的思考块同为 item.id，拉取与转发经前端 seen 去重不叠加）
+    if (item.type === 'reasoning') {
+      const text = reasoningText(item.summary, item.content)
+      if (text) {
+        appendReasoning(childThreadId, {
+          ts: Date.now(),
+          turnId: typeof params.turnId === 'string' ? params.turnId : null,
+          text,
+          itemId: item.id,
+        })
+      }
+    }
+  }
+
   handleNotification(method: string, params: Params): void {
     const t = this.translator
     switch (method) {
@@ -345,6 +442,7 @@ export class CodexSession {
         const turn = (params.turn as Params) ?? {}
         this.currentTurnId = undefined
         this.setRunState('idle')
+        this.resetOutputBufs()
         this.emit(turnCompletedMsg(this.threadId!, turn, this.lastUsage))
         break
       }
@@ -384,7 +482,10 @@ export class CodexSession {
         const item = params.item as Params
         const itemType = (item as { type?: string }).type
         if (itemType === 'userMessage') break // 用户消息本地已回显
+        const itemId = (item as { id?: string }).id
+        if (itemId) this.outputBufs.delete(itemId) // 终态结果即权威，部分结果缓冲随之失效
         // codex rollout 不持久化 reasoning：侧车落盘，历史读取时按 turn 时间窗回插
+        //（itemId 一并落盘：回插消息与 live 流同 uuid，重连补发经前端 seen 去重）
         if (itemType === 'reasoning' && this.threadId) {
           const it = item as { summary?: string[]; content?: unknown }
           const text = reasoningText(it.summary, it.content)
@@ -393,7 +494,18 @@ export class CodexSession {
               ts: Date.now(),
               turnId: typeof params.turnId === 'string' ? params.turnId : null,
               text,
+              itemId,
             })
+          }
+        }
+        // collab 子线程注册（父子事件链转发的路由表，0.148 实测子线程事件推到父连接）：
+        // 最早的注册点是 subAgentActivity started（子线程首批事件紧随其后到达）
+        if (itemType === 'subAgentActivity') {
+          const it = item as { kind?: string; agentThreadId?: string }
+          if (it.kind === 'started' && it.agentThreadId) this.runtime.registerChild(it.agentThreadId, this, 1)
+        } else if (itemType === 'collabAgentToolCall') {
+          for (const tid of (item as { receiverThreadIds?: string[] }).receiverThreadIds ?? []) {
+            if (tid) this.runtime.registerChild(tid, this, 1)
           }
         }
         for (const m of t?.itemCompleted(item as never) ?? []) this.emit(m)
@@ -401,8 +513,24 @@ export class CodexSession {
       }
       case 'item/agentMessage/delta':
       case 'item/reasoning/textDelta':
-      case 'item/reasoning/summaryTextDelta': {
+      case 'item/reasoning/summaryTextDelta':
+      case 'item/reasoning/summaryPartAdded': {
         for (const m of t?.itemDelta(method, params) ?? []) this.emit(m)
+        break
+      }
+      case 'item/commandExecution/outputDelta': {
+        // 终端输出增量：尾部追加合并，300ms 窗口作为 partial tool_result 下发一次
+        this.noteOutputDelta(String(params.itemId ?? ''), String(params.delta ?? ''), 'accumulate')
+        break
+      }
+      case 'item/commandExecution/terminalInteraction': {
+        // 交互终端的 stdin 回显（agent 向运行中进程写输入）：与输出同流追加
+        this.noteOutputDelta(String(params.itemId ?? ''), String(params.stdin ?? ''), 'accumulate')
+        break
+      }
+      case 'item/mcpToolCall/progress': {
+        // MCP 进度是状态串而非流：取最新一条
+        this.noteOutputDelta(String(params.itemId ?? ''), String(params.message ?? ''), 'latest')
         break
       }
       case 'serverRequest/resolved': {
@@ -677,7 +805,10 @@ export class CodexSession {
   dispose(): void {
     if (this.exited) return
     this.cancelRecycle()
+    this.resetOutputBufs()
+    this.childMarkedTurns.clear()
     this.exited = true
+    this.runtime.unregisterChildrenOf(this)
     // 断开订阅即可；app-server 会在无订阅且无活动满 thread_unload_delay_secs（默认 60s）后卸载
     if (this.threadId) {
       void this.runtime.rpcRequest('thread/unsubscribe', { threadId: this.threadId }).catch(() => {})
@@ -689,6 +820,9 @@ export class CodexSession {
   handleProcessExit(): void {
     if (this.exited) return
     this.exited = true
+    this.resetOutputBufs()
+    this.childMarkedTurns.clear()
+    this.runtime.unregisterChildrenOf(this)
     this.setRunState('idle')
     this.cb.onExit(1)
   }
@@ -718,6 +852,39 @@ export class CodexSession {
 
   private emitError(text: string): void {
     this.emit({ type: 'result', subtype: 'error', is_error: true, result: text, session_id: this.threadId })
+  }
+
+  /** 工具流式部分结果：按 itemId 合并进缓冲，300ms 追尾窗口统一下发（下行量与命令刷频解耦） */
+  private noteOutputDelta(itemId: string, text: string, mode: OutputBuf['mode']): void {
+    if (!itemId || !text || this.exited) return
+    const b = this.outputBufs.get(itemId) ?? { text: '', mode, dirty: false }
+    b.text = mode === 'latest' ? text : b.text + text
+    if (b.text.length > OUTPUT_PARTIAL_CAP) b.text = b.text.slice(-OUTPUT_PARTIAL_CAP)
+    b.dirty = true
+    this.outputBufs.set(itemId, b)
+    if (!this.outputFlushTimer) {
+      this.outputFlushTimer = setTimeout(() => {
+        this.outputFlushTimer = undefined
+        this.flushOutputPartials()
+      }, OUTPUT_PARTIAL_MS)
+    }
+  }
+
+  private flushOutputPartials(): void {
+    if (this.exited) return
+    for (const [itemId, b] of this.outputBufs) {
+      if (!b.dirty) continue
+      b.dirty = false
+      this.emit(partialToolResultMsg(itemId, b.text))
+    }
+  }
+
+  private resetOutputBufs(): void {
+    if (this.outputFlushTimer) {
+      clearTimeout(this.outputFlushTimer)
+      this.outputFlushTimer = undefined
+    }
+    this.outputBufs.clear()
   }
 
   private setRunState(st: 'idle' | 'running' | 'requires_action'): void {
@@ -823,6 +990,25 @@ export class CodexRuntime {
     if (!s || this.byThread.get(threadId) === s) this.byThread.delete(threadId)
   }
 
+  /** collab 子线程路由表：子线程 id → 父会话与嵌套深度（直接子代理=1，孙代理=2…）。
+   *  0.148 起子线程实时事件推到父连接（父子事件链），demux 经此表转发给父会话进侧栏桶。 */
+  private children = new Map<string, { parent: CodexSession; depth: number }>()
+  /** 未知线程事件的告警去重（子线程 delta 高频，每线程只留一次痕） */
+  private unknownThreadWarned = new Set<string>()
+
+  registerChild(childThreadId: string, parent: CodexSession, depth: number): void {
+    if (!this.children.has(childThreadId)) {
+      this.children.set(childThreadId, { parent, depth })
+      this.unknownThreadWarned.delete(childThreadId)
+    }
+  }
+
+  unregisterChildrenOf(parent: CodexSession): void {
+    for (const [tid, link] of this.children) {
+      if (link.parent === parent) this.children.delete(tid)
+    }
+  }
+
   private demux(method: string, params: Params): void {
     const threadId = typeof params.threadId === 'string' ? params.threadId : undefined
     if (threadId) {
@@ -831,7 +1017,26 @@ export class CodexRuntime {
         this.feedCollector(threadId, collector, method, params)
         return
       }
-      this.byThread.get(threadId)?.handleNotification(method, params)
+      const session = this.byThread.get(threadId)
+      if (session) {
+        session.handleNotification(method, params)
+        return
+      }
+      const link = this.children.get(threadId)
+      if (link) {
+        if (!link.parent.exited) link.parent.handleChildNotification(threadId, link.depth, method, params)
+        else this.children.delete(threadId)
+        return
+      }
+      // 注册前抢先到达的子线程事件（attach 中途接入运行中的 collab 也会在此）：
+      // 终态拉取兜底，不丢正确性；每线程留一次痕便于排查路由缺口
+      if (!this.unknownThreadWarned.has(threadId)) {
+        this.unknownThreadWarned.add(threadId)
+        log.warn('[codex] 收到未注册线程的事件，已跳过（attach 中途接入或路由缺口）', {
+          threadId: threadId.slice(0, 8),
+          method,
+        })
+      }
     }
     // 无 threadId 的全局通知（account/*、remoteControl/* 等）暂不处理
   }
@@ -934,6 +1139,7 @@ export class CodexRuntime {
   disposeAll(): void {
     for (const s of [...this.sessions.values()]) s.dispose()
     this.sessions.clear()
+    this.children.clear()
     this.rpc?.kill()
     this.rpc = undefined
   }
@@ -1036,7 +1242,7 @@ export class CodexRuntime {
         }
         if (hit.length > 0) {
           const thinkingMsgs = hit.map((i) => ({
-            uuid: `rs-${reasoning[i].ts}-${i}`,
+            uuid: reasoningSidecarUuid(reasoning[i], i),
             role: 'assistant' as const,
             blocks: [{ kind: 'thinking' as const, text: reasoning[i].text }],
           }))

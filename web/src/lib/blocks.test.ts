@@ -225,3 +225,24 @@ describe('groupCollapsibleRuns / buildTranscriptRows', () => {
     })
   })
 })
+
+describe('buildTranscriptRows streaming 标记（codex 部分结果驱动卡片展开）', () => {
+  const tool = (
+    id: string,
+    extra?: { pending?: boolean; resultText?: string },
+  ): ChatMsg['blocks'][number] => ({ kind: 'tool', id, name: 'Bash', input: { command: 'ls' }, ...extra })
+  const msg = (id: string, blocks: ChatMsg['blocks']): ChatMsg => ({ id, role: 'assistant', blocks })
+
+  test('pending 且有部分结果文本 → streaming: true；其余工具块不标记', () => {
+    const rows = buildTranscriptRows([
+      msg('a1', [
+        tool('t1', { pending: true, resultText: 'tick-1\n' }), // 流式中 → streaming
+        tool('t2', { pending: true }), // 运行中但无输出 → 不展开
+        tool('t3', { resultText: 'done' }), // 终态 → 不展开
+      ]),
+    ])
+    const act = rows[0]
+    if (act?.type !== 'activity') throw new Error('expected activity')
+    expect(act.items.map((it) => it.streaming ?? false)).toEqual([true, false, false])
+  })
+})
