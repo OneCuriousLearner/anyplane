@@ -68,6 +68,23 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 但 `thread/revert` 仅支持 `history_mode: "paginated"` 的线程，而上游默认是 `legacy`，
 因此必须系统性迁移历史读取链路。
 
+**前置一：本机 codex 0.148.0 已落后（npm latest 0.153.4），升级单独 PR 处理**。
+步骤：升级 CLI → `check-codex-schema.ts` 对比基线 → 刷新 `codex-schema-baseline/` →
+回归方向五 e2e（`e2e-codex-delta.ts` 探针 + `e2e-codex-streaming.ts` 断言）→ `bun test`。
+已预查 0.153.x 源码（本地快照含 rust-v0.153.4 tag）：方向五依赖的 delta 通知 wire 名全部仍在
+（`item/agentMessage/delta`、`item/commandExecution/outputDelta`、`item/mcpToolCall/progress` 等）。
+paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义开发再返工。
+
+**前置二：上游线程持久化已切 sqlite（本机已生效）**。
+`~/.codex/sessions/` 的 rollout jsonl 停止新增（本机最新一个 2026-08-29），改存
+`~/.codex/*.sqlite`（state_5/logs_2/goals_1 等，上游 `codex-rs/state/` 模块）。影响面：
+- `hydrateContextUsage` 的 rollout 尾部回扫**静默失效**——resume 后环形 UI 回退为"首个新 turn 才显示"
+  （代码按"找不到即隐藏"设计，优雅降级不报错）。迁移时换水合数据源（`thread/turns/list` 或接受等首个 turn）。
+- 历史读取走 `thread/read` RPC 不受影响（app-server 自读 sqlite）；归档/删除走 RPC 不受影响；
+  reasoning 侧车是 AnyPlane 自存（`~/.anyplane/reasoning/`）不受影响。
+- "超大 rollout 读取慢"的原动机随之消解一半：sqlite 时代历史读取本就该走
+  `thread/turns/list` + `thread/items/list` 分页（方向四主目标不变，理由更充分）。
+
 **实施步骤**：
 1. **新线程创建**：`thread/start` 显式传 `history_mode: "paginated"`。
 2. **历史读取分页重构**：`readHistory` 从已 deprecated 的 `thread/read includeTurns: true`
