@@ -68,7 +68,8 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 但 `thread/revert` 仅支持 `history_mode: "paginated"` 的线程，而上游默认是 `legacy`，
 因此必须系统性迁移历史读取链路。
 
-**前置一：本机 codex 0.148.0 已落后（npm latest 0.153.4），升级单独 PR 处理**。
+**前置一：本机 codex 0.148.0 已落后（npm latest 0.153.4），升级单独 PR 处理（等待排期：
+定 PR #17 合入后从 master 另开 `chore/upgrade-codex` 分支）**。
 步骤：升级 CLI → `check-codex-schema.ts` 对比基线 → 刷新 `codex-schema-baseline/` →
 回归方向五 e2e（`e2e-codex-delta.ts` 探针 + `e2e-codex-streaming.ts` 断言）→ `bun test`。
 已预查 0.153.x 源码（本地快照含 rust-v0.153.4 tag）：方向五依赖的 delta 通知 wire 名全部仍在
