@@ -41,6 +41,9 @@ const now = collect(tmp)
 rmSync(tmp, { recursive: true, force: true })
 
 if (update || !existsSync(baselineDir)) {
+  // 先清空再写：上游删除的类型文件必须同步移除，
+  // 否则陈旧文件永远留在基线里，"移除"类漂移每次检查都重复报告（issue 刷屏）
+  rmSync(baselineDir, { recursive: true, force: true })
   mkdirSync(baselineDir, { recursive: true })
   for (const [rel, content] of now) {
     const p = join(baselineDir, rel)
