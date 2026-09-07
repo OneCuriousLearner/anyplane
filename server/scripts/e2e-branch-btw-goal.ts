@@ -23,7 +23,8 @@ a.on((ev) => {
   }
   if (ev.kind === 'cli' && (ev.msg as { type?: string }).type === 'result') turnDone = true
 })
-a.send({ kind: 'user', text: '记住暗号「星河战舰」，只回复「收到」两个字。' })
+// 禁止写 memory：暗号必须只活在对话上下文里（CLI 新版自动记忆会落盘，污染隔离语义）
+a.send({ kind: 'user', text: '记住暗号「星河战舰」，只回复「收到」两个字。为保证上下文隔离，禁止写入 memory。' })
 for (let i = 0; i < 120 && !turnDone; i++) await new Promise((r) => setTimeout(r, 1000))
 note(turnDone && !!sessionId, '源会话建立上下文', `sessionId=${sessionId.slice(0, 8)}`)
 
