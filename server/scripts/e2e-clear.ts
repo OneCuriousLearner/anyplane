@@ -53,9 +53,10 @@ async function awaitResult(fromIndex: number, ms: number): Promise<boolean> {
   return false
 }
 
-// 1. 建立上下文
+// 1. 建立上下文（禁止写 memory：CLI 新版会把暗号落盘到项目 memory/，clear 后的新会话
+//    会从记忆文件读回暗号——clear 语义本身没变，是测试前提被自动记忆行为腐化）
 let idx = events.length
-ws.send(JSON.stringify({ kind: 'user', text: '记住暗号「蓝莓蛋糕」，只回复「收到」两个字。' }))
+ws.send(JSON.stringify({ kind: 'user', text: '记住暗号「蓝莓蛋糕」，只回复「收到」两个字。为保证上下文隔离，禁止写入 memory。' }))
 note(await awaitResult(idx, 150_000), 'clear 前：上下文建立')
 
 // 2. /clear
@@ -78,6 +79,10 @@ console.log('\n>> 事件流:')
 for (const e of events) console.log(`  ${((e.at - events[0].at) / 1000).toFixed(1)}s ${e.kind} ${e.brief}`)
 
 ws.close()
-rmSync(dir, { recursive: true, force: true })
+// 清理 best-effort：claude 进程以该目录为 cwd，空闲回收（默认 5min）前 Windows 上 rm 必 EBUSY，
+// 失败不影响断言结论——临时目录留给系统自洁
+try {
+  rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 500 })
+} catch {}
 clearTimeout(timeout)
 exitWithSummary(results)

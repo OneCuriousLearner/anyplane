@@ -11,7 +11,8 @@ const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN
 // 从 REST 拿一条用户消息 uuid。取最后一条带文本的用户消息：
 // 最早的消息通常早于文件检查点（无快照可恢复），最近的消息最可能有 checkpoint。
 const hist = await (await fetch(`http://localhost:7480/api/history/${slug}/${sessionId}`)).json()
-const candidates = hist.filter(
+// 端点返回 { messages, fileBytes, subagents }（历史响应带子代理水合字段后不再是裸数组）
+const candidates = (hist.messages ?? []).filter(
   (m) =>
     m.role === 'user' &&
     m.uuid &&

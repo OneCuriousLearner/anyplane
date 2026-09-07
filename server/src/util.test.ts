@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ensurePrivateDir, childEnv, errorMessage, pumpLines } from './util'
+import { ensurePrivateDir, childEnv, errorMessage, pumpLines, summarizeInput } from './util'
 
 function streamOf(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -128,5 +128,30 @@ describe('ensurePrivateDir（~/.anyplane 私有目录）', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('summarizeInput（审批摘要唯一口径）', () => {
+  test('按工具分发到裁决关键字段', () => {
+    expect(summarizeInput('Bash', { command: 'ls -la', description: '列目录' })).toBe('ls -la')
+    expect(summarizeInput('Glob', { pattern: 'src/**/*.ts' })).toBe('src/**/*.ts')
+    expect(summarizeInput('Grep', { pattern: 'foo' })).toBe('foo')
+    expect(summarizeInput('WebSearch', { query: 'bun watch' })).toBe('bun watch')
+    expect(summarizeInput('WebFetch', { url: 'https://example.com' })).toBe('https://example.com')
+    expect(summarizeInput('Agent', { description: '查日志', prompt: '详细指令' })).toBe('查日志')
+  })
+  test('通用回退：file_path > path > grantRoot > JSON', () => {
+    expect(summarizeInput('Write', { file_path: '/tmp/a.txt', content: 'x' })).toBe('/tmp/a.txt')
+    expect(summarizeInput('Custom', { path: '/b' })).toBe('/b')
+    expect(summarizeInput('Custom', { grantRoot: '/c' })).toBe('/c')
+    expect(summarizeInput('Custom', { other: 1 })).toBe('{"other":1}')
+  })
+  test('长输入截断（Bash 400 / 其余 JSON 300）', () => {
+    expect(summarizeInput('Bash', { command: 'x'.repeat(500) })).toHaveLength(400)
+    expect(summarizeInput('Custom', { v: 'y'.repeat(400) }).length).toBeLessThanOrEqual(301)
+  })
+  test('空输入不炸', () => {
+    expect(summarizeInput('Bash', undefined)).toBe('')
+    expect(summarizeInput('Custom', null)).toBe('{}')
   })
 })
