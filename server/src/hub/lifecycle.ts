@@ -15,11 +15,12 @@ export function rewindBusy(hub: Hub, message = '已有回滚操作正在进行')
 }
 
 /**
- * 审批解析共享路径：WS approval 消息与推送直接审批（/api/approval-action）共用。
- * 返回 false 表示 requestId 已不在 pending（重复点击/已在别处处理）。
+ * 审批投递共享半段：手动裁决（resolveApproval）与规则自动裁决（callbacks.ts）共用——
+ * 退出检查 + sendApproval 异常防护 + 外部门禁刷新。
+ * 留痕事件不进这里：手动路径广播 approval_resolved（有 pending 卡要清），
+ * 规则路径广播 approval_auto（请求从未入 pending，没有卡可清）。
  */
-export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
-  if (!hub.pendingApprovals.delete(requestId)) return false
+export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalDecision): void {
   const port = portFor(hub.key)
   const s = port.sessionOf(hub.key)
   if (s && !s.exited) {
@@ -33,6 +34,15 @@ export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalD
     broadcastError(hub, '会话未在运行，审批未能送达（该请求会在上游自行超时）')
   }
   port.notifyExternalGate(hub.key)
+}
+
+/**
+ * 审批解析共享路径：WS approval 消息与推送直接审批（/api/approval-action）共用。
+ * 返回 false 表示 requestId 已不在 pending（重复点击/已在别处处理）。
+ */
+export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
+  if (!hub.pendingApprovals.delete(requestId)) return false
+  deliverApproval(hub, requestId, decision)
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   pushStatus(hub)

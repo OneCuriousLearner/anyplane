@@ -91,16 +91,10 @@ export function useSessionSocket(opts: {
             break
           case 'approval_auto': {
             // 规则引擎自动裁决的审计留痕：不进审批队列，只落一条系统卡。
-            // 摘要字段提取与服务端 summarizeInput 同口径（command / file_path / url）。
-            const inp = ev.input as Record<string, unknown> | undefined
-            const detail =
-              (typeof inp?.command === 'string' && inp.command) ||
-              (typeof inp?.file_path === 'string' && inp.file_path) ||
-              (typeof inp?.grantRoot === 'string' && inp.grantRoot) ||
-              (typeof inp?.url === 'string' && inp.url) ||
-              ''
+            // 摘要直接用服务端下发的 detail（summarizeInput 唯一口径，前端不另起一套）。
+            const detail = typeof ev.detail === 'string' ? ev.detail : ''
             ingestApi.pushSystem(
-              `规则自动${ev.action === 'allow' ? '放行' : '拒绝'}：${ev.toolName}${detail ? ` ${detail.slice(0, 120)}` : ''}（${ev.rule}）`,
+              `规则自动${ev.action === 'allow' ? '放行' : '拒绝'}：${ev.toolName}${detail ? ` ${detail}` : ''}（${ev.rule}）`,
             )
             break
           }

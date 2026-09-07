@@ -12,6 +12,7 @@
 
 import type { Hub } from '../hub/types'
 import type { HandoffDetail } from '../handoff'
+import { errorMessage } from '../util'
 import { isCodexKey } from './codex/backend'
 import { claudePort } from './claude/port'
 import { codexPort } from './codex/port'
@@ -94,6 +95,21 @@ export interface StatusContext {
 /** REST 管理面结果：路由层原样映射为 HTTP 响应（状态码逐字保留） */
 export type RouteResult = { ok: true } | { ok: false; error: string; status: number }
 
+/** 归档/回收站列表行（/api/sessions/archived）：claude=trash（trashedAt/sizeBytes），
+ *  codex=archived threads（title/lastPrompt/cwd/mtime）——两后端字段并集，缺省即不渲染 */
+export interface ArchivedEntry {
+  key: string
+  sessionId: string
+  slug: string
+  backend: BackendName
+  title?: string
+  lastPrompt?: string
+  cwd?: string
+  mtime?: number
+  trashedAt?: string
+  sizeBytes?: number
+}
+
 export interface BackendPort {
   readonly name: BackendName
   /** 当前存活（或已退出待回收）的会话句柄；取代编排层散落的 isCodexKey ? codexRuntime.get : processManager.get */
@@ -163,6 +179,9 @@ export interface BackendPort {
   archive(key: string): Promise<RouteResult>
   restore(key: string): Promise<RouteResult>
   rename(key: string, title: string): Promise<RouteResult>
+  /** 归档/回收站列表：claude=trash（同步文件读），codex=archived thread/list。
+   *  单后端失败降级为空数组（适配器内 log），不拖垮另一后端的列表。 */
+  listArchived(): Promise<ArchivedEntry[]>
 }
 
 /** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */
@@ -192,4 +211,26 @@ export function backendOf(key: string): BackendName {
 /** 编排层唯一的后端分支点：全仓库的能力分发都收敛到这一个三元 */
 export function portFor(key: string): BackendPort {
   return isCodexKey(key) ? codexPort : claudePort
+}
+
+// ---------- /btw 侧问的共享信封（校验失败文案与 btw_result 广播只有一份，双后端不分叉） ----------
+
+/** 无会话可借上下文时的统一拒绝（空问题 / 无 sessionId） */
+export function btwRejectNoSession(hub: Hub, question: string): void {
+  hubServices().broadcast(hub, {
+    kind: 'btw_result',
+    ok: false,
+    question,
+    text: '侧问需要已有会话（先发过至少一条消息）',
+  })
+}
+
+/** 执行体跑完后统一广播 btw_result；流式增量（btw_delta）由后端在执行体内自行广播 */
+export function btwDeliver(hub: Hub, question: string, run: () => Promise<string>): void {
+  const { broadcast } = hubServices()
+  run()
+    .then((text) => broadcast(hub, { kind: 'btw_result', ok: true, question, text }))
+    .catch((e) =>
+      broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${errorMessage(e)}` }),
+    )
 }

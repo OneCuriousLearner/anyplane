@@ -3,18 +3,22 @@
 
 import { defaultPermissionMode } from '../../config'
 import { generateCodexBrief, type HandoffDetail } from '../../handoff'
+import { log } from '../../log'
 import { errorMessage } from '../../util'
 import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
+  btwDeliver,
+  btwRejectNoSession,
   hubServices,
+  type ArchivedEntry,
   type BackendPort,
   type RouteResult,
   type SessionHandle,
   type StatusContext,
 } from '../port'
 import type { SpawnOptions } from '../types'
-import { parseKey as codexParseKey, splitThreadId } from './backend'
+import { listArchivedSessions, parseKey as codexParseKey, splitThreadId } from './backend'
 import { codexRuntime, type CodexSession } from './runtime'
 
 class CodexPort implements BackendPort {
@@ -153,21 +157,18 @@ class CodexPort implements BackendPort {
   }
 
   btw(hub: Hub, question: string): void {
-    const { broadcast } = hubServices()
     const parsed = codexParseKey(hub.key)
     const tid = codexRuntime.get(hub.key)?.sessionId ?? parsed?.resumeThreadId
     if (!question || !tid) {
-      broadcast(hub, { kind: 'btw_result', ok: false, question, text: '侧问需要已有会话（先发过至少一条消息）' })
+      btwRejectNoSession(hub, question)
       return
     }
-    void codexRuntime
-      .runEphemeralQuestion(tid, question, 180_000, (delta, thinking) => {
-        broadcast(hub, { kind: 'btw_delta', question, delta, thinking: thinking || undefined })
+    btwDeliver(hub, question, async () => {
+      const r = await codexRuntime.runEphemeralQuestion(tid, question, 180_000, (delta, thinking) => {
+        hubServices().broadcast(hub, { kind: 'btw_delta', question, delta, thinking: thinking || undefined })
       })
-      .then((r) => broadcast(hub, { kind: 'btw_result', ok: true, question, text: r.text }))
-      .catch((e) =>
-        broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${errorMessage(e)}` }),
-      )
+      return r.text
+    })
   }
 
   query(
@@ -216,36 +217,48 @@ class CodexPort implements BackendPort {
 
   // ---------- REST 管理面（官方 RPC：loaded/stored thread 均可） ----------
 
-  async archive(key: string): Promise<RouteResult> {
+  /** thread 管理 RPC 共享核：splitThreadId 守卫 + rpcRequest + RouteResult 信封只有一份，
+   *  守卫措辞或错误映射（如 -32600 线程被占用）修订时三处管理端点不会分叉 */
+  private async threadRpc(key: string, method: string, params: Record<string, unknown>): Promise<RouteResult> {
     const threadId = splitThreadId(key)
     if (!threadId) return { ok: false, error: '无法解析 threadId', status: 400 }
     try {
-      await codexRuntime.rpcRequest('thread/archive', { threadId })
+      await codexRuntime.rpcRequest(method, { threadId, ...params })
       return { ok: true }
     } catch (e) {
       return { ok: false, error: errorMessage(e), status: 500 }
     }
   }
 
-  async restore(key: string): Promise<RouteResult> {
-    const threadId = splitThreadId(key)
-    if (!threadId) return { ok: false, error: '无法解析 threadId', status: 400 }
-    try {
-      await codexRuntime.rpcRequest('thread/unarchive', { threadId })
-      return { ok: true }
-    } catch (e) {
-      return { ok: false, error: errorMessage(e), status: 500 }
-    }
+  archive(key: string): Promise<RouteResult> {
+    return this.threadRpc(key, 'thread/archive', {})
   }
 
-  async rename(key: string, title: string): Promise<RouteResult> {
-    const threadId = splitThreadId(key)
-    if (!threadId) return { ok: false, error: '无法解析 threadId', status: 400 }
+  restore(key: string): Promise<RouteResult> {
+    return this.threadRpc(key, 'thread/unarchive', {})
+  }
+
+  rename(key: string, title: string): Promise<RouteResult> {
+    return this.threadRpc(key, 'thread/name/set', { name: title })
+  }
+
+  /** codex 归档列表：复用 backend 的 toSummary 唯一映射；RPC 失败降级空数组不拖垮 claude trash */
+  async listArchived(): Promise<ArchivedEntry[]> {
     try {
-      await codexRuntime.rpcRequest('thread/name/set', { threadId, name: title })
-      return { ok: true }
+      const rows = await listArchivedSessions()
+      return rows.map((s) => ({
+        key: s.key,
+        sessionId: s.id,
+        slug: 'codex',
+        backend: 'codex' as const,
+        title: s.title,
+        lastPrompt: s.lastPrompt,
+        cwd: s.cwd,
+        mtime: s.mtime,
+      }))
     } catch (e) {
-      return { ok: false, error: errorMessage(e), status: 500 }
+      log.warn('[api] codex archived 列表失败:', e instanceof Error ? e.message : e)
+      return []
     }
   }
 }

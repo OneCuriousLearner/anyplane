@@ -3,7 +3,7 @@
 
 import { appendFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { archiveClaudeSession, restoreClaudeSession } from '../../archive'
+import { archiveClaudeSession, listTrash, restoreClaudeSession } from '../../archive'
 import { config, defaultPermissionMode } from '../../config'
 import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
@@ -11,7 +11,10 @@ import { errorMessage } from '../../util'
 import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
+  btwDeliver,
+  btwRejectNoSession,
   hubServices,
+  type ArchivedEntry,
   type BackendPort,
   type RouteResult,
   type SessionHandle,
@@ -367,21 +370,16 @@ class ClaudePort implements BackendPort {
   /** 官方 side_question 控制通道（进程内轻量 fork，共享 prompt cache，
    *  不产生磁盘 FORK 会话）。无流式增量，应答单次返回。 */
   btw(hub: Hub, question: string): void {
-    const { broadcast } = hubServices()
     const parsed = parseKey(hub.key)
     const sid =
       processManager.get(hub.key)?.sessionId ?? parsed?.resumeSessionId ?? parsed?.forkFromSessionId
     if (!question || !parsed || !sid) {
-      broadcast(hub, { kind: 'btw_result', ok: false, question, text: '侧问需要已有会话（先发过至少一条消息）' })
+      btwRejectNoSession(hub, question)
       return
     }
     const s = this.sessionForSend(hub)
     if (!s) return // ensureSpawned 已广播具体错误
-    s.sideQuestion(question)
-      .then((text) => broadcast(hub, { kind: 'btw_result', ok: true, question, text }))
-      .catch((e) =>
-        broadcast(hub, { kind: 'btw_result', ok: false, question, text: `侧问失败: ${errorMessage(e)}` }),
-      )
+    btwDeliver(hub, question, () => s.sideQuestion(question))
   }
 
   query(
@@ -497,6 +495,18 @@ class ClaudePort implements BackendPort {
     } catch (e) {
       return { ok: false, error: errorMessage(e), status: 500 }
     }
+  }
+
+  /** claude 无官方归档概念：回收站即 ~/.anyplane/trash/claude/ 的 transcript 迁移记录 */
+  async listArchived(): Promise<ArchivedEntry[]> {
+    return listTrash().map((t) => ({
+      key: t.key,
+      sessionId: t.sessionId,
+      slug: t.slug,
+      backend: 'claude' as const,
+      trashedAt: t.trashedAt,
+      sizeBytes: t.sizeBytes,
+    }))
   }
 }
 

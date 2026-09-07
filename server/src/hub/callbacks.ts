@@ -6,10 +6,13 @@ import { keyFor, parseKey } from '../backends/claude/backend'
 import { sanitizePath } from '../backends/claude/discovery'
 import { processManager } from '../backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from '../backends/claude/protocol'
+import { isCodexKey } from '../backends/codex/backend'
 import { portFor } from '../backends/port'
 import { config } from '../config'
 import { log } from '../log'
+import { summarizeInput } from '../util'
 import { broadcast, publishInbox } from './broadcast'
+import { deliverApproval } from './lifecycle'
 import { hubs } from './registry'
 import { pushStatus, throttledPushStatus } from './status'
 import type { Hub } from './types'
@@ -24,7 +27,9 @@ export function sessionCallbacks(hub: Hub) {
       if (isInternalUserMessage(msg)) return
       // /clear（别名 /reset /new）：CLI 发 conversation_reset 并以新 session_id 续跑。
       // Hub 随之重键到 s|slug|<newSid>——新会话页承载后续对话，旧 transcript 原样留存。
-      if (msg.type === 'conversation_reset') {
+      // claude-only 语义，守卫防漂移：codex 若未来发出同形事件，落入普通透传而不是
+      // 误触 claude 专属的重键（parseKey/processManager.rekey 作用在 x| key 上即消息黑洞）。
+      if (msg.type === 'conversation_reset' && !isCodexKey(hub.key)) {
         hub.pendingRekey = true
         return // 原始事件不进主抄本，迁移以 moved 事件表达
       }
@@ -84,12 +89,14 @@ export function sessionCallbacks(hub: Hub) {
           requestId: req.requestId,
           toolName: req.toolName,
           input: req.input,
+          // 摘要由服务端唯一口径 summarizeInput 算好下发，前端不再各自提取字段
+          detail: summarizeInput(req.toolName, req.input),
           action: auto.rule.action,
           rule: label,
         })
-        const s = portFor(hub.key).sessionOf(hub.key)
-        if (s) s.sendApproval(req.requestId, decisionOfRule(auto.rule, req.input))
-        else log.warn(`[approval] ${hub.key} 会话句柄已不存在，自动裁决无法送达`)
+        // 与手动裁决共用投递半段（退出检查/异常防护/门禁刷新）；
+        // 不广播 approval_resolved——请求从未入 pending，没有卡片需要清除
+        deliverApproval(hub, req.requestId, decisionOfRule(auto.rule, req.input))
         return
       }
       hub.pendingApprovals.set(req.requestId, req)

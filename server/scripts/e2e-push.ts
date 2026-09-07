@@ -20,6 +20,10 @@ import { exitWithSummary, makeNote } from './e2e-lib'
 const BASE = process.env.ANYPLANE_BASE ?? 'http://127.0.0.1:7480'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 const TOKEN_Q = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
+// /api 一律要鉴权（authToken 配置后）；能力 URL（approval-action）按设计绕开 token，
+// 这两处调用必须保持无 token，否则测不到"秘密只经加密推送投递"的红线
+const api = (path: string, init?: RequestInit) =>
+  fetch(`${BASE}${path}${path.includes('?') ? '&' : '?'}${TOKEN_Q.slice(1)}`, init)
 const { note, results } = makeNote()
 const b64url = (b: Buffer) => b.toString('base64url')
 // ---------- mock push service ----------
@@ -103,7 +107,7 @@ try {
     endpoint: 'http://127.0.0.1:18999/push/A',
     keys: { p256dh: b64url(uaPubRaw), auth: b64url(auth) },
   }
-  const reg = await fetch(`${BASE}/api/push/subscriptions`, {
+  const reg = await api('/api/push/subscriptions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(subA),
@@ -177,8 +181,11 @@ try {
     !!payload.actions?.allow.endsWith(secret) && !!payload.actions.deny.endsWith(secret),
     '能力 URL 按订阅补全了 secret',
   )
-  // 只断言文件名：CLI 落盘的路径分隔符由工具规范化（Windows 全反斜杠），不宜断言拼接形态
-  note(payload.body.includes('ccr-push-test.txt'), '推送正文含审批详情（详细内容策略）', payload.body.slice(0, 60))
+  // 断言完整路径（分隔符归一化：Windows 上 CLI 落盘为反斜杠）——body 必须携带可行动的
+  // 绝对路径；只含 basename 或错目录的回归不能放绿（本断言是脚本唯一的 body 内容检查）
+  const expectPath = `${testCwd}/ccr-push-test.txt`.replace(/\\/g, '/')
+  const bodyNorm = payload.body.replace(/\\/g, '/')
+  note(bodyNorm.includes(expectPath), '推送正文含审批详情（完整路径）', payload.body.slice(0, 60))
 
   // 6. 直接审批：POST 能力 URL（无 authToken——模拟 SW 环境）
   const allowResp = await fetch(`${BASE}${payload.actions!.allow}`, { method: 'POST' })
@@ -193,7 +200,7 @@ try {
   note(badResp.status === 403, '错误 secret 被拒（403）')
 
   // 8. 死订阅 410 清理：注册 B（标记 410）→ 再触发一次审批 → B 应被自动摘除
-  await fetch(`${BASE}/api/push/subscriptions`, {
+  await api('/api/push/subscriptions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -202,7 +209,7 @@ try {
     }),
   })
   gonePaths.add('/push/B')
-  const countBefore = ((await (await fetch(`${BASE}/api/push/public-key`)).json()) as { subscriptions: number }).subscriptions
+  const countBefore = ((await (await api('/api/push/public-key')).json()) as { subscriptions: number }).subscriptions
   ws.send(JSON.stringify({ kind: 'user', text: `再用 Write 把文件 ${testCwd}/ccr-push-test2.txt 内容写成 push-ok2。只做这一件事。` }))
   let pushB: Captured | undefined
   for (let i = 0; i < 120 && !pushB; i++) {
@@ -217,16 +224,16 @@ try {
     if (p2.actions) await fetch(`${BASE}${p2.actions.allow}`, { method: 'POST' })
   }
   await new Promise((r) => setTimeout(r, 1500))
-  const countAfter = ((await (await fetch(`${BASE}/api/push/public-key`)).json()) as { subscriptions: number }).subscriptions
+  const countAfter = ((await (await api('/api/push/public-key')).json()) as { subscriptions: number }).subscriptions
   note(countAfter === countBefore - 1, '410 死订阅自动摘除', `${countBefore} → ${countAfter}`)
 
   // 9. 清理测试订阅 A
-  await fetch(`${BASE}/api/push/subscriptions`, {
+  await api('/api/push/subscriptions', {
     method: 'DELETE',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ endpoint: subA.endpoint }),
   })
-  const countFinal = ((await (await fetch(`${BASE}/api/push/public-key`)).json()) as { subscriptions: number }).subscriptions
+  const countFinal = ((await (await api('/api/push/public-key')).json()) as { subscriptions: number }).subscriptions
   note(countFinal === 0, '测试订阅清理完毕', `剩余 ${countFinal}`)
 
   ws.close()

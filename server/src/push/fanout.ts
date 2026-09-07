@@ -5,7 +5,7 @@ import { parseKey } from '../backends/claude/backend'
 import { portFor } from '../backends/port'
 import { log } from '../log'
 import { pushToAll, pushWebhooksToAll, subscriptionCount, webhookCount, type PushPayload } from '../push'
-import { escapeHtml } from '../util'
+import { escapeHtml, summarizeInput } from '../util'
 import { hubs } from '../hub/registry'
 import type { InboxEvent, PendingApproval } from '../hub/types'
 
@@ -41,22 +41,7 @@ export function sessionNameOf(key: string): string {
   return key.slice(0, 18)
 }
 
-/** 审批输入摘要（推送通知/审批页）：按工具挑裁决所需的关键字段，其余给 JSON 截断。
- *  与 web 端 toolSummary 同族但取舍不同——审批场景 Bash 必须给 command 本体
- *  （description 是作者给的说明文字，不能作为裁决依据；web 卡片下方另有详情区才可用它打头）。 */
-export function summarizeInput(toolName: string, input: unknown): string {
-  const obj = (input ?? {}) as Record<string, unknown>
-  if (toolName === 'Bash') return String(obj.command ?? '').slice(0, 400)
-  if (toolName === 'Glob' || toolName === 'Grep') return String(obj.pattern ?? '')
-  if (toolName === 'WebSearch') return String(obj.query ?? '')
-  if (toolName === 'WebFetch') return String(obj.url ?? '')
-  if (toolName === 'Agent') return String(obj.description ?? obj.prompt ?? '').slice(0, 300)
-  if (obj.file_path) return String(obj.file_path)
-  if (obj.path) return String(obj.path)
-  if (obj.grantRoot) return String(obj.grantRoot)
-  const json = JSON.stringify(input ?? {})
-  return json.length > 300 ? json.slice(0, 300) + '…' : json
-}
+/** 审批确认页与推送体的摘要口径已上移到 util.ts 的 summarizeInput（唯一正本，hub 层也用它）。 */
 
 /**
  * webhook 审批确认页（GET /api/approval-page 的 HTML）。

@@ -1,16 +1,21 @@
 // 会话列表与管理路由：/api/sessions（GET/POST）+ archive/restore/archived/rename。
 // git 分支缓存也在这里（仅列表端点使用）。
 
-import { listTrash } from '../archive'
 import { keyFor, keyForNew } from '../backends/claude/backend'
 import { listSessions, sanitizePath, type SessionInfo } from '../backends/claude/discovery'
 import { keyForNew as codexKeyForNew, listSessions as listCodexSessions } from '../backends/codex/backend'
-import { codexRuntime } from '../backends/codex/runtime'
-import { portFor } from '../backends/port'
+import { claudePort } from '../backends/claude/port'
+import { codexPort } from '../backends/codex/port'
+import { portFor, type RouteResult } from '../backends/port'
 import { readGitBranch } from '../fsbrowse'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
 import { json, readJsonBody } from './http'
+
+/** RouteResult → HTTP 响应（状态码逐字保留） */
+function routeResultJson(r: RouteResult): Response {
+  return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
+}
 
 // ---------- /api/sessions 的 git 分支缓存 ----------
 // 列表被前端轮询，每个 cwd 的分支读取是 2-3 次同步文件 IO；分支变化不需要秒级新鲜度，30s TTL。
@@ -74,43 +79,20 @@ export async function handleSessionRoutes(req: Request, url: URL): Promise<Respo
   if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {
     const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
-    const r = await portFor(body.key).archive(body.key)
-    return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
+    return routeResultJson(await portFor(body.key).archive(body.key))
   }
   if (url.pathname === '/api/sessions/restore' && req.method === 'POST') {
     const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
-    const r = await portFor(body.key).restore(body.key)
-    return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
+    return routeResultJson(await portFor(body.key).restore(body.key))
   }
-  // 归档/回收站列表：codex archived + claude trash 合并
+  // 归档/回收站列表：两后端各自经 port 提供（codex archived + claude trash），
+  // 单后端失败在适配器内降级为空数组，互不拖垮
   if (url.pathname === '/api/sessions/archived' && req.method === 'GET') {
-    const claudeTrash = listTrash().map((t) => ({
-      key: t.key,
-      sessionId: t.sessionId,
-      slug: t.slug,
-      backend: 'claude' as const,
-      trashedAt: t.trashedAt,
-      sizeBytes: t.sizeBytes,
-    }))
-    let codexArchived: Record<string, unknown>[] = []
-    try {
-      const res = (await codexRuntime.rpcRequest('thread/list', { archived: true, limit: 100 })) as {
-        data?: Array<Record<string, unknown>>
-      }
-      codexArchived = (res.data ?? []).map((t) => ({
-        key: `x|${String(t.id)}`,
-        sessionId: String(t.id),
-        slug: 'codex',
-        backend: 'codex' as const,
-        title: typeof t.name === 'string' ? t.name : undefined,
-        lastPrompt: typeof t.preview === 'string' ? t.preview : undefined,
-        cwd: typeof t.cwd === 'string' ? t.cwd : undefined,
-        mtime: Number(t.updatedAt ?? t.createdAt ?? 0) * 1000,
-      }))
-    } catch (e) {
-      log.warn('[api] codex archived 列表失败:', e instanceof Error ? e.message : e)
-    }
+    const [codexArchived, claudeTrash] = await Promise.all([
+      codexPort.listArchived(),
+      claudePort.listArchived(),
+    ])
     return json({ entries: [...codexArchived, ...claudeTrash] })
   }
   if (url.pathname === '/api/sessions/rename' && req.method === 'POST') {
@@ -119,8 +101,7 @@ export async function handleSessionRoutes(req: Request, url: URL): Promise<Respo
     if (!body.key || !title) return json({ error: '缺少 key 或 title' }, { status: 400 })
     // codex 走官方 thread/name/set；claude 仅离线会话（transcript 追加 custom-title），
     // 两路实现见各自适配器
-    const r = await portFor(body.key).rename(body.key, title)
-    return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
+    return routeResultJson(await portFor(body.key).rename(body.key, title))
   }
   return undefined
 }

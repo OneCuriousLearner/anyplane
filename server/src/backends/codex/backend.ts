@@ -77,6 +77,15 @@ export async function listSessions(): Promise<SessionSummary[]> {
   return rows
 }
 
+/** 归档线程列表（/api/sessions/archived）：与活跃列表共用 toSummary 唯一映射，
+ *  避免 wire 形状变化时两处漂移。不走 listSessions 的 TTL 缓存——归档页低频。 */
+export async function listArchivedSessions(): Promise<SessionSummary[]> {
+  const res = (await codexRuntime.rpcRequest('thread/list', { archived: true, limit: 100 })) as {
+    data?: ThreadRow[]
+  }
+  return (res.data ?? []).map(toSummary)
+}
+
 export function readHistory(threadId: string): Promise<HistoryMessage[]> {
   return codexRuntime.readHistory(threadId)
 }

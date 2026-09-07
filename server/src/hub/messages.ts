@@ -74,9 +74,11 @@ export function handleClientMessage(
       const text = String(data.text ?? '')
       void (async () => {
         const port = portFor(hub.key)
-        const s = await port.ensureForSend(hub)
-        if (!s) return // 适配器已广播具体错误
         try {
+          // ensure 也必须罩在 try 内：fire-and-forget IIFE 里 await 抛在 catch 之外
+          // 会变 unhandled rejection——消息无声消失，客户端连错误卡都收不到
+          const s = await port.ensureForSend(hub)
+          if (!s) return // 适配器已广播具体错误
           // sendMode 直通：claude 侧 steer=priority 'now'（中断处理）、queue=服务端排队
           s.sendUserText(text, sendMode, attachments)
           // 后端特定的发送后跟踪（claude：/goal 出站跟踪 + 标题素材记账；codex 无）
