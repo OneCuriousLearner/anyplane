@@ -91,14 +91,26 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 2. **消除子线程轮询**：子代理产生的实时正文与思考增量通过父子事件链实时广播，废除前端 8s 轮询 `fetchCodexHistory` 机制，终态收尾拉取一次即可。
 3. **轻量化思考侧车**：实时流不再从侧车回读；侧车仅作为会话离线重载历史时的兜底补充。
 
-## 方向六：架构解耦与上帝文件重构（BackendPort 抽象，待排期）
+## 方向六：架构解耦与上帝文件重构（BackendPort 抽象）——✅ 已完成（2026-09-07）
 
 **定论**：目前 `index.ts`（1800+ 行）和 `Chat.tsx`（2000+ 行）承担了过多混合职责。双后端在 `index.ts` 中散落了 20 余处 `isCodexKey` 分支。此项为**纯架构解耦重构**，绝不与任何行为改动混杂，独立开分支推进。
 
-**实施步骤**：
-1. **服务端 BackendPort 契约**：在 `server/src/backends/` 定义真正的 `BackendPort` 抽象接口（`ensureSession`, `statusOf`, `sendControl`, `sendUserText` 等），消除 Hub 编排层的 `isCodexKey` 分支，为未来评估第三后端（如 OpenCode/Gemini）提供规范承重结构。
-2. **服务端 index.ts 拆分**：将路由分发拆为 `routes/`（REST API 路由）、`hub/`（WS 会话池生命周期）、`push/`（推送路由与通知）。
-3. **前端 Chat.tsx 拆解**：抽离 `useSessionSocket`（WS 连接与重连队列）、`useTaskBuckets`（后台任务分组管理），并将头部状态栏、输入框、详情抽屉抽为独立子组件。
+**已交付**（PR #15，commit 见 git log）：
+- **服务端 BackendPort 契约**：`backends/port.ts` 定义接口，`portFor(key)` 是编排层唯一的后端分支点；
+  状态/句柄/生命周期/消息/回滚/侧问/查询/handoff/审批/REST 管理全域收编进 claude/codex 两个适配器（S1.1–S1.7），
+  `isCodexKey` 从编排层清零（只剩 key 元数据读取）。装配经 `initBackendPorts` 显式注入 HubServices，适配器不反向 import 编排层。
+- **index.ts 拆分**：`hub/`（registry/callbacks/messages/lifecycle/status/broadcast）与 `push/` 物理切出（S2.1），
+  `routes/` REST 四文件切出（S2.2），index.ts 收口为纯装配层。
+- **Chat.tsx 拆解**：纯函数与斜杠拦截表下沉 lib（F1）→ 展示子组件 ChatHeader/Composer/DetailDrawer（F2）→
+  useTaskBuckets（F3）→ useTranscriptIngest（F4）→ useSessionSocket（F5）。
+- **merge 前审查修复轮**（medium 审查 8 条存活发现，1164e66）：ensureForSend 异常防护（挪进 try）、
+  `deliverApproval` 共享投递核（自动/手动裁决同路）、approval_auto 摘要口径唯一化（`summarizeInput` 上移 util.ts
+  成唯一正本，事件直接带 `detail`，前端删自建口径）、btw 双端共享信封、codex `threadRpc` 收敛与归档列表复用
+  `toSummary`、/clear 重键加后端守卫、e2e-push 恢复全路径断言并修复 HTTP 鉴权缺口。
+
+**验证**：`bun test` 410 全过（含新增 summarizeInput 口径单测）；e2e-ws / e2e-slash / e2e-approval / e2e-push
+真实 CLI 全链路绿；浏览器实测会话列表、回收站归档/恢复、发消息、codex btw 均正常。
+零行为改动红线守住（审查修复轮的每项都已在上方列明）。未来评估第三后端（OpenCode/Gemini）时以 BackendPort 为承重结构。
 
 ## 方向七：长会话虚拟列表与初始定位重构（待排期）
 
