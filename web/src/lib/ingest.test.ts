@@ -283,3 +283,45 @@ describe('pairToolResultPartialIn append 增量模式', () => {
     expect(toolBlocksOf(fin.msgs)[0]).toMatchObject({ resultText: 'final-full', pending: false })
   })
 })
+
+describe('mergeTerminalHistoryState（codex 桶终态拉取的锚点合并）', () => {
+  const txt = (id: string, t: string): HistoryMessage => ({ uuid: id, role: 'assistant', blocks: [{ kind: 'text', text: t }] })
+  const live = (id: string, t: string) => ({ id, role: 'assistant' as const, blocks: [{ kind: 'text' as const, text: t }] })
+
+  test('锚点前缺失项按历史序前插，已有 live 项不重复', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    // live 段覆盖 c,d（中途接入）；历史全序 a,b,c,d → 补 a,b 在前
+    const r = mergeTerminalHistoryState([live('c', 'C'), live('d', 'D')], [txt('a', 'A'), txt('b', 'B'), txt('c', 'C'), txt('d', 'D')])
+    expect(r?.state.msgs.map((m) => m.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(r?.state.msgs.map((m) => (m.blocks[0] as { text: string }).text)).toEqual(['A', 'B', 'C', 'D'])
+  })
+
+  test('live 段含历史没有的项（未持久化的工具卡）时保留在原位', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    const toolMsg = { id: 'tool-1', role: 'assistant' as const, blocks: [{ kind: 'tool' as const, id: 'c1', name: 'Bash', pending: true }] }
+    // 历史只有文本 a,b；live 段是 [b, 工具卡]（b 为锚）
+    const r = mergeTerminalHistoryState([live('b', 'B'), toolMsg], [txt('a', 'A'), txt('b', 'B')])
+    expect(r?.state.msgs.map((m) => m.id)).toEqual(['a', 'b', 'tool-1'])
+    expect(r?.state.toolIdx.get('c1')).toBeDefined()
+  })
+
+  test('锚点之后的洞（注册间隙丢失）追加在尾部', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    // live 段 [a, d]（b 锚后缺失——理论上的注册间隙洞）→ b 追加在 d 之后
+    const r = mergeTerminalHistoryState([live('a', 'A'), live('d', 'D')], [txt('a', 'A'), txt('b', 'B'), txt('d', 'D')])
+    expect(r?.state.msgs.map((m) => m.id)).toEqual(['a', 'd', 'b'])
+  })
+
+  test('无交集时历史整体前插；桶为空等价全量重建；无新增返回 null', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    // live 段全是历史没有的内容（纯工具 turn）
+    const noIntersect = mergeTerminalHistoryState([live('x-live', 'X')], [txt('a', 'A'), txt('b', 'B')])
+    expect(noIntersect?.state.msgs.map((m) => m.id)).toEqual(['a', 'b', 'x-live'])
+    // 桶为空
+    const empty = mergeTerminalHistoryState([], [txt('a', 'A')])
+    expect(empty?.state.msgs.map((m) => m.id)).toEqual(['a'])
+    // 无新增
+    expect(mergeTerminalHistoryState([live('a', 'A')], [txt('a', 'A')])).toBeNull()
+    expect(mergeTerminalHistoryState([live('a', 'A')], [])).toBeNull()
+  })
+})

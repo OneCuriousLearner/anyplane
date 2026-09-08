@@ -85,6 +85,13 @@ paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义
   reasoning 侧车是 AnyPlane 自存（`~/.anyplane/reasoning/`）不受影响。
 - "超大 rollout 读取慢"的原动机随之消解一半：sqlite 时代历史读取本就该走
   `thread/turns/list` + `thread/items/list` 分页（方向四主目标不变，理由更充分）。
+- **⚠ 实测发现（0.148，master 上也存在）**：legacy `thread/read includeTurns` 返回的 turns
+  里**没有 commandExecution / collabAgentToolCall / reasoning** 三类 item（userMessage /
+  agentMessage / subAgentActivity / fileChange 正常）——codex 会话刷新后工具卡凭空消失，
+  子代理桶的终态拉取也缺工具对（thinking 有侧车兜底）。rollout 时代的老线程经当前二进制读取同样缺，
+  说明是重建/持久化路径而非单线程数据问题。0.153 源码中 `thread/items/list` 已对 sqlite 线程实现
+  （rollout 线程报 Unsupported）——方向四的 paginated 迁移因此不仅是 revert 体验优化，
+  更是**历史完整性的修复路径**；升级 PR 需顺手验证 0.153 的 legacy 读取是否也缺。
 
 **实施步骤**：
 1. **新线程创建**：`thread/start` 显式传 `history_mode: "paginated"`。

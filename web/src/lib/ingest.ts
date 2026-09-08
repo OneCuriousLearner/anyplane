@@ -247,3 +247,36 @@ export function flushStrayResults(state: IngestState): void {
   }
   state.pending.clear()
 }
+
+/**
+ * codex 子代理桶的终态拉取合并（useTaskBuckets 调用）：历史拉取是权威全序，
+ * 但上游 legacy thread/read 不返回 commandExecution/collabAgentToolCall 等工具项
+ * （0.148 实测），全量重建会把 live 转发来的工具卡抹掉——所以按锚点合并：
+ * 「第一条同时存在于两处的消息」为锚，锚前缺失项按历史序前插，锚后缺失项
+ * （注册间隙丢的洞）追加；无交集时历史整体前插（桶空等价全量重建）。
+ * 返回重建后的 IngestState 与本次拉取的全部 uuid（调用方据此刷新去重集）；
+ * 无新增返回 null。
+ */
+export function mergeTerminalHistoryState(
+  base: ChatMsg[],
+  fetched: HistoryMessage[],
+): { state: IngestState; fetchedUuids: Set<string> } | null {
+  if (fetched.length === 0) return null
+  const liveIds = new Set(base.map((m) => m.id))
+  const anchorPos = fetched.findIndex((h) => h.uuid && liveIds.has(h.uuid))
+  const missing = (h: HistoryMessage) => !h.uuid || !liveIds.has(h.uuid)
+  const prefixSrc = (anchorPos < 0 ? fetched : fetched.slice(0, anchorPos)).filter(missing)
+  const suffixSrc = anchorPos < 0 ? [] : fetched.slice(anchorPos + 1).filter(missing)
+  if (prefixSrc.length === 0 && suffixSrc.length === 0) return null
+  const toMsgs = (list: HistoryMessage[]): ChatMsg[] => {
+    const st = createIngestState()
+    for (const h of list) appendHistoryMsg(st, h)
+    return st.msgs
+  }
+  const st = createIngestState()
+  for (const m of [...toMsgs(prefixSrc), ...base, ...toMsgs(suffixSrc)]) pushIngestMsg(st, m)
+  return {
+    state: st,
+    fetchedUuids: new Set(fetched.map((h) => h.uuid).filter((u): u is string => Boolean(u))),
+  }
+}

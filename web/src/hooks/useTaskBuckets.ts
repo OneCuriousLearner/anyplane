@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchCodexHistory, type HistoryMessage, type HistoryResponse } from '../lib/api'
 import type { ChatMsg } from '../lib/blocks'
 import { cliSidechainToHistory } from '../lib/chatText'
-import { appendHistoryMsg, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
+import { appendHistoryMsg, mergeTerminalHistoryState, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import type { SessionState } from '../lib/ws'
 import type { TaskFeed } from '../components/TasksPanel'
 
@@ -115,11 +115,12 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     pubTasks()
   }
 
-  /** codex 子代理转录终态兜底拉取：live 转发（父子事件链）覆盖运行期，但中途接入的客户端
-   *  可能缺早期 item（cliRing 挤掉/注册前事件跳过）——终态经 thread/read 全量拉一次补齐。
-   *  拉取结果是完整权威历史，**全量重建**桶转录而非 append（append 会把早期 item 追加到
-   *  live 已覆盖的尾部之后，时序打乱）；uuid 去重对重建后迟到的 live 消息仍然有效。
-   *  桶若在 30s 宽限期内已被驱逐（网络慢的 fetch 晚于驱逐滴答），直接丢弃结果——
+  /** codex 子代理转录终态兜底拉取：live 转发（父子事件链）只覆盖注册点之后的 item，
+   *  中途接入的客户端缺早期转录——终态经 thread/read 拉全量补齐。
+   *  **锚点合并而非全量重建**（实现见 lib/ingest.mergeTerminalHistoryState）：上游 legacy
+   *  thread/read 不返回 commandExecution/collabAgentToolCall 等工具项（0.148 实测，
+   *  见 ROADMAP 方向四前置二），重建会把 live 转发来的工具卡抹掉。
+   *  桶在 30s 宽限期内已被驱逐（慢 fetch 晚于驱逐滴答）时丢弃结果——
    *  taskBucket() 重建会产出 status:'running' 且无 evictAfter 的僵尸卡，永不驱逐。 */
   const maybeFetchCodexTranscript = (b: TaskBucket) => {
     if (!isCodex || !b.agentId || b.transcriptFetched) return
@@ -127,12 +128,14 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     fetchCodexHistory(b.agentId)
       .then((resp) => {
         if (taskMapRef.current.get(b.toolUseId) !== b) return // 已驱逐，不复活
-        b.messages = []
-        b.toolIdx = new Map()
-        b.pending = new Map()
-        b.seen = new Set()
-        for (const h of resp.messages) appendTaskMsg(b.toolUseId, h)
-        pubTasks()
+        const r = mergeTerminalHistoryState(b.messages, resp.messages)
+        if (r) {
+          b.messages = r.state.msgs
+          b.toolIdx = r.state.toolIdx
+          b.pending = r.state.pending
+          b.seen = new Set([...r.state.msgs.map((m) => m.id), ...r.fetchedUuids])
+          pubTasks()
+        }
       })
       .catch(() => {})
   }
