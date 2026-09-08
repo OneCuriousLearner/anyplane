@@ -68,6 +68,31 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 但 `thread/revert` 仅支持 `history_mode: "paginated"` 的线程，而上游默认是 `legacy`，
 因此必须系统性迁移历史读取链路。
 
+**前置一：本机 codex 0.148.0 已落后（npm latest 0.153.4），升级单独 PR 处理（等待排期：
+定 PR #17 合入后从 master 另开 `chore/upgrade-codex` 分支）**。
+步骤：升级 CLI → `check-codex-schema.ts` 对比基线 → 刷新 `codex-schema-baseline/` →
+回归方向五 e2e（`e2e-codex-delta.ts` 探针 + `e2e-codex-streaming.ts` 断言）→ `bun test`。
+已预查 0.153.x 源码（本地快照含 rust-v0.153.4 tag）：方向五依赖的 delta 通知 wire 名全部仍在
+（`item/agentMessage/delta`、`item/commandExecution/outputDelta`、`item/mcpToolCall/progress` 等）。
+paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义开发再返工。
+
+**前置二：上游线程持久化已切 sqlite（本机已生效）**。
+`~/.codex/sessions/` 的 rollout jsonl 停止新增（本机最新一个 2026-08-29），改存
+`~/.codex/*.sqlite`（state_5/logs_2/goals_1 等，上游 `codex-rs/state/` 模块）。影响面：
+- `hydrateContextUsage` 的 rollout 尾部回扫**静默失效**——resume 后环形 UI 回退为"首个新 turn 才显示"
+  （代码按"找不到即隐藏"设计，优雅降级不报错）。迁移时换水合数据源（`thread/turns/list` 或接受等首个 turn）。
+- 历史读取走 `thread/read` RPC 不受影响（app-server 自读 sqlite）；归档/删除走 RPC 不受影响；
+  reasoning 侧车是 AnyPlane 自存（`~/.anyplane/reasoning/`）不受影响。
+- "超大 rollout 读取慢"的原动机随之消解一半：sqlite 时代历史读取本就该走
+  `thread/turns/list` + `thread/items/list` 分页（方向四主目标不变，理由更充分）。
+- **⚠ 实测发现（0.148，master 上也存在）**：legacy `thread/read includeTurns` 返回的 turns
+  里**没有 commandExecution / collabAgentToolCall / reasoning** 三类 item（userMessage /
+  agentMessage / subAgentActivity / fileChange 正常）——codex 会话刷新后工具卡凭空消失，
+  子代理桶的终态拉取也缺工具对（thinking 有侧车兜底）。rollout 时代的老线程经当前二进制读取同样缺，
+  说明是重建/持久化路径而非单线程数据问题。0.153 源码中 `thread/items/list` 已对 sqlite 线程实现
+  （rollout 线程报 Unsupported）——方向四的 paginated 迁移因此不仅是 revert 体验优化，
+  更是**历史完整性的修复路径**；升级 PR 需顺手验证 0.153 的 legacy 读取是否也缺。
+
 **实施步骤**：
 1. **新线程创建**：`thread/start` 显式传 `history_mode: "paginated"`。
 2. **历史读取分页重构**：`readHistory` 从已 deprecated 的 `thread/read includeTurns: true`
@@ -76,20 +101,42 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
    回滚操作也按 mode 选择：paginated 线程走 `thread/revert`，legacy 线程降级走 `thread/fork`。
 4. **回滚时序**：`thread/revert` 原地生效后，前端清理当前 turn 之后的消息并刷新状态，无需换 key 导航。
 
-## 方向五：Codex 实时流与思考增量对齐（Delta 通知接入，待排期）
+## 方向五：Codex 实时流与思考增量对齐（Delta 通知接入）——✅ 已完成（2026-09-07）
 
 **定论**：当前 Codex 在 AnyPlane 中大多等 `item/completed` 整块到达后才显示，思考过程依赖 `~/.anyplane/reasoning/` 侧车落盘，子代理转录需前端 8 秒定时轮询。这完全可以通过接入 Codex app-server 原生的 Delta 通知全面消灭。
 
-**真源能力**：
-- `item/agentMessage/delta`：正文实时增量流式输出
-- `item/reasoning/textDelta` 与 `summaryTextDelta`：思考过程实时增量流式输出
-- `item/commandExecution/outputDelta` / `terminalInteraction`：命令执行的终端增量输出
-- `item/mcpToolCall/progress`：MCP 工具调用的执行进度通知
+**探针实测（codex 0.148.0，本机默认模型 deepseek-v4-flash）**——三项推翻旧结论的实测：
+- `item/agentMessage/delta`、`item/reasoning/textDelta` 真实到达且量大（单 turn 思考 delta 8000+）；`summaryTextDelta` 该模型不发。
+- `item/commandExecution/outputDelta` 逐秒实时到达（命令真正跑起来时）；`terminalInteraction`、`item/mcpToolCall/progress` 按 schema 接入。
+- **子线程事件直接推到父连接**（0.148 实测，含嵌套孙线程、thread/resume 之后同样成立）——AGENTS.md 旧结论"子代理转录不被父通知流转发"已过时；无需 resume 子线程，demux 路由转发即可。
 
-**实施步骤**：
-1. **Runtime 订阅流分发**：在 `runtime.ts` 的 `demux` 中，将上述通知通过 `translate.ts` 翻译为统一的 `stream_event` 增量形状下发。
-2. **消除子线程轮询**：子代理产生的实时正文与思考增量通过父子事件链实时广播，废除前端 8s 轮询 `fetchCodexHistory` 机制，终态收尾拉取一次即可。
-3. **轻量化思考侧车**：实时流不再从侧车回读；侧车仅作为会话离线重载历史时的兜底补充。
+**已交付**（PR 见 git log）：
+- 服务端：`item/reasoning/summaryPartAdded`（摘要分段补 `\n\n`，仅见过 summary delta 时）；
+  `outputDelta`/`terminalInteraction` 尾部追加、`mcpToolCall/progress` 取最新，300ms 追尾合并为
+  **partial tool_result**（`partial:true` 标记——前端更新卡片文本但保持运行态；cliRing 不占序号，
+  重连由终态 `aggregatedOutput` 兜底；缓冲尾留 32KB）。
+- collab 父子事件链转发：`subAgentActivity started`/`collabAgentToolCall` End 注册子线程路由，
+  子线程 `item/completed` 翻译为 claude sidechain 形状（`parent_tool_use_id`=子线程 id，uuid 与
+  历史同口径）进侧栏桶；孙代理 `task_started` 携带 `parent_tool_use_id`+`spawn_depth` 血缘；
+  子线程 reasoning 同写侧车（侧车条目新增 `itemId` 锚点，live/历史去重不叠加，顺带修复主线
+  思考块重连补发可能重复的隐患）。子线程 delta/tokenUsage/turn 级事件不进桶（桶无草稿概念）。
+- 前端：`pairToolResultPartialIn`（保 pending、过期丢弃、不进乱序缓冲）；工具卡 streaming
+  时强制展开（Thinking 同款行为）；`taskStarted` 读取 `parent_tool_use_id`。
+- 验证：`bun test` 437 全过（新增 27 项）；`server/scripts/e2e-codex-streaming.ts` 真实
+  server+模型全链路（A 正文/思考增量先于 result；B partial 先于终态且终态完整、append 增量标记；
+  C 侧链转录先于 task_notification）；浏览器实测。
+- 侧车维持原角色（离线历史兜底，live 从不读它）；**终态拉取无条件保留一次**（审查发现：
+  live 转发使"桶非空即跳过"守卫常真，中途接入的客户端会永久缺早期 item——uuid 去重已幂等，
+  代价仅终态一次 RPC）。
+- **medium 审查修复轮**（8 条存活发现全修）：终态拉取改**全量重建**（append 会把早期 item 追加到
+  live 覆盖段之后打乱时序）且桶已驱逐时丢弃结果（防重建出永不驱逐的僵尸 running 卡）；partial 改
+  **append 增量**下发（全量重发在 32KB 缓冲 × 300ms 窗口下放大约 100 倍下行，远程/蜂窝场景不可接受；
+  MCP 进度保持替换语义）；ToolCard 开合改派生值（用户点过以用户为准，不再被 streaming 翻转顶掉）；
+  子线程注册收编 `registerSpawnedChildren` 单份实现（路由地基防两处拷贝漂移）；子线程未知 item 类型
+  warn 留痕（对齐宽松解析红线）；e2e 脚本收编 `e2e-lib`（connect 支持 ANYPLANE_TOKEN——此前 lib 消费者
+  对带 token 服务端全灭；新增 spawnAppServer 共享 stdio harness，消除与 e2e-codex.ts 的静默分叉）；
+  e2e 总超时正确退 1（原先空断言集超时退 0，挂死会被 CI 当绿）。
+- 已知边界：attach 中途接入运行中的 collab 子线程，注册前事件跳过（warn 留痕），终态拉取兜底。
 
 ## 方向六：架构解耦与上帝文件重构（BackendPort 抽象）——✅ 已完成（2026-09-07）
 

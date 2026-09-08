@@ -76,6 +76,11 @@ function assistantFinal(id: string, block: Record<string, unknown>): CliMessage[
 
 /** 每个线程一个：维护 itemId → 合成 message id / 块序号的流式状态 */
 export class ThreadTranslator {
+  /** 见过 summaryTextDelta 的 reasoning item：summaryPartAdded 据此插入段落分隔
+   * （供应商流式摘要分多段时，对齐 completed 项 reasoningText 的 join('\n\n') 口径；
+   *  只发 textDelta（raw content）的供应商不会收到 summaryPartAdded，天然互斥） */
+  private summaryDeltaItems = new Set<string>()
+
   /** item/started：agentMessage 开头流（message_start + block_start）；工具项发 tool_use */
   itemStarted(item: ThreadItem): CliMessage[] {
     if (!item.id || !item.type) return []
@@ -185,10 +190,21 @@ export class ThreadTranslator {
       ]
     }
     if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
+      if (method === 'item/reasoning/summaryTextDelta') this.summaryDeltaItems.add(itemId)
       return [
         {
           type: 'stream_event',
           event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: String(params.delta ?? '') } },
+          message: { id: itemId },
+        },
+      ]
+    }
+    // 摘要新段落开始：补段落分隔，对齐 completed 项 summary[] join('\n\n') 的成稿口径
+    if (method === 'item/reasoning/summaryPartAdded' && this.summaryDeltaItems.has(itemId)) {
+      return [
+        {
+          type: 'stream_event',
+          event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '\n\n' } },
           message: { id: itemId },
         },
       ]
@@ -227,12 +243,119 @@ export class ThreadTranslator {
         return { type: 'tool_use', id: item.id, name: item.type ?? '?', input: {} }
     }
   }
+
+  /**
+   * 子线程（collab 子代理）item/completed → claude sidechain 形状（parent_tool_use_id = 子线程 id）。
+   * 前端桶（useTaskBuckets.appendSidechain）与历史终态拉取共用 uuid 去重：
+   * 与 itemsToHistory 同口径（文本/思考 uuid=item.id，工具结果 uuid=item.id-r；
+   * 每轮首条 userMessage 以 turnId 为 uuid——history 的 rewindable 标记同键，见 opts.firstUserTurnId）。
+   * 孙代理的 collab 工具卡以接收方线程 id 出块——前端嵌套血缘按各桶转录的工具块归属反推。
+   * delta 不进桶：桶转录按 item 粒度实时已足够（思考/正文 item 完成即达，秒级）。
+   */
+  childItemMsgs(childThreadId: string, item: ThreadItem, opts?: { firstUserTurnId?: string }): CliMessage[] {
+    if (!item.id || !item.type) return []
+    const side = (msg: CliMessage): CliMessage => ({ parent_tool_use_id: childThreadId, ...msg })
+    switch (item.type) {
+      case 'userMessage': {
+        const text = userInputBlocks(item.content)
+          .filter((b) => b.kind === 'text')
+          .map((b) => b.text ?? '')
+          .join('\n')
+          .trim()
+        return text
+          ? [
+              side({
+                type: 'user',
+                uuid: opts?.firstUserTurnId ?? item.id,
+                message: { role: 'user', content: [{ type: 'text', text }] },
+              }),
+            ]
+          : []
+      }
+      case 'agentMessage':
+      case 'plan': {
+        const text = (item.text ?? '').trim()
+        return text
+          ? [side({ type: 'assistant', uuid: item.id, message: { role: 'assistant', content: [{ type: 'text', text: item.text }] } })]
+          : []
+      }
+      case 'reasoning': {
+        const text = reasoningText(item.summary, item.content)
+        return text
+          ? [side({ type: 'assistant', uuid: item.id, message: { role: 'assistant', content: [{ type: 'thinking', thinking: text }] } })]
+          : []
+      }
+      case 'commandExecution':
+      case 'fileChange':
+      case 'mcpToolCall':
+      case 'webSearch':
+      case 'dynamicToolCall':
+      case 'imageGeneration':
+      case 'sleep': {
+        const r = toolResultFromItem(item)
+        return [
+          side({ type: 'assistant', uuid: item.id, message: { role: 'assistant', content: [this.toolUseBlock(item)] } }),
+          side({
+            type: 'user',
+            uuid: `${item.id}-r`,
+            message: {
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: item.id, content: r.text, is_error: r.isError }],
+            },
+          }),
+        ]
+      }
+      case 'collabAgentToolCall': {
+        const receiver = (item.receiverThreadIds ?? []).filter(Boolean)[0]
+        const blockId = receiver ?? item.id
+        const toolUse = { ...this.toolUseBlock(item), id: blockId }
+        const r = collabToolResultFromItem(item, blockId)
+        return [
+          side({ type: 'assistant', uuid: item.id, message: { role: 'assistant', content: [toolUse] } }),
+          side({
+            type: 'user',
+            uuid: `${item.id}-r`,
+            message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: blockId, content: r.text, is_error: r.isError }] },
+          }),
+        ]
+      }
+      // subAgentActivity 是生命周期事件（runtime 另行翻译为 task_*），不进桶转录
+      case 'subAgentActivity':
+      // hookPrompt/imageView/compact/review 等在主线是系统提示，桶转录里有意不进
+      case 'hookPrompt':
+      case 'imageView':
+      case 'contextCompaction':
+      case 'enteredReviewMode':
+      case 'exitedReviewMode':
+        return []
+      default:
+        // 未知 type 留痕后跳过（宽松解析红线：透传胜过丢弃，静默丢弃曾丢过五种类型）；
+        // 主线（toolUseBlock）与历史（itemsToHistory）的 default 同样 warn
+        log.warn('[codex] 子线程转录出现未识别 ThreadItem 类型，已跳过', { itemType: item.type })
+        return []
+    }
+  }
 }
 
 function toolResultMsg(toolUseId: string, text: string, isError: boolean): CliMessage {
   return {
     type: 'user',
     message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text, is_error: isError }] },
+  }
+}
+
+/** 工具执行的流式部分结果（commandExecution/outputDelta、mcpToolCall/progress）：
+ *  与终态 tool_result 同形 + `partial: true` 标记——前端更新卡片文本但保持运行态，
+ *  服务端 cliRing 据此不占序号（高频增量，重连由终态结果兜底）。
+ *  `append: true`（命令输出）：文本是本窗口的增量，前端**追加**到卡片现有部分文本上——
+ *  全量重发会让 300ms 窗口 × 32KB 缓冲在长跑命令下放大约 100 倍下行流量；
+ *  缺省（MCP 进度）是替换语义（进度是状态串，不是流）。 */
+export function partialToolResultMsg(toolUseId: string, text: string, append?: boolean): CliMessage {
+  return {
+    type: 'user',
+    partial: true,
+    ...(append ? { append: true } : {}),
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text, is_error: false }] },
   }
 }
 
@@ -301,7 +424,8 @@ function collabTerminalStatus(status?: string): 'completed' | 'failed' | 'stoppe
   }
 }
 
-function collabToolResultMsg(item: ThreadItem): CliMessage {
+/** collab 工具项的结果文本与失败标记（主线配对卡与子线程桶卡共用，blockId 为配对键） */
+function collabToolResultFromItem(item: ThreadItem, blockId: string): { text: string; isError: boolean } {
   const isError = item.status === 'failed' || item.status === 'interrupted'
   const parts: string[] = [`${String(item.tool ?? '?')} → ${String(item.status ?? '?')}`]
   const receivers = (item.receiverThreadIds ?? []).filter(Boolean)
@@ -310,7 +434,12 @@ function collabToolResultMsg(item: ThreadItem): CliMessage {
     const msg = typeof st?.message === 'string' && st.message.trim() ? `: ${st.message.slice(0, 120)}` : ''
     parts.push(`${tid.slice(0, 8)} ${String(st?.status ?? '?')}${msg}`)
   }
-  return toolResultMsg(item.id!, parts.join('\n'), isError)
+  return { text: parts.join('\n'), isError }
+}
+
+function collabToolResultMsg(item: ThreadItem): CliMessage {
+  const r = collabToolResultFromItem(item, item.id!)
+  return toolResultMsg(item.id!, r.text, r.isError)
 }
 
 /**
@@ -320,8 +449,9 @@ function collabToolResultMsg(item: ThreadItem): CliMessage {
  * - spawnAgent 失败/打断：无子线程 id，用 call id 建一张即终态的卡（否则失败完全不可见）
  * - 所有 End 的 agentsStates：携带各子代理终态（wait End 的报告正文在此），逐个发 task_notification；
  *   与 subAgentActivity 的终态可能重复，前端 markTerminal 幂等（仅刷新驱逐倒计时）
+ * 导出给 runtime 孙代理生命周期复用（子线程内的 collab End 同样要建桶）。
  */
-function collabAgentMsgs(item: ThreadItem): CliMessage[] {
+export function collabAgentMsgs(item: ThreadItem): CliMessage[] {
   const out: CliMessage[] = []
   const receivers = (item.receiverThreadIds ?? []).filter(Boolean)
   if (item.tool === 'spawnAgent') {
@@ -362,8 +492,9 @@ function collabAgentMsgs(item: ThreadItem): CliMessage[] {
 /**
  * subAgentActivity → 生命周期事件。只以 item/completed 送达（event_mapping.rs 实测），
  * kind=started/interacted/interrupted/completed 各占一条；interacted 无展示语义，忽略。
+ * 导出给 runtime 孙代理生命周期复用。
  */
-function subAgentActivityMsgs(item: ThreadItem): CliMessage[] {
+export function subAgentActivityMsgs(item: ThreadItem): CliMessage[] {
   const tid = item.agentThreadId
   if (!tid) return []
   switch (item.kind) {

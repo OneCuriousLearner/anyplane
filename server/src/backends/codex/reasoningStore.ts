@@ -13,6 +13,9 @@ export interface ReasoningEntry {
   ts: number
   turnId: string | null
   text: string
+  /** reasoning item id（0.148+ 写入）：历史回插时作 uuid——与 live 流 committed 思考块同 id，
+   *  重连补发/终态拉取经 seen 去重不会叠出第二份；缺省（旧数据）回退 rs-<ts>-<i> 合成 id */
+  itemId?: string
 }
 
 function dir(): string {

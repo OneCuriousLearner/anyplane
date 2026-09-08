@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { toolDetail, toolSummary, type ToolBlock } from '../lib/blocks'
 
-/** 工具调用卡片：一行 trace（图标+名称+摘要+结果状态），点击展开参数与结果 */
-export function ToolCard(props: { tool: ToolBlock; className?: string; embedded?: boolean }) {
+/** 工具调用卡片：一行 trace（图标+名称+摘要+结果状态），点击展开参数与结果。
+ *  streaming（codex 命令输出部分结果流入中）时默认展开；开合是派生值而非 effect——
+ *  用户点过就以用户为准（流式中收起不被顶开，终态时展开不被收回），从未点过则跟随 streaming。 */
+export function ToolCard(props: { tool: ToolBlock; streaming?: boolean; className?: string; embedded?: boolean }) {
   const { tool } = props
-  const [open, setOpen] = useState(false)
+  const [userChoice, setUserChoice] = useState<boolean | null>(null)
+  const open = userChoice ?? Boolean(props.streaming)
   const summary = toolSummary(tool.name, tool.input)
 
   return (
@@ -14,7 +17,7 @@ export function ToolCard(props: { tool: ToolBlock; className?: string; embedded?
       <button
         type="button"
         className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[12px] transition-colors hover:bg-surface2"
-        onClick={() => setOpen(!open)}
+        onClick={() => setUserChoice(!open)}
       >
         <span className="text-faint">{open ? '▾' : '▸'}</span>
         <span className="shrink-0 font-semibold text-ink">{tool.name}</span>

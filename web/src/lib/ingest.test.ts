@@ -236,3 +236,92 @@ describe('live/补发去重键', () => {
     expect(hitsSeen(seen, keys)).toBe(true)
   })
 })
+
+describe('pairToolResultPartialIn（codex 流式部分结果）', () => {
+  test('部分结果更新文本但保持 pending 运行态', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    pushIngestMsg(s, { id: 'm1', role: 'assistant', blocks: [{ kind: 'tool', id: 't1', name: 'Bash', pending: true }] })
+    const r = pairToolResultPartialIn(s.msgs, s.toolIdx, 't1', 'tick-1\n')
+    expect(r.paired).toBe(true)
+    const [b] = toolBlocksOf(r.msgs)
+    expect(b).toMatchObject({ id: 't1', resultText: 'tick-1\n', pending: true })
+  })
+
+  test('终态结果落地后部分结果视为过期丢弃', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    pushIngestMsg(s, { id: 'm1', role: 'assistant', blocks: [{ kind: 'tool', id: 't1', name: 'Bash', pending: true }] })
+    const fin = pairToolResultIn(s.msgs, s.toolIdx, 't1', 'final', false)
+    const r = pairToolResultPartialIn(fin.msgs, s.toolIdx, 't1', 'stale-partial')
+    expect(r.paired).toBe(false)
+    expect(toolBlocksOf(r.msgs)[0].resultText).toBe('final')
+  })
+
+  test('工具块未落地时部分结果直接丢弃（不进乱序缓冲）', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    const r = pairToolResultPartialIn(s.msgs, s.toolIdx, 'ghost', 'x')
+    expect(r.paired).toBe(false)
+    expect(s.pending.size).toBe(0)
+  })
+})
+
+describe('pairToolResultPartialIn append 增量模式', () => {
+  test('append=true 追加到现有部分结果；缺省替换；终态照常整体覆盖', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    pushIngestMsg(s, { id: 'm1', role: 'assistant', blocks: [{ kind: 'tool', id: 't1', name: 'Bash', pending: true }] })
+    const r1 = pairToolResultPartialIn(s.msgs, s.toolIdx, 't1', 'tick-1\n', true)
+    const r2 = pairToolResultPartialIn(r1.msgs, s.toolIdx, 't1', 'tick-2\n', true)
+    expect(toolBlocksOf(r2.msgs)[0]).toMatchObject({ resultText: 'tick-1\ntick-2\n', pending: true })
+    // 替换语义（进度）：整体覆盖
+    const r3 = pairToolResultPartialIn(r2.msgs, s.toolIdx, 't1', '最新进度', false)
+    expect(toolBlocksOf(r3.msgs)[0].resultText).toBe('最新进度')
+    // 终态结果整体覆盖部分累积
+    const fin = pairToolResultIn(r3.msgs, s.toolIdx, 't1', 'final-full', false)
+    expect(toolBlocksOf(fin.msgs)[0]).toMatchObject({ resultText: 'final-full', pending: false })
+  })
+})
+
+describe('mergeTerminalHistoryState（codex 桶终态拉取的锚点合并）', () => {
+  const txt = (id: string, t: string): HistoryMessage => ({ uuid: id, role: 'assistant', blocks: [{ kind: 'text', text: t }] })
+  const live = (id: string, t: string) => ({ id, role: 'assistant' as const, blocks: [{ kind: 'text' as const, text: t }] })
+
+  test('锚点前缺失项按历史序前插，已有 live 项不重复', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    // live 段覆盖 c,d（中途接入）；历史全序 a,b,c,d → 补 a,b 在前
+    const r = mergeTerminalHistoryState([live('c', 'C'), live('d', 'D')], [txt('a', 'A'), txt('b', 'B'), txt('c', 'C'), txt('d', 'D')])
+    expect(r?.state.msgs.map((m) => m.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(r?.state.msgs.map((m) => (m.blocks[0] as { text: string }).text)).toEqual(['A', 'B', 'C', 'D'])
+  })
+
+  test('live 段含历史没有的项（未持久化的工具卡）时保留在原位', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    const toolMsg = { id: 'tool-1', role: 'assistant' as const, blocks: [{ kind: 'tool' as const, id: 'c1', name: 'Bash', pending: true }] }
+    // 历史只有文本 a,b；live 段是 [b, 工具卡]（b 为锚）
+    const r = mergeTerminalHistoryState([live('b', 'B'), toolMsg], [txt('a', 'A'), txt('b', 'B')])
+    expect(r?.state.msgs.map((m) => m.id)).toEqual(['a', 'b', 'tool-1'])
+    expect(r?.state.toolIdx.get('c1')).toBeDefined()
+  })
+
+  test('锚点之后的洞（注册间隙丢失）追加在尾部', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    // live 段 [a, d]（b 锚后缺失——理论上的注册间隙洞）→ b 追加在 d 之后
+    const r = mergeTerminalHistoryState([live('a', 'A'), live('d', 'D')], [txt('a', 'A'), txt('b', 'B'), txt('d', 'D')])
+    expect(r?.state.msgs.map((m) => m.id)).toEqual(['a', 'd', 'b'])
+  })
+
+  test('无交集时历史整体前插；桶为空等价全量重建；无新增返回 null', async () => {
+    const { mergeTerminalHistoryState } = await import('./ingest')
+    // live 段全是历史没有的内容（纯工具 turn）
+    const noIntersect = mergeTerminalHistoryState([live('x-live', 'X')], [txt('a', 'A'), txt('b', 'B')])
+    expect(noIntersect?.state.msgs.map((m) => m.id)).toEqual(['a', 'b', 'x-live'])
+    // 桶为空
+    const empty = mergeTerminalHistoryState([], [txt('a', 'A')])
+    expect(empty?.state.msgs.map((m) => m.id)).toEqual(['a'])
+    // 无新增
+    expect(mergeTerminalHistoryState([live('a', 'A')], [txt('a', 'A')])).toBeNull()
+    expect(mergeTerminalHistoryState([live('a', 'A')], [])).toBeNull()
+  })
+})

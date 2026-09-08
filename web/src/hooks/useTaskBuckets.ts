@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchCodexHistory, type HistoryMessage, type HistoryResponse } from '../lib/api'
 import type { ChatMsg } from '../lib/blocks'
 import { cliSidechainToHistory } from '../lib/chatText'
-import { appendHistoryMsg, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
+import { appendHistoryMsg, mergeTerminalHistoryState, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import type { SessionState } from '../lib/ws'
 import type { TaskFeed } from '../components/TasksPanel'
 
@@ -115,14 +115,27 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     pubTasks()
   }
 
-  /** codex 子代理转录懒取：子线程不被父通知流转发，终态后经 thread/read 拉回填充 */
+  /** codex 子代理转录终态兜底拉取：live 转发（父子事件链）只覆盖注册点之后的 item，
+   *  中途接入的客户端缺早期转录——终态经 thread/read 拉全量补齐。
+   *  **锚点合并而非全量重建**（实现见 lib/ingest.mergeTerminalHistoryState）：上游 legacy
+   *  thread/read 不返回 commandExecution/collabAgentToolCall 等工具项（0.148 实测，
+   *  见 ROADMAP 方向四前置二），重建会把 live 转发来的工具卡抹掉。
+   *  桶在 30s 宽限期内已被驱逐（慢 fetch 晚于驱逐滴答）时丢弃结果——
+   *  taskBucket() 重建会产出 status:'running' 且无 evictAfter 的僵尸卡，永不驱逐。 */
   const maybeFetchCodexTranscript = (b: TaskBucket) => {
-    if (!isCodex || !b.agentId || b.transcriptFetched || b.messages.length > 0) return
+    if (!isCodex || !b.agentId || b.transcriptFetched) return
     b.transcriptFetched = true
     fetchCodexHistory(b.agentId)
       .then((resp) => {
-        for (const h of resp.messages) appendTaskMsg(b.toolUseId, h)
-        pubTasks()
+        if (taskMapRef.current.get(b.toolUseId) !== b) return // 已驱逐，不复活
+        const r = mergeTerminalHistoryState(b.messages, resp.messages)
+        if (r) {
+          b.messages = r.state.msgs
+          b.toolIdx = r.state.toolIdx
+          b.pending = r.state.pending
+          b.seen = new Set([...r.state.msgs.map((m) => m.id), ...r.fetchedUuids])
+          pubTasks()
+        }
       })
       .catch(() => {})
   }
@@ -184,6 +197,8 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     b.agentType = (rec.subagent_type as string | undefined) ?? (rec.task_type as string | undefined) ?? b.agentType
     b.kind = (rec.task_type as string | undefined) ?? b.kind
     b.depth = (rec.spawn_depth as number | undefined) ?? b.depth
+    // 嵌套血缘：claude 由水合下发；codex 孙代理的 task_started 直接携带（服务端事件链已知父子）
+    b.parentToolUseId = (rec.parent_tool_use_id as string | undefined) ?? b.parentToolUseId
     b.status = 'running'
     pubTasks()
     if (window.matchMedia('(min-width: 768px)').matches) setTasksOpen(true)

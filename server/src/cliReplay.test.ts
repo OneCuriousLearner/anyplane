@@ -20,12 +20,14 @@ function replaySince(h: CliRingState, fromSeq: number): { sent: Record<string, u
 }
 
 describe('shouldRingCli', () => {
-  test('只入环 cli，且排除 stream_event', () => {
+  test('只入环 cli，且排除 stream_event 与 partial 部分结果', () => {
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'assistant' } })).toBe(true)
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'user' } })).toBe(true)
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'result' } })).toBe(true)
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'system' } })).toBe(true)
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'stream_event' } })).toBe(false)
+    // codex 工具输出的流式部分结果：高频增量不占环，终态 tool_result 兜底
+    expect(shouldRingCli({ kind: 'cli', msg: { type: 'user', partial: true } })).toBe(false)
     expect(shouldRingCli({ kind: 'status' })).toBe(false)
     expect(shouldRingCli({ kind: 'replay_gap' })).toBe(false)
   })

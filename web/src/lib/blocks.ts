@@ -141,6 +141,8 @@ export function buildTranscriptRows(
         pushActivityItem({
           key: b.kind === 'tool' ? `tool:${b.id}` : `${msg.id}:thinking:${i}`,
           block: b,
+          // codex 命令输出流式部分结果：运行中且已有部分文本时按 streaming 展开卡片
+          streaming: b.kind === 'tool' && b.pending === true && b.resultText != null,
         })
       } else {
         pushContent({ key: `${msg.id}:${i}`, block: b })

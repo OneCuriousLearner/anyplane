@@ -33,10 +33,14 @@ export function createIngestState(msgs: ChatMsg[] = []): IngestState {
   return { msgs, toolIdx: new Map(), pending: new Map() }
 }
 
-function patched(m: ChatMsg, bi: number, text: string, isError: boolean): ChatMsg {
+function patched(m: ChatMsg, bi: number, text: string, isError: boolean, keepPending = false): ChatMsg {
   const blocks = [...m.blocks]
   const b = blocks[bi]
-  if (b?.kind === 'tool') blocks[bi] = { ...b, resultText: text, resultError: isError, pending: false }
+  if (b?.kind === 'tool') {
+    blocks[bi] = keepPending
+      ? { ...b, resultText: text, resultError: isError }
+      : { ...b, resultText: text, resultError: isError, pending: false }
+  }
   return { ...m, blocks }
 }
 
@@ -64,6 +68,48 @@ export function pairToolResultIn(
     if (bi < 0) continue
     const out = [...msgs]
     out[mi] = patched(out[mi], bi, text, isError)
+    return { msgs: out, paired: true }
+  }
+  return { msgs, paired: false }
+}
+
+/** 部分结果在卡片上的累积上限（append 模式尾留）：只影响运行中展示，终态全文照常替换 */
+const PARTIAL_TEXT_CAP = 64 * 1024
+
+/**
+ * codex 工具输出的流式部分结果（partial tool_result）：更新卡片文本但**保持运行态**
+ * （pending 不动、不改 resultError、不进乱序缓冲——部分结果不配对的直接丢弃，
+ *  下一拍 partial 或终态结果会自愈，缓冲反而可能把过期部分结果补到终态之后）。
+ * append=true（命令输出流）：文本追加到现有部分结果上（尾留 PARTIAL_TEXT_CAP）；
+ * append 缺省（MCP 进度）：整体替换。
+ */
+export function pairToolResultPartialIn(
+  msgs: ChatMsg[],
+  toolIdx: Map<string, ToolPos> | undefined,
+  toolUseId: string | undefined,
+  text: string,
+  append?: boolean,
+): { msgs: ChatMsg[]; paired: boolean } {
+  if (!toolUseId) return { msgs, paired: false }
+  const nextText = (cur: string | undefined): string => {
+    if (!append) return text
+    const joined = (cur ?? '') + text
+    return joined.length > PARTIAL_TEXT_CAP ? joined.slice(-PARTIAL_TEXT_CAP) : joined
+  }
+  const at = toolIdx?.get(toolUseId)
+  const hit = at ? msgs[at.mi]?.blocks[at.bi] : undefined
+  if (at && hit?.kind === 'tool' && hit.id === toolUseId && hit.pending === true) {
+    const out = [...msgs]
+    out[at.mi] = patched(out[at.mi], at.bi, nextText(hit.resultText), false, true)
+    return { msgs: out, paired: true }
+  }
+  for (let mi = msgs.length - 1; mi >= 0; mi--) {
+    const bi = msgs[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
+    if (bi < 0) continue
+    const blk = msgs[mi].blocks[bi]
+    if (blk.kind !== 'tool' || blk.pending !== true) break // 已有终态，部分结果过期
+    const out = [...msgs]
+    out[mi] = patched(out[mi], bi, nextText(blk.kind === 'tool' ? blk.resultText : undefined), false, true)
     return { msgs: out, paired: true }
   }
   return { msgs, paired: false }
@@ -200,4 +246,37 @@ export function flushStrayResults(state: IngestState): void {
     ]
   }
   state.pending.clear()
+}
+
+/**
+ * codex 子代理桶的终态拉取合并（useTaskBuckets 调用）：历史拉取是权威全序，
+ * 但上游 legacy thread/read 不返回 commandExecution/collabAgentToolCall 等工具项
+ * （0.148 实测），全量重建会把 live 转发来的工具卡抹掉——所以按锚点合并：
+ * 「第一条同时存在于两处的消息」为锚，锚前缺失项按历史序前插，锚后缺失项
+ * （注册间隙丢的洞）追加；无交集时历史整体前插（桶空等价全量重建）。
+ * 返回重建后的 IngestState 与本次拉取的全部 uuid（调用方据此刷新去重集）；
+ * 无新增返回 null。
+ */
+export function mergeTerminalHistoryState(
+  base: ChatMsg[],
+  fetched: HistoryMessage[],
+): { state: IngestState; fetchedUuids: Set<string> } | null {
+  if (fetched.length === 0) return null
+  const liveIds = new Set(base.map((m) => m.id))
+  const anchorPos = fetched.findIndex((h) => h.uuid && liveIds.has(h.uuid))
+  const missing = (h: HistoryMessage) => !h.uuid || !liveIds.has(h.uuid)
+  const prefixSrc = (anchorPos < 0 ? fetched : fetched.slice(0, anchorPos)).filter(missing)
+  const suffixSrc = anchorPos < 0 ? [] : fetched.slice(anchorPos + 1).filter(missing)
+  if (prefixSrc.length === 0 && suffixSrc.length === 0) return null
+  const toMsgs = (list: HistoryMessage[]): ChatMsg[] => {
+    const st = createIngestState()
+    for (const h of list) appendHistoryMsg(st, h)
+    return st.msgs
+  }
+  const st = createIngestState()
+  for (const m of [...toMsgs(prefixSrc), ...base, ...toMsgs(suffixSrc)]) pushIngestMsg(st, m)
+  return {
+    state: st,
+    fetchedUuids: new Set(fetched.map((h) => h.uuid).filter((u): u is string => Boolean(u))),
+  }
 }

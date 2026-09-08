@@ -17,6 +17,7 @@ import {
   indexToolBlocks,
   liveMessageKeys,
   pairToolResultIn,
+  pairToolResultPartialIn,
   rememberKeys,
   transcriptKeys,
   type IngestState,
@@ -315,6 +316,22 @@ export function useTranscriptIngest(opts: {
 
     if (msg.type === 'user') {
       if (msg.isMeta) return
+      // codex 工具输出的流式部分结果：更新运行中工具卡的文本，但不做任何终态动作
+      //（不 settle 桶、不进乱序缓冲、不标 seen——终态 tool_result 随后走正常路径收尾）
+      if (rec.partial === true) {
+        const content = msg.message?.content
+        const blocks = Array.isArray(content) ? content : []
+        const append = rec.append === true
+        for (const c of blocks) {
+          if (c?.type === 'tool_result') {
+            const id = c.tool_use_id as string | undefined
+            const text = toolResultText(c.content)
+            if (!id) continue
+            setMsgs((prev) => pairToolResultPartialIn(prev, toolPosRef.current, id, text, append).msgs)
+          }
+        }
+        return
+      }
       if (taskApi.appendSidechain(rec)) return
       const content = msg.message?.content
       const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
