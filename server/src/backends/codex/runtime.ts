@@ -131,12 +131,16 @@ interface PendingCodexApproval {
 /** 工具流式部分结果的合并窗口：outputDelta 按字节块到达（高频时每 token 一批），
  *  300ms 追尾合并成一次 partial 下发；终态 item/completed 的 aggregatedOutput 是权威替换 */
 const OUTPUT_PARTIAL_MS = 300
-/** 部分结果只保留尾部（长跑命令刷日志场景防内存/带宽无界增长；终态全文由 completed 给） */
+/** 单个合并窗口的增量上限（超量保留尾部并加截断标记——防极端刷频下单元格无界增长；
+ *  注意与下行放大无关：append 模式下每个窗口只发增量） */
 const OUTPUT_PARTIAL_CAP = 32 * 1024
 
 interface OutputBuf {
+  /** 本窗口内待下发的增量（accumulate）或最新进度串（latest） */
   text: string
-  /** accumulate=命令输出追加；latest=进度消息取最新 */
+  /** 窗口内发生过截断（accumulate 超 CAP） */
+  truncated?: boolean
+  /** accumulate=命令输出追加（append 下发）；latest=进度消息取最新（替换下发） */
   mode: 'accumulate' | 'latest'
   dirty: boolean
 }
@@ -377,13 +381,7 @@ export class CodexSession {
       | undefined
     if (!item?.id || !item.type) return
     // 孙代理注册（先于转录翻译：孙线程首批事件紧随 started 到达，路由表必须先就位）
-    if (item.type === 'subAgentActivity') {
-      if (item.kind === 'started' && item.agentThreadId) this.runtime.registerChild(item.agentThreadId, this, depth + 1)
-    } else if (item.type === 'collabAgentToolCall') {
-      for (const gtid of item.receiverThreadIds ?? []) {
-        if (gtid) this.runtime.registerChild(gtid, this, depth + 1)
-      }
-    }
+    this.registerSpawnedChildren(item, depth + 1)
     const t = this.translator
     if (!t) return
     // 孙代理生命周期：task_started 补嵌套血缘字段（父桶键 + 深度），前端 flattenTasks 直接归组
@@ -500,14 +498,7 @@ export class CodexSession {
         }
         // collab 子线程注册（父子事件链转发的路由表，0.148 实测子线程事件推到父连接）：
         // 最早的注册点是 subAgentActivity started（子线程首批事件紧随其后到达）
-        if (itemType === 'subAgentActivity') {
-          const it = item as { kind?: string; agentThreadId?: string }
-          if (it.kind === 'started' && it.agentThreadId) this.runtime.registerChild(it.agentThreadId, this, 1)
-        } else if (itemType === 'collabAgentToolCall') {
-          for (const tid of (item as { receiverThreadIds?: string[] }).receiverThreadIds ?? []) {
-            if (tid) this.runtime.registerChild(tid, this, 1)
-          }
-        }
+        this.registerSpawnedChildren(item as { type?: string }, 1)
         for (const m of t?.itemCompleted(item as never) ?? []) this.emit(m)
         break
       }
@@ -854,12 +845,34 @@ export class CodexSession {
     this.emit({ type: 'result', subtype: 'error', is_error: true, result: text, session_id: this.threadId })
   }
 
+  /** collab 子线程注册（item/completed 的两个调用点共用：主线 depth=1，子线程内 depth+1——
+   *  父子事件链转发的路由地基，只许一份实现：上游新增派生途径时改这里，两处同时生效） */
+  private registerSpawnedChildren(
+    item: { type?: string; kind?: string; agentThreadId?: string; receiverThreadIds?: string[] },
+    depth: number,
+  ): void {
+    if (item.type === 'subAgentActivity') {
+      if (item.kind === 'started' && item.agentThreadId) this.runtime.registerChild(item.agentThreadId, this, depth)
+    } else if (item.type === 'collabAgentToolCall') {
+      for (const tid of item.receiverThreadIds ?? []) {
+        if (tid) this.runtime.registerChild(tid, this, depth)
+      }
+    }
+  }
+
   /** 工具流式部分结果：按 itemId 合并进缓冲，300ms 追尾窗口统一下发（下行量与命令刷频解耦） */
   private noteOutputDelta(itemId: string, text: string, mode: OutputBuf['mode']): void {
     if (!itemId || !text || this.exited) return
     const b = this.outputBufs.get(itemId) ?? { text: '', mode, dirty: false }
-    b.text = mode === 'latest' ? text : b.text + text
-    if (b.text.length > OUTPUT_PARTIAL_CAP) b.text = b.text.slice(-OUTPUT_PARTIAL_CAP)
+    if (mode === 'latest') {
+      b.text = text
+    } else {
+      b.text += text
+      if (b.text.length > OUTPUT_PARTIAL_CAP) {
+        b.text = b.text.slice(-OUTPUT_PARTIAL_CAP)
+        b.truncated = true
+      }
+    }
     b.dirty = true
     this.outputBufs.set(itemId, b)
     if (!this.outputFlushTimer) {
@@ -875,7 +888,11 @@ export class CodexSession {
     for (const [itemId, b] of this.outputBufs) {
       if (!b.dirty) continue
       b.dirty = false
-      this.emit(partialToolResultMsg(itemId, b.text))
+      const text = b.truncated ? `…（输出过快，中间有截断）\n${b.text}` : b.text
+      // accumulate 走 append 增量（发完即清，下行量 ≈ 实际产出）；latest 保持替换语义
+      this.emit(partialToolResultMsg(itemId, text, b.mode === 'accumulate'))
+      b.text = ''
+      b.truncated = false
     }
   }
 

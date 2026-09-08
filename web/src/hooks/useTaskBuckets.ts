@@ -117,12 +117,20 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
 
   /** codex 子代理转录终态兜底拉取：live 转发（父子事件链）覆盖运行期，但中途接入的客户端
    *  可能缺早期 item（cliRing 挤掉/注册前事件跳过）——终态经 thread/read 全量拉一次补齐。
-   *  uuid 与 live 同口径，去重幂等；代价仅终态一次 RPC。桶非空不再是跳过理由（live 已使其常真）。 */
+   *  拉取结果是完整权威历史，**全量重建**桶转录而非 append（append 会把早期 item 追加到
+   *  live 已覆盖的尾部之后，时序打乱）；uuid 去重对重建后迟到的 live 消息仍然有效。
+   *  桶若在 30s 宽限期内已被驱逐（网络慢的 fetch 晚于驱逐滴答），直接丢弃结果——
+   *  taskBucket() 重建会产出 status:'running' 且无 evictAfter 的僵尸卡，永不驱逐。 */
   const maybeFetchCodexTranscript = (b: TaskBucket) => {
     if (!isCodex || !b.agentId || b.transcriptFetched) return
     b.transcriptFetched = true
     fetchCodexHistory(b.agentId)
       .then((resp) => {
+        if (taskMapRef.current.get(b.toolUseId) !== b) return // 已驱逐，不复活
+        b.messages = []
+        b.toolIdx = new Map()
+        b.pending = new Map()
+        b.seen = new Set()
         for (const h of resp.messages) appendTaskMsg(b.toolUseId, h)
         pubTasks()
       })

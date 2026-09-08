@@ -73,23 +73,34 @@ export function pairToolResultIn(
   return { msgs, paired: false }
 }
 
+/** 部分结果在卡片上的累积上限（append 模式尾留）：只影响运行中展示，终态全文照常替换 */
+const PARTIAL_TEXT_CAP = 64 * 1024
+
 /**
  * codex 工具输出的流式部分结果（partial tool_result）：更新卡片文本但**保持运行态**
  * （pending 不动、不改 resultError、不进乱序缓冲——部分结果不配对的直接丢弃，
  *  下一拍 partial 或终态结果会自愈，缓冲反而可能把过期部分结果补到终态之后）。
+ * append=true（命令输出流）：文本追加到现有部分结果上（尾留 PARTIAL_TEXT_CAP）；
+ * append 缺省（MCP 进度）：整体替换。
  */
 export function pairToolResultPartialIn(
   msgs: ChatMsg[],
   toolIdx: Map<string, ToolPos> | undefined,
   toolUseId: string | undefined,
   text: string,
+  append?: boolean,
 ): { msgs: ChatMsg[]; paired: boolean } {
   if (!toolUseId) return { msgs, paired: false }
+  const nextText = (cur: string | undefined): string => {
+    if (!append) return text
+    const joined = (cur ?? '') + text
+    return joined.length > PARTIAL_TEXT_CAP ? joined.slice(-PARTIAL_TEXT_CAP) : joined
+  }
   const at = toolIdx?.get(toolUseId)
   const hit = at ? msgs[at.mi]?.blocks[at.bi] : undefined
   if (at && hit?.kind === 'tool' && hit.id === toolUseId && hit.pending === true) {
     const out = [...msgs]
-    out[at.mi] = patched(out[at.mi], at.bi, text, false, true)
+    out[at.mi] = patched(out[at.mi], at.bi, nextText(hit.resultText), false, true)
     return { msgs: out, paired: true }
   }
   for (let mi = msgs.length - 1; mi >= 0; mi--) {
@@ -98,7 +109,7 @@ export function pairToolResultPartialIn(
     const blk = msgs[mi].blocks[bi]
     if (blk.kind !== 'tool' || blk.pending !== true) break // 已有终态，部分结果过期
     const out = [...msgs]
-    out[mi] = patched(out[mi], bi, text, false, true)
+    out[mi] = patched(out[mi], bi, nextText(blk.kind === 'tool' ? blk.resultText : undefined), false, true)
     return { msgs: out, paired: true }
   }
   return { msgs, paired: false }

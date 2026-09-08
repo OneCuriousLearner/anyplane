@@ -618,3 +618,12 @@ describe('childItemMsgs 首条 userMessage 的 turnId 锚点', () => {
     expect(without[0]).toMatchObject({ uuid: 'u1' })
   })
 })
+
+describe('partialToolResultMsg append 标记', () => {
+  test('append=true 时携带增量标记；缺省为替换语义（MCP 进度）', () => {
+    expect(partialToolResultMsg('c1', 'chunk', true)).toMatchObject({ type: 'user', partial: true, append: true })
+    const replace = partialToolResultMsg('m1', '进度', undefined)
+    expect(replace.partial).toBe(true)
+    expect((replace as Record<string, unknown>).append).toBeUndefined()
+  })
+})

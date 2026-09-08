@@ -3,37 +3,13 @@
 //   Turn 2：spawn_agent 子代理 → 统计非主线程事件（0.148 起子线程事件直接推到父连接，含嵌套与 resume 后）
 // 用途：升级 codex 后回归验证 delta 通知清单与父子事件链是否仍然成立（协议漂移早期信号）。
 // 用法：bun run server/scripts/e2e-codex-delta.ts [cwd]
+// stdio JSON-RPC 样板（spawn/行泵/应答路由）走 e2e-lib 的 spawnAppServer。
+
+import { spawnAppServer } from './e2e-lib'
 
 const cwd = process.argv[2] ?? process.cwd()
 
-interface RpcMsg {
-  id?: number | string
-  method?: string
-  params?: unknown
-  result?: unknown
-  error?: { code: number; message: string }
-}
-
-const proc = Bun.spawn(['codex', 'app-server', '--stdio'], {
-  stdin: 'pipe',
-  stdout: 'pipe',
-  stderr: 'pipe',
-})
-
-let reqId = 0
-const pending = new Map<number, { resolve: (r: unknown) => void; reject: (e: Error) => void }>()
-
-function send(msg: RpcMsg): void {
-  proc.stdin.write(JSON.stringify(msg) + '\n')
-}
-
-function request(method: string, params?: unknown): Promise<unknown> {
-  const id = ++reqId
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    send({ id, method, params })
-  })
-}
+const app = spawnAppServer()
 
 const t0 = Date.now()
 const ms = () => String(Date.now() - t0).padStart(6)
@@ -63,69 +39,38 @@ function brief(method: string, params: Record<string, unknown>): string {
   return ''
 }
 
-async function pump(): Promise<void> {
-  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx: number
-    while ((idx = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, idx).trim()
-      buf = buf.slice(idx + 1)
-      if (!line) continue
-      let msg: RpcMsg
-      try {
-        msg = JSON.parse(line)
-      } catch {
-        continue
-      }
-      if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
-        const p = pending.get(Number(msg.id))
-        if (p) {
-          pending.delete(Number(msg.id))
-          if (msg.error) p.reject(new Error(`${msg.error.code}: ${msg.error.message}`))
-          else p.resolve(msg.result)
-        }
-        continue
-      }
-      const method = msg.method ?? '?'
-      const params = (msg.params ?? {}) as Record<string, unknown>
-      if (msg.id !== undefined) {
-        // server request（审批等）：本探针一律批准（命令无副作用）
-        send({ id: msg.id, result: { decision: 'accept' } })
-        continue
-      }
-      const tid = String(params.threadId ?? '')
-      const tag = tid && tid === childThreadId ? 'CHILD' : tid === mainThreadId ? 'MAIN' : '?'
-      bump(`${tag} ${method}`)
-      if (method === 'turn/completed') {
-        if (tid === mainThreadId && !turn1Done) turn1Done = true
-        else if (tid === mainThreadId) turn2Done = true
-      }
-      // spawn End：记录首个子线程 id（仅用于日志归因；0.148 起子线程事件本身即推到父连接，
-      // 无需 thread/resume 订阅——这正是方向五赖以转发的事实基础）
-      if (method === 'item/completed' && tag === 'MAIN') {
-        const item = params.item as { type?: string; tool?: string; receiverThreadIds?: string[] } | undefined
-        if (item?.type === 'collabAgentToolCall' && item.receiverThreadIds?.length && !childThreadId) {
-          childThreadId = item.receiverThreadIds[0]
-          console.log(`[${ms()}] ★ 首个子线程 ${childThreadId}（其后续事件改标 CHILD）`)
-        }
-      }
-      // 只打印非高频事件的全貌，delta 类打印摘要
-      if (!method.includes('delta') && !method.includes('Delta') && !method.endsWith('progress')) {
-        console.log(`[${ms()}] ← ${tag} ${method} ${brief(method, params)}`.slice(0, 220))
-      } else if ((counts.get(`${tag} ${method}`) ?? 0) <= 3) {
-        console.log(`[${ms()}] ← ${tag} ${method} ${brief(method, params)}`.slice(0, 220))
-      }
+app.onEvent((msg) => {
+  const method = msg.method ?? '?'
+  const params = (msg.params ?? {}) as Record<string, unknown>
+  if (method.startsWith('serverRequest:')) {
+    console.log(`[${ms()}] ← ${method}（已按探针策略拒绝）`, JSON.stringify(msg.params).slice(0, 160))
+    return
+  }
+  const tid = String(params.threadId ?? '')
+  const tag = tid && tid === childThreadId ? 'CHILD' : tid === mainThreadId ? 'MAIN' : '?'
+  bump(`${tag} ${method}`)
+  if (method === 'turn/completed') {
+    if (tid === mainThreadId && !turn1Done) turn1Done = true
+    else if (tid === mainThreadId) turn2Done = true
+  }
+  // spawn End：记录首个子线程 id（仅用于日志归因；0.148 起子线程事件本身即推到父连接，
+  // 无需 thread/resume 订阅——这正是方向五赖以转发的事实基础）
+  if (method === 'item/completed' && tag === 'MAIN') {
+    const item = params.item as { type?: string; tool?: string; receiverThreadIds?: string[] } | undefined
+    if (item?.type === 'collabAgentToolCall' && item.receiverThreadIds?.length && !childThreadId) {
+      childThreadId = item.receiverThreadIds[0]
+      console.log(`[${ms()}] ★ 首个子线程 ${childThreadId}（其后续事件改标 CHILD）`)
     }
   }
-}
+  // 只打印非高频事件的全貌，delta 类打印前 3 条摘要
+  if (!method.includes('delta') && !method.includes('Delta') && !method.endsWith('progress')) {
+    console.log(`[${ms()}] ← ${tag} ${method} ${brief(method, params)}`.slice(0, 220))
+  } else if ((counts.get(`${tag} ${method}`) ?? 0) <= 3) {
+    console.log(`[${ms()}] ← ${tag} ${method} ${brief(method, params)}`.slice(0, 220))
+  }
+})
 
-void pump()
-void new Response(proc.stderr as ReadableStream<Uint8Array>).text().then((t) => {
+void app.stderrText.then((t) => {
   if (t.trim()) console.error('[stderr]', t.slice(0, 500))
 })
 
@@ -137,14 +82,14 @@ const waitFor = async (cond: () => boolean, timeoutMs: number, label: string) =>
 }
 
 try {
-  const init = (await request('initialize', {
+  const init = (await app.request('initialize', {
     clientInfo: { name: 'anyplane-delta-probe', title: 'anyplane delta probe', version: '0.1.0' },
     capabilities: { experimentalApi: true },
   })) as Record<string, unknown>
   console.log('✓ initialize:', init.userAgent)
-  send({ method: 'initialized', params: {} })
+  app.notify('initialized', {})
 
-  const started = (await request('thread/start', {
+  const started = (await app.request('thread/start', {
     cwd,
     approvalPolicy: 'never',
     sandbox: 'workspace-write',
@@ -154,7 +99,7 @@ try {
   console.log('✓ thread/start:', mainThreadId)
 
   // ---------- Turn 1：delta 全覆盖 ----------
-  await request('turn/start', {
+  await app.request('turn/start', {
     threadId: mainThreadId,
     input: [
       {
@@ -167,7 +112,7 @@ try {
   await waitFor(() => turn1Done, 180_000, 'turn 1 完成')
 
   // ---------- Turn 2：collab 子线程订阅 ----------
-  await request('turn/start', {
+  await app.request('turn/start', {
     threadId: mainThreadId,
     input: [
       {
@@ -191,5 +136,5 @@ try {
   console.error('PROBE FAIL:', e)
   process.exit(1)
 } finally {
-  proc.kill()
+  app.kill()
 }

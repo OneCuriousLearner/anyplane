@@ -321,12 +321,13 @@ export function useTranscriptIngest(opts: {
       if (rec.partial === true) {
         const content = msg.message?.content
         const blocks = Array.isArray(content) ? content : []
+        const append = rec.append === true
         for (const c of blocks) {
           if (c?.type === 'tool_result') {
             const id = c.tool_use_id as string | undefined
             const text = toolResultText(c.content)
             if (!id) continue
-            setMsgs((prev) => pairToolResultPartialIn(prev, toolPosRef.current, id, text).msgs)
+            setMsgs((prev) => pairToolResultPartialIn(prev, toolPosRef.current, id, text, append).msgs)
           }
         }
         return

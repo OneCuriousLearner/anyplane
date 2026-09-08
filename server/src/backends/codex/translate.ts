@@ -319,9 +319,19 @@ export class ThreadTranslator {
           }),
         ]
       }
-      // subAgentActivity 是生命周期事件（runtime 另行翻译为 task_*），不进桶转录；
-      // 其余类型（hookPrompt/imageView/contextCompaction/review 等）子线程里罕见，同样不进桶
+      // subAgentActivity 是生命周期事件（runtime 另行翻译为 task_*），不进桶转录
+      case 'subAgentActivity':
+      // hookPrompt/imageView/compact/review 等在主线是系统提示，桶转录里有意不进
+      case 'hookPrompt':
+      case 'imageView':
+      case 'contextCompaction':
+      case 'enteredReviewMode':
+      case 'exitedReviewMode':
+        return []
       default:
+        // 未知 type 留痕后跳过（宽松解析红线：透传胜过丢弃，静默丢弃曾丢过五种类型）；
+        // 主线（toolUseBlock）与历史（itemsToHistory）的 default 同样 warn
+        log.warn('[codex] 子线程转录出现未识别 ThreadItem 类型，已跳过', { itemType: item.type })
         return []
     }
   }
@@ -336,11 +346,15 @@ function toolResultMsg(toolUseId: string, text: string, isError: boolean): CliMe
 
 /** 工具执行的流式部分结果（commandExecution/outputDelta、mcpToolCall/progress）：
  *  与终态 tool_result 同形 + `partial: true` 标记——前端更新卡片文本但保持运行态，
- *  服务端 cliRing 据此不占序号（高频增量，重连由终态结果兜底）。 */
-export function partialToolResultMsg(toolUseId: string, text: string): CliMessage {
+ *  服务端 cliRing 据此不占序号（高频增量，重连由终态结果兜底）。
+ *  `append: true`（命令输出）：文本是本窗口的增量，前端**追加**到卡片现有部分文本上——
+ *  全量重发会让 300ms 窗口 × 32KB 缓冲在长跑命令下放大约 100 倍下行流量；
+ *  缺省（MCP 进度）是替换语义（进度是状态串，不是流）。 */
+export function partialToolResultMsg(toolUseId: string, text: string, append?: boolean): CliMessage {
   return {
     type: 'user',
     partial: true,
+    ...(append ? { append: true } : {}),
     message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text, is_error: false }] },
   }
 }

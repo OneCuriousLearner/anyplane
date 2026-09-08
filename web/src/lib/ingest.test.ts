@@ -266,3 +266,20 @@ describe('pairToolResultPartialIn（codex 流式部分结果）', () => {
     expect(s.pending.size).toBe(0)
   })
 })
+
+describe('pairToolResultPartialIn append 增量模式', () => {
+  test('append=true 追加到现有部分结果；缺省替换；终态照常整体覆盖', async () => {
+    const { pairToolResultPartialIn } = await import('./ingest')
+    const s = createIngestState()
+    pushIngestMsg(s, { id: 'm1', role: 'assistant', blocks: [{ kind: 'tool', id: 't1', name: 'Bash', pending: true }] })
+    const r1 = pairToolResultPartialIn(s.msgs, s.toolIdx, 't1', 'tick-1\n', true)
+    const r2 = pairToolResultPartialIn(r1.msgs, s.toolIdx, 't1', 'tick-2\n', true)
+    expect(toolBlocksOf(r2.msgs)[0]).toMatchObject({ resultText: 'tick-1\ntick-2\n', pending: true })
+    // 替换语义（进度）：整体覆盖
+    const r3 = pairToolResultPartialIn(r2.msgs, s.toolIdx, 't1', '最新进度', false)
+    expect(toolBlocksOf(r3.msgs)[0].resultText).toBe('最新进度')
+    // 终态结果整体覆盖部分累积
+    const fin = pairToolResultIn(r3.msgs, s.toolIdx, 't1', 'final-full', false)
+    expect(toolBlocksOf(fin.msgs)[0]).toMatchObject({ resultText: 'final-full', pending: false })
+  })
+})

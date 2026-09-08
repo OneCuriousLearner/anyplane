@@ -159,7 +159,7 @@ const makeSession = (key = 'x|parent-tid') => {
 }
 
 describe('工具流式部分结果（outputDelta → partial tool_result）', () => {
-  test('accumulate 合并：两个 delta 在 300ms 窗口内合并为一条 partial 下发', async () => {
+  test('accumulate 合并：窗口内 delta 合并为一条 append partial；下一窗口只发新增量', async () => {
     const { session, msgs } = makeSession()
     session.handleNotification('item/commandExecution/outputDelta', { itemId: 'c1', delta: 'tick-1\n' })
     session.handleNotification('item/commandExecution/outputDelta', { itemId: 'c1', delta: 'tick-2\n' })
@@ -169,18 +169,38 @@ describe('工具流式部分结果（outputDelta → partial tool_result）', ()
     expect(partials).toHaveLength(1)
     expect(partials[0]).toMatchObject({
       type: 'user',
+      partial: true,
+      append: true,
       message: { content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'tick-1\ntick-2\n', is_error: false }] },
     })
+    // 第二窗口只发新增量（append 模式下行量 ≈ 实际产出，不全量重发）
+    session.handleNotification('item/commandExecution/outputDelta', { itemId: 'c1', delta: 'tick-3\n' })
+    await Bun.sleep(400)
+    const partials2 = msgs.filter((m) => m.partial === true)
+    expect(partials2).toHaveLength(2)
+    expect(partials2[1]).toMatchObject({ append: true, message: { content: [{ content: 'tick-3\n' }] } })
   })
 
-  test('mcpToolCall/progress 是 latest 语义：只保留最新一条进度', async () => {
+  test('mcpToolCall/progress 是 latest 语义：只保留最新一条进度，替换下发（无 append 标记）', async () => {
     const { session, msgs } = makeSession()
     session.handleNotification('item/mcpToolCall/progress', { itemId: 'm1', message: '连接中…' })
     session.handleNotification('item/mcpToolCall/progress', { itemId: 'm1', message: '拉取第 3 页' })
     await Bun.sleep(400)
     const partials = msgs.filter((m) => m.partial === true)
     expect(partials).toHaveLength(1)
+    expect(partials[0].append).toBeUndefined()
     expect((partials[0].message as { content: Array<{ content: string }> }).content[0].content).toBe('拉取第 3 页')
+  })
+
+  test('单窗口超 32KB 截断并带标记（防极端刷频下单元格无界增长）', async () => {
+    const { session, msgs } = makeSession()
+    session.handleNotification('item/commandExecution/outputDelta', { itemId: 'c1', delta: 'x'.repeat(40 * 1024) })
+    await Bun.sleep(400)
+    const partials = msgs.filter((m) => m.partial === true)
+    expect(partials).toHaveLength(1)
+    const text = (partials[0].message as { content: Array<{ content: string }> }).content[0].content
+    expect(text.startsWith('…（输出过快，中间有截断）\n')).toBe(true)
+    expect(text.length).toBeLessThanOrEqual(32 * 1024 + 64)
   })
 
   test('终态 item/completed 清缓冲：之后不再下发该工具的 partial', async () => {
