@@ -22,10 +22,20 @@ import {
   turnCompletedMsg,
   ThreadTranslator,
   type HistoryMessage,
+  type ThreadItem,
 } from './translate'
 import { log } from '../../log'
 
 type Params = Record<string, unknown>
+
+/** readHistory 双轨共享的 turn 归一形状：legacy 来自 thread/read includeTurns，
+ *  paginated 来自 turns/list 元数据 + items/list 按 turnId 归组 */
+interface HistoryTurn {
+  id?: string
+  startedAt?: number | null
+  completedAt?: number | null
+  items?: ThreadItem[]
+}
 
 export interface CodexSpawnOpts {
   cwd?: string
@@ -191,6 +201,10 @@ export class CodexSession {
    *  history 把每轮首条 userMessage 以 turnId 为 uuid（rewindable 锚点），
    *  live 转发必须同键，否则终态拉取时提示词在桶里重复一份 */
   private childMarkedTurns = new Set<string>()
+  /** 线程历史契约（thread/start / thread/resume 响应的 thread.historyMode）。
+   *  paginated：历史走 turns/list+items/list、回滚走 thread/revert、resume 自动补发 tokenUsage；
+   *  legacy：历史走 thread/read includeTurns、回滚降级 thread/fork。 */
+  historyMode: string | undefined
 
   constructor(
     key: string,
@@ -276,20 +290,25 @@ export class CodexSession {
     const perm = mapPermissionMode(this.opts.permissionMode)
     try {
       if (this.threadId) {
-        await rpc.request('thread/resume', {
+        const res = (await rpc.request('thread/resume', {
           threadId: this.threadId,
           excludeTurns: true,
           ...perm,
           ...(this.opts.model ? { model: this.opts.model } : {}),
-        })
+        })) as { thread?: { historyMode?: string } }
+        this.historyMode = res.thread?.historyMode
       } else {
         const res = (await rpc.request('thread/start', {
           cwd: this.opts.cwd,
           ...perm,
           ...(this.opts.model ? { model: this.opts.model } : {}),
           serviceName: 'anyplane',
-        })) as { thread: { id: string; cwd?: string } }
+          // 0.153 起默认已是 paginated（实测）；显式传是防御——上游回摆时我们不跟着退化成
+          // legacy（legacy 的 thread/read 历史缺 commandExecution/collab/reasoning，0.153.4 实测未修）
+          historyMode: 'paginated',
+        })) as { thread: { id: string; cwd?: string; historyMode?: string } }
         this.threadId = res.thread.id
+        this.historyMode = res.thread.historyMode
         if (res.thread.cwd) this.opts.cwd = res.thread.cwd
       }
     } catch (e) {
@@ -303,9 +322,10 @@ export class CodexSession {
     this.runtime.registerThread(this.threadId!, this)
     if (this.opts.effort) this.turnOverrides.effort = this.opts.effort
     this.cb.onMessage({ type: 'system', subtype: 'init', session_id: this.threadId, model: this.opts.model })
-    // resume 水合：thread/resume 不补发 tokenUsage（实测），回扫 rollout 尾部的
-    // token_count 事件播种窗口占用与累计用量，让环形 UI 在首个新 turn 之前就有数
-    if (this.opts.resumeThreadId) void this.hydrateContextUsage()
+    // resume 水合：0.153 起 paginated 线程的 thread/resume 自动补发 tokenUsage（实测；
+    // 源码 thread_processor.rs：paginated_resume 即触发，excludeTurns 廉价路径仅对 legacy 跳过）。
+    // legacy 线程维持 rollout 尾部回扫（上游持久化切 sqlite 后对新会话静默失效，优雅降级）。
+    if (this.opts.resumeThreadId && this.historyMode !== 'paginated') void this.hydrateContextUsage()
     // 回读线程目标：goal 是 durable 的，重连/换端后 chip 需要恢复
     void this.runtime
       .rpcRequest('thread/goal/get', { threadId: this.threadId })
@@ -468,6 +488,15 @@ export class CodexSession {
       case 'thread/goal/cleared': {
         this.goal = null
         this.cb.onStatusChange?.()
+        break
+      }
+      case 'thread/reverted': {
+        // thread/revert 原地截断持久历史（仅 paginated 线程；0.153 起新线程默认 paginated）。
+        // 可能来自本会话的回滚面板，也可能来自外部客户端（TUI/VSCode）——app-server 内部
+        // 完成 shutdown→截断→reload 并保持订阅（源码注释明确客户端无需重新 resume），
+        // live 流自然从截断点继续。翻译为 cli 系统消息广播并入环：重连补发也会携带它，
+        // 前端据此重载权威历史（本地视图中"被回滚的未来"不会经 replay 复活）。
+        this.emit({ type: 'system', subtype: 'thread_reverted' })
         break
       }
       case 'item/started': {
@@ -1215,14 +1244,82 @@ export class CodexRuntime {
     )
   }
 
-  /** 历史：thread/read includeTurns（只读，不加载不订阅）+ 侧车 reasoning 按 turn 时间窗回插 */
+  /** 历史双轨（0.153.4 实测）：
+   *  - paginated 线程：`thread/turns/list`（turn 元数据，供 rewindable 锚点与侧车时间窗）
+   *    + `thread/items/list`（全量 item，跨 turn 升序分页）——item 与 live itemCompleted 同形同 id；
+   *  - legacy 线程：`thread/read includeTurns`（items/list 对 legacy 报 -32601，无法借用分页补齐——
+   *    legacy 历史的 commandExecution/collab/reasoning 缺失是上游未修的持久化缺口，维持现状）。
+   *  两侧共用 turnsToHistory（itemsToHistory + 侧车 reasoning 按 turn 时间窗回插）。 */
   async readHistory(threadId: string): Promise<HistoryMessage[]> {
+    const meta = (await this.rpcRequest('thread/read', { threadId, includeTurns: false }, 30_000)) as {
+      thread?: { historyMode?: string }
+    }
+    const turns =
+      meta.thread?.historyMode === 'paginated'
+        ? await this.readPaginatedTurns(threadId)
+        : await this.readLegacyTurns(threadId)
+    return this.turnsToHistory(threadId, turns)
+  }
+
+  private async readLegacyTurns(threadId: string): Promise<HistoryTurn[]> {
     const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: true }, 60_000)) as {
-      thread?: {
-        turns?: Array<{ id?: string; startedAt?: number | null; completedAt?: number | null; items?: never[] }>
+      thread?: { turns?: HistoryTurn[] }
+    }
+    return res.thread?.turns ?? []
+  }
+
+  /** paginated 历史：turns/list 默认降序（新→旧，实测）——显式 asc 翻页拿元数据；
+   *  items/list 不带 turnId 时跨 turn 升序分页（entry 为 {turnId, item} 包装，非裸 ThreadItem）。 */
+  private async readPaginatedTurns(threadId: string): Promise<HistoryTurn[]> {
+    const turnsMeta: Array<{ id?: string; startedAt?: number | null; completedAt?: number | null }> = []
+    let cursor: string | null | undefined
+    do {
+      const page = (await this.rpcRequest(
+        'thread/turns/list',
+        { threadId, limit: 100, sortDirection: 'asc', ...(cursor ? { cursor } : {}) },
+        60_000,
+      )) as {
+        data?: Array<{ id?: string; startedAt?: number | null; completedAt?: number | null }>
+        nextCursor?: string | null
+      }
+      turnsMeta.push(...(page.data ?? []))
+      cursor = page.nextCursor ?? null
+    } while (cursor)
+
+    const itemsByTurn = new Map<string, ThreadItem[]>()
+    cursor = undefined
+    do {
+      const page = (await this.rpcRequest(
+        'thread/items/list',
+        { threadId, limit: 500, ...(cursor ? { cursor } : {}) },
+        60_000,
+      )) as { data?: Array<{ turnId?: string; item?: ThreadItem }>; nextCursor?: string | null }
+      for (const e of page.data ?? []) {
+        if (!e.turnId || !e.item) continue
+        const arr = itemsByTurn.get(e.turnId) ?? []
+        arr.push(e.item)
+        itemsByTurn.set(e.turnId, arr)
+      }
+      cursor = page.nextCursor ?? null
+    } while (cursor)
+
+    const seen = new Set<string>()
+    const turns = turnsMeta.map((t) => {
+      if (t.id) seen.add(t.id)
+      return { ...t, items: t.id ? (itemsByTurn.get(t.id) ?? []) : [] }
+    })
+    // 防御：item 的 turnId 不在 turns/list 里（竞态/分页窗口交错）——按首见序追加为末段，不静默丢弃
+    for (const [turnId, items] of itemsByTurn) {
+      if (!seen.has(turnId)) {
+        log.warn('[codex] items/list 出现 turns/list 之外的 turnId，按末段追加', { threadId, turnId })
+        turns.push({ id: turnId, startedAt: null, completedAt: null, items })
       }
     }
-    const turns = res.thread?.turns ?? []
+    return turns
+  }
+
+  /** turn 序列 → 历史消息：itemsToHistory 翻译 + 侧车 reasoning 按 turn 时间窗回插 */
+  private turnsToHistory(threadId: string, turns: HistoryTurn[]): HistoryMessage[] {
     const reasoning = readReasoning(threadId)
     // 侧车 append-only 按时间递增；校验失败（手工编辑等）回退全扫，语义不变
     const reasoningSorted = reasoning.every((r, i) => i === 0 || reasoning[i - 1].ts <= r.ts)
@@ -1272,6 +1369,24 @@ export class CodexRuntime {
       out.push(...msgs)
     }
     return out
+  }
+
+  /** 原地回滚（paginated 线程）：thread/revert 用 beforeTurnId 之前的持久历史替换现状——
+   *  thread id、连接、订阅全部保留（app-server 内部 shutdown→截断→reload），
+   *  完成后服务端发 thread/reverted 通知（经 handleNotification 广播）。 */
+  async revertAt(threadId: string, beforeTurnId: string): Promise<void> {
+    await this.rpcRequest('thread/revert', { threadId, beforeTurnId }, 60_000)
+  }
+
+  /** 线程的 historyMode：优先在线会话缓存，否则 thread/read 惰性解析（回滚双轨分流依据） */
+  async historyModeOf(threadId: string): Promise<string | undefined> {
+    for (const s of this.sessions.values()) {
+      if (s.threadId === threadId && s.historyMode) return s.historyMode
+    }
+    const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: false }, 30_000)) as {
+      thread?: { historyMode?: string }
+    }
+    return res.thread?.historyMode
   }
 
   /** 分叉回滚：thread/fork beforeTurnId——复制该轮之前的历史为新线程，原线程不动 */

@@ -48,6 +48,8 @@ class CodexPort implements BackendPort {
       model: hub?.spawnOpts?.model,
       tailing: false,
       goal: s?.goal ?? null,
+      // 回滚面板的分叉/原地回滚文案依据（legacy→thread/fork，paginated→thread/revert）
+      historyMode: s?.historyMode,
     }
   }
 
@@ -106,17 +108,30 @@ class CodexPort implements BackendPort {
   startTailer(_hub: Hub, _from?: number): void {}
   stopTailer(_hub: Hub): void {}
 
-  /** codex：分叉语义——thread/fork(beforeTurnId) 复制该轮之前的历史为新线程，
-   *  原线程不动。userMessageId 即历史的轮首 userMessage 的 turnId。 */
+  /** codex 回滚双轨（0.153.4 实测分流）：
+   *  - paginated 线程（0.153 起新线程默认）：thread/revert 原地截断持久历史，thread id /
+   *    订阅 / 会话 key 全不变，广播 reverted 让前端就地截断视图（不再产生孤立 fork 线程）。
+   *  - legacy 线程：降级 thread/fork(beforeTurnId) 复制该轮之前的历史为新线程，原线程不动。
+   *  userMessageId 即历史的轮首 userMessage 的 turnId。 */
   rewindConversation(hub: Hub, at: string): void {
     const tid = codexRuntime.get(hub.key)?.sessionId ?? codexParseKey(hub.key)?.resumeThreadId
     if (!tid) {
-      hubServices().broadcastError(hub, 'codex 会话未就绪，无法分叉')
+      hubServices().broadcastError(hub, 'codex 会话未就绪，无法回滚')
       return
     }
     void codexRuntime
-      .forkAt(tid, at)
-      .then((newId) => {
+      .historyModeOf(tid)
+      .then(async (mode) => {
+        if (mode === 'paginated') {
+          await codexRuntime.revertAt(tid, at)
+          // 环里还躺着"被回滚的未来"，重连补发会复活它们——清空（cliSeq 不动保持单调；
+          // 在线路径另有 thread_reverted 系统消息入环，重放即触发前端重载权威历史）
+          hub.cliRing = []
+          hubServices().broadcast(hub, { kind: 'reverted', userMessageId: at })
+          hubServices().pushStatus(hub)
+          return
+        }
+        const newId = await codexRuntime.forkAt(tid, at)
         hubServices().broadcast(hub, {
           kind: 'forked',
           targetKey: `x|${newId}`,
@@ -124,7 +139,7 @@ class CodexPort implements BackendPort {
           fromTurnId: at,
         })
       })
-      .catch((e) => hubServices().broadcastError(hub, `分叉失败: ${errorMessage(e)}`))
+      .catch((e) => hubServices().broadcastError(hub, `回滚失败: ${errorMessage(e)}`))
   }
 
   rewindBoth(hub: Hub, _at: string): void {

@@ -16,6 +16,10 @@ export type ServerEvent =
   | { kind: 'btw_delta'; question: string; delta: string; thinking?: boolean }
   | { kind: 'btw_result'; ok: boolean; question: string; text: string }
   | { kind: 'rewound'; userMessageId: string; scope?: 'conversation' | 'both' }
+  /** codex paginated 线程原地回滚完成（thread/revert）：所选消息及其后内容已从持久历史移除，
+   *  会话 key 不变；前端就地截断视图。另有 cli 系统消息 thread_reverted（含外部客户端发起的
+   *  revert、重连补发）驱动权威历史重载 */
+  | { kind: 'reverted'; userMessageId: string }
   /** codex 分叉回滚完成：原线程不动，新线程已生成；claude 懒分叉：branchOf 为源 sessionId，name 为可选分支名 */
   | { kind: 'forked'; targetKey: string; targetSessionId?: string; fromTurnId?: string; branchOf?: string; name?: string }
   /** 接力进度：源会话 fork 摘要中 */
@@ -101,6 +105,8 @@ export interface SessionState {
   liveStatus?: string
   /** 当前目标（claude /goal 跟踪 / codex thread/goal 通知） */
   goal?: { condition: string; since: number; tokensUsed?: number; timeUsedSeconds?: number } | null
+  /** codex 线程的历史契约（legacy | paginated）：回滚面板据此切换分叉/原地回滚文案 */
+  historyMode?: string
   exited?: boolean
   exitCode?: number
 }

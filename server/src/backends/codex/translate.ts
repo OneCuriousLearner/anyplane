@@ -11,7 +11,7 @@ import { log } from '../../log'
 
 type Params = Record<string, unknown>
 
-interface ThreadItem {
+export interface ThreadItem {
   type?: string
   id?: string
   text?: string
