@@ -123,10 +123,12 @@ class CodexPort implements BackendPort {
       .historyModeOf(tid)
       .then(async (mode) => {
         if (mode === 'paginated') {
-          await codexRuntime.revertAt(tid, at)
-          // 环里还躺着"被回滚的未来"，重连补发会复活它们——清空（cliSeq 不动保持单调；
-          // 在线路径另有 thread_reverted 系统消息入环，重放即触发前端重载权威历史）
+          // 清环必须在 revertAt 之前：环里躺着"被回滚的未来"，重连补放会复活它们。
+          // 提前清可根除对上游"RPC 应答先于 thread/reverted 通知"的顺序依赖——通知无论何时
+          // 到达都会落进新环（cliSeq 不动保持单调），重放即触发前端权威重载。
+          // 代价：revert 失败也清了环（罕见），损失的只是补放缓冲，新 attach 仍读权威历史。
           hub.cliRing = []
+          await codexRuntime.revertAt(tid, at)
           hubServices().broadcast(hub, { kind: 'reverted', userMessageId: at })
           hubServices().pushStatus(hub)
           return

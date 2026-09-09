@@ -1251,13 +1251,9 @@ export class CodexRuntime {
    *    legacy 历史的 commandExecution/collab/reasoning 缺失是上游未修的持久化缺口，维持现状）。
    *  两侧共用 turnsToHistory（itemsToHistory + 侧车 reasoning 按 turn 时间窗回插）。 */
   async readHistory(threadId: string): Promise<HistoryMessage[]> {
-    const meta = (await this.rpcRequest('thread/read', { threadId, includeTurns: false }, 30_000)) as {
-      thread?: { historyMode?: string }
-    }
-    const turns =
-      meta.thread?.historyMode === 'paginated'
-        ? await this.readPaginatedTurns(threadId)
-        : await this.readLegacyTurns(threadId)
+    // historyMode 走 threadMeta 缓存（同线程重复打开/回滚判定不再各付一次 thread/read）
+    const mode = (await this.threadMeta(threadId)).historyMode
+    const turns = mode === 'paginated' ? await this.readPaginatedTurns(threadId) : await this.readLegacyTurns(threadId)
     return this.turnsToHistory(threadId, turns)
   }
 
@@ -1295,7 +1291,12 @@ export class CodexRuntime {
         60_000,
       )) as { data?: Array<{ turnId?: string; item?: ThreadItem }>; nextCursor?: string | null }
       for (const e of page.data ?? []) {
-        if (!e.turnId || !e.item) continue
+        // 缺 turnId/item 的 entry 不能静默丢弃（AGENTS.md 宽松解析红线）——上游包装形状
+        // 漂移时抄本会凭空缺块且零日志，与孤儿 turnId 同口径 warn 留痕
+        if (!e.turnId || !e.item) {
+          log.warn('[codex] items/list 返回缺 turnId/item 的条目，已跳过', { threadId })
+          continue
+        }
         const arr = itemsByTurn.get(e.turnId) ?? []
         arr.push(e.item)
         itemsByTurn.set(e.turnId, arr)
@@ -1378,15 +1379,29 @@ export class CodexRuntime {
     await this.rpcRequest('thread/revert', { threadId, beforeTurnId }, 60_000)
   }
 
-  /** 线程的 historyMode：优先在线会话缓存，否则 thread/read 惰性解析（回滚双轨分流依据） */
-  async historyModeOf(threadId: string): Promise<string | undefined> {
+  /** 线程元数据（historyMode/cwd 都是创建即固定的量）单缓存：readHistory/historyModeOf/
+   *  threadCwd 三处共用，避免同形 thread/read 复制与重复惰性往返（审查发现）。
+   *  优先级：在线会话字段（0.153 起 start/resume 响应已带 historyMode）→ 进程内缓存 →
+   *  一次 thread/read includeTurns:false。 */
+  private threadMetaCache = new Map<string, { historyMode?: string; cwd?: string }>()
+
+  async threadMeta(threadId: string): Promise<{ historyMode?: string; cwd?: string }> {
     for (const s of this.sessions.values()) {
-      if (s.threadId === threadId && s.historyMode) return s.historyMode
+      if (s.threadId === threadId && (s.historyMode || s.cwd)) return { historyMode: s.historyMode, cwd: s.cwd }
     }
+    const cached = this.threadMetaCache.get(threadId)
+    if (cached) return cached
     const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: false }, 30_000)) as {
-      thread?: { historyMode?: string }
+      thread?: { historyMode?: string; cwd?: string }
     }
-    return res.thread?.historyMode
+    const meta = { historyMode: res.thread?.historyMode, cwd: res.thread?.cwd }
+    this.threadMetaCache.set(threadId, meta)
+    return meta
+  }
+
+  /** 线程的 historyMode（回滚双轨分流依据） */
+  async historyModeOf(threadId: string): Promise<string | undefined> {
+    return (await this.threadMeta(threadId)).historyMode
   }
 
   /** 分叉回滚：thread/fork beforeTurnId——复制该轮之前的历史为新线程，原线程不动 */
@@ -1397,15 +1412,9 @@ export class CodexRuntime {
     return res.thread.id
   }
 
-  /** x| key 的 cwd 惰性解析：优先已加载会话，否则 thread/read */
+  /** x| key 的 cwd 惰性解析 */
   async threadCwd(threadId: string): Promise<string | undefined> {
-    for (const s of this.sessions.values()) {
-      if (s.threadId === threadId && s.cwd) return s.cwd
-    }
-    const res = (await this.rpcRequest('thread/read', { threadId, includeTurns: false }, 30_000)) as {
-      thread?: { cwd?: string }
-    }
-    return res.thread?.cwd
+    return (await this.threadMeta(threadId)).cwd
   }
 }
 

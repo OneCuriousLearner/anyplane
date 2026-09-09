@@ -36,7 +36,7 @@ const { on, send, open } = connect(key)
 
 let threadId = ''
 let historyMode = ''
-let sawTokenUsageBeforeTurn2 = false
+let sawContextByTurn2 = false
 let turn3Done = false
 let phase: 't1' | 't2' | 't3' = 't1'
 let revertedEv: { userMessageId?: string } | null = null
@@ -80,7 +80,7 @@ on((ev) => {
   if (ev.kind === 'status') {
     const st = ev.state as { historyMode?: string; context?: unknown }
     if (st.historyMode) historyMode = st.historyMode
-    if (phase === 't2' && st.context) sawTokenUsageBeforeTurn2 = true // revert 前的任意时刻见到环形即可
+    if (phase === 't2' && st.context) sawContextByTurn2 = true // turn1 产出 tokenUsage 后环形即有数
     return
   }
   if (ev.kind === 'reverted') {
@@ -172,7 +172,9 @@ async function afterRevert() {
 
 async function runAssertions() {
   note(historyMode === 'paginated', 'A1 status 下发 historyMode=paginated', historyMode || '(未下发)')
-  note(sawTokenUsageBeforeTurn2, 'A2 resume/start 后环形水合（tokenUsage 自动补发，无首个新 turn 空洞）')
+  // 注意：本脚本只走 thread/start 新线程，从未 resume——不断言"resume 自动补发 tokenUsage"
+  // 契约（那是冷 resume 水合路径，e2e 预算内无法验证，见文件头注释）；这里只锁环形数据通路活着
+  note(sawContextByTurn2, 'A2 环形数据通路（turn 完成后 context 随 status 下发）')
   note(!!revertedEv && revertedEv!.userMessageId === revertTarget, 'C1 reverted 广播携带目标锚点')
   note(revertedEcho, 'C2 thread_reverted 系统消息回声到达（入环信号）')
   note(turn3Done, 'C4 回滚后原地续聊（无 fork 导航，key 不变）')
