@@ -61,7 +61,9 @@ permissions?: string | null, config?: { [key in string]?: JsonValue } | null, ba
 /**
  * When true, return only thread metadata and live-resume state without
  * populating `thread.turns`. This is useful when the client plans to call
- * `thread/turns/list` immediately after resuming.
+ * `thread/turns/list` immediately after resuming. Full-history hydration
+ * is deprecated for paginated threads; use this with `thread/turns/list`
+ * and `thread/items/list` instead.
  */
 excludeTurns?: boolean,
 /**

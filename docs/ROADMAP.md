@@ -68,13 +68,32 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 但 `thread/revert` 仅支持 `history_mode: "paginated"` 的线程，而上游默认是 `legacy`，
 因此必须系统性迁移历史读取链路。
 
-**前置一：本机 codex 0.148.0 已落后（npm latest 0.153.4），升级单独 PR 处理（等待排期：
-定 PR #17 合入后从 master 另开 `chore/upgrade-codex` 分支）**。
+**前置一：本机 codex 0.148.0 已落后（npm latest 0.153.4），升级单独 PR 处理（~~等待排期：
+定 PR #17 合入后从 master 另开 `chore/upgrade-codex` 分支~~ → ✅ 已升级 0.153.4，2026-09-09）**。
 步骤：升级 CLI → `check-codex-schema.ts` 对比基线 → 刷新 `codex-schema-baseline/` →
 回归方向五 e2e（`e2e-codex-delta.ts` 探针 + `e2e-codex-streaming.ts` 断言）→ `bun test`。
 已预查 0.153.x 源码（本地快照含 rust-v0.153.4 tag）：方向五依赖的 delta 通知 wire 名全部仍在
 （`item/agentMessage/delta`、`item/commandExecution/outputDelta`、`item/mcpToolCall/progress` 等）。
 paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义开发再返工。
+
+**0.153.4 升级实测结论（2026-09-09 探针，改变方向四前提）**：
+- schema 漂移 118 处**全部为新增式**（project/*、turn/settings/update、thread/timeline/list、
+  bedrock、mcp event stream 等），无任何已有方法/通知被移除或改名；方向五 wire 名逐项核对仍在。
+  值得注意的新形状：ThreadItem 新增 `functionCallOutput` variant（translate 未知类型 warn 留痕路径覆盖）、
+  `agentMessage` 新增可空 `delivery`/`questions` 字段、`subAgentActivity` kind 新增 `completed`
+  （translate 已处理）、`CollabAgentTool` 新增 sendMessage/followupTask/interruptAgent/listAgents。
+- **`thread/start` 默认 `historyMode` 已切 paginated**（实测新线程返回值）——上方"上游默认是 legacy"
+  已过时，实施步骤 1 从"必须显式传"降为"防御性显式传"。
+- legacy `thread/read includeTurns` **仍缺** commandExecution/collabAgentToolCall/reasoning
+  （0.153.4 实测复现）——方向四作为历史完整性修复路径的结论成立且更硬。
+- `thread/turns/list` 对 legacy 线程可用但内嵌 items 只有 user/agentMessage；
+  `thread/items/list` 对 legacy 报 `-32601 not supported yet`，仅 paginated 线程可用且 item 完整
+  （条目形状 `{turnId, item}` 包装，非裸 ThreadItem）——方向四双轨分流时 legacy 会话
+  只能继续走 `thread/read includeTurns`（残缺现状），无法借用分页 API 补齐。
+- e2e-codex-streaming 的 C3/C4/Z 断言依赖"主模型用 collab 工具后收敛"，
+  实测 deepseek-v4-flash 在 0.148.0 与 0.153.4 **同现 spawn→wait→再 spawn 死循环**
+  （直连 app-server 无 AnyPlane 介入也复现）——上游/模型侧 flake，与升级无关；
+  回归时该三项失败不代表协议回归，看 A/B/C1/C2 即可。
 
 **前置二：上游线程持久化已切 sqlite（本机已生效）**。
 `~/.codex/sessions/` 的 rollout jsonl 停止新增（本机最新一个 2026-08-29），改存
