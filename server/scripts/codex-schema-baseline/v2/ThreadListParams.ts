@@ -43,6 +43,11 @@ archived?: boolean | null,
  */
 sectionId?: string | null,
 /**
+ * Omit to include every project, set to null for unassigned threads,
+ * or provide a project ID to return only threads in that project.
+ */
+projectId?: string | null,
+/**
  * Optional cwd filter or filters; when set, only threads whose session cwd
  * exactly matches one of these paths are returned.
  */

@@ -61,7 +61,9 @@ threadSource?: ThreadSource | null,
 /**
  * When true, return only thread metadata and live fork state without
  * populating `thread.turns`. This is useful when the client plans to call
- * `thread/turns/list` immediately after forking.
+ * `thread/turns/list` immediately after forking. Full-history hydration
+ * is deprecated for paginated threads; use this with `thread/turns/list`
+ * and `thread/items/list` instead.
  */
 excludeTurns?: boolean,
 /**
