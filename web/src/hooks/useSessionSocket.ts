@@ -7,7 +7,7 @@
 // fetchConfig 与 socket 生命周期无关，同在组合层独立 effect（原 effect 内同步先后执行，
 // 拆开后同 commit 按声明序执行，行为等价）。
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchHistory, makeSessionInfo, type HistoryResponse, type SessionInfo } from '../lib/api'
 import { nextId, type Block } from '../lib/blocks'
 import { appendHistoryMsg, flushStrayResults, type IngestState } from '../lib/ingest'
@@ -44,9 +44,34 @@ export function useSessionSocket(opts: {
   const [state, setState] = useState<SessionState>({ spawned: false, busy: false })
   const [connected, setConnected] = useState(false)
   const [approvals, setApprovals] = useState<Approval[]>([])
+  /** codex thread/revert 双信号去重：'reverted'（本地截断）后 5s 内到达的 cli
+   *  thread_reverted（权威重载）是同一事件的回声，跳过避免二次重载 */
+  const lastRevertedAtRef = useRef(0)
 
   // ---------- WS 连接 ----------
   useEffect(() => {
+    /** 重载权威历史（replay_gap 与 codex thread_reverted 共用）：
+     *  先挡住 cli 再清草稿——环里残留的 stream/assistant 不能在重载完成前改抄本。 */
+    const reloadTranscript = (label: string) => {
+      ingestApi.gapReloadingRef.current = true
+      ingestApi.setDraftBoth(null)
+      ingestApi.pendingResultsRef.current.clear()
+      ingestApi.setPhase(undefined)
+      const gapKey = session.key
+      loadSessionHistory()
+        .then((resp) => {
+          if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
+          ingestApi.applyHistory(resp)
+          ingestApi.pushSystem(label)
+        })
+        .catch(() => {
+          if (sockRef.current?.key !== gapKey) return
+          ingestApi.pushSystem('⚠ 重新载入对话失败，请手动刷新', 'error')
+        })
+        .finally(() => {
+          if (sockRef.current?.key === gapKey) ingestApi.gapReloadingRef.current = false
+        })
+    }
     const sock = new SessionSocket(
       session.key,
       (ev: ServerEvent) => {
@@ -241,7 +266,33 @@ export function useSessionSocket(opts: {
               return [...base, { id: nextId(), role: 'system', blocks: [{ kind: 'text', text: label }] }]
             })
             break
+          case 'reverted': {
+            // codex paginated 原地回滚（thread/revert）：会话 key/连接不变，所选消息所在轮
+            // 及其后内容已从持久历史移除（beforeTurnId 语义）——本地截断同样排除所选消息
+            //（与 rewound 的 idx+1 保留目标不同，注意两后端的语义差）。
+            // thread_reverted 系统消息随后到达（回声），5s 窗口内不再触发权威重载
+            lastRevertedAtRef.current = Date.now()
+            ingestApi.setDraftBoth(null)
+            ingestApi.pendingResultsRef.current.clear()
+            ingestApi.setPhase(undefined)
+            ingestApi.setMsgs((prev) => {
+              const idx = prev.findIndex((m) => m.id === ev.userMessageId)
+              const base = idx >= 0 ? prev.slice(0, idx) : prev
+              return [...base, { id: nextId(), role: 'system', blocks: [{ kind: 'text', text: '↩ 对话已回滚（该消息及之后的内容已移除）' }] }]
+            })
+            onCloseRewind()
+            break
+          }
           case 'cli':
+            // codex thread/reverted（thread/revert 原地截断完成；外部客户端发起或重连补放）：
+            // 重载权威历史对齐——本地视图中"被回滚的未来"不能靠 replay 残留。
+            // 本会话回滚面板刚完成的 5s 内，这条是 'reverted' 事件的回声，跳过
+            if (ev.msg?.type === 'system' && ev.msg?.subtype === 'thread_reverted') {
+              if (Date.now() - lastRevertedAtRef.current > 5000) {
+                reloadTranscript('↻ 对话已回滚，重新载入')
+              }
+              break
+            }
             if (ingestApi.gapReloadingRef.current) break
             ingestApi.handleCli(ev.msg, ev.replay === true)
             break
@@ -283,25 +334,7 @@ export function useSessionSocket(opts: {
             // 断线太久，服务端环形缓冲已挤掉起点：补发会留空洞，直接重载历史。
             // transcript 是权威事实源，重载一定能补齐（代价只是一次 HTTP）。
             // 必须与初次加载走同一 loader——Codex 没有 Claude transcript 路径。
-            // 先挡住 cli 再清草稿：环里残留的 stream/assistant 不能在重载完成前改抄本。
-            ingestApi.gapReloadingRef.current = true
-            ingestApi.setDraftBoth(null)
-            ingestApi.pendingResultsRef.current.clear()
-            ingestApi.setPhase(undefined)
-            const gapKey = session.key
-            loadSessionHistory()
-              .then((resp) => {
-                if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
-                ingestApi.applyHistory(resp)
-                ingestApi.pushSystem('↻ 断线较久，已重新载入对话')
-              })
-              .catch(() => {
-                if (sockRef.current?.key !== gapKey) return
-                ingestApi.pushSystem('⚠ 重新载入对话失败，请手动刷新', 'error')
-              })
-              .finally(() => {
-                if (sockRef.current?.key === gapKey) ingestApi.gapReloadingRef.current = false
-              })
+            reloadTranscript('↻ 断线较久，已重新载入对话')
             break
           }
           case 'tail_reset': {

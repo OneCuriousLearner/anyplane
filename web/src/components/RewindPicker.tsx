@@ -31,10 +31,18 @@ export function RewindPicker(props: {
   onRewindConversation: (uuid: string) => void
   onRewindBoth: (uuid: string) => void
   onClose: () => void
-  /** codex：分叉语义（thread/fork beforeTurnId），无文件回滚 */
+  /** codex：回滚语义按线程 historyMode 分流（status 下发）——
+   *  paginated：thread/revert 原地截断，会话不变；legacy：thread/fork 分叉新线程；
+   *  缺省（status 未下发）：中性文案，绝不谎报「原会话不动」 */
   mode?: 'claude' | 'codex'
+  historyMode?: string
 }) {
   const isCodex = props.mode === 'codex'
+  // 三态：paginated=原地截断 / legacy=分叉新线程 / 缺省（服务端重启等 status 未下发）=中性文案——
+  // 绝不能缺省兜底成分叉文案：paginated 线程实际执行的是破坏性原地 revert，
+  // 「原会话不动」的承诺与真实行为相反（审查发现）
+  const codexRevert = isCodex && props.historyMode === 'paginated'
+  const codexFork = isCodex && props.historyMode === 'legacy'
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 md:items-center" onClick={props.onClose}>
       <div
@@ -42,7 +50,9 @@ export function RewindPicker(props: {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-mono text-xs tracking-widest text-muted uppercase">{isCodex ? '从…分叉' : '回滚到…'}</h2>
+          <h2 className="font-mono text-xs tracking-widest text-muted uppercase">
+            {isCodex ? (codexRevert ? '回滚到…' : codexFork ? '从…分叉' : '回滚 / 分叉') : '回滚到…'}
+          </h2>
           <button className="text-faint hover:text-ink" onClick={props.onClose}>
             ✕
           </button>
@@ -51,7 +61,13 @@ export function RewindPicker(props: {
           <p className="mb-3 text-xs leading-relaxed text-faint">选择一条用户消息作为目标；可单独恢复文件、单独恢复对话，或同时恢复两者。</p>
         )}
         {props.targets.length > 0 && isCodex && (
-          <p className="mb-3 text-xs leading-relaxed text-faint">选择一条用户消息：新会话将携带该消息所在轮<b>之前</b>的全部历史，原会话保持不动。</p>
+          <p className="mb-3 text-xs leading-relaxed text-faint">
+            {codexRevert
+              ? '选择一条用户消息：该消息所在轮及其后的全部内容将从会话中移除，会话原地继续。'
+              : codexFork
+                ? '选择一条用户消息：新会话将携带该消息所在轮之前的全部历史，原会话保持不动。'
+                : '选择一条用户消息：该消息所在轮及其后内容将被移除；旧格式的会话会改为分叉为新会话（原会话不动）。'}
+          </p>
         )}
         {props.targets.length === 0 && (
           <p className="text-sm text-muted">没有可回滚的用户消息（compact 之前的内容不可回滚）</p>
@@ -78,7 +94,7 @@ export function RewindPicker(props: {
                 className="mt-2 w-full rounded-full bg-ink py-1.5 font-mono text-[11px] font-medium text-bg"
                 onClick={() => props.onRewindConversation(t.uuid)}
               >
-                从此处分叉（原会话不动）
+                {codexRevert ? '回滚到此处（该消息及之后被移除）' : codexFork ? '从此处分叉（原会话不动）' : '回滚 / 分叉到此处'}
               </button>
             ) : (
             <div className="grid grid-cols-2 gap-2">

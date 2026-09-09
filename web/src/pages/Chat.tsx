@@ -484,6 +484,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         <RewindPicker
           targets={rewindTargets}
           mode={isCodex ? 'codex' : 'claude'}
+          historyMode={state.historyMode}
           onClose={() => setShowRewind(false)}
           onRewindFiles={(uuid) => {
             sockRef.current?.send({ kind: 'control', subtype: 'rewind_files', extra: { user_message_id: uuid } })

@@ -61,7 +61,7 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 | Cloudflare Tunnel | 免费 | CF 边缘终止 TLS（可见明文），换来 Access 认证层 | 要稳定域名 + WAF 时选 |
 | 家宽 IPv6 + DDNS | 零 | 无第三方 | 国内家宽多有公网 v6；注意运营商入站过滤与自身防火墙 |
 
-## 方向四：Codex 迁移 Paginated 历史模式与 thread/revert（待排期）
+## 方向四：Codex 迁移 Paginated 历史模式与 thread/revert——✅ 已完成（2026-09-09）
 
 **定论**：`thread/revert` 已经发布且非实验，原地截断 durable history + 保持 thread id + 会话 key 不变，
 体验远好于现在的 `thread/fork`（当前每次回滚产生一条孤立垃圾线程，且 sessionKey 变化需要重定向导航）。
@@ -119,6 +119,22 @@ paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义
 3. **双轨兼容分流**：既有历史会话仍为 legacy，`readHistory` 须按 `thread.history_mode` 自动分流；
    回滚操作也按 mode 选择：paginated 线程走 `thread/revert`，legacy 线程降级走 `thread/fork`。
 4. **回滚时序**：`thread/revert` 原地生效后，前端清理当前 turn 之后的消息并刷新状态，无需换 key 导航。
+
+**交付记录（PR 见 git log，全部按上方步骤落地）**：
+- 服务端：`thread/start` 显式 paginated；`readHistory` 按 `historyMode` 双轨分流
+  （paginated：turns/list **显式 asc**（默认降序，实测）+ items/list 跨 turn 分页归组；
+  legacy：维持 thread/read）；`revertAt`/`historyModeOf`；`thread/reverted` 通知 →
+  cli 系统消息入环广播；paginated resume 跳过 rollout 回扫（0.153 冷 resume 自动补发 tokenUsage）。
+- port：`rewindConversation` 双轨——paginated 原地 revert（清 hub.cliRing 防重连复活
+  "被回滚的未来"，广播 `reverted` 就地截断）；legacy 维持 fork + 导航。status 下发 historyMode。
+- 前端：RewindPicker 按 historyMode 切换「回滚到此处」/「从此处分叉」文案；
+  `reverted` 事件就地截断（**排除**所选消息——beforeTurnId 语义，与 claude rewound 的
+  保留目标不同）；cli `thread_reverted` 触发权威历史重载（5s 回声去重）。
+- 验证：`bun test` 446 全过（新增 5 项：双轨分页/asc/锚点/孤儿 turnId/reverted 通知）；
+  `server/scripts/e2e-codex-paginated.ts` 全绿（真实服务端+模型：历史工具卡完整、
+  revert 截断、原地续聊、legacy fork 降级）；分 turn 超时 + 失败轨迹 dump 入脚本。
+- 已知边界：冷/热 resume 的 tokenUsage 补发差异与 writer lock 时序见 AGENTS.md；
+  e2e 脚本需用唯一 cwd（xn key 跨次复用会撞服务端残留 Hub）。
 
 ## 方向五：Codex 实时流与思考增量对齐（Delta 通知接入）——✅ 已完成（2026-09-07）
 
