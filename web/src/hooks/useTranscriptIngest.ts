@@ -18,6 +18,7 @@ import {
   liveMessageKeys,
   pairToolResultIn,
   pairToolResultPartialIn,
+  prependHistoryMsgs,
   rememberKeys,
   transcriptKeys,
   type IngestState,
@@ -55,6 +56,8 @@ export interface TranscriptIngestApi {
   handleCli(msg: CliMsg, replay?: boolean): void
   /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset 重载共用） */
   applyHistory(resp: HistoryResponse): void
+  /** 翻页加载的更早历史 prepend 到抄本前（服务端 before 游标语义，零重叠） */
+  prependHistory(resp: HistoryResponse): void
   /** 会话切换重置（E3 组合层调用；顺序即原 E3 清空段前 7 步） */
   reset(): void
   // ref 出口：WS 事件分发（F5 前留 Chat）需要直接读写
@@ -78,6 +81,10 @@ export function useTranscriptIngest(opts: {
   initInfo: { model?: string; slashCommands?: string[] }
   permMode: string | undefined
   effort: string | undefined
+  /** claude 历史分页：已加载窗口之前服务端还有更早消息（codex 恒 false——其历史全量下发） */
+  hasMoreHistory: boolean
+  /** 下一页的 before 游标（事件处理器在渲染外触发，经 ref 读最新值） */
+  historyBeforeRef: React.RefObject<number | undefined>
   api: TranscriptIngestApi
 } {
   const { isCodex, sockRef, taskApi } = opts
@@ -101,6 +108,9 @@ export function useTranscriptIngest(opts: {
   const gapReloadingRef = useRef(false)
   /** 已见消息身份（uuid / message.id / tool:id）。HTTP 历史与 live/补发重叠时靠它去重 */
   const seenIdsRef = useRef(new Set<string>())
+  /** claude 历史分页游标与 hasMore 镜像（hasMore 走 state 驱动哨兵渲染，游标走 ref 供事件路径读最新） */
+  const historyBeforeRef = useRef<number | undefined>(undefined)
+  const [hasMoreHistory, setHasMoreHistory] = useState(false)
 
   const setMsgs = (up: (prev: ChatMsg[]) => ChatMsg[]) => {
     messagesRef.current = up(messagesRef.current)
@@ -125,6 +135,8 @@ export function useTranscriptIngest(opts: {
   /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset 重载共用） */
   const applyHistory = (resp: HistoryResponse) => {
     historyOffsetRef.current = resp.fileBytes
+    historyBeforeRef.current = resp.nextBefore
+    setHasMoreHistory(resp.hasMore === true)
     const st = createIngestState()
     for (const h of resp.messages) appendHistoryMsg(st, h)
     // 批次收尾：整批读完仍未配对的才是真孤儿（批内乱序此时已修复）
@@ -145,6 +157,20 @@ export function useTranscriptIngest(opts: {
     if (!isCodex) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
   }
 
+  /** 翻页 prepend：更早一页铺到抄本前。去重键并集（防 replay 重复），游标推进，桶不重建 */
+  const prependHistory = (resp: HistoryResponse) => {
+    historyBeforeRef.current = resp.nextBefore
+    setHasMoreHistory(resp.hasMore === true)
+    setMsgs((prev) => {
+      const st: IngestState = { msgs: prev, toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
+      prependHistoryMsgs(st, resp.messages)
+      // prepend 合并乱序缓冲时更换了 Map 实例，ref 必须跟随（索引 Map 是原实例原地重建）
+      pendingResultsRef.current = st.pending
+      return st.msgs
+    })
+    for (const h of resp.messages) rememberKeys(seenIdsRef.current, liveMessageKeys({ uuid: h.uuid }))
+  }
+
   /** 会话切换重置（E3 组合层调用；顺序即原 E3 清空段前 7 步） */
   const reset = () => {
     setMsgs(() => [])
@@ -153,6 +179,8 @@ export function useTranscriptIngest(opts: {
     toolPosRef.current.clear()
     seenIdsRef.current.clear()
     historyOffsetRef.current = undefined
+    historyBeforeRef.current = undefined
+    setHasMoreHistory(false)
     gapReloadingRef.current = false
   }
 
@@ -434,6 +462,8 @@ export function useTranscriptIngest(opts: {
     initInfo,
     permMode,
     effort,
+    hasMoreHistory,
+    historyBeforeRef,
     api: {
       setPhase,
       setPermMode,
@@ -446,6 +476,7 @@ export function useTranscriptIngest(opts: {
       commitDraft,
       handleCli,
       applyHistory,
+      prependHistory,
       reset,
       messagesRef,
       draftRef,

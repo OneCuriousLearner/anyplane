@@ -88,8 +88,21 @@ export async function handleMiscRoutes(req: Request, url: URL): Promise<Response
   const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
   if (histMatch && req.method === 'GET') {
     const [, slug, sessionId] = histMatch
-    // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移
-    return json(readHistory(slug, sessionId))
+    // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移；
+    // ?before=<行号> 翻更早的页（响应 nextBefore 续传），?limit= 覆盖默认 300（上限 1000）
+    const num = (k: string) => {
+      const v = url.searchParams.get(k)
+      if (v == null) return undefined
+      const n = Number(v)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined
+    }
+    const limit = num('limit')
+    return json(
+      readHistory(slug, sessionId, {
+        before: num('before'),
+        limit: limit == null ? undefined : Math.min(limit, 1000),
+      }),
+    )
   }
   // codex 历史：thread/read includeTurns（只读），无 tailer 偏移概念
   const codexHistMatch = url.pathname.match(/^\/api\/codex\/history\/([^/]+)$/)

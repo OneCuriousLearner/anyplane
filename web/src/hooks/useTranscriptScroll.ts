@@ -36,6 +36,9 @@ export function useTranscriptScroll(opts: {
   followDeps: readonly unknown[]
   /** 流式进行中（有 draft）：跟随用 auto；收尾/新消息才 smooth */
   streaming: boolean
+  /** 窗口已到顶（windowStart=0）且继续向上滚动时触发：调用方据此拉取更早历史页。
+   *  门控与扩窗相同（初始定位完成 + 非程序化回链 + 方向向上 + 近顶端） */
+  onReachTop?: () => void
 }): {
   /** 已 clamp 的窗口起点；调用方 rows.slice(windowStart) 后渲染 */
   windowStart: number
@@ -46,8 +49,11 @@ export function useTranscriptScroll(opts: {
   jumpToBottom: () => void
   /** 顶部哨兵按钮的显式扩窗（与上翻扩窗同一条锚定补偿路径） */
   expandWindow: () => void
+  /** 异步 prepend 前调用：捕获当前滚动量，下一渲染的 layout 阶段按 scrollHeight
+   *  增量补偿（与扩窗共用同一消费点）。必须在 setState 提交前调用 */
+  preparePrepend: () => void
 } {
-  const { scrollRef, rowCount, resetKey, followDeps, streaming } = opts
+  const { scrollRef, rowCount, resetKey, followDeps, streaming, onReachTop } = opts
   const [atBottom, setAtBottom] = useState(true)
   const atBottomRef = useRef(true)
   /** 用户显式扩窗/冻结后的窗口起点；null = 未交互，跟随初始策略（尾部窗口，随行数漂移） */
@@ -153,13 +159,18 @@ export function useTranscriptScroll(opts: {
     // 静默卸载用户正在阅读的行
     if (rawStart == null) setRawStart(windowStart)
 
-    // 扩窗门控：初始定位完成 + 非程序化滚动回链 + 方向向上 + 近顶端 + 还有更早的行
+    // 扩窗门控：初始定位完成 + 非程序化滚动回链 + 方向向上 + 近顶端
     if (!initialAnchorDoneRef.current) return
     if (performance.now() < ignoreScrollUntilRef.current) return
     if (top >= last) return // 仅向上滚动可扩窗
-    if (windowStart <= 0 || top >= EXPAND_TOP_PX) return
-    pendingAnchorRef.current = { height: el.scrollHeight, top }
-    setRawStart(expandWindowStart(windowStart))
+    if (top >= EXPAND_TOP_PX) return
+    if (windowStart > 0) {
+      pendingAnchorRef.current = { height: el.scrollHeight, top }
+      setRawStart(expandWindowStart(windowStart))
+    } else {
+      // 本地窗口已到顶：服务端还有更早历史（hasMore）时由调用方拉取上一页
+      onReachTop?.()
+    }
   }
 
   // ---- ↓ 按钮：恢复尾部窗口 + 直达底部 ----
@@ -175,10 +186,22 @@ export function useTranscriptScroll(opts: {
   // ---- 顶部哨兵按钮：显式扩窗（程序化，但与上翻扩窗共用锚定补偿，视口不动） ----
   const expandWindow = () => {
     const el = scrollRef.current
-    if (!el || windowStart <= 0) return
-    pendingAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
-    setRawStart(expandWindowStart(windowStart))
+    if (!el) return
+    if (windowStart > 0) {
+      pendingAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+      setRawStart(expandWindowStart(windowStart))
+    } else {
+      onReachTop?.()
+    }
   }
 
-  return { windowStart, atBottom, onScroll, jumpToBottom, expandWindow }
+  // ---- 异步 prepend 锚点捕获：在翻页响应落抄本（setState）之前调用，
+  // 渲染后的 layout 效应按 scrollHeight 增量补偿（与扩窗同一消费点） ----
+  const preparePrepend = () => {
+    const el = scrollRef.current
+    if (!el) return
+    pendingAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+  }
+
+  return { windowStart, atBottom, onScroll, jumpToBottom, expandWindow, preparePrepend }
 }

@@ -61,14 +61,40 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   // ---------- 主抄本 ingest（消息/流式草稿/配对索引 + cli 流驱动的会话元数据；F4/F5 下沉 hooks/useTranscriptIngest.ts） ----------
   // api 为每渲染重建的普通对象：内部全走 ref/稳定 setState，过期闭包语义等价
-  const { messages, draft, phase, initInfo, permMode, effort, api: ingestApi } = useTranscriptIngest({
-    isCodex,
-    sockRef,
-    taskApi,
-  })
+  const { messages, draft, phase, initInfo, permMode, effort, hasMoreHistory, historyBeforeRef, api: ingestApi } =
+    useTranscriptIngest({
+      isCodex,
+      sockRef,
+      taskApi,
+    })
 
   const loadSessionHistory = () =>
     isCodex ? fetchCodexHistory(session.sessionId) : fetchHistory(session.slug, session.sessionId)
+
+  /** 向上翻页：拉更早历史并锚定 prepend（游标/hasMore 由 ingest 持有；codex 历史全量无分页）。
+   *  经 ref 桥接给滚动 hook 的 onReachTop——loadEarlier 需要滚动 hook 的 preparePrepend，
+   *  两者互相引用，ref 打破声明顺序环 */
+  const [fetchingEarlier, setFetchingEarlier] = useState(false)
+  const fetchingEarlierRef = useRef(false)
+  const loadEarlierRef = useRef<() => void>(() => {})
+  loadEarlierRef.current = () => {
+    const before = historyBeforeRef.current
+    if (before == null || fetchingEarlierRef.current || isCodex) return
+    fetchingEarlierRef.current = true
+    setFetchingEarlier(true)
+    fetchHistory(session.slug, session.sessionId, { before })
+      .then((resp) => {
+        // 会话已切走时丢弃过期响应（sockRef.key 是现行会话判定的既有口径）
+        if (sockRef.current?.key !== session.key) return
+        if (resp.messages.length > 0) scrollRefApi.current?.preparePrepend()
+        ingestApi.prependHistory(resp)
+      })
+      .catch(() => ingestApi.pushSystem('⚠ 加载更早消息失败', 'error'))
+      .finally(() => {
+        fetchingEarlierRef.current = false
+        setFetchingEarlier(false)
+      })
+  }
 
   // ---------- 详情查询（query 通道；应答的详情域分发留组合层） ----------
   const runQuery = (query: string, title: string) => {
@@ -347,14 +373,19 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   // 渲染行在 Chat 层算：Transcript 保持纯展示，重进/重渲时不重复摊平
   const transcriptRows = useMemo(() => buildTranscriptRows(messages, draft), [messages, draft])
 
-  // 抄本滚动与尾部窗口化（初始定位/门控扩窗/锚定补偿全在 hook 内，约束见文件头注释）
-  const { windowStart, atBottom, onScroll, jumpToBottom, expandWindow } = useTranscriptScroll({
+  // 抄本滚动与尾部窗口化（初始定位/门控扩窗/锚定补偿全在 hook 内，约束见文件头注释）；
+  // onReachTop：本地窗口到顶且服务端 hasMore 时翻页拉更早历史
+  const transcriptScroll = useTranscriptScroll({
     scrollRef,
     rowCount: transcriptRows.length,
     resetKey: session.key,
     followDeps: [messages, approvals, draft],
     streaming: Boolean(draft),
+    onReachTop: () => loadEarlierRef.current(),
   })
+  const { windowStart, atBottom, onScroll, jumpToBottom, expandWindow } = transcriptScroll
+  const scrollRefApi = useRef<typeof transcriptScroll | null>(null)
+  scrollRefApi.current = transcriptScroll
   const visibleRows = useMemo(
     () => transcriptRows.slice(windowStart),
     [transcriptRows, windowStart],
@@ -371,8 +402,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto max-w-3xl px-[17px] pb-[300px] pt-[84px] md:px-[29px]">
-          {/* 窗口化顶部哨兵：还有未挂载的更早行时的入口提示（点击=等价于上翻到顶的扩窗） */}
-          {windowStart > 0 && (
+          {/* 顶部哨兵：窗口未扩完=本地扩窗；已到顶且服务端还有更早历史=翻页加载（点击与上翻同路径） */}
+          {windowStart > 0 ? (
             <button
               type="button"
               onClick={expandWindow}
@@ -380,6 +411,17 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             >
               向上滚动或点此加载更早的消息
             </button>
+          ) : (
+            hasMoreHistory && (
+              <button
+                type="button"
+                onClick={expandWindow}
+                disabled={fetchingEarlier}
+                className="mb-3 w-full rounded-[14px] bg-surface/60 py-2 font-mono text-[11px] tracking-wide text-faint transition-colors hover:bg-surface2 hover:text-muted disabled:opacity-60"
+              >
+                {fetchingEarlier ? '正在加载更早的消息…' : '向上滚动或点此加载更早的消息'}
+              </button>
+            )
           )}
           <Transcript rows={visibleRows} draft={draft} />
 

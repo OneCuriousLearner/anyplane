@@ -1,14 +1,17 @@
-// 抄本窗口化验收 fixture（方向七）：合成 300+ 渲染行的混合抄本，
+// 抄本窗口化验收 fixture（方向七 + 历史分页）：合成分页数据源的混合抄本，
 // 驱动与 Chat 完全同一份 useTranscriptScroll + buildTranscriptRows + Transcript。
 //
 // 仅 Vite dev 提供（/transcript-fixture.html）；生产构建默认只打 index.html，本页不进 dist。
 // ?autorun=1 自动跑四段场景并把结果写到 window.__fixtureResult 与 #results <pre>，
 // 供浏览器自动化（chrome-devtools MCP）读取；断言全过 document.title 变为 FIXTURE:PASS。
 //
-// 场景（对齐 ROADMAP 方向七验收口径）：
+// 数据源：全部 76 轮（≈532 行）按页下发——首载只给最近 46 轮（322 行，模拟服务端 300 条窗口），
+// 向上到顶且 hasMore 时异步 prepend 更早一页（20 轮/页，120ms 延迟模拟网络）。
+//
+// 场景（对齐 ROADMAP 方向七验收口径 + 历史分页回归）：
 //   S1 打开会话：首绘 layout 阶段 auto 直达底部，只挂载尾部窗口，无 smooth 漂移
 //   S2 流式追加：atBottom 期间持续追加，挂载行数恒定有界（DOM 不随会话长度增长）
-//   S3 手动上翻：向上滚动逐段扩窗到顶，锚定补偿保证视口内容不跳变
+//   S3 手动上翻：本地窗口逐段扩窗 + 到顶自动翻页直至最早一页，锚定补偿保证视口不跳变
 //   S4 回到底部：jumpToBottom 恢复尾部窗口，挂载重回收敛且停在底部
 
 import { createRoot } from 'react-dom/client'
@@ -23,15 +26,18 @@ import { Transcript } from '../components/Transcript'
 // 合成数据：每 turn = user + [thinking+tool][text][tool][text][tool][text] ≈ 7 行
 // ---------------------------------------------------------------------------
 
-const TURNS = 46 // ≈ 322 渲染行
+const TURNS_TOTAL = 76 // ≈ 532 渲染行（全量）
+const FIRST_PAGE_TURNS = 46 // 首载 46 轮 ≈ 322 行（模拟服务端首页窗口）
+const PAGE_TURNS = 20 // 每次翻页 prepend 20 轮
 
 function longText(t: number, k: number): string {
   return `第 ${t} 轮第 ${k} 段正文。\n\n这里是一段 markdown：\n\n- 要点 A（fixture 行 ${t}.${k}）\n- 要点 B\n\n\`\`\`ts\nconst turn = ${t}\nconsole.log(turn)\n\`\`\`\n\n结尾句。`
 }
 
-function makeMessages(): ChatMsg[] {
+/** 生成 [from, TURNS_TOTAL) 轮的消息（确定性内容，按轮号对齐） */
+function makeTurns(from: number): ChatMsg[] {
   const msgs: ChatMsg[] = []
-  for (let t = 0; t < TURNS; t++) {
+  for (let t = from; t < TURNS_TOTAL; t++) {
     msgs.push({
       id: `fx-u-${t}`,
       role: 'user',
@@ -71,6 +77,10 @@ interface FixtureState {
   rowCount: number
   mountedRows: number
   streaming: boolean
+  /** 分页数据源：最早已加载的轮号 / 是否还有更早页 / 翻页进行中 */
+  startTurn: number
+  hasMore: boolean
+  fetchingEarlier: boolean
 }
 
 declare global {
@@ -81,23 +91,47 @@ declare global {
 }
 
 function Fixture() {
-  const [messages, setMessages] = useState<ChatMsg[]>(makeMessages)
+  const [startTurn, setStartTurn] = useState(TURNS_TOTAL - FIRST_PAGE_TURNS)
+  const [appended, setAppended] = useState<ChatMsg[]>([])
   const [draftText, setDraftText] = useState<string | null>(null)
   const [results, setResults] = useState<string[] | null>(null)
+  const [fetchingEarlier, setFetchingEarlier] = useState(false)
+  const fetchingRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  const hasMore = startTurn > 0
+  const messages = useMemo(() => [...makeTurns(startTurn), ...appended], [startTurn, appended])
   const draft = useMemo(
     () => (draftText == null ? null : { blocks: [{ idx: 0, kind: 'text' as const, text: draftText }] }),
     [draftText],
   )
   const rows = useMemo(() => buildTranscriptRows(messages, draft), [messages, draft])
-  const { windowStart, atBottom, onScroll, jumpToBottom, expandWindow } = useTranscriptScroll({
+
+  /** 翻页（模拟 Chat 的 loadEarlier）：异步延迟后锚定 prepend 更早一轮页 */
+  const loadEarlierRef = useRef<() => void>(() => {})
+  loadEarlierRef.current = () => {
+    if (fetchingRef.current || startTurn === 0) return
+    fetchingRef.current = true
+    setFetchingEarlier(true)
+    void sleep(120).then(() => {
+      scrollApiRef.current?.preparePrepend()
+      setStartTurn((s) => Math.max(0, s - PAGE_TURNS))
+      fetchingRef.current = false
+      setFetchingEarlier(false)
+    })
+  }
+
+  const transcriptScroll = useTranscriptScroll({
     scrollRef,
     rowCount: rows.length,
     resetKey: 'fixture',
     followDeps: [messages, draft],
     streaming: draft != null,
+    onReachTop: () => loadEarlierRef.current(),
   })
+  const { windowStart, atBottom, onScroll, jumpToBottom, expandWindow } = transcriptScroll
+  const scrollApiRef = useRef<typeof transcriptScroll | null>(null)
+  scrollApiRef.current = transcriptScroll
   const visibleRows = useMemo(() => rows.slice(windowStart), [rows, windowStart])
 
   // 状态桥：每渲染把内部状态吐给 window，供自动化读取
@@ -111,9 +145,12 @@ function Fixture() {
     rowCount: rows.length,
     mountedRows: visibleRows.length,
     streaming: draft != null,
+    startTurn,
+    hasMore,
+    fetchingEarlier,
   }
 
-  /** 流式追加：40ms 一个 token，共 25 拍，然后定稿进 messages（tool+text 两块=两行，
+  /** 流式追加：40ms 一个 token，共 25 拍，然后定稿进 appended（tool+text 两块=两行，
    *  纯 text 会被相邻 content 行合并导致行数不变——S2 断言需要真实行数增长），重复 count 条 */
   const appendStreaming = async (count: number) => {
     for (let m = 0; m < count; m++) {
@@ -124,7 +161,7 @@ function Fixture() {
         await sleep(40)
       }
       const finalText = text
-      setMessages((prev) => [
+      setAppended((prev) => [
         ...prev,
         {
           id: `fx-s-${m}`,
@@ -155,6 +192,7 @@ function Fixture() {
       note(bottomGap <= 1 && s.atBottom, 'S1 首绘直达底部', `gap=${bottomGap}`)
       note(s.windowStart === s.rowCount - WINDOW_TAIL_ROWS, 'S1 只挂载尾部窗口', `start=${s.windowStart}/${s.rowCount}`)
       note(s.mountedRows === WINDOW_TAIL_ROWS, 'S1 挂载行数=尾窗', `mounted=${s.mountedRows}`)
+      note(s.hasMore, 'S1 数据源还有更早页', `startTurn=${s.startTurn}`)
       const before = s.scrollTop
       await sleep(350)
       note(st().scrollTop === before, 'S1 无 smooth 漂移', `Δ=${st().scrollTop - before}`)
@@ -171,38 +209,53 @@ function Fixture() {
       note(bottomGap <= 1 && s.atBottom, 'S2 流式结束仍钉在底部', `gap=${bottomGap}`)
     }
 
-    // ---- S3 手动上翻 ----
+    // ---- S3 手动上翻：本地扩窗 + 到顶翻页，直到最早一页 ----
     {
       const el = scrollRef.current!
       let anchorOk = true
       let anchorDetail = ''
-      for (let i = 0; i < 200; i++) {
-        if ((window.__fixtureState?.windowStart ?? 0) === 0 && el.scrollTop <= 2) break
-        const startBefore = window.__fixtureState?.windowStart ?? 0
-        // 锚点取证：给视口内元素打临时属性并记录其 y，扩窗后精确找回同一元素比对位移。
-        // 向上滚动使元素在视口中下移（scrollTop -600 ⇒ viewport top +600，delta ≈ -600）；
-        // 锚定补偿失效时扩窗 prepend 会额外叠加数千 px 位移
+      for (let i = 0; i < 250; i++) {
+        const s = st()
+        if (s.windowStart === 0 && !s.hasMore && !s.fetchingEarlier && el.scrollTop <= 2) break
+        // 锚点取证：给视口内元素打临时属性并记录其 y，扩窗/翻页后精确找回比对位移。
+        // 向上滚动使元素在视口中下移（scrollTop -800 ⇒ viewport top +800，delta ≈ -800）；
+        // 锚定补偿失效时 prepend 会额外叠加数千 px 位移
         const probe = document.elementFromPoint(el.clientWidth / 2, 200) as HTMLElement | null
         const beforeTop = probe?.getBoundingClientRect().top
         probe?.setAttribute('data-fx-anchor', '1')
-        el.scrollTop = Math.max(0, el.scrollTop - 600)
+        const scrollBefore = el.scrollTop
+        el.scrollTop = Math.max(0, el.scrollTop - 800)
+        const intended = scrollBefore - el.scrollTop // 钳位到 0 时实际滚动量 < 800
         await sleep(50)
         await frames(2)
-        const startAfter = window.__fixtureState?.windowStart ?? 0
+        // 翻页是异步的（120ms）：等一拍让进行中的 prepend 落地再测
+        if (st().fetchingEarlier) {
+          await sleep(150)
+          await frames(2)
+        }
+        const s2 = st()
+        const grown = s2.windowStart < s.windowStart || s2.rowCount > s.rowCount
         const hit = el.querySelector('[data-fx-anchor="1"]') as HTMLElement | null
         hit?.removeAttribute('data-fx-anchor')
-        if (startAfter < startBefore && probe && hit && beforeTop != null) {
+        if (grown && probe && hit && beforeTop != null && intended > 0) {
+          // 位移应等于本步实际滚动量（锚定补偿把扩窗/翻页的 prepend 影响抵消为零）
           const delta = beforeTop - hit.getBoundingClientRect().top
-          if (Math.abs(delta + 600) > 120) {
+          if (Math.abs(delta + intended) > 160) {
             anchorOk = false
-            anchorDetail = `位移 ${delta.toFixed(0)}px 异常（期望≈-600）`
+            anchorDetail = `位移 ${delta.toFixed(0)}px 异常（本步滚动 ${intended.toFixed(0)}px，期望≈${(-intended).toFixed(0)}）`
             break
           }
         }
       }
       const s = st()
-      note(s.windowStart === 0, 'S3 扩窗到顶（全部挂载）', `start=${s.windowStart} mounted=${s.mountedRows}/${s.rowCount}`)
-      note(anchorOk, 'S3 扩窗锚定补偿无跳变', anchorDetail)
+      note(s.startTurn === 0 && !s.hasMore, 'S3 翻页加载到最早一页', `startTurn=${s.startTurn} hasMore=${s.hasMore}`)
+      note(
+        s.windowStart === 0 && s.mountedRows === s.rowCount,
+        'S3 扩窗到顶（全部挂载）',
+        `start=${s.windowStart} mounted=${s.mountedRows}/${s.rowCount}`,
+      )
+      note(s.rowCount >= 530, 'S3 全量行数符合数据源', `rows=${s.rowCount}`)
+      note(anchorOk, 'S3 扩窗/翻页锚定补偿无跳变', anchorDetail)
     }
 
     // ---- S4 回到底部 ----
@@ -236,20 +289,22 @@ function Fixture() {
   return (
     <div className="relative flex h-dvh flex-col bg-bg text-ink">
       <div className="border-b border-line px-4 py-2 font-mono text-[11px] text-faint">
-        抄本窗口 fixture · {rows.length} 行（挂载 {visibleRows.length}）· 窗口起点 {windowStart}
+        抄本窗口 fixture · {rows.length} 行（挂载 {visibleRows.length}）· 窗口起点 {windowStart} · 最早第 {startTurn} 轮
+        {hasMore ? '（还有更早页）' : ''}
         {results == null && autorun && ' · 运行中…'}
       </div>
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-[17px] pb-[300px] pt-[84px] md:px-[29px]">
-          {windowStart > 0 && (
+          {windowStart > 0 || hasMore ? (
             <button
               type="button"
               onClick={expandWindow}
-              className="mb-3 w-full rounded-[14px] bg-surface/60 py-2 font-mono text-[11px] tracking-wide text-faint transition-colors hover:bg-surface2 hover:text-muted"
+              disabled={fetchingEarlier}
+              className="mb-3 w-full rounded-[14px] bg-surface/60 py-2 font-mono text-[11px] tracking-wide text-faint transition-colors hover:bg-surface2 hover:text-muted disabled:opacity-60"
             >
-              向上滚动或点此加载更早的消息
+              {fetchingEarlier ? '正在加载更早的消息…' : '向上滚动或点此加载更早的消息'}
             </button>
-          )}
+          ) : null}
           <Transcript rows={visibleRows} draft={draft} />
         </div>
       </div>

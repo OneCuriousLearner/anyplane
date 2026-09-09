@@ -9,6 +9,7 @@ import {
   ingestToolResult,
   liveMessageKeys,
   pairToolResultIn,
+  prependHistoryMsgs,
   pushIngestMsg,
   rememberKeys,
   transcriptKeys,
@@ -128,8 +129,50 @@ describe('ingest：tool_use ↔ tool_result 配对', () => {
   })
 })
 
-describe('ingest 性质测试：任意事件序下最终形态恒等', () => {
-  // 确定性 PRNG（mulberry32）：失败可复现，不引入外部依赖
+describe('prependHistoryMsgs：历史翻页 prepend', () => {
+  test('更早页铺到前面，页内配对保留，索引平移后现行配对仍可用', () => {
+    const s = createIngestState()
+    appendHistoryMsg(s, toolUse('t-cur'))
+    appendHistoryMsg(s, toolResult('t-cur'))
+    prependHistoryMsgs(s, [
+      { uuid: 'old-1', role: 'user', blocks: [{ kind: 'text', text: '更早的提问' }] },
+      toolUse('t-old'),
+      toolResult('t-old'),
+    ])
+    expect(s.msgs.map((m) => m.id)).toEqual(['old-1', 'u-t-old', 'u-t-cur'])
+    const blocks = toolBlocksOf(s.msgs)
+    expect(blocks.find((b) => b.id === 't-old')).toMatchObject({ resultText: 'out-t-old', pending: false })
+    expect(blocks.find((b) => b.id === 't-cur')).toMatchObject({ resultText: 'out-t-cur', pending: false })
+    // 索引已重建到平移后的位置：继续配对现行消息的工具仍能命中
+    appendHistoryMsg(s, toolUse('t-new'))
+    appendHistoryMsg(s, toolResult('t-new'))
+    expect(toolBlocksOf(s.msgs).find((b) => b.id === 't-new')).toMatchObject({ pending: false })
+  })
+
+  test('跨页配对：调用在更早页、结果在现行页（反向缓冲消费）', () => {
+    const s = createIngestState()
+    // 现行页先落地一个结果，其调用在尚未加载的更早页 → 进 pending 缓冲
+    appendHistoryMsg(s, toolResult('t-x'))
+    expect(s.pending.has('t-x')).toBe(true)
+    // 翻到更早页，调用出现 → prepend 重建索引时消费缓冲完成配对
+    prependHistoryMsgs(s, [toolUse('t-x')])
+    expect(s.pending.has('t-x')).toBe(false)
+    expect(toolBlocksOf(s.msgs).find((b) => b.id === 't-x')).toMatchObject({
+      resultText: 'out-t-x',
+      pending: false,
+    })
+  })
+
+  test('空页与零消息页不动现有抄本', () => {
+    const s = createIngestState()
+    appendHistoryMsg(s, toolUse('t1'))
+    const before = s.msgs
+    prependHistoryMsgs(s, [])
+    expect(s.msgs).toBe(before)
+  })
+})
+
+describe('ingest 性质测试：任意事件序下最终形态恒等', () => {  // 确定性 PRNG（mulberry32）：失败可复现，不引入外部依赖
   const rng = (seed: number) => () => {
     seed = (seed + 0x6d2b79f5) | 0
     let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)

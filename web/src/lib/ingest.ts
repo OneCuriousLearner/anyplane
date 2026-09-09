@@ -153,6 +153,22 @@ export function pushIngestMsg(state: IngestState, m: ChatMsg): void {
 }
 
 /**
+ * 历史翻页的 prepend 归并：更早一页铺到现有抄本前面。
+ * 页内配对在临时 state 完成；随后合并两边乱序缓冲、全量重建工具索引——
+ * indexToolBlocks 逐条落地时消费缓冲，跨页边界的配对（结果在本页、调用在旧页，
+ * 或反之）在这一步自然完成。仍不配对的留在 pending，等更旧的页或批次收尾按既有规则浮现。
+ */
+export function prependHistoryMsgs(state: IngestState, hs: HistoryMessage[]): void {
+  const earlier = createIngestState()
+  for (const h of hs) appendHistoryMsg(earlier, h)
+  if (earlier.msgs.length === 0) return
+  state.pending = new Map([...earlier.pending, ...state.pending])
+  state.msgs = [...earlier.msgs, ...state.msgs]
+  state.toolIdx.clear()
+  for (let mi = 0; mi < state.msgs.length; mi++) indexToolBlocks(state, mi)
+}
+
+/**
  * 历史/tail 的单条归并：把 HistoryMessage 翻成 ChatMsg 落进 state。
  * compact_boundary 渲染为分隔线；isMeta 不进主抄本。
  */

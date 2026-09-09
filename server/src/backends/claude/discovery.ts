@@ -385,13 +385,26 @@ export function entryToHistoryMessage(
   }
 }
 
+export interface HistoryPage {
+  messages: HistoryMessage[]
+  fileBytes: number
+  /** 子代理侧链转录：仅首页（无 before）下发——重，且只为首载的桶重建服务 */
+  subagents?: SubagentHistory[]
+  /** 窗口之前还有更早的消息（可继续用 before=nextBefore 翻页） */
+  hasMore: boolean
+  /** 下一页请求的 before 游标：当前窗口首条消息的 transcript 行号 */
+  nextBefore?: number
+}
+
 export function readHistory(
   slug: string,
   sessionId: string,
-  limit = 300,
-): { messages: HistoryMessage[]; fileBytes: number; subagents: SubagentHistory[] } {
+  opts?: { limit?: number; before?: number },
+): HistoryPage {
+  const limit = opts?.limit ?? 300
+  const before = opts?.before
   const path = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
-  if (!existsSync(path)) return { messages: [], fileBytes: 0, subagents: readSubagentTranscripts(slug, sessionId) }
+  if (!existsSync(path)) return { messages: [], fileBytes: 0, subagents: readSubagentTranscripts(slug, sessionId), hasMore: false }
   // 读 Buffer 而非 utf8 文本：fileBytes 必须与本次实际解析的字节精确一致，
   // tailer 从该偏移续读才不会有缝（statSync 与 read 之间文件可能增长）。
   const raw = readFileSync(path)
@@ -429,17 +442,32 @@ export function readHistory(
     selectable.push(msg.role !== 'user' || isSelectableRewindTarget(obj))
   }
   // 只有最后一个 compact 边界之后的消息才是逻辑上存在、可回滚的；
-  // user 消息还需通过官方同款的目标过滤（无 checkpoint 的消息不可作为 rewind 目标）
+  // user 消息还需通过官方同款的目标过滤（无 checkpoint 的消息不可作为 rewind 目标）。
+  // rewindable 必须基于全量列表计算（lastBoundaryLine 是全文件扫描的产物），与分页窗口无关
   for (let i = 0; i < msgs.length; i++) {
     msgs[i].rewindable = msgLineIdx[i] > lastBoundaryLine && selectable[i]
   }
-  // 子代理侧链：新版拆分文件为主，旧版内联桶补齐缺口（同一 toolUseId 不重复）
-  const subagents = readSubagentTranscripts(slug, sessionId)
-  for (const [toolUseId, messages] of legacySidechain) {
-    if (!subagents.some((s) => s.toolUseId === toolUseId)) subagents.push({ toolUseId, messages })
+  // 分页窗口：before = 只要该行号之前的消息（严格小于，页间零重叠）；
+  // 窗口取过滤后的末尾 limit 条，hasMore = 窗口之前还有剩余
+  const eligible: number[] = []
+  for (let i = 0; i < msgs.length; i++) {
+    if (before == null || msgLineIdx[i]! < before) eligible.push(i)
   }
-  subagents.sort((a, b) => (a.messages[0]?.timestamp ?? '').localeCompare(b.messages[0]?.timestamp ?? ''))
-  return { messages: msgs.slice(-limit), fileBytes: raw.length, subagents }
+  const windowIdx = eligible.slice(-limit)
+  const hasMore = eligible.length > windowIdx.length
+  const nextBefore = hasMore && windowIdx.length > 0 ? msgLineIdx[windowIdx[0]!] : undefined
+  const page = windowIdx.map((i) => msgs[i]!)
+  // 子代理侧链：新版拆分文件为主，旧版内联桶补齐缺口（同一 toolUseId 不重复）。
+  // 仅首页下发（翻页请求只补主线消息；桶重建只在首载发生）
+  if (before == null) {
+    const subagents = readSubagentTranscripts(slug, sessionId)
+    for (const [toolUseId, messages] of legacySidechain) {
+      if (!subagents.some((s) => s.toolUseId === toolUseId)) subagents.push({ toolUseId, messages })
+    }
+    subagents.sort((a, b) => (a.messages[0]?.timestamp ?? '').localeCompare(b.messages[0]?.timestamp ?? ''))
+    return { messages: page, fileBytes: raw.length, subagents, hasMore, nextBefore }
+  }
+  return { messages: page, fileBytes: raw.length, hasMore, nextBefore }
 }
 
 /** 单个子代理转录的消息上限（防止超长转录拖垮首载；超出时保留末尾） */

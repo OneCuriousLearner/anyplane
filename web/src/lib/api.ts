@@ -126,12 +126,22 @@ export interface HistoryResponse {
   messages: HistoryMessage[]
   /** 服务端本次实际读取的 transcript 字节数，作为 tail_subscribe 的起始偏移 */
   fileBytes: number
-  /** 子代理侧链转录（历史回放用；实时更新走 WS 的 parent_tool_use_id 消息） */
+  /** 子代理侧链转录（历史回放用；实时更新走 WS 的 parent_tool_use_id 消息）。
+   *  仅首页下发——翻页请求不含此字段 */
   subagents?: SubagentHistory[]
+  /** claude 历史分页：窗口之前还有更早消息（codex 历史恒全量，无此字段语义） */
+  hasMore?: boolean
+  /** 下一页的 before 游标（transcript 行号），hasMore 时必带 */
+  nextBefore?: number
 }
 
-export async function fetchHistory(slug: string, sessionId: string): Promise<HistoryResponse> {
-  const r = await apiFetch(`/api/history/${slug}/${sessionId}`)
+export async function fetchHistory(
+  slug: string,
+  sessionId: string,
+  opts?: { before?: number },
+): Promise<HistoryResponse> {
+  const q = opts?.before != null ? `?before=${opts.before}` : ''
+  const r = await apiFetch(`/api/history/${slug}/${sessionId}${q}`)
   return r.json()
 }
 

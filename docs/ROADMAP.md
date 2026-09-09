@@ -212,8 +212,20 @@ paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义
 - **稳定 key**：Transcript 行 key 从索引改为内容派生（msg.id / 首块 key），
   扩窗平移不再 remount 已展开的思考/工具卡。
 - **验收 fixture**：`web/transcript-fixture.html`（仅 Vite dev 提供，不进生产构建）合成 322 行
-  混合抄本，`?autorun=1` 自检四段场景（打开定位/流式追加有界/上翻锚定无跳变/回底收敛），
-  chrome-devtools MCP 实测 11 断言全绿；真实会话集成冒烟（含本会话直播流）通过。
+  混合抄本 + 分页数据源（首载 46 轮、20 轮/页 prepend），`?autorun=1` 自检四段场景
+  （打开定位/流式追加有界/上翻扩窗+翻页锚定无跳变/回底收敛），
+  chrome-devtools MCP 实测 14 断言全绿；真实会话集成冒烟（含本会话直播流）通过。
+
+**实测逮出并修复的两个存量 bug**（2026-09-09 用户报告长会话复现）：
+1. **claude 历史 300 条硬截断**：`readHistory` 固定 `slice(-300)`，更早消息永不下发——
+   窗口化上翻后才用户可见。已改为 `before` 行号游标分页（页间零重叠，`subagents` 仅首页下发），
+   前端窗口扩到顶且 hasMore 时自动翻页 + 锚定 prepend（`ingest.prependHistoryMsgs`：
+   全量重建工具索引顺带完成跨页配对）。实测 860 条会话 3 页、1726 条会话 6 页完整到顶，
+   首条消息逐字命中。
+2. **历史 agent 桶复活**：`subagents` 全量下发但主线消息被 300 条窗口截断，窗口外 agent 的
+   tool_use 不在 `finished` 集合 → 全被误判未完成建桶 → hydrateTasks 判终态 → 30s 齐消失。
+   修复为 `selectHistoryBuckets` 纯函数口径：只为「调用在已加载窗口内且未配对终态」的建桶，
+   窗口外/已完成一律不建（真在跑的由 status activeTasks 权威水合兜底）。
 
 ## 方向八：自托管 Outbound Relay 与端到端加密（E2EE）评估
 
