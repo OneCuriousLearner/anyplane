@@ -2,12 +2,11 @@
 // 方法体多为 index.ts 原 claude 分支的逐字搬迁——重构红线是零行为改动。
 
 import { appendFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from '../../archive'
-import { config, defaultPermissionMode } from '../../config'
+import { defaultPermissionMode } from '../../config'
 import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
-import { errorMessage } from '../../util'
+import { errorMessage, transcriptPathOf } from '../../util'
 import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
@@ -218,7 +217,7 @@ class ClaudePort implements BackendPort {
     const ek = splitExistingKey(hub.key)
     if (!ek) return // 新会话还没有 transcript
     if (processManager.get(hub.key)) return // 已 spawn：live 流覆盖，无需 tail
-    const path = join(config.claudeConfigDir, 'projects', ek.slug, `${ek.sessionId}.jsonl`)
+    const path = transcriptPathOf(ek.slug, ek.sessionId)
     hub.tailer = new TranscriptTailer(path, from, {
       onMessage: (msg) => {
         hubServices().broadcast(hub, { kind: 'tail', msg })
@@ -261,7 +260,16 @@ class ClaudePort implements BackendPort {
         this.rewindConversationAt(hub, at, 'both')
       })
       .catch((error) => {
-        hubServices().broadcastError(hub, `回滚文件失败，未回滚对话：${errorMessage(error)}`)
+        // 超时 ≠ 失败：rewind_files 没有 CLI 侧超时，大项目恢复可能在我们 120s 断点后
+        // 仍静默完成——此时文件已回滚而对话未截断（半回滚）。文案必须如实区分，
+        // 不能让用户误以为"什么都没发生"而继续在新状态上工作。
+        const timedOut = errorMessage(error).includes('超时')
+        hubServices().broadcastError(
+          hub,
+          timedOut
+            ? '回滚文件响应超时：文件恢复可能仍在后台进行，未回滚对话。请确认工作区状态后再决定是否重试'
+            : `回滚文件失败，未回滚对话：${errorMessage(error)}`,
+        )
       })
       .finally(() => {
         hub.rewindPending = false
@@ -275,6 +283,13 @@ class ClaudePort implements BackendPort {
     const sid = current?.sessionId ?? parsed?.resumeSessionId
     if (!parsed || !sid) {
       hubServices().broadcastError(hub, '无法回滚：未知会话 ID')
+      return
+    }
+    // 与 archive/rename 同款守卫：会话正被外部 CLI（终端 TUI）持有时拒绝——
+    // 否则 --resume-session-at 会与活进程双写同一 transcript，截断点之后交错损坏。
+    // 外部会话的截断由 tail_reset 路径承接（tailer 发现文件缩小即通知前端重载）。
+    if (!current && liveSessionInfo(sid)) {
+      hubServices().broadcastError(hub, '会话正在官方 CLI 中运行，请先在该 CLI 内回滚')
       return
     }
     // 先从 map 摘掉再 kill，避免旧 onExit 污染新会话。
@@ -486,7 +501,7 @@ class ClaudePort implements BackendPort {
     if (processManager.get(key) || liveSessionInfo(sessionId)) {
       return { ok: false, error: '会话正在运行，请在 CLI 退出后改名', status: 409 }
     }
-    const file = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
+    const file = transcriptPathOf(slug, sessionId)
     if (!existsSync(file)) return { ok: false, error: 'transcript 不存在', status: 404 }
     try {
       // 与官方 /rename 相同的条目形状；discovery 读取时后者优先
