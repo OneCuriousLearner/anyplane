@@ -19,6 +19,14 @@ export function setInboxSink(s: InboxSink): void {
   inboxSink = s
 }
 
+/** 测试专用复位：bun test 单进程跨文件共享模块实例，sink/warn-once 状态无法靠重 import
+ *  隔离——断言「sink 未注册」行为的用例必须先复位，否则依赖测试文件执行顺序（各平台
+ *  文件枚举顺序不同，ubuntu CI 曾因此误红）。 */
+export function resetInboxSinkForTest(): void {
+  inboxSink = undefined
+  sinkWarned = false
+}
+
 /** hub 各模块的 inbox 事件统一出口。sink 缺失是装配错误：warn 留痕但不 throw
  * （broadcast 的 error 路径会走到这里，throw 会把普通错误广播变成异常）。 */
 export function publishInbox(ev: InboxEvent): void {
