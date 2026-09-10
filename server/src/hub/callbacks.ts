@@ -111,7 +111,25 @@ export function sessionCallbacks(hub: Hub) {
       portFor(hub.key).notifyExternalGate(hub.key)
     },
     onStatusChange: () => throttledPushStatus(hub),
+    /** 审批被上游终结（app-server 超时/中断/其他客户端应答，codex serverRequest/resolved）：
+     *  同步清掉 Hub 侧 pending，否则死审批会随重连重放、status 恒 waiting。 */
+    onApprovalResolved: (requestId: string) => {
+      if (!hub.pendingApprovals.delete(requestId)) return
+      broadcast(hub, { kind: 'approval_resolved', requestId })
+      publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
+      pushStatus(hub)
+    },
     onExit: (code: number) => {
+      // 进程已死，待审批随之失效：清表并逐条广播 approval_resolved 让客户端撤卡。
+      // 否则重连时 replayApprovals 会把死审批重放成可点击卡片（点击后投递给一个不认识
+      // 该 request_id 的新进程），此后任何 status 推送也都因 pending>0 显示 waiting。
+      if (hub.pendingApprovals.size > 0) {
+        for (const requestId of hub.pendingApprovals.keys()) {
+          broadcast(hub, { kind: 'approval_resolved', requestId })
+          publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
+        }
+        hub.pendingApprovals.clear()
+      }
       pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
     },
   }

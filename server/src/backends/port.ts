@@ -67,10 +67,14 @@ export interface SessionHandle {
   /** 会话 cwd（codex 句柄有 getter；claude 缺席——x| key 的 sessionNameOf 反查用，
    *  可选属性使 ClaudeSession 无需改动即结构化兼容） */
   readonly cwd?: string
+  /** 后台任务表（claude 专属；codex 缺席——恒空数组会被 hydrateTasks 误读为权威空） */
+  readonly activeTaskCount?: number
+  readonly backgroundTasks?: unknown[]
   sendUserText(text: string, sendMode?: 'steer' | 'queue', images?: ImageAttachment[]): void
   sendApproval(requestId: string, decision: ApprovalDecision): void
   sendControl(subtype: string, extra?: Record<string, unknown>): void
-  sendControlAndWait(
+  /** 可等待的控制请求通道（claude 专属；codex 的 rewind/查询走专用 RPC，无对应物） */
+  sendControlAndWait?(
     subtype: string,
     extra?: Record<string, unknown>,
     timeoutMs?: number,
