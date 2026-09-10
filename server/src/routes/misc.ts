@@ -5,6 +5,7 @@ import { readHistory, sanitizePath } from '../backends/claude/discovery'
 import { resolveTierModelNames } from '../backends/claude/modelNames'
 import { readHistory as readCodexHistory } from '../backends/codex/backend'
 import { codexRuntime } from '../backends/codex/runtime'
+import { describeKey } from '../backends/port'
 import { config } from '../config'
 import { FsBrowseError, listDirectories } from '../fsbrowse'
 import { lineageFor, type HandoffDetail } from '../handoff'
@@ -44,27 +45,25 @@ export async function handleMiscRoutes(req: Request, url: URL): Promise<Response
     for (const r of records) {
       for (const k of [r.fromKey, r.toKey, r.fromResolvedKey, r.toResolvedKey]) {
         if (!k || nodes[k]) continue
-        const parts = k.split('|')
-        if (parts[0] === 's' && parts.length === 3) {
-          nodes[k] = { key: k, backend: 'claude', slug: parts[1], sessionId: parts[2], cwd: r.cwd }
-        } else if (parts[0] === 'x' && parts.length === 2) {
-          nodes[k] = { key: k, backend: 'codex', slug: 'codex', sessionId: parts[1], cwd: r.cwd }
-        } else if (parts[0] === 'n' || parts[0] === 'xn') {
+        const d = describeKey(k)
+        if (d?.kind === 'existing') {
+          nodes[k] = { key: k, backend: d.backend, slug: d.slug ?? 'codex', sessionId: d.sessionId, cwd: r.cwd }
+        } else if (d?.kind === 'new') {
           nodes[k] = {
             key: k,
-            backend: parts[0] === 'xn' ? 'codex' : 'claude',
-            slug: parts[0] === 'xn' ? 'codex' : sanitizePath(decodeURIComponent(parts[1] ?? '')),
+            backend: d.backend,
+            slug: d.backend === 'codex' ? 'codex' : sanitizePath(d.cwd ?? ''),
             sessionId: 'new',
             cwd: r.cwd,
           }
-        } else if (parts[0] === 'b' && parts.length === 3) {
+        } else if (d?.kind === 'branch') {
           // 懒分叉源（分叉后从未 spawn 或被回收，fromResolvedKey 缺省时记录里仍是 b| key）：
           // 缺节点会让前端接力链按钮 disabled（死按钮）；sessionId 内嵌的是分叉源 id
           nodes[k] = {
             key: k,
             backend: 'claude',
-            slug: sanitizePath(decodeURIComponent(parts[1] ?? '')),
-            sessionId: parts[2],
+            slug: sanitizePath(d.cwd ?? ''),
+            sessionId: d.sessionId,
             cwd: r.cwd,
           }
         }

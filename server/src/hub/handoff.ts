@@ -3,7 +3,7 @@
 
 import { keyFor, keyForNew } from '../backends/claude/backend'
 import { sanitizePath } from '../backends/claude/discovery'
-import { keyForNew as codexKeyForNew } from '../backends/codex/backend'
+import { keyFor as codexKeyFor, keyForNew as codexKeyForNew } from '../backends/codex/backend'
 import { portFor } from '../backends/port'
 import { appendLineage, seedMessage, type HandoffDetail } from '../handoff'
 import { errorMessage } from '../util'
@@ -47,7 +47,7 @@ export function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detai
       const toResolvedKey =
         toBackend === 'codex'
           ? targetSessionId
-            ? `x|${targetSessionId}`
+            ? codexKeyFor(targetSessionId)
             : undefined
           : targetSessionId
             ? keyFor(sanitizePath(sourceCwd), targetSessionId)
@@ -60,7 +60,7 @@ export function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detai
         }
         if (fromKey.startsWith('x|')) return fromKey
         const tidNow = fromPort.sessionOf(fromKey)?.sessionId
-        return tidNow ? `x|${tidNow}` : undefined
+        return tidNow ? codexKeyFor(tidNow) : undefined
       })()
 
       // 播种进程/线程落在 n|/xn| key 上，而 handoff_done 导航走 resolved key：立即三层重键

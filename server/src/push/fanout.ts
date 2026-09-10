@@ -2,7 +2,7 @@
 // 依赖方向：push → hub（registry）允许，反向禁止（hub 经 hub/broadcast 的 InboxSink 出口）。
 
 import { parseKey } from '../backends/claude/backend'
-import { portFor } from '../backends/port'
+import { describeKey, portFor } from '../backends/port'
 import { log } from '../log'
 import { pushToAll, pushWebhooksToAll, subscriptionCount, webhookCount, type PushPayload } from '../push'
 import { escapeHtml, summarizeInput } from '../util'
@@ -11,30 +11,23 @@ import type { InboxEvent, PendingApproval } from '../hub/types'
 
 /** 会话显示名：项目目录 basename（approval 只在 spawn 后发生，spawnOpts.cwd 必有）。
  *  s| 未 spawn 时经 parseKey 反查真实 cwd——每 Hub 至多一次（缓存在 hub.nameCwd，
- *  避免推送事件触发反复 listSessions 全盘扫描）；b|/n|/xn| 的 cwd 内嵌在 key 里直接取。
- *  parseKey 也查不到（slug 目录已删）时以 slug 末段近似。 */
+ *  避免推送事件触发反复 listSessions 全盘扫描）；b|/n|/xn| 的 cwd 内嵌在 key 里直接取
+ * （describeKey 零 I/O 形状解析）。parseKey 也查不到（slug 目录已删）时以 slug 末段近似。 */
 export function sessionNameOf(key: string): string {
   const base = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() ?? cwd
   const hub = hubs.get(key)
   if (hub?.spawnOpts?.cwd) return base(hub.spawnOpts.cwd)
-  const parts = key.split('|')
-  try {
-    if ((parts[0] === 'b' || parts[0] === 'n' || parts[0] === 'xn') && parts[1]) {
-      return base(decodeURIComponent(parts[1]))
-    }
-  } catch {
-    // key 内嵌 cwd 不是合法 URI 编码（状态损坏/构造输入）：落 key 截断，不影响推送分发
-    return key.slice(0, 18)
-  }
-  if (parts[0] === 's') {
+  const d = describeKey(key)
+  if ((d?.kind === 'new' || d?.kind === 'branch') && d.cwd) return base(d.cwd)
+  if (d?.kind === 'existing' && d.backend === 'claude') {
     if (hub && hub.nameCwd === undefined) hub.nameCwd = parseKey(key)?.cwd ?? ''
     if (hub?.nameCwd) return base(hub.nameCwd)
     // slug 是 sanitizePath(cwd)：末段即目录名（近似，仅推送显示用）
-    if (parts[1]) return parts[1].split('-').pop() ?? key.slice(0, 18)
+    if (d.slug) return d.slug.split('-').pop() ?? key.slice(0, 18)
   }
   // x|：cwd 不在 key 里，取已加载会话句柄的 cwd（thread/read 解析后即有；
   // 推送/审批页恰好在会话存活期触发）。取不到时落 key 截断，不做同步 RPC
-  if (parts[0] === 'x') {
+  if (d?.kind === 'existing' && d.backend === 'codex') {
     if (hub && hub.nameCwd === undefined) hub.nameCwd = portFor(key).sessionOf(key)?.cwd ?? ''
     if (hub?.nameCwd) return base(hub.nameCwd)
   }

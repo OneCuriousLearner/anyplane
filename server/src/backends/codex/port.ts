@@ -18,7 +18,7 @@ import {
   type StatusContext,
 } from '../port'
 import type { SpawnOptions } from '../types'
-import { listArchivedSessions, parseKey as codexParseKey, splitThreadId } from './backend'
+import { keyFor, listArchivedSessions, parseKey as codexParseKey, splitThreadId } from './backend'
 import { codexRuntime, type CodexSession } from './runtime'
 
 class CodexPort implements BackendPort {
@@ -144,7 +144,7 @@ class CodexPort implements BackendPort {
         const newId = await codexRuntime.forkAt(tid, at)
         hubServices().broadcast(hub, {
           kind: 'forked',
-          targetKey: `x|${newId}`,
+          targetKey: keyFor(newId),
           targetSessionId: newId,
           fromTurnId: at,
         })

@@ -5,6 +5,7 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { keyFor } from './backends/claude/backend'
 import { config } from './config'
 import { ccDataDir, ensurePrivateDir, transcriptPathOf } from './util'
 
@@ -96,7 +97,7 @@ export function listTrash(): TrashEntry[] {
       try {
         sizeBytes = statSync(p).size
       } catch {}
-      out.push({ key: `s|${slug}|${sessionId}`, slug, sessionId, trashedAt, sizeBytes })
+      out.push({ key: keyFor(slug, sessionId), slug, sessionId, trashedAt, sizeBytes })
     }
   }
   return out.sort((a, b) => (b.trashedAt ?? '').localeCompare(a.trashedAt ?? ''))
