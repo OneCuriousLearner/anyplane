@@ -84,6 +84,9 @@ class CodexPort implements BackendPort {
     try {
       await s.start()
     } catch (e) {
+      // start 失败（如 -32600 线程被占用）必须摘掉句柄：否则 exited=false 的僵尸会话让
+      // hasLiveSession 恒真——Hub 永不回收，且下次 ensure 复用同一坏对象永远不自愈。
+      s.dispose()
       hubServices().broadcastError(hub, errorMessage(e))
       hubServices().pushStatus(hub)
       return undefined
@@ -114,11 +117,16 @@ class CodexPort implements BackendPort {
    *  - legacy 线程：降级 thread/fork(beforeTurnId) 复制该轮之前的历史为新线程，原线程不动。
    *  userMessageId 即历史的轮首 userMessage 的 turnId。 */
   rewindConversation(hub: Hub, at: string): void {
+    if (hubServices().rewindBusy(hub)) return
     const tid = codexRuntime.get(hub.key)?.sessionId ?? codexParseKey(hub.key)?.resumeThreadId
     if (!tid) {
       hubServices().broadcastError(hub, 'codex 会话未就绪，无法回滚')
       return
     }
+    // revert/fork 是异步 RPC（最长 60s）窗口：置 rewindPending 门控用户消息
+    //（hub/messages.ts user 分支），否则新 turn 与 thread/revert 并发会截掉刚开始的对话
+    hub.rewindPending = true
+    hubServices().pushStatus(hub, { rewindPending: true })
     void codexRuntime
       .historyModeOf(tid)
       .then(async (mode) => {
@@ -142,6 +150,10 @@ class CodexPort implements BackendPort {
         })
       })
       .catch((e) => hubServices().broadcastError(hub, `回滚失败: ${errorMessage(e)}`))
+      .finally(() => {
+        hub.rewindPending = false
+        hubServices().pushStatus(hub, { rewindPending: false })
+      })
   }
 
   rewindBoth(hub: Hub, _at: string): void {
