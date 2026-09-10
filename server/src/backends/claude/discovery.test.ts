@@ -204,7 +204,7 @@ describe('readHistory 子代理侧链收集', () => {
   })
 
   test('新版拆分文件：消息 + meta 元数据齐全，tool_use/tool_result 可配对', () => {
-    const { subagents } = readHistory(SLUG, SID2)
+    const { subagents = [] } = readHistory(SLUG, SID2)
     const split = subagents.find((s) => s.toolUseId === 'tool_split')
     expect(split).toMatchObject({ agentId: 'abc123', agentType: 'Explore', description: '查找 Hub 类定义文件', spawnDepth: 1 })
     expect(split?.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
@@ -215,10 +215,59 @@ describe('readHistory 子代理侧链收集', () => {
   })
 
   test('旧版内联侧链：按 parentToolUseId 分桶，不污染主抄本', () => {
-    const { messages, subagents } = readHistory(SLUG, SID2)
+    const { messages, subagents = [] } = readHistory(SLUG, SID2)
     expect(messages.some((m) => m.uuid === 's1')).toBe(false)
     const legacy = subagents.find((s) => s.toolUseId === 'tool_main')
     expect(legacy?.messages).toHaveLength(1)
     expect(legacy?.messages[0]?.blocks[0]).toEqual({ kind: 'text', text: '内联侧链内容' })
+  })
+})
+
+describe('readHistory 分页窗口', () => {
+  const SID3 = 'cccccccc-dddd-4eee-8fff-000000000000'
+  const TOTAL = 10
+
+  beforeAll(() => {
+    const projectDir = join(dir, 'projects', SLUG)
+    // 交替 user/assistant 文本行，uuid 即序号可读
+    const lines: string[] = []
+    for (let i = 0; i < TOTAL; i++) {
+      const role = i % 2 === 0 ? 'user' : 'assistant'
+      lines.push(line({ type: role, uuid: `m${i}`, message: { role, content: `第 ${i} 条` } }))
+    }
+    writeFileSync(join(projectDir, `${SID3}.jsonl`), lines.join('\n'))
+  })
+
+  test('默认返回末尾 300 条；短会话 hasMore=false 且无 nextBefore', () => {
+    const page = readHistory(SLUG, SID3)
+    expect(page.messages).toHaveLength(TOTAL)
+    expect(page.hasMore).toBe(false)
+    expect(page.nextBefore).toBeUndefined()
+    expect(page.subagents).toEqual([]) // 首页仍下发 subagents 字段（空目录=空数组）
+  })
+
+  test('limit 窗口 + before 游标翻页直到顶：零重叠、零遗漏', () => {
+    const seen: string[] = []
+    let before: number | undefined
+    let pages = 0
+    for (;;) {
+      const page = readHistory(SLUG, SID3, { limit: 4, before })
+      seen.unshift(...page.messages.map((m) => m.uuid!))
+      pages++
+      if (!page.hasMore) break
+      before = page.nextBefore
+      expect(before).toBeDefined()
+      if (pages > 10) throw new Error('翻页未收敛')
+    }
+    expect(seen).toEqual(Array.from({ length: TOTAL }, (_, i) => `m${i}`))
+    expect(pages).toBe(3) // 10 = 4 + 4 + 2
+  })
+
+  test('翻页请求不再下发 subagents', () => {
+    const first = readHistory(SLUG, SID3, { limit: 4 })
+    const second = readHistory(SLUG, SID3, { limit: 4, before: first.nextBefore })
+    expect(second.subagents).toBeUndefined()
+    // 游标语义：第二页最后一条 < 首页第一条的行号
+    expect(second.messages.map((m) => m.uuid)).toEqual(['m2', 'm3', 'm4', 'm5'])
   })
 })

@@ -17,6 +17,7 @@ import { isCodexKey, isExistingKey } from '../lib/key'
 import { useTaskBuckets } from '../hooks/useTaskBuckets'
 import { useTranscriptIngest } from '../hooks/useTranscriptIngest'
 import { useSessionSocket, type QueryResultEvent } from '../hooks/useSessionSocket'
+import { useTranscriptScroll } from '../hooks/useTranscriptScroll'
 
 export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: (s: SessionInfo) => void }) {
   const { session } = props
@@ -52,8 +53,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [atBottom, setAtBottom] = useState(true)
-  const atBottomRef = useRef(true)
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
   // 桶状态与辅助群已下沉 hooks/useTaskBuckets.ts（F3）：api 为每渲染重建的普通对象——
@@ -62,14 +61,46 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
   // ---------- 主抄本 ingest（消息/流式草稿/配对索引 + cli 流驱动的会话元数据；F4/F5 下沉 hooks/useTranscriptIngest.ts） ----------
   // api 为每渲染重建的普通对象：内部全走 ref/稳定 setState，过期闭包语义等价
-  const { messages, draft, phase, initInfo, permMode, effort, api: ingestApi } = useTranscriptIngest({
-    isCodex,
-    sockRef,
-    taskApi,
-  })
+  const { messages, draft, phase, initInfo, permMode, effort, hasMoreHistory, historyBeforeRef, api: ingestApi } =
+    useTranscriptIngest({
+      isCodex,
+      sockRef,
+      taskApi,
+    })
 
-  const loadSessionHistory = () =>
-    isCodex ? fetchCodexHistory(session.sessionId) : fetchHistory(session.slug, session.sessionId)
+  const loadSessionHistory = (opts?: { limit?: number }) =>
+    isCodex ? fetchCodexHistory(session.sessionId) : fetchHistory(session.slug, session.sessionId, opts)
+
+  /** 向上翻页：拉更早历史并锚定 prepend（游标/hasMore 由 ingest 持有；codex 历史全量无分页）。
+   *  经 ref 桥接给滚动 hook 的 onReachTop——loadEarlier 需要滚动 hook 的 preparePrepend，
+   *  两者互相引用，ref 打破声明顺序环。
+   *  两道过期守卫：会话切换（sockRef.key 比对，then/catch 都要有——catch 漏了会把错误卡
+   *  写进新会话抄本）与分页纪元（在途期间 applyHistory/reset 重置过坐标系的响应作废）。 */
+  const [fetchingEarlier, setFetchingEarlier] = useState(false)
+  const fetchingEarlierRef = useRef(false)
+  const loadEarlierRef = useRef<() => void>(() => {})
+  loadEarlierRef.current = () => {
+    const before = historyBeforeRef.current
+    if (before == null || fetchingEarlierRef.current || isCodex) return
+    const keyAtStart = session.key
+    const epochAtStart = ingestApi.historyEpochRef.current
+    fetchingEarlierRef.current = true
+    setFetchingEarlier(true)
+    fetchHistory(session.slug, session.sessionId, { before })
+      .then((resp) => {
+        if (sockRef.current?.key !== keyAtStart) return // 已切走
+        if (ingestApi.historyEpochRef.current !== epochAtStart) return // 历史已重载/重置
+        if (resp.messages.length > 0) scrollRefApi.current?.preparePrepend()
+        ingestApi.prependHistory(resp)
+      })
+      .catch(() => {
+        if (sockRef.current?.key === keyAtStart) ingestApi.pushSystem('⚠ 加载更早消息失败', 'error')
+      })
+      .finally(() => {
+        fetchingEarlierRef.current = false
+        setFetchingEarlier(false)
+      })
+  }
 
   // ---------- 详情查询（query 通道；应答的详情域分发留组合层） ----------
   const runQuery = (query: string, title: string) => {
@@ -186,42 +217,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   useEffect(() => {
     fetchConfig().then(setCfg).catch(() => {})
   }, [session.key])
-
-  // 只滚消息列表容器。禁止 scrollIntoView：它会连带滚动 overflow 祖先，
-  // 把 absolute 顶/底栏一起顶出视口（表现为先对齐再跳到 top=-8px）。
-  const scrollToBottom = (smooth = false) => {
-    const el = scrollRef.current
-    if (!el) return
-    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    else el.scrollTop = el.scrollHeight
-  }
-
-  /** 跟随滚动的 rAF 合帧：流式输出时 draft 每个 token 都变引用，逐次 smooth scrollTo
-   *  会在移动端积出可感 jank（smooth 动画彼此打断）。合到下一帧只滚一次，
-   *  且流式期间用 auto——smooth 的缓动跟不上 token 速率，反而拖尾。 */
-  const followRaf = useRef(0)
-  const scheduleFollow = (smooth: boolean) => {
-    if (followRaf.current) return
-    followRaf.current = requestAnimationFrame(() => {
-      followRaf.current = 0
-      if (atBottomRef.current) scrollToBottom(smooth)
-    })
-  }
-  useEffect(() => () => cancelAnimationFrame(followRaf.current), [])
-
-  // 贴底时才自动跟随滚动；用户上翻时保持位置（用 ↓ 按钮回到底部）
-  useEffect(() => {
-    if (!atBottomRef.current) return
-    scheduleFollow(!draft) // 流式进行中走 auto，收尾/新消息才用 smooth
-  }, [messages, approvals, draft])
-
-  const onScroll = () => {
-    const el = scrollRef.current
-    if (!el) return
-    const at = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    atBottomRef.current = at
-    setAtBottom(at)
-  }
 
   // ---------- 发送 ----------
 
@@ -384,6 +379,26 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   // 渲染行在 Chat 层算：Transcript 保持纯展示，重进/重渲时不重复摊平
   const transcriptRows = useMemo(() => buildTranscriptRows(messages, draft), [messages, draft])
 
+  // 抄本滚动与尾部窗口化（初始定位/门控扩窗/锚定补偿全在 hook 内，约束见文件头注释）；
+  // onReachTop：本地窗口到顶且服务端 hasMore 时翻页拉更早历史。
+  // codex 不挂（其历史全量下发无分页；方向四若引入 codex 分页需先接通这条链路，
+  // 否则哨兵会渲染成点了没反应的死控件）
+  const transcriptScroll = useTranscriptScroll({
+    scrollRef,
+    rowCount: transcriptRows.length,
+    resetKey: session.key,
+    followDeps: [messages, approvals, draft],
+    streaming: Boolean(draft),
+    onReachTop: isCodex ? undefined : () => loadEarlierRef.current(),
+  })
+  const { windowStart, atBottom, onScroll, jumpToBottom, expandWindow } = transcriptScroll
+  const scrollRefApi = useRef<typeof transcriptScroll | null>(null)
+  scrollRefApi.current = transcriptScroll
+  const visibleRows = useMemo(
+    () => transcriptRows.slice(windowStart),
+    [transcriptRows, windowStart],
+  )
+
   const busy = state.busy
   const waiting = state.waiting || approvals.length > 0
   const usageLine = usageSummary(state.usage, 'tok ')
@@ -395,7 +410,20 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       {/* 消息抄本：占满整个视口，上下各留 ~100px 空区避让悬浮栏 */}
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto max-w-3xl px-[17px] pb-[300px] pt-[84px] md:px-[29px]">
-          <Transcript rows={transcriptRows} draft={draft} />
+          {/* 顶部哨兵：本地窗口未扩完走扩窗，到顶且服务端有更早历史走翻页（同一按钮同一入口，
+           *  expandWindow 内部按 windowStart 分流；fetchingEarlier 只在翻页分支为真）。
+           *  codex 不渲染——其历史全量无分页（onReachTop 同样不挂，双保险） */}
+          {(windowStart > 0 || (hasMoreHistory && !isCodex)) && (
+            <button
+              type="button"
+              onClick={expandWindow}
+              disabled={fetchingEarlier}
+              className="mb-3 w-full rounded-[14px] bg-surface/60 py-2 font-mono text-[11px] tracking-wide text-faint transition-colors hover:bg-surface2 hover:text-muted disabled:opacity-60"
+            >
+              {fetchingEarlier ? '正在加载更早的消息…' : '向上滚动或点此加载更早的消息'}
+            </button>
+          )}
+          <Transcript rows={visibleRows} draft={draft} />
 
           {approvals.map((a) => (
             <ApprovalCard
@@ -516,7 +544,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         onSend={send}
         onInterrupt={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
         atBottom={atBottom}
-        onScrollToBottom={() => scrollToBottom(false)}
+        onScrollToBottom={jumpToBottom}
         slashCommands={state.slashCommands}
         initSlashCommands={initInfo.slashCommands}
         cfg={cfg}

@@ -194,14 +194,57 @@ paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义
 真实 CLI 全链路绿；浏览器实测会话列表、回收站归档/恢复、发消息、codex btw 均正常。
 零行为改动红线守住（审查修复轮的每项都已在上方列明）。未来评估第三后端（OpenCode/Gemini）时以 BackendPort 为承重结构。
 
-## 方向七：长会话虚拟列表与初始定位重构（待排期）
+## 方向七：长会话虚拟列表与初始定位重构
 
-**定论**：长会话（>200 行）全量挂载 DOM 在移动端仍有内存和渲染压力。此前试过 `content-visibility:auto` 与简单行窗口化，均因破坏「打开会话即滚到最新」的默认体验而回退（踩坑实录见下方）。
+✅ **已完成（2026-09-09，尾部窗口化方案）**：`web/src/hooks/useTranscriptScroll.ts` 承接 Chat 全部滚动逻辑，
+窗口纯函数在 `web/src/lib/transcriptWindow.ts`（单测覆盖）；Chat/Transcript 接入切片与稳定 key。
 
-**实施步骤**：
-1. **解耦初始滚动与视口扩窗**：进入会话首绘时必须使用 `auto`（无缓动动画）确保 100% 精确停在底部，以此为硬前提再开启视口切片。
-2. **扩窗触发限定用户手势**：扩窗仅允许由用户的主动向上滚轮或 touchmove 手势触发，严格禁止由数据变动触发的级联 scroll 事件引发扩窗。
-3. **超长会话自动化回归**：编写能模拟 300+ 行消息及工具调用的 fixture，在浏览器自动化环境下严格验收打开会话、流式追加、手动上翻这三段的滚动稳定性。
+- **初始定位（硬前提）**：首个非空抄本在 `useLayoutEffect` 以 `auto` 直达底部（绘制前完成），
+  完成前扩窗门控恒关；会话切换的重置效应跳过首次挂载（实测：挂载即重置会清掉同帧 layout 锚点，
+  扩窗门控永久关闭——fixture 首跑即逮到）。
+- **扩窗门控**：仅「方向向上 + 距顶 < 480px + 初始定位完成」触发；本仓库不存在程序化向上滚动
+  （跟随/回底/锚定补偿全部向下），方向向上 ⟺ 用户主动上翻（滚轮/touch/拖滚动条全覆盖）。
+  锚定补偿与回底重置的钳位滚动套 200ms 豁免窗防回链。
+- **窗口策略**：行数 >120 启用，初始只挂尾部 80 行，上翻按 60 行/段扩窗；prepend 后按
+  scrollHeight 增量补偿 scrollTop（视口内容不跳）。atBottom 期间窗口随行数漂移保持尾部
+  （跟随滚动钉底，顶部卸载不可见）；离开底部冻结起点；回到底部（滚动或 ↓ 按钮）恢复尾窗收敛。
+  只向上生长不向下收缩——超长会话读到顶部时 DOM 会涨回全量，记录的取舍。
+- **稳定 key**：Transcript 行 key 从索引改为内容派生（msg.id / 首块 key），
+  扩窗平移不再 remount 已展开的思考/工具卡。
+- **验收 fixture**：`web/transcript-fixture.html`（仅 Vite dev 提供，不进生产构建）合成 322 行
+  混合抄本 + 分页数据源（首载 46 轮、20 轮/页 prepend），`?autorun=1` 自检四段场景
+  （打开定位/流式追加有界/上翻扩窗+翻页锚定无跳变/回底收敛），
+  chrome-devtools MCP 实测 14 断言全绿；真实会话集成冒烟（含本会话直播流）通过。
+
+**实测逮出并修复的两个存量 bug**（2026-09-09 用户报告长会话复现）：
+1. **claude 历史 300 条硬截断**：`readHistory` 固定 `slice(-300)`，更早消息永不下发——
+   窗口化上翻后才用户可见。已改为 `before` 行号游标分页（页间零重叠，`subagents` 仅首页下发），
+   前端窗口扩到顶且 hasMore 时自动翻页 + 锚定 prepend（`ingest.prependHistoryMsgs`：
+   全量重建工具索引顺带完成跨页配对）。实测 860 条会话 3 页、1726 条会话 6 页完整到顶，
+   首条消息逐字命中。
+2. **历史 agent 桶复活**：`subagents` 全量下发但主线消息被 300 条窗口截断，窗口外 agent 的
+   tool_use 不在 `finished` 集合 → 全被误判未完成建桶 → hydrateTasks 判终态 → 30s 齐消失。
+   修复为 `selectHistoryBuckets` 纯函数口径：只为「调用在已加载窗口内且未配对终态」的建桶，
+   窗口外/已完成一律不建（真在跑的由 status activeTasks 权威水合兜底）。
+
+**审查修复轮（/code-review medium，8 项全修）**：翻页响应的分页纪元守卫（在途期间
+applyHistory/reset 重置过坐标系即作废）+ catch 补会话切换守卫（错误卡不再写进新会话）；
+replay_gap 重载按「已加载数+500」保载拉取（append-only 下零漂移；tail_reset 内容截断
+仍全量重置）；hasMore 期间推迟孤儿 tool_result 浮现（其 tool_use 可能在未加载页，
+翻页时跨页配对完成）；翻到更早页时对首页留存的 subagents 做 add-only 补建桶；
+扩窗 setState 走 flushSync 与同 lane 的 WS draft 更新隔离（锚定补偿不再混入尾部增量）；
+哨兵 JSX 合一（对齐 fixture 形态）；onReachTop 与哨兵对 codex 关门（防方向四落地后
+渲染出死控件）。
+
+**后续可选优化（只记录，不动手）**：
+1. **向下收缩**：读到顶部后裁掉尾部行，让 DOM 在任意阅读位置都有界（现策略只向上生长，
+   翻到顶即全量挂载）。需要底部锚定 + 回底恢复路径，复杂度比本轮高一档，等真实超长会话
+   （>500 行）使用反馈再评估。
+2. **codex 客户端侧分页**：目前服务端分页读全再一次性下发，超长 codex 线程首载 payload
+   若成问题再做。接通时必须同时放开哨兵/onReachTop 的 codex 关门（F8 修复处），否则没入口。
+3. **子代理侧链转录翻页**：`SUBAGENT_HISTORY_LIMIT=150` 是首载防 payload 爆炸的取舍，
+   深挖老 agent 完整转录需要桶内翻页，等需求出现再做。
+4. **翻页预取**：windowStart 接近 0 时提前拉下一页，消掉翻到顶后的加载等待感（纯体验项）。
 
 ## 方向八：自托管 Outbound Relay 与端到端加密（E2EE）评估
 
@@ -227,12 +270,15 @@ paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义
   （`maybeGenerateTitle`，按 sessionId 去重，/clear 后新会话再生成）；CLI persist 写 ai-title 进 transcript，
   discovery 标题链（custom-title > ai-title > summary > 首条消息）自动接住，无需 AnyPlane 侧落状态。实测 4 项全过。
 
-## 抄本窗口化 / 虚拟列表（做过一版，回退了，记下踩坑）
+## 抄本窗口化 / 虚拟列表（✅ 已落地第三版，见「方向七」；回退实录保留）
 
-现状：抄本全量挂载。已落地的只有**跟随滚动 rAF 合帧**（流式输出曾每 token 一次
-smooth scrollTo，移动端积 jank）——这条是纯收益、已实测。
+现状：**尾部窗口化已上线**（useTranscriptScroll + transcriptWindow，验收 fixture
+`web/transcript-fixture.html` 四段场景全绿）。此前两次回退的根因记录如下，
+第三版的每条设计约束都直接对应其中一个坑。
 
-**另外两条试过都回退了，根因是同一个：与「打开会话即滚到最新」打架。**
+跟随滚动 rAF 合帧（流式输出曾每 token 一次 smooth scrollTo，移动端积 jank）
+是早期落地的纯收益项，第三版沿用。**另外两条试过都回退了，根因是同一个：
+与「打开会话即滚到最新」打架。**
 
 `content-visibility:auto`（跳过视口外排版绘制）：视口外行按 `contain-intrinsic-size`
 占位，首绘时 `scrollHeight` 被显著低估，滚到底会落空——实测打开长会话停在对话中段

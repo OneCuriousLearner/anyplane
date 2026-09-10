@@ -6,12 +6,35 @@
 // session.key 变化 effect 与历史加载里显式调用（reset 先于建连的顺序纪律在 Chat）。
 
 import { useEffect, useRef, useState } from 'react'
-import { fetchCodexHistory, type HistoryMessage, type HistoryResponse } from '../lib/api'
+import { fetchCodexHistory, type HistoryMessage, type HistoryResponse, type SubagentHistory } from '../lib/api'
 import type { ChatMsg } from '../lib/blocks'
 import { cliSidechainToHistory } from '../lib/chatText'
 import { appendHistoryMsg, mergeTerminalHistoryState, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
 import type { SessionState } from '../lib/ws'
 import type { TaskFeed } from '../components/TasksPanel'
+
+/** 历史桶回填的选择口径（resetFromHistory 用；纯函数便于单测）：
+ *  只为「调用在已加载历史窗口内、且主线 tool_result 缺失（未配对终态）」的 subagent 建桶。
+ *  两条排除：已完成的（pending === false）不建——老会话重进复活一堆历史卡 30s 后齐消失
+ *  是纯噪声，翻旧账走主线 Agent 工具卡；调用在历史分页窗口之外的不建——状态不可考
+ * （实测 300 条窗口外 20 个 subagent 全被误判未完成 → 复活 → hydrate 判终态 → 30s 消失）；
+ *  真在跑的任务由 status 的 activeTasks 权威水合兜底，不靠历史猜。 */
+export function selectHistoryBuckets(msgs: ChatMsg[], subagents: SubagentHistory[] | undefined): SubagentHistory[] {
+  const seenUse = new Set<string>()
+  const finished = new Set<string>()
+  for (const m of msgs) {
+    for (const blk of m.blocks) {
+      if (blk.kind === 'tool' && (blk.name === 'Agent' || blk.name === 'Task') && blk.id) {
+        seenUse.add(blk.id)
+        if (blk.pending === false) finished.add(blk.id)
+      }
+    }
+  }
+  return (subagents ?? []).filter((s) => {
+    const id = s.toolUseId ?? s.agentId
+    return Boolean(id) && seenUse.has(id!) && !finished.has(id!)
+  })
+}
 
 /** 后台任务桶：TaskFeed + 归并用的 tool 配对索引与去重集合（不发布给渲染） */
 interface TaskBucket extends TaskFeed {
@@ -43,6 +66,9 @@ export interface TaskBucketsApi {
   taskNotification(rec: Record<string, unknown>): void
   /** 历史加载时的桶重建：清桶 + 未完成的 subagent 回填（msgs = 刚加载的主线消息） */
   resetFromHistory(msgs: ChatMsg[], resp: HistoryResponse): void
+  /** 翻页 prepend 后的 add-only 补建：新进入窗口的未完成 subagent 建桶；已有桶不动
+   * （运行中桶不清除——reset 清桶只在整段历史重载时发生） */
+  backfillFromHistory(msgs: ChatMsg[], subagents: SubagentHistory[]): void
   /** 会话切换重置 */
   clear(): void
 }
@@ -238,22 +264,11 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     pubTasks()
   }
 
-  /** 历史加载的桶重建：清桶 → 只回填「转录落盘但主线 tool_result 缺失」的未完成 subagent。
-   *  已完成的不建桶——老会话重进复活一堆历史卡 30s 后齐消失是纯噪声；翻旧账走主线 Agent 工具卡。 */
+  /** 历史加载的桶重建：清桶 → 回填口径见 selectHistoryBuckets（纯函数，可单测） */
   const resetFromHistory = (msgs: ChatMsg[], resp: HistoryResponse) => {
     taskMapRef.current.clear()
-    // 先扫主线找「已完成」的 Agent 调用（转录落盘即终态），它们在历史加载时不建桶
-    const finished = new Set<string>()
-    for (const m of msgs) {
-      for (const blk of m.blocks) {
-        if (blk.kind === 'tool' && (blk.name === 'Agent' || blk.name === 'Task') && blk.pending === false && blk.id) {
-          finished.add(blk.id)
-        }
-      }
-    }
-    for (const s of resp.subagents ?? []) {
-      const id = s.toolUseId ?? s.agentId
-      if (!id || finished.has(id)) continue // 已完成的在历史里不复活
+    for (const s of selectHistoryBuckets(msgs, resp.subagents)) {
+      const id = (s.toolUseId ?? s.agentId)!
       const b = taskBucket(id)
       b.agentId = s.agentId ?? b.agentId
       b.agentType = s.agentType ?? b.agentType
@@ -261,6 +276,22 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
       for (const h of s.messages) appendTaskMsg(b.toolUseId, h)
     }
     pubTasks()
+  }
+
+  /** 翻页补建（add-only）：翻页响应不带 subagents，调用方传入首页留存的全量清单 */
+  const backfillFromHistory = (msgs: ChatMsg[], subagents: SubagentHistory[]) => {
+    let dirty = false
+    for (const s of selectHistoryBuckets(msgs, subagents)) {
+      const id = (s.toolUseId ?? s.agentId)!
+      if (taskMapRef.current.has(id)) continue
+      const b = taskBucket(id)
+      b.agentId = s.agentId ?? b.agentId
+      b.agentType = s.agentType ?? b.agentType
+      b.description = s.description ?? b.description
+      for (const h of s.messages) appendTaskMsg(b.toolUseId, h)
+      dirty = true
+    }
+    if (dirty) pubTasks()
   }
 
   const clear = () => {
@@ -301,6 +332,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
       taskUpdated,
       taskNotification,
       resetFromHistory,
+      backfillFromHistory,
       clear,
     },
   }
