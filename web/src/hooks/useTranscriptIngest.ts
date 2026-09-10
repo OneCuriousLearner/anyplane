@@ -328,7 +328,10 @@ export function useTranscriptIngest(opts: {
       const blocks = Array.isArray(content) ? content : []
       const msgId = (rec.message as { id?: string } | undefined)?.id
       const d = draftRef.current
-      if (!d || msgId !== d.msgId) {
+      // 兜底草稿（中途接入没见过 message_start，msgId 为 undefined）与本轮快照同源，
+      // 必须落入合并分支——否则快照直推一份、message_stop 的 commitDraft 再推一份，
+      // 同一轮回复在抄本里渲染两次（且同 id 工具块互相污染配对）
+      if (!d || (d.msgId !== undefined && msgId !== d.msgId)) {
         const toolIds = blocks.filter((c) => c?.type === 'tool_use' && c.id).map((c) => String(c.id))
         const keys = liveMessageKeys({ uuid: msg.uuid, messageId: msgId, toolIds })
         // uuid / message.id / 工具块 id 任一已在抄本（HTTP 历史或先前 live）即跳过——
