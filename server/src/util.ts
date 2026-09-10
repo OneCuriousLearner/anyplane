@@ -3,11 +3,20 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { config } from './config'
 import { log } from './log'
 
 /** anyplane 运行数据根目录（~/.anyplane/，约定见 AGENTS.md）；权限收紧由 ensurePrivateDir 完成 */
 export function ccDataDir(): string {
   return ensurePrivateDir(join(homedir(), '.anyplane'))
+}
+
+/** claude transcript 文件路径（~/.claude/projects/<slug>/<sessionId>.jsonl）。
+ *  放叶子层而非 discovery：discovery → agents → processManager，processManager 水合也要
+ *  用本函数，放 discovery 会成环（sanitizePath 同理，正本在此）。调用方自负责路径安全闸
+ *  （slug/sessionId 的字符校验见 splitExistingKey）。 */
+export function transcriptPathOf(slug: string, sessionId: string): string {
+  return join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
 }
 
 /** 读 JSON 文件；不存在或解析失败返回 undefined（调用方决定回退值） */

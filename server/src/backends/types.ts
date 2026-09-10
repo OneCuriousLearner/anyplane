@@ -136,6 +136,9 @@ export interface SessionCallbacks {
   }): void
   /** 进程退出（仅当前仍登记在管理器中的实例会回调） */
   onExit(code: number): void
+  /** 审批被上游终结（如 codex serverRequest/resolved：app-server 超时/中断/他端应答）——
+   *  宿主据此清掉自己维护的 pending 表；claude 无此路径 */
+  onApprovalResolved?(requestId: string): void
   /** busy / sessionState 变化时通知宿主广播 status */
   onStatusChange?(): void
 }

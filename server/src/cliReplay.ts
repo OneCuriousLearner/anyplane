@@ -46,11 +46,15 @@ export function pushCliRing(state: CliRingState, payload: Record<string, unknown
 }
 
 /** 把环里 seq > fromSeq 的 cli 事件交给 send。
- *  返回是否发生了「缺口」——请求的起点已被环挤掉，客户端需要重载历史才能补全。 */
+ *  返回是否发生了「缺口」——请求的起点已被环挤掉、或服务端序号纪元低于客户端高水位
+ *  （服务端重启后 Hub/cliSeq 归零，旧高水位再也无法衔接），客户端需要重载历史才能补全。 */
 export function replayCliSince(state: CliRingState, fromSeq: number, send: (payload: unknown) => void): boolean {
   const ring = state.cliRing ?? []
-  if (ring.length === 0) return false
-  const gap = ring[0].seq > fromSeq + 1
+  // 纪元失配：客户端声称收过 fromSeq 条，而我们发过的总数（含已被挤掉的）比这还少——
+  // 只有服务端重启（新 Hub 从 1 重计）会产生这种倒挂，此时环里的一切都不能补发旧账。
+  const epochMismatch = fromSeq > (state.cliSeq ?? 0)
+  if (ring.length === 0) return epochMismatch
+  const gap = ring[0].seq > fromSeq + 1 || epochMismatch
   for (const e of ring) if (e.seq > fromSeq) send({ ...e.payload, replay: true })
   return gap
 }

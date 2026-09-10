@@ -2,7 +2,7 @@
 // CodexSession 实现与 ClaudeSession 同形的会话句柄（契约见 backends/types.ts 末尾注释），
 // 事件经 ThreadTranslator 翻译成 claude stream-json 形状后走统一回调。
 
-import type { ApprovalDecision, BackgroundTask, SessionCallbacks } from '../types'
+import type { ApprovalDecision, SessionCallbacks } from '../types'
 import type { CliMessage } from '../claude/protocol'
 import { saveUpload } from '../../uploads'
 import { errorMessage } from '../../util'
@@ -135,7 +135,6 @@ export function extractTokenCountFromRolloutTail(text: string): RolloutTokenCoun
 
 interface PendingCodexApproval {
   rpcId: number | string
-  kind: string
 }
 
 /** 工具流式部分结果的合并窗口：outputDelta 按字节块到达（高频时每 token 一批），
@@ -174,7 +173,8 @@ function mapTokenUsage(u: Record<string, number> | undefined) {
 }
 
 export class CodexSession {
-  readonly key: string
+  /** 会话 key；handoff 播种线程拿到真实 threadId 后由 CodexRuntime.rekey 改写（会话不换，键跟随 xn|→x|） */
+  key: string
   threadId: string | undefined
   exited = false
 
@@ -237,12 +237,6 @@ export class CodexSession {
   }
   get connectedClients(): number {
     return this.clientCount
-  }
-  get activeTaskCount(): number {
-    return 0 // codex 的后台终端管理（backgroundTerminals/*）留待后续版本
-  }
-  get backgroundTasks(): BackgroundTask[] {
-    return []
   }
   get cwd(): string | undefined {
     return this.opts.cwd
@@ -558,6 +552,9 @@ export class CodexSession {
         // 否则 approvals.size 守卫永久短路 thread/status/changed，runState 卡在 requires_action
         const rid = (params as { requestId?: string | number }).requestId
         if (rid !== undefined && this.approvals.delete(`cx-${rid}`)) {
+          // Hub 侧 pendingApprovals 同步清理（广播撤卡）：只清了 session 表会让死审批
+          // 随重连重放、status 恒 waiting
+          this.cb.onApprovalResolved?.(`cx-${rid}`)
           if (this.approvals.size === 0 && this.runState === 'requires_action') {
             this.setRunState(this.currentTurnId ? 'running' : 'idle')
           }
@@ -616,7 +613,7 @@ export class CodexSession {
         this.runtime.respondSafe(id, { decision: 'decline' })
         return
     }
-    this.approvals.set(requestId, { rpcId: id, kind: method })
+    this.approvals.set(requestId, { rpcId: id })
     this.setRunState('requires_action')
     this.cb.onApprovalRequest({ requestId, toolName, input, toolUseId: String(params.itemId ?? '') })
   }
@@ -746,12 +743,6 @@ export class CodexSession {
         this.emitError(`codex 后端暂不支持控制请求 ${subtype}`)
     }
     return reqId
-  }
-
-  /** codex 没有可等待的控制请求通道：rewind 走 thread/fork，查询走 mcpServerStatus/list，
-   *  两者都在 index.ts 提前分流，不会到这里 */
-  sendControlAndWait(subtype: string, _extra: Record<string, unknown> = {}, _timeoutMs = 15_000): Promise<unknown> {
-    return Promise.reject(new Error(`codex 后端暂不支持控制请求 ${subtype}`))
   }
 
   sendApproval(requestId: string, decision: ApprovalDecision): void {
@@ -1180,6 +1171,17 @@ export class CodexRuntime {
     if (!s) return
     this.sessions.delete(key)
     s.dispose()
+  }
+
+  /** handoff 播种线程拿到真实 threadId 后的重键：会话不换，map 键跟随 xn|→x|。
+   *  不迁的话 hub 按新 key 查不到会话会再 thread/resume 一次（同线程双会话句柄）。 */
+  rekey(oldKey: string, newKey: string): boolean {
+    const s = this.sessions.get(oldKey)
+    if (!s) return false
+    this.sessions.delete(oldKey)
+    s.key = newKey
+    this.sessions.set(newKey, s)
+    return true
   }
 
   disposeAll(): void {

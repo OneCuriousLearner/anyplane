@@ -240,11 +240,13 @@ export function useSessionSocket(opts: {
             onNavigate?.(
               makeSessionInfo({
                 key: ev.targetKey,
-                slug: ev.toBackend === 'codex' ? 'codex' : session.slug,
+                // slug/cwd 以下发值为准：codex→claude 接力时源会话 slug 恒为 'codex'，
+                // 沿用会把 claude 目标的历史请求打到 projects/codex/（历史空白）
+                slug: ev.toBackend === 'codex' ? 'codex' : (ev.targetSlug ?? session.slug),
                 // 目标已 spawn 时 targetKey 是 resolved key（s|/x|）：必须带真实 id，
                 // 否则 codex 侧 fetchCodexHistory('new') 必失败、历史视图永远空白
                 sessionId: ev.targetSessionId ?? 'new',
-                cwd: session.cwd,
+                cwd: ev.targetCwd ?? session.cwd,
                 backend: ev.toBackend,
                 status: 'busy',
                 managed: { spawned: true, busy: true, clients: 0 },

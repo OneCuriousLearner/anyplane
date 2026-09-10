@@ -10,15 +10,14 @@
 // 仓库约定：本模块只被服务端入口与两个 check 脚本引用，不产生任何外发请求
 // （告警走 push.ts 的既有 webhook 扇出，配置即信任边界不变）。
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { join } from 'node:path'
 import { config } from './config'
 import { pushWebhooksToAll } from './push'
 import { log } from './log'
+import { ccDataDir, childEnv, readJsonFile, writeJsonFile } from './util'
 
-const STATE_PATH = join(homedir(), '.anyplane', 'protocol-checks.json')
+const STATE_PATH = join(ccDataDir(), 'protocol-checks.json')
 
 interface DriftState {
   /** 各 CLI 最近一次「该版本无漂移或基线已更新」的记录 */
@@ -28,20 +27,15 @@ interface DriftState {
 }
 
 function loadState(): DriftState {
-  try {
-    if (existsSync(STATE_PATH)) {
-      return JSON.parse(readFileSync(STATE_PATH, 'utf8')) as DriftState
-    }
-  } catch (e) {
-    log.warn(`[drift] 状态文件解析失败（当空处理）:`, e)
-  }
+  const s = readJsonFile<DriftState>(STATE_PATH)
+  if (s && typeof s === 'object' && s.checked && typeof s.checked === 'object') return s
+  if (s !== undefined) log.warn(`[drift] 状态文件形状异常（当空处理）:`, s)
   return { checked: {} }
 }
 
 function saveState(s: DriftState): void {
   try {
-    mkdirSync(join(homedir(), '.anyplane'), { recursive: true })
-    writeFileSync(STATE_PATH, JSON.stringify(s, null, 2))
+    writeJsonFile(STATE_PATH, s, { pretty: true })
   } catch (e) {
     log.warn(`[drift] 状态写入失败:`, e)
   }
@@ -60,7 +54,9 @@ export function cliVersionOf(cli: 'claude' | 'codex'): string | null {
         : ['codex']
   for (const cmd of candidates) {
     try {
-      const r = spawnSync(cmd, ['--version'], { encoding: 'utf8', timeout: 10_000, shell: cmd.endsWith('.cmd') })
+      // childEnv() 剥离 ANYPLANE_TOKEN：这是全仓唯一绕开 childEnv 的 spawn 点，
+      // 缺省继承全量 process.env 会把服务端凭据泄给任意同名 PATH 可执行文件
+      const r = spawnSync(cmd, ['--version'], { encoding: 'utf8', timeout: 10_000, shell: cmd.endsWith('.cmd'), env: childEnv() })
       const out = (r.stdout ?? '').trim()
       if (r.status === 0 && out) return out.split('\n')[0]!.trim()
     } catch {

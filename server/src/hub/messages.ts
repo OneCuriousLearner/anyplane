@@ -32,7 +32,19 @@ export function handleClientMessage(
       // 浏览历史只握手，不 spawn。发消息 / 切 model·mode·effort / rewind / btw 时再启动 CLI。
       // 各后端的 attach 策略（warm 预热、codex x| 即 resume）见适配器 onAttach。
       portFor(hub.key).onAttach(hub, data)
-      replayApprovals(hub, (p) => broadcast(hub, p))
+      // 待审批补发只给本次 attach 的连接：走 broadcast 会让已在线的其他客户端
+      // 重复收到同一张审批卡（requestId 相同，纯噪声）
+      if (ws) {
+        replayApprovals(hub, (p) => {
+          try {
+            ws.send(JSON.stringify(p))
+          } catch (e) {
+            log.debug(`[ws ${hub.key}] 审批补发单播失败`, errFields(e))
+          }
+        })
+      } else {
+        replayApprovals(hub, (p) => broadcast(hub, p))
+      }
       // 重连补发：客户端带上断线前的最高 seq，取回这期间错过的 cli 事件。
       // **必须单播**：走 broadcast 会让补发内容重新入环并分配新序号（自我污染），
       // 且已在线的其他客户端会收到重复投递。

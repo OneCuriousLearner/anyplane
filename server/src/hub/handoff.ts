@@ -63,6 +63,20 @@ export function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detai
         return tidNow ? `x|${tidNow}` : undefined
       })()
 
+      // 播种进程/线程落在 n|/xn| key 上，而 handoff_done 导航走 resolved key：立即三层重键
+      // （Hub / 进程 map / 存活 WS data.key，镜像 callbacks.ts 的 /clear 重键）。不重键的话
+      // 目标页查不到播种进程——live 事件进无客户端的旧 Hub，首条用户消息还会再 spawn
+      // 一个进程与播种进程同写一份 transcript。
+      if (toResolvedKey && targetSessionId && toResolvedKey !== targetKey) {
+        hubs.delete(targetKey)
+        targetHub.key = toResolvedKey
+        hubs.set(toResolvedKey, targetHub)
+        portFor(toResolvedKey).rekeySession?.(targetHub, targetKey, toResolvedKey, targetSessionId)
+        for (const ws of targetHub.clients) {
+          if (!ws.data.inbox) ws.data.key = toResolvedKey
+        }
+      }
+
       // 3. 血缘
       appendLineage({
         id: `ho-${Date.now().toString(36)}`,
@@ -83,6 +97,10 @@ export function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detai
           kind: 'handoff_done',
           targetKey: toResolvedKey ?? targetKey,
           targetSessionId,
+          // 目标 slug/cwd 以下发为准：源会话是 codex 时 session.slug 恒为 'codex'，
+          // 前端若沿用源 slug 会把 claude 目标的历史请求打到 projects/codex/（空白）
+          targetSlug: toBackend === 'codex' ? 'codex' : sanitizePath(sourceCwd),
+          targetCwd: sourceCwd,
           toBackend,
           brief,
         })

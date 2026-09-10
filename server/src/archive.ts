@@ -6,7 +6,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { config } from './config'
-import { ccDataDir, ensurePrivateDir } from './util'
+import { ccDataDir, ensurePrivateDir, transcriptPathOf } from './util'
 
 function trashRoot(): string {
   return ensurePrivateDir(join(ccDataDir(), 'trash', 'claude'))
@@ -34,10 +34,6 @@ function move(src: string, dest: string): void {
   }
 }
 
-function transcriptPath(slug: string, sessionId: string): string {
-  return join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
-}
-
 export interface TrashEntry {
   key: string
   slug: string
@@ -49,7 +45,7 @@ export interface TrashEntry {
 
 /** claude 会话归档：jsonl + 可能的 subagents 目录一起移入回收站 */
 export function archiveClaudeSession(slug: string, sessionId: string): void {
-  const src = transcriptPath(slug, sessionId)
+  const src = transcriptPathOf(slug, sessionId)
   if (!existsSync(src)) throw new Error('transcript 不存在')
   const destDir = join(trashRoot(), slug)
   mkdirSync(destDir, { recursive: true })
@@ -70,7 +66,7 @@ export function restoreClaudeSession(slug: string, sessionId: string): void {
   const destDir = join(trashRoot(), slug)
   const src = join(destDir, `${sessionId}.jsonl`)
   if (!existsSync(src)) throw new Error('回收站中没有该会话')
-  const dest = transcriptPath(slug, sessionId)
+  const dest = transcriptPathOf(slug, sessionId)
   if (existsSync(dest)) throw new Error('原位置已有同名 transcript')
   const projectDir = join(config.claudeConfigDir, 'projects', slug)
   mkdirSync(projectDir, { recursive: true })

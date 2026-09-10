@@ -32,7 +32,8 @@ export function publishInbox(ev: InboxEvent): void {
   inboxSink.publish(ev)
 }
 
-/** 待审批重放：WS 接入（单播）与 attach（广播）共用——未裁决的审批补发给目标 */
+/** 待审批重放：socket 接入（socket.ts，单播）与 attach（messages.ts，单播给发起连接）共用——
+ *  未裁决的审批补发给目标，不向 Hub 内其他在线客户端广播（重复审批卡） */
 export function replayApprovals(hub: Hub, send: (payload: unknown) => void): void {
   for (const a of hub.pendingApprovals.values()) {
     send({ kind: 'approval_request', ...a })

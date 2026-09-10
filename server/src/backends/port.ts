@@ -67,10 +67,14 @@ export interface SessionHandle {
   /** 会话 cwd（codex 句柄有 getter；claude 缺席——x| key 的 sessionNameOf 反查用，
    *  可选属性使 ClaudeSession 无需改动即结构化兼容） */
   readonly cwd?: string
+  /** 后台任务表（claude 专属；codex 缺席——恒空数组会被 hydrateTasks 误读为权威空） */
+  readonly activeTaskCount?: number
+  readonly backgroundTasks?: unknown[]
   sendUserText(text: string, sendMode?: 'steer' | 'queue', images?: ImageAttachment[]): void
   sendApproval(requestId: string, decision: ApprovalDecision): void
   sendControl(subtype: string, extra?: Record<string, unknown>): void
-  sendControlAndWait(
+  /** 可等待的控制请求通道（claude 专属；codex 的 rewind/查询走专用 RPC，无对应物） */
+  sendControlAndWait?(
     subtype: string,
     extra?: Record<string, unknown>,
     timeoutMs?: number,
@@ -174,6 +178,11 @@ export interface BackendPort {
   ): Promise<{ text: string; usage?: Record<string, number> }>
   /** 目标会话播种首条消息，返回目标 sessionId（claude 含 init 前 30s 轮询）；启动失败抛错 */
   seedHandoffTarget(hub: Hub, seed: string): Promise<string | undefined>
+  /** 播种拿到真实 id 后的会话重键（n|→s| / xn|→x|）：进程/线程句柄不换，map 键跟随，
+   *  并对齐 spawnOpts 里的会话身份（回收重生须续跑当前会话）。由 hub/handoff.ts 在广播
+   *  handoff_done 前调用——不同步的话浏览器导航到 resolved key 查不到播种进程，live 事件
+   *  进无客户端的旧 Hub，首条用户消息还会再 spawn 一个进程同写一份 transcript。 */
+  rekeySession?(hub: Hub, oldKey: string, newKey: string, newSessionId: string): void
 
   // ---------- REST 管理面（归档/恢复/改名） ----------
   archive(key: string): Promise<RouteResult>

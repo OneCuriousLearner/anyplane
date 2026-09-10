@@ -25,7 +25,7 @@ export type ServerEvent =
   /** 接力进度：源会话 fork 摘要中 */
   | { kind: 'handoff_pending'; toBackend: 'claude' | 'codex' }
   | { kind: 'handoff_brief'; brief: string }
-  | { kind: 'handoff_done'; targetKey: string; targetSessionId?: string; toBackend: 'claude' | 'codex'; brief: string }
+  | { kind: 'handoff_done'; targetKey: string; targetSessionId?: string; targetSlug?: string; targetCwd?: string; toBackend: 'claude' | 'codex'; brief: string }
   | { kind: 'handoff_error'; message: string }
   /** 只读控制查询应答（mcp_status / get_settings / get_context_usage） */
   | { kind: 'query_result'; id: string; ok: boolean; data?: unknown; error?: string }
