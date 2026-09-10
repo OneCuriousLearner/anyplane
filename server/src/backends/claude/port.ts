@@ -129,6 +129,11 @@ class ClaudePort implements BackendPort {
       delete spawnOpts.forkFromSessionId
       spawnOpts.resumeSessionId = hub.sessionId
     }
+    // 会话身份以最新 init 记下的 hub.sessionId 为权威：/clear 重键、handoff 重键、n| 首 turn 之后，
+    // spawnOpts 里的 resumeSessionId 都是陈旧值（或是显式 undefined——扩散合并会盖掉 parsed 的
+    // resumeSessionId）。进程空闲回收后重生必须续跑当前会话，否则 /clear 后回到旧 transcript、
+    // n| 会话静默开空白新会话。
+    if (hub.sessionId) spawnOpts.resumeSessionId = hub.sessionId
     hub.spawnOpts = spawnOpts
     try {
       const s = processManager.ensure(hub.key, spawnOpts, hubServices().sessionCallbacks(hub))
@@ -464,6 +469,12 @@ class ClaudePort implements BackendPort {
       }
     }
     return s.sessionId
+  }
+
+  /** handoff 播种进程的重键（n|→s|）：进程不换，map 键跟随真实 sessionId。
+   *  spawnOpts 的 resumeSessionId 无需在此对齐——ensureSpawned 的身份权威行会处理。 */
+  rekeySession(_hub: Hub, oldKey: string, newKey: string, _newSessionId: string): void {
+    processManager.rekey(oldKey, newKey)
   }
 
   // ---------- REST 管理面（归档/恢复/改名） ----------

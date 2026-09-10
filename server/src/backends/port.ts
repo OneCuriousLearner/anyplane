@@ -178,6 +178,11 @@ export interface BackendPort {
   ): Promise<{ text: string; usage?: Record<string, number> }>
   /** 目标会话播种首条消息，返回目标 sessionId（claude 含 init 前 30s 轮询）；启动失败抛错 */
   seedHandoffTarget(hub: Hub, seed: string): Promise<string | undefined>
+  /** 播种拿到真实 id 后的会话重键（n|→s| / xn|→x|）：进程/线程句柄不换，map 键跟随，
+   *  并对齐 spawnOpts 里的会话身份（回收重生须续跑当前会话）。由 hub/handoff.ts 在广播
+   *  handoff_done 前调用——不同步的话浏览器导航到 resolved key 查不到播种进程，live 事件
+   *  进无客户端的旧 Hub，首条用户消息还会再 spawn 一个进程同写一份 transcript。 */
+  rekeySession?(hub: Hub, oldKey: string, newKey: string, newSessionId: string): void
 
   // ---------- REST 管理面（归档/恢复/改名） ----------
   archive(key: string): Promise<RouteResult>

@@ -173,7 +173,8 @@ function mapTokenUsage(u: Record<string, number> | undefined) {
 }
 
 export class CodexSession {
-  readonly key: string
+  /** 会话 key；handoff 播种线程拿到真实 threadId 后由 CodexRuntime.rekey 改写（会话不换，键跟随 xn|→x|） */
+  key: string
   threadId: string | undefined
   exited = false
 
@@ -1170,6 +1171,17 @@ export class CodexRuntime {
     if (!s) return
     this.sessions.delete(key)
     s.dispose()
+  }
+
+  /** handoff 播种线程拿到真实 threadId 后的重键：会话不换，map 键跟随 xn|→x|。
+   *  不迁的话 hub 按新 key 查不到会话会再 thread/resume 一次（同线程双会话句柄）。 */
+  rekey(oldKey: string, newKey: string): boolean {
+    const s = this.sessions.get(oldKey)
+    if (!s) return false
+    this.sessions.delete(oldKey)
+    s.key = newKey
+    this.sessions.set(newKey, s)
+    return true
   }
 
   disposeAll(): void {

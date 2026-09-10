@@ -244,6 +244,14 @@ class CodexPort implements BackendPort {
     return s.sessionId
   }
 
+  /** handoff 播种线程的重键（xn|→x|）：线程句柄不换，map 键跟随真实 threadId。
+   *  xn| 时代的 spawnOpts.resumeThreadId 是显式 undefined，回收重生时会经扩散合并盖掉
+   *  parseKey(x|) 的 resumeThreadId 而 thread/start 出全新线程——重键时对齐当前线程身份。 */
+  rekeySession(hub: Hub, oldKey: string, newKey: string, newSessionId: string): void {
+    codexRuntime.rekey(oldKey, newKey)
+    if (hub.spawnOpts) (hub.spawnOpts as { resumeThreadId?: string }).resumeThreadId = newSessionId
+  }
+
   // ---------- REST 管理面（官方 RPC：loaded/stored thread 均可） ----------
 
   /** thread 管理 RPC 共享核：splitThreadId 守卫 + rpcRequest + RouteResult 信封只有一份，
