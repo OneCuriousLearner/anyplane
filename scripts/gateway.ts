@@ -12,8 +12,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { detectProtocol, isOwnGatewayCmd, modeCookie, parseSsListenPids, pickMode, type Mode } from './gateway-lib'
+import { detectProtocol, isOwnGatewayCmd, modeCookie, pickMode, type Mode } from './gateway-lib'
 import { loadAnyplaneConfigFile } from '../server/src/config'
+import { describePid, listListenPids, terminatePids } from '../server/src/portTakeover'
 import { ensurePrivateDir, escapeHtml as htmlEscape } from '../server/src/util'
 
 type GatewayCfg = {
@@ -393,31 +394,23 @@ async function pipeTo(
   }
 }
 
-function cmdlineOf(pid: number): string {
-  try {
-    return readFileSync(`/proc/${pid}/cmdline`, 'utf8')
-  } catch {
-    return ''
-  }
-}
-
-async function listenPids(port: number): Promise<number[]> {
-  const proc = Bun.spawn(['ss', '-tlnp'], { stdout: 'pipe', stderr: 'pipe' })
-  const out = await new Response(proc.stdout).text()
-  await proc.exited
-  return parseSsListenPids(out, port)
-}
-
-/** 只结束上一份 scripts/gateway.ts；nginx/sshd 等外来进程拒绝覆盖。 */
+/** 只结束上一份 scripts/gateway.ts；nginx/sshd 等外来进程拒绝覆盖。
+ *  所有权校验只有 cmdline 一条（无稳定子目录 cwd 可查，与 portTakeover 的双校验分歧是有意的）；
+ *  杀进程流（SIGTERM/轮询/SIGKILL 节奏）共用 portTakeover.terminatePids 一份实现。 */
 async function replaceStaleGateway(ports: number[]): Promise<void> {
   const seen = new Set<number>()
   const own: number[] = []
   const foreign: Array<{ pid: number; cmd: string; port: number }> = []
   for (const port of ports) {
-    for (const pid of await listenPids(port)) {
+    const pids = await listListenPids(port)
+    if (pids === null) {
+      console.warn('[gateway] 当前平台不支持自动列监听进程，跳过 --replace（端口被占时启动会报错）')
+      return
+    }
+    for (const pid of pids) {
       if (pid === process.pid || seen.has(pid)) continue
       seen.add(pid)
-      const cmd = cmdlineOf(pid)
+      const cmd = (await describePid(pid))?.cmdline ?? ''
       if (isOwnGatewayCmd(cmd)) own.push(pid)
       else foreign.push({ pid, cmd: cmd.replace(/\0/g, ' ').trim() || '(unknown)', port })
     }
@@ -429,31 +422,23 @@ async function replaceStaleGateway(ports: number[]): Promise<void> {
     console.error('[gateway] 拒绝覆盖。确认后手动结束该进程，或改 gateway.httpPort。')
     process.exit(1)
   }
-  for (const pid of own) {
-    console.warn(`[gateway] 结束上一份网关 pid=${pid}`)
-    try {
-      process.kill(pid, 'SIGTERM')
-    } catch {}
-  }
   if (!own.length) return
-  const deadline = Date.now() + 2000
-  while (Date.now() < deadline) {
-    let leftover = false
-    for (const port of ports) {
-      for (const pid of await listenPids(port)) {
-        if (own.includes(pid)) leftover = true
+  const cleared = await terminatePids(
+    own,
+    // 清场 = own pid 不再监听任何网关端口（按 pid 判，端口可能被无关新进程抢占）
+    async () => {
+      for (const port of ports) {
+        const pids = await listListenPids(port)
+        if (pids === null || pids.some((p) => own.includes(p))) return false
       }
-    }
-    if (!leftover) return
-    await Bun.sleep(50)
-  }
-  for (const pid of own) {
-    try {
-      process.kill(pid, 'SIGKILL')
-      console.warn(`[gateway] pid=${pid} 未退出，已 SIGKILL`)
-    } catch {}
-  }
-  await Bun.sleep(50)
+      return true
+    },
+    (pid, signal) => {
+      if (signal === 'SIGTERM') console.warn(`[gateway] 结束上一份网关 pid=${pid}`)
+      else console.warn(`[gateway] pid=${pid} 未退出，已 SIGKILL`)
+    },
+  )
+  if (!cleared) console.error('[gateway] SIGKILL 后端口仍被占用，启动可能失败')
 }
 
 function startMux(

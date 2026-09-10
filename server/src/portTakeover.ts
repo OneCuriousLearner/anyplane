@@ -117,14 +117,40 @@ export async function describePid(pid: number): Promise<PidDesc | null> {
 
 export type TakeoverResult = 'noop' | 'freed' | 'refused' | 'unsupported'
 
-/** 在 deadlineMs 内轮询等待端口释放；释放返回 true */
-async function waitForPortFree(port: number, deadlineMs: number): Promise<boolean> {
+/** 在 deadlineMs 内每 50ms 轮询 isClear；清场返回 true，超时返回 false */
+async function pollUntil(isClear: () => Promise<boolean>, deadlineMs: number): Promise<boolean> {
   const deadline = Date.now() + deadlineMs
   while (Date.now() < deadline) {
-    if ((await listListenPids(port))?.length === 0) return true
+    if (await isClear()) return true
     await Bun.sleep(50)
   }
   return false
+}
+
+/**
+ * "自己人"进程的结束流：SIGTERM 全体 → 轮询清场(2s) → 未退者 SIGKILL → 再轮询(1s)。
+ * 破坏性流程只此一份（takeoverStaleListeners 与 scripts/gateway 的 replaceStaleGateway 共用），
+ * 超时/信号节奏调整不会两处漂移。isClear 由调用方定义"清场"（本模块=端口零监听——
+ * 防新进程抢占误判；gateway=own pid 不再监听）；onEvent 供调用方接自家格式的日志。 */
+export async function terminatePids(
+  own: number[],
+  isClear: () => Promise<boolean>,
+  onEvent: (pid: number, signal: 'SIGTERM' | 'SIGKILL') => void,
+): Promise<boolean> {
+  for (const pid of own) {
+    onEvent(pid, 'SIGTERM')
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {}
+  }
+  if (await pollUntil(isClear, 2000)) return true
+  for (const pid of own) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {}
+    onEvent(pid, 'SIGKILL')
+  }
+  return pollUntil(isClear, 1000)
 }
 
 /**
@@ -162,20 +188,16 @@ export async function takeoverStaleListeners(
     return 'refused'
   }
 
-  for (const pid of own) {
-    log.warn(`[port-takeover] :${port} 结束残留进程 pid=${pid}`)
-    try {
-      process.kill(pid, 'SIGTERM')
-    } catch {}
-  }
-  if (await waitForPortFree(port, 2000)) return 'freed'
-  for (const pid of own) {
-    try {
-      process.kill(pid, 'SIGKILL')
-      log.warn(`[port-takeover] pid=${pid} 未退出，已 SIGKILL`)
-    } catch {}
-  }
-  if (await waitForPortFree(port, 1000)) return 'freed'
+  const cleared = await terminatePids(
+    own,
+    // 清场 = 端口零监听（防kill后新进程抢占同名端口被误判为已释放）
+    async () => (await listListenPids(port))?.length === 0,
+    (pid, signal) => {
+      if (signal === 'SIGTERM') log.warn(`[port-takeover] :${port} 结束残留进程 pid=${pid}`)
+      else log.warn(`[port-takeover] pid=${pid} 未退出，已 SIGKILL`)
+    },
+  )
+  if (cleared) return 'freed'
   log.error(`[port-takeover] :${port} SIGKILL 后仍被占用，接管失败`)
   return 'refused'
 }
