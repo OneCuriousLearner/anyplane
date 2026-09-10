@@ -217,20 +217,23 @@ const displayHost = isLoopbackHost(config.host)
   : config.host === '0.0.0.0' || config.host === '::'
     ? lanAddress()
     : config.host
-const accessUrl = `http://${displayHost}:${server.port}/${config.authToken ? `?token=${config.authToken}` : ''}`
+// authToken 是 /api 与 /ws 的唯一防线凭据，绝不能进日志 sink（stdout 会被 nohup/journal/日志采集持久化，
+// docs 还建议打包上传日志）。带 token 的完整 URL 与二维码仅向交互终端直出（绕过 logger），供管理员扫码 onboarding。
+const baseUrl = `http://${displayHost}:${server.port}/`
 log.info(
-  `[anyplane] listening on ${accessUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version}`,
+  `[anyplane] listening on ${baseUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version} auth=${config.authToken ? 'token' : 'off'}`,
 )
 log.info(`[anyplane] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
 if (!config.authToken) {
   log.info('[anyplane] 未配置 authToken，仅监听回环地址。需要局域网访问时：配置 authToken 并设置 host。')
 }
 
-// 局域网模式：打印扫码即入的终端二维码（URL 已带 token）
-if (!isLoopbackHost(config.host)) {
+// 局域网模式：打印扫码即入的终端二维码（URL 带 token；仅交互终端——重定向到文件/服务管理器时不输出）
+if (!isLoopbackHost(config.host) && process.stdout.isTTY) {
   try {
     const { default: QRCode } = await import('qrcode')
-    log.info(await QRCode.toString(accessUrl, { type: 'terminal', small: true }))
+    const accessUrl = `${baseUrl}${config.authToken ? `?token=${config.authToken}` : ''}`
+    process.stdout.write(`${await QRCode.toString(accessUrl, { type: 'terminal', small: true })}\n`)
   } catch (e) {
     log.warn('[anyplane] 二维码生成失败（不影响服务）:', e)
   }
