@@ -1,7 +1,7 @@
 // Web Push 订阅管理：订阅/退订/状态查询
 // 密钥流：服务端 VAPID 公钥 → pushManager.subscribe → 订阅对象 POST 回服务端注册表
 
-import { apiError, apiFetch, postJson } from './api'
+import { apiError, apiFetch, errorMessage, postJson } from './api'
 
 /** 当前浏览器是否支持推送（Service Worker + Push API + 通知） */
 export function pushSupported(): boolean {
@@ -48,7 +48,7 @@ export async function subscribePush(): Promise<{ ok: boolean; error?: string }> 
     if (!r.ok) return { ok: false, error: `注册订阅失败（${(await apiError(r)).message}）` }
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    return { ok: false, error: errorMessage(e) }
   }
 }
 

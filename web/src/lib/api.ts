@@ -33,6 +33,11 @@ export async function postJson(path: string, body: unknown): Promise<Response> {
   })
 }
 
+/** unknown 错误 → 单行文案（catch 后展示用；与服务端 util.errorMessage 同规则） */
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 export interface SessionInfo {
   sessionId: string
   cwd?: string
@@ -244,6 +249,21 @@ export interface TierModelName {
   /** 显示名（_MODEL_NAME 优先，缺省回退模型 ID） */
   name: string
   id?: string
+}
+
+/** 模型值 → {显示名, tooltip}：tier 直查（haiku/sonnet/…）→ 按模型 ID 反查（init 报的是解析后 ID，
+ *  如 k3[1m]——大小写不敏感，设置里的 ID 写法可能不同）→ 未配置原样显示（降级）。
+ *  只需显示名的场景取 .label；StatusPill/DetailDrawer/Composer 共用同一口径，避免同模型多处显示不一致。 */
+export function resolveModel(
+  modelNames: Record<string, TierModelName> | null | undefined,
+  v: string,
+): { label: string; title?: string } {
+  const names = modelNames ?? {}
+  const direct = names[v]
+  if (direct) return { label: direct.name, title: direct.id && direct.id !== direct.name ? direct.id : undefined }
+  const rev = Object.values(names).find((t) => t.id && t.id.toLowerCase() === v.toLowerCase())
+  if (rev) return { label: rev.name, title: v }
+  return { label: v }
 }
 
 /** 各档实际配置的模型名（haiku/sonnet/opus/fable → 网关真实名）；未配置的档缺席，前端降级 tier 名 */

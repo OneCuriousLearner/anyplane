@@ -5,7 +5,7 @@
 //（codexCfg/codexModelId/codexEffortLevels/codexModeOf）也一并内聚进来。
 
 import { useEffect, useRef, useState } from 'react'
-import type { CodexModelInfo, ServerConfigInfo, TierModelName } from '../lib/api'
+import { resolveModel, type CodexModelInfo, type ServerConfigInfo, type TierModelName } from '../lib/api'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 import type { SessionState } from '../lib/ws'
 import { ContextRing } from './ContextRing'
@@ -365,7 +365,9 @@ export function Composer(props: {
               modelLabel={
                 isCodex
                   ? (codexCurrentModel?.label ?? codexModelId)
-                  : (modelNames?.[claudeModel ?? '']?.name ?? claudeModel)
+                  : claudeModel == null
+                    ? undefined
+                    : resolveModel(modelNames, claudeModel).label
               }
               onOpenFullDetail={onOpenFullDetail}
             />
