@@ -58,7 +58,9 @@ export function parseAgentsJson(text: string): Map<string, DaemonAgent> {
   return map
 }
 
-const TTL_MS = 15_000
+// /api/sessions 每 10s 轮询一次，而每次 spawn `claude agents --json --all` 都是全量 CLI 冷启动。
+// 15s TTL 意味着列表页开着就每 ~15s 白 spawn 一个 CLI；后台 agent 的存活态不需要秒级新鲜度。
+const TTL_MS = 60_000
 let cache: { at: number; map: Map<string, DaemonAgent> } | undefined
 let inflight = false
 

@@ -5,7 +5,7 @@ import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, 
 import { basename, join } from 'node:path'
 import { saveUpload } from '../../uploads'
 import { config } from '../../config'
-import { sanitizePath } from '../../util'
+import { sanitizePath, transcriptPathOf } from '../../util'
 import { backgroundAlive, daemonAgents } from './agents'
 import { isInternalUserMessage, type CliMessage } from './protocol'
 
@@ -178,7 +178,7 @@ function extractMetaCached(path: string, mtimeMs: number, size: number): ReturnT
 /** 单个 transcript 的 meta（经 memo）。parseKey 快路径用：O(1) 单文件读替代 listSessions() 全盘扫描。
  *  调用方须先过 splitExistingKey 的形状闸（slug/sessionId 拼进文件路径）。 */
 export function sessionMetaOf(slug: string, sessionId: string): ReturnType<typeof extractMeta> | undefined {
-  const path = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
+  const path = transcriptPathOf(slug, sessionId)
   try {
     const st = statSync(path)
     return extractMetaCached(path, st.mtimeMs, st.size)
@@ -396,18 +396,40 @@ export interface HistoryPage {
   nextBefore?: number
 }
 
-export function readHistory(
-  slug: string,
-  sessionId: string,
-  opts?: { limit?: number; before?: number },
-): HistoryPage {
-  const limit = opts?.limit ?? 300
-  const before = opts?.before
-  const path = join(config.claudeConfigDir, 'projects', slug, `${sessionId}.jsonl`)
-  if (!existsSync(path)) return { messages: [], fileBytes: 0, subagents: readSubagentTranscripts(slug, sessionId), hasMore: false }
-  // 读 Buffer 而非 utf8 文本：fileBytes 必须与本次实际解析的字节精确一致，
-  // tailer 从该偏移续读才不会有缝（statSync 与 read 之间文件可能增长）。
-  const raw = readFileSync(path)
+/** 全量解析结果的 (mtimeMs, size) 键缓存：翻 N 页不再付 N 次全文件读 + 逐行 JSON.parse
+ *  （长会话每页可达数百 ms，阻塞单线程事件循环）。transcript 只追加，键变即内容变；
+ *  外部回滚/重建会改 size/mtime，自然失效。LRU 封顶防长会话集合撑爆内存。 */
+interface ParsedTranscript {
+  fileBytes: number
+  msgs: HistoryMessage[]
+  msgLineIdx: number[]
+  selectable: boolean[]
+  lastBoundaryLine: number
+  /** 旧版内联侧链桶：仅首页（无 before）消费，解析是内容派生，随缓存一起保留 */
+  legacySidechain: Map<string, HistoryMessage[]>
+}
+const PARSE_CACHE_CAP = 8
+const parseCache = new Map<string, { mtimeMs: number; size: number; parsed: ParsedTranscript }>()
+
+function parseTranscriptCached(path: string, mtimeMs: number, size: number, raw: Buffer): ParsedTranscript {
+  const hit = parseCache.get(path)
+  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) {
+    // LRU 触摸：命中即最新，淘汰从最早未用开始
+    parseCache.delete(path)
+    parseCache.set(path, hit)
+    return hit.parsed
+  }
+  const parsed = parseTranscript(raw)
+  parseCache.set(path, { mtimeMs, size, parsed })
+  while (parseCache.size > PARSE_CACHE_CAP) {
+    const oldest = parseCache.keys().next().value
+    if (oldest === undefined) break
+    parseCache.delete(oldest)
+  }
+  return parsed
+}
+
+function parseTranscript(raw: Buffer): ParsedTranscript {
   const lines = raw.toString('utf8').split('\n')
   const msgs: HistoryMessage[] = []
   const msgLineIdx: number[] = []
@@ -441,6 +463,25 @@ export function readHistory(
     msgLineIdx.push(li)
     selectable.push(msg.role !== 'user' || isSelectableRewindTarget(obj))
   }
+  // legacySidechain 随缓存返回（内容派生）；旧注释见 interface 字段说明
+  return { fileBytes: raw.length, msgs, msgLineIdx, selectable, lastBoundaryLine, legacySidechain }
+}
+
+export function readHistory(
+  slug: string,
+  sessionId: string,
+  opts?: { limit?: number; before?: number },
+): HistoryPage {
+  const limit = opts?.limit ?? 300
+  const before = opts?.before
+  const path = transcriptPathOf(slug, sessionId)
+  if (!existsSync(path)) return { messages: [], fileBytes: 0, subagents: readSubagentTranscripts(slug, sessionId), hasMore: false }
+  // 读 Buffer 而非 utf8 文本：fileBytes 必须与本次实际解析的字节精确一致，
+  // tailer 从该偏移续读才不会有缝（statSync 与 read 之间文件可能增长）。
+  const st = statSync(path)
+  const raw = readFileSync(path)
+  const { fileBytes, msgs, msgLineIdx, selectable, lastBoundaryLine, legacySidechain } =
+    parseTranscriptCached(path, st.mtimeMs, st.size, raw)
   // 只有最后一个 compact 边界之后的消息才是逻辑上存在、可回滚的；
   // user 消息还需通过官方同款的目标过滤（无 checkpoint 的消息不可作为 rewind 目标）。
   // rewindable 必须基于全量列表计算（lastBoundaryLine 是全文件扫描的产物），与分页窗口无关
@@ -465,9 +506,9 @@ export function readHistory(
       if (!subagents.some((s) => s.toolUseId === toolUseId)) subagents.push({ toolUseId, messages })
     }
     subagents.sort((a, b) => (a.messages[0]?.timestamp ?? '').localeCompare(b.messages[0]?.timestamp ?? ''))
-    return { messages: page, fileBytes: raw.length, subagents, hasMore, nextBefore }
+    return { messages: page, fileBytes, subagents, hasMore, nextBefore }
   }
-  return { messages: page, fileBytes: raw.length, hasMore, nextBefore }
+  return { messages: page, fileBytes, hasMore, nextBefore }
 }
 
 /** 单个子代理转录的消息上限（防止超长转录拖垮首载；超出时保留末尾） */

@@ -14,6 +14,9 @@ export interface TailerEvents {
 }
 
 const POLL_MS = 2000
+/** 无写入时的状态心跳间隔：onTick 的用途是节流刷新外部会话的 busy/idle，
+ *  没有新内容时每 2s 无条件广播一次 status 纯属噪声（页面常开 N 个外部会话就是 N 路 2s 广播） */
+const TICK_HEARTBEAT_MS = 30_000
 
 export class TranscriptTailer {
   private offset: number
@@ -22,6 +25,7 @@ export class TranscriptTailer {
   private pollTimer?: ReturnType<typeof setInterval>
   private debounce?: ReturnType<typeof setTimeout>
   private stopped = false
+  private lastTickAt = 0
 
   constructor(
     private path: string,
@@ -82,7 +86,8 @@ export class TranscriptTailer {
       this.events.onReset()
       return
     }
-    if (size > this.offset) {
+    const grew = size > this.offset
+    if (grew) {
       let fd = -1
       try {
         fd = openSync(this.path, 'r')
@@ -99,7 +104,12 @@ export class TranscriptTailer {
           } catch {}
       }
     }
-    this.events.onTick()
+    // 只有文件真的增长（或心跳到期）才打 onTick：空闲的外部会话不再每 2s 广播一次 status
+    const now = Date.now()
+    if (grew || now - this.lastTickAt >= TICK_HEARTBEAT_MS) {
+      this.lastTickAt = now
+      this.events.onTick()
+    }
   }
 
   private emitLines(buf: Buffer): void {
