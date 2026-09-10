@@ -462,7 +462,7 @@ async function sendSct(wh: { type: 'sct'; sendkey: string }, payload: PushPayloa
   const lines = [payload.body]
   if (payload.type === 'approval') {
     const page = approvalPageLink(wh, payload)
-    if (page) lines.push('', `[👉 前往审批（允许 / 拒绝）](${page})`)
+    if (page) lines.push('', `[前往审批（允许 / 拒绝）](${page})`)
   } else {
     const click = sessionLink(payload.key)
     if (click) lines.push('', `[查看会话](${click})`)

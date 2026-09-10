@@ -3,12 +3,11 @@
 // 分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息才 --fork-session）。
 
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
-import { join } from 'node:path'
-import { config } from '../../config'
 import type { ContextUsageInfo } from '../types'
 import { listSessions, sessionMetaOf } from './discovery'
 import { contextUsageOf, contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
 import { sessionModelOf } from './sessionModels'
+import { transcriptPathOf } from '../../util'
 
 export function keyFor(slug: string, sessionId: string): string {
   return `s|${slug}|${sessionId}`
@@ -85,7 +84,7 @@ const hydrationCache = new Map<string, { mtimeMs: number; context: ContextUsageI
 export function hydratedContextOf(key: string): ContextUsageInfo | undefined {
   const ek = splitExistingKey(key)
   if (!ek) return undefined
-  const path = join(config.claudeConfigDir, 'projects', ek.slug, `${ek.sessionId}.jsonl`)
+  const path = transcriptPathOf(ek.slug, ek.sessionId)
   let size: number
   let mtimeMs: number
   try {
