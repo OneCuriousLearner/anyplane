@@ -101,7 +101,26 @@ describe('cli 事件环形缓冲与补发', () => {
     expect(replaySince(h, 2).gap).toBe(true)
   })
 
-  test('空环补发不报缺口（会话刚起、还没产生任何可落盘 cli 事件）', () => {
-    expect(replaySince(mk(), 7)).toEqual({ sent: [], gap: false })
+  test('空环 + fromSeq=0 不报缺口（会话刚起、还没产生任何可落盘 cli 事件）', () => {
+    expect(replaySince(mk(), 0)).toEqual({ sent: [], gap: false })
+  })
+
+  test('空环但客户端有高水位 → 纪元失配报缺口（服务端重启，旧高水位无法衔接）', () => {
+    expect(replaySince(mk(), 7)).toEqual({ sent: [], gap: true })
+  })
+
+  test('环内 seq 全部低于客户端高水位 → 纪元失配报缺口（服务端重启后重计）', () => {
+    const h = mk()
+    for (let i = 1; i <= 3; i++) pushDurable(h, i) // 重启后新 Hub 从 1 重计
+    const r = replaySince(h, 1473)
+    expect(r.gap).toBe(true)
+    expect(r.sent).toEqual([]) // 旧纪元的任何事件都不该补发
+  })
+
+  test('revert 清环但 cliSeq 保留：同纪元高水位衔接不算缺口', () => {
+    const h = mk()
+    for (let i = 1; i <= 5; i++) pushDurable(h, i)
+    h.cliRing = [] // 模拟 revert 成功清环（cliSeq 不动保持单调）
+    expect(replaySince(h, 5).gap).toBe(false)
   })
 })

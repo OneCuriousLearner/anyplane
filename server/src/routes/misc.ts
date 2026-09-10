@@ -91,16 +91,19 @@ export async function handleMiscRoutes(req: Request, url: URL): Promise<Response
     // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移；
     // ?before=<行号> 翻更早的页（响应 nextBefore 续传），?limit= 覆盖默认 300
     //（上限 10000：replay_gap 保载重载按已加载数+余量拉取，长会话需要突破首窗 300）
-    const num = (k: string) => {
+    const num = (k: string, allowZero = false) => {
       const v = url.searchParams.get(k)
       if (v == null) return undefined
       const n = Number(v)
-      return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined
+      // before 是行号游标，0 合法：最老可入历史消息在文件第 0 行时 nextBefore=0，
+      // 吞掉它会让前端按无 before 处理拿到最新一页，翻页死循环重复 prepend。
+      // limit 不允许 0（slice(-0) 会退化成全量），保持 n > 0。
+      return Number.isFinite(n) && (allowZero ? n >= 0 : n > 0) ? Math.floor(n) : undefined
     }
     const limit = num('limit')
     return json(
       readHistory(slug, sessionId, {
-        before: num('before'),
+        before: num('before', true),
         limit: limit == null ? undefined : Math.min(limit, 10_000),
       }),
     )
