@@ -4,7 +4,7 @@
 // - publishInbox：sink 未注册是装配错误——warn 留痕一次但绝不 throw（error 广播路径会经过这里，
 //   throw 会把普通错误广播变成异常）
 import { describe, expect, test } from 'bun:test'
-import { broadcast, broadcastError, publishInbox, replayApprovals, setInboxSink } from './broadcast'
+import { broadcast, broadcastError, publishInbox, replayApprovals, resetInboxSinkForTest, setInboxSink } from './broadcast'
 import type { Hub, InboxEvent } from './types'
 
 interface FakeWs {
@@ -36,8 +36,10 @@ function collectInbox(): InboxEvent[] {
 }
 
 describe('publishInbox：sink 注册语义', () => {
-  // 本用例必须先于任何 setInboxSink 调用执行（sink 是一次性装配，模块级状态无法复位）
+  // 模块级 sink/warn-once 单态跨测试文件共享（bun test 单进程），用例开头显式复位，
+  // 不依赖文件执行顺序（各平台枚举顺序不同，顺序敏感曾在 ubuntu CI 误红）
   test('sink 未注册时丢弃事件：warn 留痕一次、不 throw', () => {
+    resetInboxSinkForTest()
     const warns: unknown[][] = []
     const origWarn = console.warn
     console.warn = (...a: unknown[]) => {
