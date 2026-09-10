@@ -13,6 +13,7 @@
 import { existsSync } from 'node:fs'
 import {
   createCipheriv,
+  createHash,
   createHmac,
   createPrivateKey,
   createPublicKey,
@@ -349,9 +350,11 @@ export async function pushToAll(payload: PushPayload): Promise<{ sent: number; p
 //   Bark/Server酱 —— 无原生按钮，链接落 GET /api/approval-page 确认页（按钮再 POST），
 //                    不做直出 GET 审批链接：链接被预览/抓取即误触。
 
-/** 渠道标识：唯一定位一条配置的字符串（secret 派生输入，也用于日志）
+/** 渠道标识：唯一定位一条配置的字符串（secret 派生输入）
  *  ntfy server 必须规范化（去掉末尾斜杠），否则 https://ntfy.sh/ 与 https://ntfy.sh
  *  会派生不同 secret，导致改配置后旧审批 URL 失效。
+ *  注意：返回值含渠道凭证（ntfy topic / Bark URL key / Server酱 SendKey），持有者可读通知全文
+ *  （含审批能力 URL），严禁进日志——日志场景一律用 webhookLogId。
  */
 function webhookId(wh: PushWebhookConfig): string {
   switch (wh.type) {
@@ -362,6 +365,11 @@ function webhookId(wh: PushWebhookConfig): string {
     case 'sct':
       return `sct:${wh.sendkey}`
   }
+}
+
+/** 日志用渠道标识：类型 + webhookId 的 SHA-256 前 8 位（稳定可区分、不泄露渠道凭证） */
+function webhookLogId(wh: PushWebhookConfig): string {
+  return `${wh.type}:${createHash('sha256').update(webhookId(wh)).digest('hex').slice(0, 8)}`
 }
 
 /** 从 vapid 私钥派生的 per-webhook 能力密钥（18 字节 → 24 字符，与订阅 secret 同长） */
@@ -494,16 +502,16 @@ export async function pushWebhooksToAll(payload: PushPayload): Promise<{ sent: n
       try {
         const status = await sendWebhook(wh, payload)
         if (status === undefined) {
-          log.warn(`[push] webhook ${webhookId(wh)} 类型未知，跳过`)
+          log.warn(`[push] webhook ${webhookLogId(wh)} 类型未知，跳过`)
           return
         }
         if (status >= 200 && status < 300) {
           sent++
         } else {
-          log.warn(`[push] webhook ${webhookId(wh)} 投递失败 (HTTP ${status})`)
+          log.warn(`[push] webhook ${webhookLogId(wh)} 投递失败 (HTTP ${status})`)
         }
       } catch (e) {
-        log.warn(`[push] webhook ${webhookId(wh)} 投递失败:`, e instanceof Error ? e.message : e)
+        log.warn(`[push] webhook ${webhookLogId(wh)} 投递失败:`, e instanceof Error ? e.message : e)
       }
     }),
   )
