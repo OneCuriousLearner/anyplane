@@ -95,7 +95,9 @@ export function extractUsageFromTranscriptTail(text: string): TranscriptCallUsag
     }
     if (msg.type !== 'assistant' || msg.isSidechain === true) continue
     const u = coerceCallUsage((msg.message as { usage?: unknown } | undefined)?.usage)
-    if (u) return u
+    // 全零 usage（中断/截断写盘、协议漂移产出 {}）不算命中：继续往更早行回扫真实占用，
+    // 否则环形 UI 会被水合成一个假的 0/窗口大小
+    if (u && u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens > 0) return u
   }
   return undefined
 }
