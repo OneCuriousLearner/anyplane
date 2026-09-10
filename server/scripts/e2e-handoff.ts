@@ -2,9 +2,10 @@
 // 双向：claude → codex、codex → claude。需服务端已启动（默认 :7480，ANYPLANE_PORT 覆盖）。
 // 用法：bun run server/scripts/e2e-handoff.ts <claudeSessionKey> <codexThreadKey>（均为要操作的源会话 key）
 
+import { connect } from './e2e-lib'
+
 const PORT = process.env.ANYPLANE_PORT ?? '7480'
 const BASE = `http://localhost:${PORT}`
-const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
 
 const CLAUDE_KEY = process.argv[2] ?? ''
 const CODEX_KEY = process.argv[3] ?? ''
@@ -23,28 +24,12 @@ interface HandoffOutcome {
 /** 连源会话 WS（触发 hub 存在），发 POST /api/handoff，等待 handoff_done/error */
 function handoff(fromKey: string, toBackend: 'claude' | 'codex', label: string): Promise<HandoffOutcome> {
   return new Promise(async (resolve) => {
-    const ws = new WebSocket(`ws://localhost:${PORT}/ws/sessions/${encodeURIComponent(fromKey)}${tokenQ}`)
+    const { ws, on, send, open } = connect(fromKey)
     const timeout = setTimeout(() => resolve({ error: 'TIMEOUT 等待 handoff_done' }), 420_000)
-    ws.onopen = async () => {
-      ws.send(JSON.stringify({ kind: 'attach' }))
-      const r = await fetch(`${BASE}/api/handoff`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ fromKey, toBackend, detail: 'standard' }),
-      })
-      const body = (await r.json().catch(() => ({}))) as { error?: string }
-      if (!r.ok) {
-        clearTimeout(timeout)
-        resolve({ error: `POST /api/handoff ${r.status}: ${body.error ?? ''}` })
-      } else {
-        console.log(`[${label}] 接力已发起，等待简报与播种…`)
-      }
-    }
-    ws.onmessage = (e) => {
-      const ev = JSON.parse(String(e.data))
+    on((ev) => {
       if (ev.kind === 'handoff_pending') console.log(`[${label}] 简报生成中…`)
       if (ev.kind === 'handoff_done') {
-        console.log(`[${label}] handoff_done target=${ev.targetKey.slice(0, 60)} sid=${String(ev.targetSessionId ?? '').slice(0, 8)}`)
+        console.log(`[${label}] handoff_done target=${String(ev.targetKey ?? '').slice(0, 60)} sid=${String(ev.targetSessionId ?? '').slice(0, 8)}`)
         clearTimeout(timeout)
         ws.close()
         resolve({ targetKey: ev.targetKey as string, targetSessionId: ev.targetSessionId as string | undefined, brief: ev.brief as string })
@@ -54,6 +39,20 @@ function handoff(fromKey: string, toBackend: 'claude' | 'codex', label: string):
         ws.close()
         resolve({ error: ev.message as string })
       }
+    })
+    await open()
+    send({ kind: 'attach' })
+    const r = await fetch(`${BASE}/api/handoff`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fromKey, toBackend, detail: 'standard' }),
+    })
+    const body = (await r.json().catch(() => ({}))) as { error?: string }
+    if (!r.ok) {
+      clearTimeout(timeout)
+      resolve({ error: `POST /api/handoff ${r.status}: ${body.error ?? ''}` })
+    } else {
+      console.log(`[${label}] 接力已发起，等待简报与播种…`)
     }
   })
 }

@@ -411,14 +411,18 @@ interface ParsedTranscript {
 const PARSE_CACHE_CAP = 8
 const parseCache = new Map<string, { mtimeMs: number; size: number; parsed: ParsedTranscript }>()
 
-function parseTranscriptCached(path: string, mtimeMs: number, size: number, raw: Buffer): ParsedTranscript {
+function peekParseCache(path: string, mtimeMs: number, size: number): ParsedTranscript | undefined {
   const hit = parseCache.get(path)
-  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) {
-    // LRU 触摸：命中即最新，淘汰从最早未用开始
-    parseCache.delete(path)
-    parseCache.set(path, hit)
-    return hit.parsed
-  }
+  if (!hit || hit.mtimeMs !== mtimeMs || hit.size !== size) return undefined
+  // LRU 触摸：命中即最新，淘汰从最早未用开始
+  parseCache.delete(path)
+  parseCache.set(path, hit)
+  return hit.parsed
+}
+
+function parseTranscriptCached(path: string, mtimeMs: number, size: number, raw: Buffer): ParsedTranscript {
+  const hit = peekParseCache(path, mtimeMs, size)
+  if (hit) return hit
   const parsed = parseTranscript(raw)
   parseCache.set(path, { mtimeMs, size, parsed })
   while (parseCache.size > PARSE_CACHE_CAP) {
@@ -476,12 +480,14 @@ export function readHistory(
   const before = opts?.before
   const path = transcriptPathOf(slug, sessionId)
   if (!existsSync(path)) return { messages: [], fileBytes: 0, subagents: readSubagentTranscripts(slug, sessionId), hasMore: false }
-  // 读 Buffer 而非 utf8 文本：fileBytes 必须与本次实际解析的字节精确一致，
-  // tailer 从该偏移续读才不会有缝（statSync 与 read 之间文件可能增长）。
   const st = statSync(path)
-  const raw = readFileSync(path)
-  const { fileBytes, msgs, msgLineIdx, selectable, lastBoundaryLine, legacySidechain } =
-    parseTranscriptCached(path, st.mtimeMs, st.size, raw)
+  // 缓存命中则跳过全文件读（上一条注释承诺的"翻 N 页不再付 N 次全文件读"的读这一半）：
+  // (mtimeMs, size) 键相等即内容相等（transcript 只追加），此时 parsed.fileBytes === st.size。
+  // 未命中才读 Buffer 而非 utf8 文本：fileBytes 必须与本次实际解析的字节精确一致，
+  // tailer 从该偏移续读才不会有缝（statSync 与 read 之间文件可能增长）。
+  const parsed =
+    peekParseCache(path, st.mtimeMs, st.size) ?? parseTranscriptCached(path, st.mtimeMs, st.size, readFileSync(path))
+  const { fileBytes, msgs, msgLineIdx, selectable, lastBoundaryLine, legacySidechain } = parsed
   // 只有最后一个 compact 边界之后的消息才是逻辑上存在、可回滚的；
   // user 消息还需通过官方同款的目标过滤（无 checkpoint 的消息不可作为 rewind 目标）。
   // rewindable 必须基于全量列表计算（lastBoundaryLine 是全文件扫描的产物），与分页窗口无关

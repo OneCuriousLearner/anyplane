@@ -1267,8 +1267,29 @@ export class CodexRuntime {
   }
 
   /** paginated 历史：turns/list 默认降序（新→旧，实测）——显式 asc 翻页拿元数据；
-   *  items/list 不带 turnId 时跨 turn 升序分页（entry 为 {turnId, item} 包装，非裸 ThreadItem）。 */
+   *  items/list 不带 turnId 时跨 turn 升序分页（entry 为 {turnId, item} 包装，非裸 ThreadItem）。
+   *  两段翻页相互独立（合并只消费两者的终态），并发启动：墙钟时间取较长一段而非相加。 */
   private async readPaginatedTurns(threadId: string): Promise<HistoryTurn[]> {
+    const [turnsMeta, itemsByTurn] = await Promise.all([this.listTurnsMeta(threadId), this.listItemsByTurn(threadId)])
+
+    const seen = new Set<string>()
+    const turns = turnsMeta.map((t) => {
+      if (t.id) seen.add(t.id)
+      return { ...t, items: t.id ? (itemsByTurn.get(t.id) ?? []) : [] }
+    })
+    // 防御：item 的 turnId 不在 turns/list 里（竞态/分页窗口交错）——按首见序追加为末段，不静默丢弃
+    for (const [turnId, items] of itemsByTurn) {
+      if (!seen.has(turnId)) {
+        log.warn('[codex] items/list 出现 turns/list 之外的 turnId，按末段追加', { threadId, turnId })
+        turns.push({ id: turnId, startedAt: null, completedAt: null, items })
+      }
+    }
+    return turns
+  }
+
+  private async listTurnsMeta(
+    threadId: string,
+  ): Promise<Array<{ id?: string; startedAt?: number | null; completedAt?: number | null }>> {
     const turnsMeta: Array<{ id?: string; startedAt?: number | null; completedAt?: number | null }> = []
     let cursor: string | null | undefined
     do {
@@ -1283,9 +1304,12 @@ export class CodexRuntime {
       turnsMeta.push(...(page.data ?? []))
       cursor = page.nextCursor ?? null
     } while (cursor)
+    return turnsMeta
+  }
 
+  private async listItemsByTurn(threadId: string): Promise<Map<string, ThreadItem[]>> {
     const itemsByTurn = new Map<string, ThreadItem[]>()
-    cursor = undefined
+    let cursor: string | null | undefined
     do {
       const page = (await this.rpcRequest(
         'thread/items/list',
@@ -1305,20 +1329,7 @@ export class CodexRuntime {
       }
       cursor = page.nextCursor ?? null
     } while (cursor)
-
-    const seen = new Set<string>()
-    const turns = turnsMeta.map((t) => {
-      if (t.id) seen.add(t.id)
-      return { ...t, items: t.id ? (itemsByTurn.get(t.id) ?? []) : [] }
-    })
-    // 防御：item 的 turnId 不在 turns/list 里（竞态/分页窗口交错）——按首见序追加为末段，不静默丢弃
-    for (const [turnId, items] of itemsByTurn) {
-      if (!seen.has(turnId)) {
-        log.warn('[codex] items/list 出现 turns/list 之外的 turnId，按末段追加', { threadId, turnId })
-        turns.push({ id: turnId, startedAt: null, completedAt: null, items })
-      }
-    }
-    return turns
+    return itemsByTurn
   }
 
   /** turn 序列 → 历史消息：itemsToHistory 翻译 + 侧车 reasoning 按 turn 时间窗回插 */

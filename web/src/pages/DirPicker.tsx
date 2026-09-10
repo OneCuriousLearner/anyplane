@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { fetchDirList, type DirEntry, type SessionInfo } from '../lib/api'
+import { errorMessage, fetchDirList, type DirEntry, type SessionInfo } from '../lib/api'
 
 type NodeState =
   | { status: 'loading' }
@@ -69,7 +69,7 @@ export function DirPicker(props: {
       const r = await fetchDirList(path)
       st = { status: 'loaded', entries: r.entries }
     } catch (e) {
-      st = { status: 'error', message: e instanceof Error ? e.message : String(e) }
+      st = { status: 'error', message: errorMessage(e) }
     }
     setTree((prev) => new Map(prev).set(path, st))
     return st

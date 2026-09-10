@@ -33,6 +33,9 @@ function branchOfCached(cwd?: string): string | undefined {
 
 export async function handleSessionRoutes(req: Request, url: URL): Promise<Response | undefined> {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
+    // codex RPC 与 claude 同步扫盘相互独立——先发起 RPC 再扫，墙钟取两者较大值而非相加
+    //（此端点被每个打开的标签页 10s 轮询）。中间无 await，rejection 一定先于下方 catch 被接管。
+    const codexP = listCodexSessions()
     const sessions = listSessions()
     const claudeRows = sessions.map((s: SessionInfo) => ({
       ...s,
@@ -48,7 +51,7 @@ export async function handleSessionRoutes(req: Request, url: URL): Promise<Respo
     // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
     let codexRows: Record<string, unknown>[] = []
     try {
-      const threads = await listCodexSessions()
+      const threads = await codexP
       codexRows = threads.map((t) => ({
         sessionId: t.id,
         cwd: t.cwd,

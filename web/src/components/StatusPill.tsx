@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ServerConfigInfo } from '../lib/api'
+import { resolveModel as resolveModelName, type ServerConfigInfo, type TierModelName } from '../lib/api'
 
 // ---- 视觉编码（E2 液态玻璃 token：唯一彩色面 = 审批红，其余走灰阶） ----
 // mode：色点（危险度语义）  effort：档位 glyph（强度渐强）
@@ -65,7 +65,7 @@ export function StatusPill(props: {
   /** effort 档位表（默认 claude 五档；codex 按模型 supportedReasoningEfforts 传入） */
   effortLevels?: readonly string[]
   /** 各档实际配置的模型名（claude 设置透传）；未配置的档缺席 → 显示 tier 名 */
-  modelNames?: Record<string, { name: string; id?: string }> | null
+  modelNames?: Record<string, TierModelName> | null
   /** 面板打开时回调（调用方借机实时拉取 modelNames） */
   onPanelOpen?: () => void
   onSetModel: (m: string) => void
@@ -80,17 +80,9 @@ export function StatusPill(props: {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  /** 模型值 → {显示名, tooltip}：tier 直查（haiku/sonnet/…）→ 按模型 ID 反查（init 报的是解析后 ID，
-   *  如 k3[1m]——大小写不敏感，设置里的 ID 写法可能不同）→ 未配置原样显示（降级） */
-  const resolveModel = (v?: string): { label: string; title?: string } => {
-    if (!v) return { label: '…' }
-    const names = props.modelNames ?? {}
-    const direct = names[v]
-    if (direct) return { label: direct.name, title: direct.id && direct.id !== direct.name ? direct.id : undefined }
-    const rev = Object.values(names).find((t) => t.id && t.id.toLowerCase() === v.toLowerCase())
-    if (rev) return { label: rev.name, title: v }
-    return { label: v }
-  }
+  /** 模型值 → {显示名, tooltip}（口径收敛在 lib/api resolveModel，此处只补未拿到模型值时的占位） */
+  const resolveModel = (v?: string): { label: string; title?: string } =>
+    v ? resolveModelName(props.modelNames, v) : { label: '…' }
 
   const syncPanelPos = () => {
     // 面板左下角与胶囊左下角重叠，向上展开（触发器 open 时 invisible，由面板盖住原位）

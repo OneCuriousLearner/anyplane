@@ -217,6 +217,44 @@ export function backendOf(key: string): BackendName {
   return isCodexKey(key) ? 'codex' : 'claude'
 }
 
+/** key 的零 I/O 纯形状解析（与两后端 keyFor/keyForNew/keyForBranch 构造器一一对应）。
+ *  只读 key 本身：不做 listSessions 反查也不做 RPC，故 existing 的 cwd 缺席（要 cwd 走 parseKey）。
+ *  未知前缀或编码段损坏（非法 % 转义）返回 null，消费方各自兜底。 */
+export interface DescribedKey {
+  backend: BackendName
+  kind: 'existing' | 'new' | 'branch'
+  /** existing：真实会话/线程 id；branch：分叉源 sessionId（b| 内嵌的是源 id，见 keyForBranch） */
+  sessionId?: string
+  /** existing(claude s|)：slug 段原样（未过字符闸；要校验用 splitExistingKey） */
+  slug?: string
+  /** new/branch：key 内嵌的 cwd（已解码） */
+  cwd?: string
+}
+
+export function describeKey(key: string): DescribedKey | null {
+  try {
+    const parts = key.split('|')
+    if (parts[0] === 's' && parts.length === 3) {
+      return { backend: 'claude', kind: 'existing', slug: parts[1], sessionId: parts[2] }
+    }
+    if (parts[0] === 'x' && parts.length === 2) {
+      return { backend: 'codex', kind: 'existing', sessionId: parts[1] }
+    }
+    if (parts[0] === 'n' && parts.length === 2) {
+      return { backend: 'claude', kind: 'new', cwd: decodeURIComponent(parts[1]) }
+    }
+    if (parts[0] === 'xn' && parts.length === 2) {
+      return { backend: 'codex', kind: 'new', cwd: decodeURIComponent(parts[1]) }
+    }
+    if (parts[0] === 'b' && parts.length === 3) {
+      return { backend: 'claude', kind: 'branch', cwd: decodeURIComponent(parts[1]), sessionId: parts[2] }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /** 编排层唯一的后端分支点：全仓库的能力分发都收敛到这一个三元 */
 export function portFor(key: string): BackendPort {
   return isCodexKey(key) ? codexPort : claudePort

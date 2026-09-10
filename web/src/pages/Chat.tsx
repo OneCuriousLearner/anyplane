@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createSession, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
+import { createSession, errorMessage, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
 import { SessionSocket } from '../lib/ws'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { ChatHeader } from '../components/ChatHeader'
@@ -484,7 +484,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           const toBackend = isCodex ? 'claude' : 'codex'
           setHandoffBusy(true)
           startHandoff(session.key, toBackend)
-            .catch((e) => ingestApi.pushSystem(`⚠ 接力失败: ${e instanceof Error ? e.message : e}`, 'error'))
+            .catch((e) => ingestApi.pushSystem(`⚠ 接力失败: ${errorMessage(e)}`, 'error'))
             .finally(() => setHandoffBusy(false))
         }}
         lineage={lineage}

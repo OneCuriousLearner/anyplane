@@ -140,6 +140,23 @@ export function useTranscriptScroll(opts: {
     setRawStart(null)
   }, [resetKey])
 
+  // ---- 扩窗或翻页（onScroll 上翻与顶部哨兵按钮共用）：本地窗口未到顶 → 锚点捕获 +
+  // flushSync 隔离提交扩窗；已到顶 → 服务端还有更早历史（hasMore）时由调用方拉取上一页 ----
+  const expandOrFetchEarlier = (top: number) => {
+    const el = scrollRef.current
+    if (!el) return
+    if (windowStart > 0) {
+      pendingAnchorRef.current = { height: el.scrollHeight, top }
+      // flushSync 隔离提交：滚动事件 lane 可能与同 tick 的 WS draft 更新合并成一个 commit，
+      // 锚定补偿按 scrollHeight 总增量会把尾部新增的草稿行高也算进去（视口跳变）——
+      // 同步提交保证补偿消费到的增量只来自本次 prepend（实测审查发现；preparePrepend
+      // 路径天然安全：捕获与 setMsgs 在同一微任务，宏任务事件插不进来）
+      flushSync(() => setRawStart(expandWindowStart(windowStart)))
+    } else {
+      onReachTop?.()
+    }
+  }
+
   // ---- 滚动事件：atBottom 维护 + 窗口冻结/恢复 + 门控扩窗 ----
   const onScroll = () => {
     const el = scrollRef.current
@@ -165,17 +182,7 @@ export function useTranscriptScroll(opts: {
     if (performance.now() < ignoreScrollUntilRef.current) return
     if (top >= last) return // 仅向上滚动可扩窗
     if (top >= EXPAND_TOP_PX) return
-    if (windowStart > 0) {
-      pendingAnchorRef.current = { height: el.scrollHeight, top }
-      // flushSync 隔离提交：滚动事件 lane 可能与同 tick 的 WS draft 更新合并成一个 commit，
-      // 锚定补偿按 scrollHeight 总增量会把尾部新增的草稿行高也算进去（视口跳变）——
-      // 同步提交保证补偿消费到的增量只来自本次 prepend（实测审查发现；preparePrepend
-      // 路径天然安全：捕获与 setMsgs 在同一微任务，宏任务事件插不进来）
-      flushSync(() => setRawStart(expandWindowStart(windowStart)))
-    } else {
-      // 本地窗口已到顶：服务端还有更早历史（hasMore）时由调用方拉取上一页
-      onReachTop?.()
-    }
+    expandOrFetchEarlier(top)
   }
 
   // ---- ↓ 按钮：恢复尾部窗口 + 直达底部 ----
@@ -192,12 +199,7 @@ export function useTranscriptScroll(opts: {
   const expandWindow = () => {
     const el = scrollRef.current
     if (!el) return
-    if (windowStart > 0) {
-      pendingAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
-      flushSync(() => setRawStart(expandWindowStart(windowStart))) // 隔离理由同上
-    } else {
-      onReachTop?.()
-    }
+    expandOrFetchEarlier(el.scrollTop)
   }
 
   // ---- 异步 prepend 锚点捕获：在翻页响应落抄本（setState）之前调用，

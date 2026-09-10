@@ -41,8 +41,8 @@ export function replayApprovals(hub: Hub, send: (payload: unknown) => void): voi
 }
 
 export function broadcast(hub: Hub, payload: unknown): void {
-  const kindForRing = (payload as { kind?: string } | null | undefined)?.kind
-  if (kindForRing === 'cli') pushCliRing(hub, payload as Record<string, unknown>)
+  const kind = (payload as { kind?: string } | null | undefined)?.kind
+  if (kind === 'cli') pushCliRing(hub, payload as Record<string, unknown>)
   const text = JSON.stringify(payload)
   for (const ws of hub.clients) {
     try {
@@ -54,7 +54,6 @@ export function broadcast(hub: Hub, payload: unknown): void {
     }
   }
   // 错误事件同步进全局收件箱（审批/完成由各自路径单独发布）
-  const kind = (payload as { kind?: string } | null | undefined)?.kind
   if (kind === 'error') {
     publishInbox({ type: 'error', key: hub.key, message: String((payload as { message?: unknown }).message ?? '') })
   }
