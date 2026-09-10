@@ -1,5 +1,7 @@
-// e2e 脚本共享小工具：结果记录（note）与 WS 连接封装（connect）。
-// 各 e2e-*.ts 脚本是独立运行的手工验证入口，只共享这两段逐字重复的样板。
+// e2e 脚本共享小工具：结果记录（note）、WS 连接封装（connect）、app-server 探针（spawnAppServer）。
+// 各 e2e-*.ts 脚本是独立运行的手工验证入口，共享此处的样板以免逐字复制漂移。
+
+import { pumpLines } from '../src/util'
 
 /** 结果汇总：note() 记录并打印一行，results 供超时/结尾汇总 */
 export function makeNote(): { note: (ok: boolean, label: string, detail?: string) => void; results: string[] } {
@@ -19,10 +21,12 @@ export function exitWithSummary(results: string[]): never {
 }
 
 /** WS 连接封装：handlers 数组 + send + open Promise。
- *  服务端配置 authToken 时需要 ANYPLANE_TOKEN 环境变量（否则握手 401）。 */
+ *  服务端配置 authToken 时需要 ANYPLANE_TOKEN 环境变量（否则握手 401）。
+ *  端口随 ANYPLANE_PORT（默认 7480），与 e2e-handoff 的 REST BASE 口径一致。 */
 export function connect(key: string) {
   const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
-  const ws = new WebSocket(`ws://localhost:7480/ws/sessions/${encodeURIComponent(key)}${tokenQ}`)
+  const port = process.env.ANYPLANE_PORT ?? '7480'
+  const ws = new WebSocket(`ws://localhost:${port}/ws/sessions/${encodeURIComponent(key)}${tokenQ}`)
   const handlers: Array<(ev: Record<string, unknown>) => void> = []
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data)
@@ -57,49 +61,35 @@ export function spawnAppServer(): {
   const handlers: Array<(msg: { method?: string; id?: number | string; params?: Record<string, unknown> }) => void> = []
   const send = (msg: Record<string, unknown>) => proc.stdin.write(JSON.stringify(msg) + '\n')
 
-  void (async () => {
-    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      let idx: number
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx).trim()
-        buf = buf.slice(idx + 1)
-        if (!line) continue
-        let msg: {
-          id?: number | string
-          method?: string
-          params?: Record<string, unknown>
-          result?: unknown
-          error?: { code: number; message: string }
-        }
-        try {
-          msg = JSON.parse(line)
-        } catch {
-          continue // 非 JSON 行（启动横幅等）
-        }
-        if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
-          const p = pending.get(Number(msg.id))
-          if (p) {
-            pending.delete(Number(msg.id))
-            if (msg.error) p.reject(new Error(`${msg.error.code}: ${msg.error.message}`))
-            else p.resolve(msg.result)
-          }
-          continue
-        }
-        if (msg.id !== undefined) {
-          send({ id: msg.id, result: { decision: 'decline' } })
-          for (const h of handlers) h({ method: `serverRequest:${msg.method}`, id: msg.id, params: msg.params })
-          continue
-        }
-        for (const h of handlers) h(msg)
-      }
+  void pumpLines(proc.stdout as ReadableStream<Uint8Array>, (line) => {
+    let msg: {
+      id?: number | string
+      method?: string
+      params?: Record<string, unknown>
+      result?: unknown
+      error?: { code: number; message: string }
     }
-  })()
+    try {
+      msg = JSON.parse(line)
+    } catch {
+      return // 非 JSON 行（启动横幅等）
+    }
+    if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
+      const p = pending.get(Number(msg.id))
+      if (p) {
+        pending.delete(Number(msg.id))
+        if (msg.error) p.reject(new Error(`${msg.error.code}: ${msg.error.message}`))
+        else p.resolve(msg.result)
+      }
+      return
+    }
+    if (msg.id !== undefined) {
+      send({ id: msg.id, result: { decision: 'decline' } })
+      for (const h of handlers) h({ method: `serverRequest:${msg.method}`, id: msg.id, params: msg.params })
+      return
+    }
+    for (const h of handlers) h(msg)
+  })
 
   return {
     request: (method, params) =>
