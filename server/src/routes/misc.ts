@@ -89,7 +89,8 @@ export async function handleMiscRoutes(req: Request, url: URL): Promise<Response
   if (histMatch && req.method === 'GET') {
     const [, slug, sessionId] = histMatch
     // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移；
-    // ?before=<行号> 翻更早的页（响应 nextBefore 续传），?limit= 覆盖默认 300（上限 1000）
+    // ?before=<行号> 翻更早的页（响应 nextBefore 续传），?limit= 覆盖默认 300
+    //（上限 10000：replay_gap 保载重载按已加载数+余量拉取，长会话需要突破首窗 300）
     const num = (k: string) => {
       const v = url.searchParams.get(k)
       if (v == null) return undefined
@@ -100,7 +101,7 @@ export async function handleMiscRoutes(req: Request, url: URL): Promise<Response
     return json(
       readHistory(slug, sessionId, {
         before: num('before'),
-        limit: limit == null ? undefined : Math.min(limit, 1000),
+        limit: limit == null ? undefined : Math.min(limit, 10_000),
       }),
     )
   }

@@ -28,7 +28,8 @@ export function useSessionSocket(opts: {
   sockRef: React.RefObject<SessionSocket | undefined>
   ingestApi: TranscriptIngestApi
   taskApi: TaskBucketsApi
-  loadSessionHistory: () => Promise<HistoryResponse>
+  /** limit：replay_gap 保载重载时按「已加载数+余量」拉取，避免丢掉用户已翻到的更早页 */
+  loadSessionHistory: (opts?: { limit?: number }) => Promise<HistoryResponse>
   onNavigate?: (s: SessionInfo) => void
   /** codex 分叉完成时收起回滚面板 */
   onCloseRewind: () => void
@@ -51,14 +52,17 @@ export function useSessionSocket(opts: {
   // ---------- WS 连接 ----------
   useEffect(() => {
     /** 重载权威历史（replay_gap 与 codex thread_reverted 共用）：
-     *  先挡住 cli 再清草稿——环里残留的 stream/assistant 不能在重载完成前改抄本。 */
-    const reloadTranscript = (label: string) => {
+     *  先挡住 cli 再清草稿——环里残留的 stream/assistant 不能在重载完成前改抄本。
+     *  preserveLoaded（仅 replay_gap）：transcript 只增不改，按已加载条数+余量拉取，
+     *  用户翻过的更早页不在重载中丢失；tail_reset/thread_reverted 内容被截断，必须默认窗口重置 */
+    const reloadTranscript = (label: string, preserveLoaded = false) => {
       ingestApi.gapReloadingRef.current = true
       ingestApi.setDraftBoth(null)
       ingestApi.pendingResultsRef.current.clear()
       ingestApi.setPhase(undefined)
       const gapKey = session.key
-      loadSessionHistory()
+      const limit = preserveLoaded ? ingestApi.messagesRef.current.length + 500 : undefined
+      loadSessionHistory({ limit })
         .then((resp) => {
           if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
           ingestApi.applyHistory(resp)
@@ -96,7 +100,10 @@ export function useSessionSocket(opts: {
               ingestApi.setDraftBoth(null)
               ingestApi.setPhase(undefined)
               // turn 已终结：此刻仍未配对的 tool_result 不会再等到它的调用了，
-              // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）
+              // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）。
+              // 例外：还有更早历史页未加载（hasMore）时缓冲留着——其 tool_use 可能在
+              // 未加载页里，翻到该页时 prepend 的索引重建会完成配对（提前浮现会永久钉在尾部）
+              if (ingestApi.historyBeforeRef.current != null) break
               ingestApi.setMsgs((prev) => {
                 const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
                 flushStrayResults(st)
@@ -332,9 +339,10 @@ export function useSessionSocket(opts: {
           }
           case 'replay_gap': {
             // 断线太久，服务端环形缓冲已挤掉起点：补发会留空洞，直接重载历史。
-            // transcript 是权威事实源，重载一定能补齐（代价只是一次 HTTP）。
+            // transcript 是权威事实源，重载一定能补齐。append-only 增长下按已加载条数
+            // +余量拉取，用户翻过的更早页不在重载中丢失（保载口径见 reloadTranscript）。
             // 必须与初次加载走同一 loader——Codex 没有 Claude transcript 路径。
-            reloadTranscript('↻ 断线较久，已重新载入对话')
+            reloadTranscript('↻ 断线较久，已重新载入对话', true)
             break
           }
           case 'tail_reset': {

@@ -66,6 +66,9 @@ export interface TaskBucketsApi {
   taskNotification(rec: Record<string, unknown>): void
   /** 历史加载时的桶重建：清桶 + 未完成的 subagent 回填（msgs = 刚加载的主线消息） */
   resetFromHistory(msgs: ChatMsg[], resp: HistoryResponse): void
+  /** 翻页 prepend 后的 add-only 补建：新进入窗口的未完成 subagent 建桶；已有桶不动
+   * （运行中桶不清除——reset 清桶只在整段历史重载时发生） */
+  backfillFromHistory(msgs: ChatMsg[], subagents: SubagentHistory[]): void
   /** 会话切换重置 */
   clear(): void
 }
@@ -275,6 +278,22 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     pubTasks()
   }
 
+  /** 翻页补建（add-only）：翻页响应不带 subagents，调用方传入首页留存的全量清单 */
+  const backfillFromHistory = (msgs: ChatMsg[], subagents: SubagentHistory[]) => {
+    let dirty = false
+    for (const s of selectHistoryBuckets(msgs, subagents)) {
+      const id = (s.toolUseId ?? s.agentId)!
+      if (taskMapRef.current.has(id)) continue
+      const b = taskBucket(id)
+      b.agentId = s.agentId ?? b.agentId
+      b.agentType = s.agentType ?? b.agentType
+      b.description = s.description ?? b.description
+      for (const h of s.messages) appendTaskMsg(b.toolUseId, h)
+      dirty = true
+    }
+    if (dirty) pubTasks()
+  }
+
   const clear = () => {
     taskMapRef.current.clear()
     setTasks([])
@@ -313,6 +332,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
       taskUpdated,
       taskNotification,
       resetFromHistory,
+      backfillFromHistory,
       clear,
     },
   }

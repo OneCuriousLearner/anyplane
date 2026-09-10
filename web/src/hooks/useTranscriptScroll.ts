@@ -13,6 +13,7 @@
 // 回到底部（滚动或 ↓ 按钮）恢复尾部窗口，DOM 重回收敛。
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import {
   EXPAND_TOP_PX,
   clampWindowStart,
@@ -166,7 +167,11 @@ export function useTranscriptScroll(opts: {
     if (top >= EXPAND_TOP_PX) return
     if (windowStart > 0) {
       pendingAnchorRef.current = { height: el.scrollHeight, top }
-      setRawStart(expandWindowStart(windowStart))
+      // flushSync 隔离提交：滚动事件 lane 可能与同 tick 的 WS draft 更新合并成一个 commit，
+      // 锚定补偿按 scrollHeight 总增量会把尾部新增的草稿行高也算进去（视口跳变）——
+      // 同步提交保证补偿消费到的增量只来自本次 prepend（实测审查发现；preparePrepend
+      // 路径天然安全：捕获与 setMsgs 在同一微任务，宏任务事件插不进来）
+      flushSync(() => setRawStart(expandWindowStart(windowStart)))
     } else {
       // 本地窗口已到顶：服务端还有更早历史（hasMore）时由调用方拉取上一页
       onReachTop?.()
@@ -189,7 +194,7 @@ export function useTranscriptScroll(opts: {
     if (!el) return
     if (windowStart > 0) {
       pendingAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
-      setRawStart(expandWindowStart(windowStart))
+      flushSync(() => setRawStart(expandWindowStart(windowStart))) // 隔离理由同上
     } else {
       onReachTop?.()
     }

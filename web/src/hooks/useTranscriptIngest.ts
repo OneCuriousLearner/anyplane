@@ -7,7 +7,7 @@
 // E3（session.key 历史加载 effect）留 Chat 组合层：reset 先于建连的顺序纪律在那。
 
 import { useRef, useState } from 'react'
-import type { HistoryResponse } from '../lib/api'
+import type { HistoryResponse, SubagentHistory } from '../lib/api'
 import { nextId, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 import {
   appendHistoryMsg,
@@ -66,8 +66,12 @@ export interface TranscriptIngestApi {
   pendingResultsRef: React.RefObject<Map<string, { text: string; isError: boolean }>>
   toolPosRef: React.RefObject<Map<string, { mi: number; bi: number }>>
   historyOffsetRef: React.RefObject<number | undefined>
+  /** 分页游标（hasMore ≡ 非空）：idle 孤儿浮现的推迟闸门也读它 */
+  historyBeforeRef: React.RefObject<number | undefined>
   gapReloadingRef: React.RefObject<boolean>
   seenIdsRef: React.RefObject<Set<string>>
+  /** 分页纪元（applyHistory/reset 递增）：翻页响应的过期判定 */
+  historyEpochRef: React.RefObject<number>
 }
 
 export function useTranscriptIngest(opts: {
@@ -111,6 +115,11 @@ export function useTranscriptIngest(opts: {
   /** claude 历史分页游标与 hasMore 镜像（hasMore 走 state 驱动哨兵渲染，游标走 ref 供事件路径读最新） */
   const historyBeforeRef = useRef<number | undefined>(undefined)
   const [hasMoreHistory, setHasMoreHistory] = useState(false)
+  /** 分页纪元：applyHistory/reset 递增。在途翻页响应落地前比对——纪元变了说明
+   *  历史已被重载/重置（replay_gap、tail_reset、切会话），旧行号坐标系的响应必须作废 */
+  const historyEpochRef = useRef(0)
+  /** 首页下发的 subagents 全量清单留存：翻页响应不再带它，prepend 补建桶时复用 */
+  const subagentsRef = useRef<SubagentHistory[]>([])
 
   const setMsgs = (up: (prev: ChatMsg[]) => ChatMsg[]) => {
     messagesRef.current = up(messagesRef.current)
@@ -132,15 +141,20 @@ export function useTranscriptIngest(opts: {
   const pushSystem = (text: string, kind: 'info' | 'error' = 'info') =>
     pushMsg({ id: nextId(), role: 'system', systemKind: kind, blocks: [{ kind: 'text', text }] })
 
-  /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset 重载共用） */
+  /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset/replay_gap 重载共用） */
   const applyHistory = (resp: HistoryResponse) => {
     historyOffsetRef.current = resp.fileBytes
     historyBeforeRef.current = resp.nextBefore
     setHasMoreHistory(resp.hasMore === true)
+    // 分页纪元递增：在途翻页响应（旧坐标系）据此判定作废——见 Chat loadEarlier 的 epoch 守卫
+    historyEpochRef.current += 1
+    subagentsRef.current = resp.subagents ?? []
     const st = createIngestState()
     for (const h of resp.messages) appendHistoryMsg(st, h)
-    // 批次收尾：整批读完仍未配对的才是真孤儿（批内乱序此时已修复）
-    flushStrayResults(st)
+    // 批次收尾：整批读完仍未配对的才是真孤儿（批内乱序此时已修复）。
+    // 还有更早页未加载时不 flush——孤儿结果的 tool_use 可能在未加载页里，
+    // 提前浮现成卡片会永久钉在抄本尾部（翻页补配对的路径见 prependHistoryMsgs）
+    if (!resp.hasMore) flushStrayResults(st)
     const out = st.msgs
     setMsgs(() => out)
     // 实时配对索引与乱序缓冲直接沿用历史加载建好的（out 已成为新 state）
@@ -157,18 +171,24 @@ export function useTranscriptIngest(opts: {
     if (!isCodex) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
   }
 
-  /** 翻页 prepend：更早一页铺到抄本前。去重键并集（防 replay 重复），游标推进，桶不重建 */
+  /** 翻页 prepend：更早一页铺到抄本前。去重键并集（防 replay 重复），游标推进；
+   *  新进入窗口的未完成 subagent 补建桶（add-only，不清已有的活桶） */
   const prependHistory = (resp: HistoryResponse) => {
     historyBeforeRef.current = resp.nextBefore
     setHasMoreHistory(resp.hasMore === true)
+    let merged: ChatMsg[] | undefined
     setMsgs((prev) => {
       const st: IngestState = { msgs: prev, toolIdx: toolPosRef.current, pending: pendingResultsRef.current }
       prependHistoryMsgs(st, resp.messages)
       // prepend 合并乱序缓冲时更换了 Map 实例，ref 必须跟随（索引 Map 是原实例原地重建）
       pendingResultsRef.current = st.pending
+      merged = st.msgs
       return st.msgs
     })
     for (const h of resp.messages) rememberKeys(seenIdsRef.current, liveMessageKeys({ uuid: h.uuid }))
+    // 首页才下发的 subagents 全量清单在此复用：翻到更早页时，其 tool_use 新进入窗口的
+    // 未完成 agent 补建桶（翻页响应本身不带 subagents）
+    if (merged && resp.messages.length > 0) taskApi.backfillFromHistory(merged, subagentsRef.current)
   }
 
   /** 会话切换重置（E3 组合层调用；顺序即原 E3 清空段前 7 步） */
@@ -181,6 +201,8 @@ export function useTranscriptIngest(opts: {
     historyOffsetRef.current = undefined
     historyBeforeRef.current = undefined
     setHasMoreHistory(false)
+    historyEpochRef.current += 1
+    subagentsRef.current = []
     gapReloadingRef.current = false
   }
 
@@ -483,8 +505,10 @@ export function useTranscriptIngest(opts: {
       pendingResultsRef,
       toolPosRef,
       historyOffsetRef,
+      historyBeforeRef,
       gapReloadingRef,
       seenIdsRef,
+      historyEpochRef,
     },
   }
 }

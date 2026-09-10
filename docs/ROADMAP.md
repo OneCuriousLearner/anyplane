@@ -227,6 +227,15 @@ paginated 迁移应以升级后的最新协议为基线，避免按 0.148 语义
    修复为 `selectHistoryBuckets` 纯函数口径：只为「调用在已加载窗口内且未配对终态」的建桶，
    窗口外/已完成一律不建（真在跑的由 status activeTasks 权威水合兜底）。
 
+**审查修复轮（/code-review medium，8 项全修）**：翻页响应的分页纪元守卫（在途期间
+applyHistory/reset 重置过坐标系即作废）+ catch 补会话切换守卫（错误卡不再写进新会话）；
+replay_gap 重载按「已加载数+500」保载拉取（append-only 下零漂移；tail_reset 内容截断
+仍全量重置）；hasMore 期间推迟孤儿 tool_result 浮现（其 tool_use 可能在未加载页，
+翻页时跨页配对完成）；翻到更早页时对首页留存的 subagents 做 add-only 补建桶；
+扩窗 setState 走 flushSync 与同 lane 的 WS draft 更新隔离（锚定补偿不再混入尾部增量）；
+哨兵 JSX 合一（对齐 fixture 形态）；onReachTop 与哨兵对 codex 关门（防方向四落地后
+渲染出死控件）。
+
 ## 方向八：自托管 Outbound Relay 与端到端加密（E2EE）评估
 
 **定论**：坚持「不自营 SaaS 云中继服务」的产品底线，但公网访问中「通知到了、锁屏按钮点不动」（蜂窝网络入站不可达）是当前最大的可用性断点。

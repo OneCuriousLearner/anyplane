@@ -138,10 +138,13 @@ export interface HistoryResponse {
 export async function fetchHistory(
   slug: string,
   sessionId: string,
-  opts?: { before?: number },
+  opts?: { before?: number; limit?: number },
 ): Promise<HistoryResponse> {
-  const q = opts?.before != null ? `?before=${opts.before}` : ''
-  const r = await apiFetch(`/api/history/${slug}/${sessionId}${q}`)
+  const q = new URLSearchParams()
+  if (opts?.before != null) q.set('before', String(opts.before))
+  if (opts?.limit != null) q.set('limit', String(opts.limit))
+  const qs = q.size > 0 ? `?${q}` : ''
+  const r = await apiFetch(`/api/history/${slug}/${sessionId}${qs}`)
   return r.json()
 }
 
