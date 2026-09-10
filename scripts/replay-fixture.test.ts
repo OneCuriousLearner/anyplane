@@ -17,6 +17,7 @@ function replay(fixturePath: string) {
     assistant: 0,
     result: 0,
     errors: 0,
+    lines: 0,
   }
   const session = new ClaudeSession(
     'replay|fixture',
@@ -35,6 +36,7 @@ function replay(fixturePath: string) {
   for (const raw of readFileSync(fixturePath, 'utf8').split('\n')) {
     const line = raw.trim()
     if (!line) continue
+    seen.lines++
     try {
       session.injectLine(line)
     } catch {
@@ -51,10 +53,13 @@ describe('replay: claude-turn-basic', () => {
     expect(seen.errors).toBe(0)
   })
 
-  test('init 消息被消费（不进入普通消息流）', () => {
-    // fixture 含 1 条 system/init；ClaudeSession 不应把它当普通消息转发
-    const initForwarded = seen.messages > 0 && seen.assistant === 0 && seen.result === 0
-    expect(initForwarded).toBe(false)
+  test('宽松透传：fixture 全部行（含 init/thinking_tokens）都进入消息流', () => {
+    // session 层只做副作用提取（init 的 model/sessionId、usage 累计），不做抄本过滤——
+    // isMeta/sidechain/system-reminder 的过滤在 Hub 与前端 ingest 层。
+    // 仅两类不转发：被 sendControlAndWait 消费的应答、can_use_tool 审批请求（fixture 均无）。
+    // 原断言（messages>0 && assistant===0 && result===0 → false）恒真：
+    // fixture 必有 assistant/result，与 init 是否被转发无关，且与真实行为（全转发）相反。
+    expect(seen.messages).toBe(seen.lines)
   })
 
   test('assistant 消息到达', () => {
