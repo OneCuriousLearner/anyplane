@@ -14,12 +14,13 @@ import { buildTranscriptRows, nextId, rewindPreview, usageSummary, type Block, t
 import { statusLineOf } from '../lib/chatText'
 import { interceptSlash, type SlashAction } from '../lib/slashIntercept'
 import { isCodexKey, isExistingKey } from '../lib/key'
+import type { NavigateSession } from '../lib/sessionHash'
 import { useTaskBuckets } from '../hooks/useTaskBuckets'
 import { useTranscriptIngest } from '../hooks/useTranscriptIngest'
 import { useSessionSocket, type QueryResultEvent } from '../hooks/useSessionSocket'
 import { useTranscriptScroll } from '../hooks/useTranscriptScroll'
 
-export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: (s: SessionInfo) => void }) {
+export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: NavigateSession }) {
   const { session } = props
   const isCodex = isCodexKey(session.key)
   const isExisting = isExistingKey(session.key)

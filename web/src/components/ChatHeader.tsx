@@ -4,6 +4,7 @@
 
 import { useRef, useState } from 'react'
 import type { LineageResponse, SessionInfo } from '../lib/api'
+import type { NavigateSession } from '../lib/sessionHash'
 import { copyText } from '../lib/chatText'
 import type { SessionState } from '../lib/ws'
 import { ClaudeMark } from './ClaudeMark'
@@ -47,7 +48,7 @@ export function ChatHeader(props: {
   handoffBusy: boolean
   onHandoff: () => void
   lineage?: LineageResponse
-  onNavigate?: (s: SessionInfo) => void
+  onNavigate?: NavigateSession
   /** 玻璃横带内的尾部插槽（详情抽屉在 DOM 上与顶栏/接力链同属 glass-bar，由组合层传入） */
   children?: React.ReactNode
 }) {

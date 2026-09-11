@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { fetchHistory, makeSessionInfo, type HistoryResponse, type SessionInfo } from '../lib/api'
+import type { NavigateSession } from '../lib/sessionHash'
 import { nextId, type Block } from '../lib/blocks'
 import { appendHistoryMsg, flushStrayResults, type IngestState } from '../lib/ingest'
 import { SessionSocket, type ServerEvent, type SessionState } from '../lib/ws'
@@ -30,7 +31,7 @@ export function useSessionSocket(opts: {
   taskApi: TaskBucketsApi
   /** limit：replay_gap 保载重载时按「已加载数+余量」拉取，避免丢掉用户已翻到的更早页 */
   loadSessionHistory: (opts?: { limit?: number }) => Promise<HistoryResponse>
-  onNavigate?: (s: SessionInfo) => void
+  onNavigate?: NavigateSession
   /** codex 分叉完成时收起回滚面板 */
   onCloseRewind: () => void
   /** query_result 详情域分发（MCP 动作应答辨认 + 结构化面板），实现在组合层 */
@@ -206,7 +207,7 @@ export function useSessionSocket(opts: {
                   cwd: session.cwd,
                   backend: 'claude',
                 }),
-              )
+              ) // 原会话还活着：默认 push，浏览器后退回得去
               break
             }
             // codex 分叉回滚完成：原线程不动，跳到携带截断历史的新线程
@@ -222,7 +223,7 @@ export function useSessionSocket(opts: {
                 backend: 'codex',
                 managed: { spawned: true, busy: false, clients: 0 },
               }),
-            )
+            ) // 原线程还活着：默认 push
             break
           }
           case 'handoff_pending':
@@ -251,7 +252,7 @@ export function useSessionSocket(opts: {
                 status: 'busy',
                 managed: { spawned: true, busy: true, clients: 0 },
               }),
-            )
+            ) // 源会话还活着：默认 push
             break
           }
           case 'handoff_error':
@@ -325,7 +326,7 @@ export function useSessionSocket(opts: {
           }
           case 'moved': {
             // /clear 对话重置：进程已换新 sessionId 续跑，Hub 重键完毕——跳到新会话页
-            //（旧 transcript 在磁盘原样保留，列表页可见）
+            //（旧 transcript 在磁盘原样保留，列表页可见）。旧 key 已作废，replace 不留历史。
             const parts = ev.targetKey.split('|')
             onNavigate?.(
               makeSessionInfo({
@@ -336,6 +337,7 @@ export function useSessionSocket(opts: {
                 backend: 'claude',
                 managed: { spawned: true, busy: false, clients: 0 },
               }),
+              { replace: true },
             )
             break
           }

@@ -2,12 +2,21 @@ import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-/** 链接点击是否拦截（preventDefault）：AI 输出的 markdown 常把文件名渲染成 <a href="">，
- *  空 href 点击 = 重新加载当前页；# 锚点会改 location.hash，与 App 的 #s=<key> hash 路由
- *  打架（hashchange 解析不到会话 key 会被弹回列表）。两类都拦。
- *  此处是未来「点击文件名 → 文件预览」的天然挂点（拦截后可改走预览面板）。 */
+/** 链接点击是否拦截（preventDefault）：
+ *  - 空 href / 空白：AI 常把文件名渲染成 <a href="">，点击 = 刷新当前页
+ *  - # 锚点：改 location.hash，与 App 的 #s=<key> 路由打架（弹回列表）
+ *  - javascript:/data:/vbscript:：不让 markdown 当脚本入口
+ *  - 相对路径 / Windows 路径 / 同站绝对路径：会卸掉 SPA
+ *  显式 http(s)/mailto/file 外链放行。
+ *  此处是未来「点击文件名 → 文件预览」的天然挂点。 */
 export function shouldInterceptLink(href: string | null): boolean {
-  return href === null || href === '' || href.startsWith('#')
+  if (href == null) return true
+  const t = href.trim()
+  if (!t) return true
+  if (t.startsWith('#')) return true
+  if (/^(javascript|data|vbscript):/i.test(t)) return true
+  if (/^(https?:|mailto:|file:)/i.test(t)) return false
+  return true
 }
 
 /** AI/用户文本的 Markdown 渲染（GFM：表格、删除线、任务列表）。
