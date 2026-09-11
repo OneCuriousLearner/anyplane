@@ -27,7 +27,7 @@ AnyPlane 不修改官方 CLI。服务端以子进程方式驱动两家 CLI 的 h
 
 ## 快速开始
 
-需要：Bun ≥ 1.3.13（Windows 请用 1.4.0+），PATH 中有已登录的官方 `claude` CLI；使用 Codex 后端则另需 `codex` CLI（≥ 0.147）。
+需要：Bun ≥ 1.4.0，PATH 中有已登录的官方 `claude` CLI；使用 Codex 后端则另需 `codex` CLI（≥ 0.147）。
 
 ```bash
 bunx anyplane

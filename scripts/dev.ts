@@ -1,18 +1,15 @@
 // 纯 Bun 开发启动器。直接启动 server / Vite，避免 Windows 上
 // `bun run --cwd ...` 的多层包装进程吞掉 Ctrl+C。
-import { hasWindowsSocketFix } from '../server/src/util'
+import { hasSupportedBunVersion } from '../server/src/util'
 import { isOwnServerProcess, isOwnViteProcess, takeoverStaleListeners } from '../server/src/portTakeover'
 
 export {}
 
 const bun = process.execPath
 
-if (!hasWindowsSocketFix() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
-  console.error(
-    `[dev] Bun ${Bun.version} on Windows has a known inherited-listener bug (oven-sh/bun#36936).`,
-  )
-  console.error('[dev] Run `bun upgrade` (need >= 1.4.0), restart the terminal, then run `bun run dev` again.')
-  console.error('[dev] Refusing to start because another forced exit can create an unrecoverable stale port.')
+if (!hasSupportedBunVersion() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
+  console.error(`[dev] 需要 Bun >= 1.4.0（当前 ${Bun.version}；1.3.x 在 Windows 有监听 socket 继承 bug，门槛已统一收到全平台）。`)
+  console.error('[dev] Run `bun upgrade`, restart the terminal, then run `bun run dev` again.')
   process.exit(1)
 }
 

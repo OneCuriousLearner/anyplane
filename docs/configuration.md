@@ -120,5 +120,5 @@ approvalRules **不是原生审批系统的替代品**，而是它们之后的�
 ## 平台注意事项
 
 - spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号。
-- Windows 请使用 Bun 1.4.0+。Bun 1.3.x 及更早版本存在监听 socket 被子进程继承的问题（[oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936)）；修复随 1.4.0 发布。已经产生的死 PID 监听通常需要重启一次 Windows 才能释放。
+- 全平台要求 Bun ≥ 1.4.0（服务端启动时强制检查，`ANYPLANE_ALLOW_UNSAFE_BUN=1` 可跳过）。门槛由来：Bun 1.3.x 及更早版本在 Windows 存在监听 socket 被子进程继承的问题（[oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936)），修复随 1.4.0 发布；1.3.x 时代已经产生的死 PID 监听通常需要重启一次 Windows 才能释放。
 - `bun run dev` 使用纯 Bun 启动器并等待 server 完成优雅关闭；不要用任务管理器直接结束 server，否则可能绕过 `server.stop(true)` 与 Claude 子进程树清理。

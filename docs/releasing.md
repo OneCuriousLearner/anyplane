@@ -39,7 +39,7 @@ npm 包 `anyplane` 的发布入口只有两个，外人默认都走不通：
 - **v0.1.1 首发失败**：tag 与 `package.json` 版本不一致，被 CI 强校验拦下。处理 = 改版本号提交 →
   `git tag -d` + `git push origin :refs/tags/v<x>` 删旧 tag → 重打重推。npm 未收到任何发布，重名 tag 无残留风险。
 - **不要给 setup-bun 钉 `bun-version`**：曾钉 1.3.15 导致 CI 404（该稳定版从未发布，Bun 由 1.3.14 直跳 1.4.0）。
-  现在版本来源于 `package.json` 的 `engines.bun`（`>=1.3.13`），setup-bun 自动解析为满足条件的最新稳定版。
+  现在版本来源于 `package.json` 的 `engines.bun`（`>=1.4.0`），setup-bun 自动解析为满足条件的最新稳定版。
 - **撤版**：`npm unpublish` 仅限发布后 72h 且有依赖检查；优先用 `npm deprecate <pkg>@<version> "<原因>"` 加发一个 patch 版本顶掉。
 
 ## 版本史备注

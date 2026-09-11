@@ -105,18 +105,13 @@ export function ensurePrivateDir(dir: string): string {
   return dir
 }
 
-/** Bun <=1.3.14 在 Windows 存在监听 socket 被子进程继承的 bug（oven-sh/bun#36936）；
- *  修复随 1.4.0 发布（1.3.15 稳定版从未发布，故 minor===3 && patch>=15 分支只命中旧 canary）。
+/** 全平台 Bun 版本门槛：>= 1.4.0。由来是 Windows 的监听 socket 继承 bug
+ * （Bun <=1.3.14，oven-sh/bun#36936，修复随 1.4.0 发布）——门槛统一收到全平台，
+ * 避免 "Windows 特例" 心智成本与低版本支持负担。
  *  server 与 scripts/dev.ts 启动时都以本判定拒绝启动（ANYPLANE_ALLOW_UNSAFE_BUN=1 可跳过） */
-export function hasWindowsSocketFix(): boolean {
-  const [major = 0, minor = 0, patch = 0] = Bun.version.split(/[.-]/).map(Number)
-  return (
-    process.platform !== 'win32' ||
-    major > 1 ||
-    minor > 3 ||
-    (minor === 3 && patch >= 15) ||
-    Bun.version.includes('canary')
-  )
+export function hasSupportedBunVersion(): boolean {
+  const [major = 0, minor = 0] = Bun.version.split(/[.-]/).map(Number)
+  return major > 1 || (major === 1 && minor >= 4)
 }
 
 /**

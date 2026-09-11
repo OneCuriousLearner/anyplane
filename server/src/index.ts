@@ -27,7 +27,7 @@ import { sessionNameOf } from './push/fanout'
 import { initInbox } from './push/inbox'
 import { handleApi } from './routes/api'
 import { json } from './routes/http'
-import { errorMessage, hasWindowsSocketFix } from './util'
+import { errorMessage, hasSupportedBunVersion } from './util'
 
 // ---------- sessionKey ----------
 // 编码规则与解析见 backends/claude/backend.ts（s|slug|sid / n|cwd）
@@ -71,11 +71,9 @@ function logWindowsPortState(stage: string, port: number): void {
 
 const distDir = resolve(import.meta.dir, '../../web/dist')
 
-if (!hasWindowsSocketFix() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
-  log.error(
-    `[anyplane] Bun ${Bun.version} on Windows has the inherited-listener bug oven-sh/bun#36936.`,
-  )
-  log.error('[anyplane] Run `bun upgrade` (need >= 1.4.0) and restart the terminal. Server startup refused.')
+if (!hasSupportedBunVersion() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
+  log.error(`[anyplane] 需要 Bun >= 1.4.0（当前 ${Bun.version}）。1.3.x 在 Windows 有监听 socket 继承 bug，门槛已统一收到全平台。`)
+  log.error('[anyplane] Run `bun upgrade` and restart the terminal. Server startup refused.')
   process.exit(1)
 }
 
