@@ -97,7 +97,11 @@ export const MessageView = memo(function MessageView(props: { msg: ChatMsg; comp
         <div className="flex items-center gap-2 px-3 py-2">
           <span className="font-mono text-[10px] tracking-widest text-muted uppercase">侧问</span>
           <span className="truncate text-xs text-muted">{msg.btw}</span>
-          {msg.btwPending && <span className="ml-auto font-mono text-[10px] text-faint">回答中…</span>}
+          <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[10px] text-faint">
+            {msg.btwPending && <span>回答中…</span>}
+            {/* side_question 不写入 transcript，刷新/重进后卡片即消失——常驻提示避免用户误以为丢失 */}
+            <span title="侧问不写入会话历史，刷新或重进后不再显示">不进历史</span>
+          </span>
         </div>
         <div className="px-3 pb-2">
           {msg.blocks.length === 0 && msg.btwPending && (

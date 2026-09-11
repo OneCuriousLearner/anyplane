@@ -1,4 +1,4 @@
-import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { SessionList } from './pages/SessionList'
 import { Chat } from './pages/Chat'
 import { AnyPlaneMark } from './components/AnyPlaneMark'
@@ -12,6 +12,12 @@ import { sessionFromKey } from './lib/key'
 function deepLinkKey(): string | null {
   const m = location.hash.match(/^#s=(.+)$/)
   return m ? decodeURIComponent(m[1]) : null
+}
+
+/** 选中态写入 URL（#s=<key>，与 sw.js 深链同编码）；undefined 清回无 hash 路径 */
+function writeHash(key: string | undefined, replace: boolean): void {
+  const url = key ? `#s=${encodeURIComponent(key)}` : location.pathname + location.search
+  history[replace ? 'replaceState' : 'pushState'](null, '', url)
 }
 
 const SIDEBAR_KEY = 'anyplane-sidebar-width'
@@ -36,7 +42,43 @@ export default function App() {
 
   useEffect(() => onAuthRequired(() => setAuthNeeded(true)), [])
 
-  // 深链引导：启动时读 #s=<key>（推送通知点击直达），选中后清掉 hash
+  // hash 路由：选中态镜像到 #s=<key>，刷新/分享链接直达当前会话（原深链消费即弃，
+  // 刷新就回列表）。selected 是唯一状态源，hash 是它的持久化投影 + 后退/前进入口。
+  // 用户主动选择 pushState（后退 = 回列表）；会话内导航（/clear 重键、fork、handoff）
+  // replaceState——旧 key 已死，不该留在历史里复活。
+  const selectSession = (s: SessionInfo | undefined, opts?: { replace?: boolean }) => {
+    setSelected(s)
+    writeHash(s?.key, opts?.replace ?? false)
+  }
+
+  // 后退/前进：hashchange 只由浏览器导航（或直接改 location.hash）触发，
+  // pushState/replaceState 不触发——不会与 selectSession 循环
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  useEffect(() => {
+    const onHash = () => {
+      const key = deepLinkKey()
+      if (!key) {
+        setSelected(undefined)
+        return
+      }
+      if (selectedRef.current?.key === key) return // 已在目标会话（selectSession 后的历史项回退）
+      // 列表里找全量信息；找不到按 key 构造最小 SessionInfo（s|/x|/b| 可纯 key 构造，
+      // 归档会话/深链直达靠它）；n|/xn| 新会话不可构造——清掉无效 hash 回列表
+      fetchSessions()
+        .then((list) => {
+          if (deepLinkKey() !== key) return // fetch 期间用户又导航了，以最新 hash 为准
+          const target = list.find((s) => s.key === key) ?? sessionFromKey(key)
+          if (target) setSelected(target)
+          else history.replaceState(null, '', location.pathname + location.search)
+        })
+        .catch(() => {})
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  // 深链引导：启动时读 #s=<key>（推送通知点击直达 / 刷新恢复），选中后 hash 保留
   useEffect(() => {
     const key = deepLinkKey()
     if (!key) return
@@ -46,7 +88,9 @@ export default function App() {
         const target = found ?? sessionFromKey(key)
         if (target) {
           setSelected(target)
-          history.replaceState(null, '', location.pathname)
+        } else {
+          // n|/xn| 新会话或已删除的 key：不可恢复，清掉无效 hash
+          history.replaceState(null, '', location.pathname + location.search)
         }
       })
       .catch(() => {})
@@ -122,7 +166,7 @@ export default function App() {
       {import.meta.env.DEV && <ModeBadge />}
       {/* 移动端：选中后隐藏列表；桌面端：双栏常显，右缘可拖宽 */}
       <div className={`relative h-full bg-surface/40 ${selected ? 'hidden md:block' : 'block'}`}>
-        <SessionList selectedKey={selected?.key} onSelect={setSelected} />
+        <SessionList selectedKey={selected?.key} onSelect={(s) => selectSession(s)} />
         <div
           role="separator"
           aria-orientation="vertical"
@@ -143,7 +187,11 @@ export default function App() {
       </div>
       <div className={`h-full min-w-0 ${selected ? 'block' : 'hidden md:block'}`}>
         {selected ? (
-          <Chat session={selected} onBack={() => setSelected(undefined)} onNavigate={setSelected} />
+          <Chat
+            session={selected}
+            onBack={() => selectSession(undefined)}
+            onNavigate={(s) => selectSession(s, { replace: true })}
+          />
         ) : (
           <div className="hidden h-full flex-col items-center justify-center gap-3 text-faint md:flex">
             <AnyPlaneMark className="h-10 w-10 text-ink/80 opacity-25" />

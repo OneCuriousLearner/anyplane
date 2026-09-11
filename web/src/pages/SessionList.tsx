@@ -604,53 +604,53 @@ export function SessionList(props: {
               const st = STATUS_META[stKey] ?? STATUS_META.offline
               const active = props.selectedKey === s.key
               const busyRow = stKey === 'busy'
+              // 行 = 两个平级按钮（主按钮打开会话 + 更多操作），不再是 role=button 套 button
+              // 的嵌套交互——嵌套时行的无障碍名会把子按钮名也吞进去
+              //（"标题 时间 会话操作：标题 状态 …"），屏幕阅读器与 a11y 树定位都受干扰
               return (
                 <div
                   key={s.key}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => props.onSelect(s)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      props.onSelect(s)
-                    }
-                  }}
-                  className={`group mx-1 mb-0.5 block w-[calc(100%-0.5rem)] cursor-pointer rounded-[14px] px-3 py-2.5 text-left transition-colors ${
+                  className={`group relative mx-1 mb-0.5 w-[calc(100%-0.5rem)] rounded-[14px] transition-colors ${
                     busyRow ? 'wave-surface bg-surface' : 'hover:bg-surface'
                   } ${active ? 'bg-surface2' : ''}`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${st.cls}`} />
-                    <span className="truncate text-[15px] font-semibold">{s.title ?? s.sessionId.slice(0, 8)}</span>
-                    <span className="ml-auto shrink-0 font-mono text-[11px] text-faint">
-                      {timeAgo(s.mtime)}
-                    </span>
-                    <button
-                      type="button"
-                      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-full transition-colors hover:bg-surface2"
-                      title="更多操作"
-                      aria-label={`会话操作：${s.title ?? s.sessionId.slice(0, 8)}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setMenu(menu?.session.key === s.key ? null : { session: s, anchor: e.currentTarget })
-                      }}
-                    >
-                      {s.backend === 'codex' ? (
-                        <CodexMark size={15} static />
-                      ) : (
-                        <ClaudeMark className="h-[15px] w-[15px]" />
+                  <button
+                    type="button"
+                    onClick={() => props.onSelect(s)}
+                    className="block w-full cursor-pointer rounded-[14px] px-3 py-2.5 text-left"
+                  >
+                    <div className="flex items-center gap-2.5 pr-[22px]">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${st.cls}`} />
+                      <span className="truncate text-[15px] font-semibold">{s.title ?? s.sessionId.slice(0, 8)}</span>
+                      <span className="ml-auto shrink-0 font-mono text-[11px] text-faint">
+                        {timeAgo(s.mtime)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 pl-[18px] text-[12px]">
+                      <span className={`shrink-0 font-medium ${stKey === 'waiting' ? 'text-accent' : 'text-muted'}`}>
+                        {st.label}
+                      </span>
+                      {s.lastPrompt && (
+                        <span className="truncate font-mono text-[11px] text-faint">{s.lastPrompt}</span>
                       )}
-                    </button>
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5 pl-[18px] text-[12px]">
-                    <span className={`shrink-0 font-medium ${stKey === 'waiting' ? 'text-accent' : 'text-muted'}`}>
-                      {st.label}
-                    </span>
-                    {s.lastPrompt && (
-                      <span className="truncate font-mono text-[11px] text-faint">{s.lastPrompt}</span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="absolute right-3 top-2.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-full transition-colors hover:bg-surface2"
+                    title="更多操作"
+                    aria-label={`会话操作：${s.title ?? s.sessionId.slice(0, 8)}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenu(menu?.session.key === s.key ? null : { session: s, anchor: e.currentTarget })
+                    }}
+                  >
+                    {s.backend === 'codex' ? (
+                      <CodexMark size={15} static />
+                    ) : (
+                      <ClaudeMark className="h-[15px] w-[15px]" />
                     )}
-                  </div>
+                  </button>
                 </div>
               )
             })}
