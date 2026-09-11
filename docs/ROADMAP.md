@@ -254,6 +254,26 @@ replay_gap 重载按「已加载数+500」保载拉取（append-only 下零漂�
 1. **轻量自托管 Relay 脚本**：提供用户可在自己的便宜 VPS 上一键运行的极轻量反向打洞中继（仅做 TCP / WebSocket 的公网 rendezvous 与帧中转，不做业务解析）。
 2. **端到端加密（E2EE）**：AnyPlane 服务端与浏览器客户端直接协商一次性会话密钥（如 X25519 + ChaCha20-Poly1305），中继 VPS 仅转发密文，无法窥视命令与代码内容，彻底保住本地主权与隐私防线。
 
+## 方向九：Codex 会话 AI 标题
+
+**问题**：Codex 线程无标题时侧栏只显示线程 id 前缀（如 `01a090c2`），多开无法区分；
+Claude 侧有 `generate_session_title` 自动标题（2026-08-27 已接入），体验不对等。
+`/rename` 手动可救（走官方 `thread/name/set`），但无人记得改。
+
+**上游调查结论（2026-09-11，codex 最新源码快照 + 0.149.0 实测）**：app-server 协议
+**只有手动命名**（`thread/name/set` + `thread/name/updated` 通知），没有任何自动标题生成机制；
+云端 tasks API 的 `has_generated_title` 是云任务特性，不在本地协议面。
+上游若补齐自动命名，`thread/name/updated` 通知会让列表自动接住——届时本方向直接作废。
+
+**可行路径（未做）**：复用 handoff 的 ephemeral fork 问答（`runEphemeralQuestion`，
+只读沙箱 + 无审批，不动现场）——首个 turn 完成后让它用一两句话概括会话目标，
+再 `thread/name/set` 写回。触发条件对齐 Claude 侧（首条真实 user 消息 × 首个 turn 完成，
+按 threadId 去重；AnyPlane 侧不落状态，thread name 即唯一状态源）。
+
+**暂不做的原因**：标题质量依赖一次额外问答（每新线程几百 token 成本），且 fork 问答
+在 turn 刚结束时与主线程共享进程管道、可能撞上用户的连续输入；先观察上游是否补齐。
+若做，必须复用现有 collector 超时/拒绝路径，不为标题引入新状态机。
+
 ## 已验证但暂不做的（决策记录）
 
 - **~~daemon socket 深度集成~~（保留结论）+ ~~`claude agents --json --all` 状态增强~~** ✅ 已接入（2026-08-27）：
