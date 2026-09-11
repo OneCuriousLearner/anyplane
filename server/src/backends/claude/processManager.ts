@@ -248,6 +248,10 @@ export class ClaudeSession {
   private noteContextUsage(u: unknown): void {
     const next = coerceCallUsage(u)
     if (!next) return
+    // 全零 usage 不算命中：本地斜杠命令（/model 等不过 API 的回合）会发 usage 全零的
+    // assistant 流事件（不落 transcript），收下会把环形 UI 清零直到下一真实回合。
+    // 真实 API 应答 input+cache 恒 > 0，守卫与离线回扫（extractUsageFromTranscriptTail）同口径
+    if (next.inputTokens + next.outputTokens + next.cacheReadTokens + next.cacheWriteTokens === 0) return
     const prev = this.lastCallUsage
     if (
       prev &&

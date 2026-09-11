@@ -211,6 +211,22 @@ describe('mapThreadStatus / turnCompletedMsg', () => {
     const badNoMsg = turnCompletedMsg('thread-1', { status: 'failed' })
     expect(badNoMsg).toMatchObject({ result: 'turn failed' })
   })
+
+  test('turn/completed 耗时映射：durationMs 优先，snake_case 防御，startedAt/completedAt 兜底', () => {
+    // wire 正本（ts-rs Turn.durationMs，0.149.0 实测已下发）
+    expect(turnCompletedMsg('t', { status: 'completed', durationMs: 7047 }).duration_ms).toBe(7047)
+    // snake_case 防御（rollout 序列化是 snake，wire 漂移时仍有值）
+    expect(turnCompletedMsg('t', { status: 'completed', duration_ms: 3000 }).duration_ms).toBe(3000)
+    // durationMs 缺席时按秒级时间戳差值兜底
+    expect(turnCompletedMsg('t', { status: 'completed', startedAt: 100, completedAt: 107 }).duration_ms).toBe(7000)
+    // durationMs 优先于时间戳差值
+    expect(
+      turnCompletedMsg('t', { status: 'completed', durationMs: 500, startedAt: 100, completedAt: 107 }).duration_ms,
+    ).toBe(500)
+    // 全部缺席 → 不带字段（页脚只显示 tok，不显示伪 0s）
+    expect(turnCompletedMsg('t', { status: 'completed' }).duration_ms).toBeUndefined()
+    expect(turnCompletedMsg('t', { status: 'completed', durationMs: null }).duration_ms).toBeUndefined()
+  })
 })
 
 describe('itemsToHistory', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { SessionList } from './pages/SessionList'
 import { Chat } from './pages/Chat'
 import { AnyPlaneMark } from './components/AnyPlaneMark'
@@ -7,11 +7,31 @@ import { ModeBadge } from './components/ModeBadge'
 import { getToken, onAuthRequired, setToken } from './lib/auth'
 import { fetchSessions, type SessionInfo } from './lib/api'
 import { sessionFromKey } from './lib/key'
+import { parseDeepLinkHash, sessionHashUrl, shouldWriteHash } from './lib/sessionHash'
 
-/** 推送通知深链：`/#s=<sessionKey>` 直达会话（SW notificationclick 写入） */
 function deepLinkKey(): string | null {
-  const m = location.hash.match(/^#s=(.+)$/)
-  return m ? decodeURIComponent(m[1]) : null
+  return parseDeepLinkHash(location.hash)
+}
+
+/** 选中态写入 URL（#s=<key>，与 sw.js 深链同编码）；undefined 清回无 hash 路径 */
+function writeHash(key: string | undefined, replace: boolean): void {
+  const url = sessionHashUrl(key, location.pathname, location.search)
+  history[replace ? 'replaceState' : 'pushState']({ ap: key ? 'session' : 'list' }, '', url)
+}
+
+function restoreFromHash(key: string, setSelected: (s: SessionInfo | undefined) => void): void {
+  fetchSessions()
+    .then((list) => {
+      if (deepLinkKey() !== key) return // fetch 期间用户又导航了，以最新 hash 为准
+      const target = list.find((s) => s.key === key) ?? sessionFromKey(key)
+      if (target) setSelected(target)
+      else history.replaceState({ ap: 'list' }, '', location.pathname + location.search)
+    })
+    .catch(() => {
+      if (deepLinkKey() !== key) return
+      const target = sessionFromKey(key)
+      if (target) setSelected(target)
+    })
 }
 
 const SIDEBAR_KEY = 'anyplane-sidebar-width'
@@ -36,20 +56,81 @@ export default function App() {
 
   useEffect(() => onAuthRequired(() => setAuthNeeded(true)), [])
 
-  // 深链引导：启动时读 #s=<key>（推送通知点击直达），选中后清掉 hash
+  // hash 路由：选中态镜像到 #s=<key>，刷新/分享链接直达当前会话。
+  // 用户主动选择 pushState（浏览器后退 = 回列表）。
+  // 会话内导航：旧 key 已死（/clear 重键）replace；旧会话还活着（fork/handoff/接力链）push。
+  // 应用内「返回列表」禁止再 push 一帧空 hash——否则系统返回会重开刚关掉的会话。
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  /** 我们 push 出去的会话帧数；应用内返回一次 pop 掉 */
+  const sessionPushesRef = useRef(0)
+  /** history.go(-n) 进行中：hashchange 若没落到列表则 replace 清掉 */
+  const pendingListPopRef = useRef(false)
+
+  const selectSession = (s: SessionInfo | undefined, opts?: { replace?: boolean }) => {
+    const replace = opts?.replace ?? false
+    const nextKey = s?.key
+    if (!shouldWriteHash(deepLinkKey(), nextKey)) {
+      setSelected(s)
+      return
+    }
+    setSelected(s)
+    writeHash(nextKey, replace)
+    if (!nextKey) sessionPushesRef.current = 0
+    else if (!replace) sessionPushesRef.current += 1
+  }
+
+  const backToList = () => {
+    const n = sessionPushesRef.current
+    if (n > 0) {
+      pendingListPopRef.current = true
+      sessionPushesRef.current = 0
+      history.go(-n)
+      return
+    }
+    selectSession(undefined, { replace: true })
+  }
+
+  // 后退/前进：hashchange 只由浏览器导航（或直接改 location.hash）触发，
+  // pushState/replaceState 不触发——不会与 selectSession 循环
+  useEffect(() => {
+    const onHash = () => {
+      const key = deepLinkKey()
+      if (pendingListPopRef.current) {
+        pendingListPopRef.current = false
+        if (!key) {
+          setSelected(undefined)
+          return
+        }
+        // 没落到列表（中间还有会话帧）：replace 清 hash，避免系统返回再打开
+        setSelected(undefined)
+        writeHash(undefined, true)
+        sessionPushesRef.current = 0
+        return
+      }
+      if (!key) {
+        sessionPushesRef.current = 0
+        setSelected(undefined)
+        return
+      }
+      if (selectedRef.current?.key === key) return
+      // 浏览器后退/前进落到某会话：后续应用内返回至少 pop 1 帧
+      sessionPushesRef.current = 1
+      restoreFromHash(key, setSelected)
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  // 深链引导：启动时读 #s=<key>（推送通知点击直达 / 刷新恢复），选中后 hash 保留
   useEffect(() => {
     const key = deepLinkKey()
-    if (!key) return
-    fetchSessions()
-      .then((list) => {
-        const found = list.find((s) => s.key === key)
-        const target = found ?? sessionFromKey(key)
-        if (target) {
-          setSelected(target)
-          history.replaceState(null, '', location.pathname)
-        }
-      })
-      .catch(() => {})
+    if (!key) {
+      // `#s=` 形状但解不出 key（损坏编码）：清掉，避免地址栏留着无效 hash
+      if (/^#s=/.test(location.hash)) writeHash(undefined, true)
+      return
+    }
+    restoreFromHash(key, setSelected)
   }, [])
 
   const persistWidth = (w: number) => {
@@ -122,7 +203,7 @@ export default function App() {
       {import.meta.env.DEV && <ModeBadge />}
       {/* 移动端：选中后隐藏列表；桌面端：双栏常显，右缘可拖宽 */}
       <div className={`relative h-full bg-surface/40 ${selected ? 'hidden md:block' : 'block'}`}>
-        <SessionList selectedKey={selected?.key} onSelect={setSelected} />
+        <SessionList selectedKey={selected?.key} onSelect={(s) => selectSession(s)} />
         <div
           role="separator"
           aria-orientation="vertical"
@@ -143,7 +224,11 @@ export default function App() {
       </div>
       <div className={`h-full min-w-0 ${selected ? 'block' : 'hidden md:block'}`}>
         {selected ? (
-          <Chat session={selected} onBack={() => setSelected(undefined)} onNavigate={setSelected} />
+          <Chat
+            session={selected}
+            onBack={backToList}
+            onNavigate={(s, opts) => selectSession(s, { replace: opts?.replace ?? false })}
+          />
         ) : (
           <div className="hidden h-full flex-col items-center justify-center gap-3 text-faint md:flex">
             <AnyPlaneMark className="h-10 w-10 text-ink/80 opacity-25" />

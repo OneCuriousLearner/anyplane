@@ -305,6 +305,36 @@ describe('ClaudeSession contextUsage（官方 statusline current_usage 的 headl
     expect(session.contextUsage).toBeUndefined()
   })
 
+  test('全零 usage（本地斜杠命令回合）不清空已有占用', () => {
+    const { session, handleLine } = makeSession()
+    handleLine(JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { id: 'msg-1', role: 'assistant', content: [], usage },
+    }))
+    const before = session.contextUsage
+    expect(before?.usedTokens).toBe(1500)
+    // /model 等不过 API 的本地命令会发 usage 全零的 assistant 流事件（不落 transcript）；
+    // 收下会把环形 UI 清零直到下一真实回合——全零视为无信息，保持上一真实值
+    const zero = { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 }
+    handleLine(JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { id: 'msg-local', role: 'assistant', content: [], usage: zero },
+    }))
+    expect(session.contextUsage).toEqual(before)
+  })
+
+  test('首个 usage 即全零时保持 undefined（不误水合成 0/窗口）', () => {
+    const { session, handleLine } = makeSession()
+    handleLine(JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { id: 'msg-local', role: 'assistant', content: [], usage: {} },
+    }))
+    expect(session.contextUsage).toBeUndefined()
+  })
+
   test('相同 usage 按值去重不重复广播；init 的 [1m] 模型驱动 windowSize', () => {
     const { session, handleLine, pushes } = makeSession()
     handleLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'k3[1m]' }))
