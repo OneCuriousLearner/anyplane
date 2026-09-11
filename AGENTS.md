@@ -3,6 +3,11 @@
 AGENTS.md 只放读代码读不出的东西——设计哲学与决策原因；代码现状速查一律不写（保质期短且必然腐烂）。
 在实测踩坑之前，先穷尽官方的协议正本，或者基于 Terminal 真实执行 `claude` / `codex` 命令得到的结果来推断。
 
+**写入判定**（每加一句话前过一遍，2026-09-11 精简后立规）：
+① 删掉它，改代码时会踩坑吗？会 → 留（红线与决策）。
+② 读代码/文档 5 分钟能自己查到吗？能 → 不写（常量值、文件清单、字段路径、UI 布局、目录明细均属此类）。
+③ 是上游 CLI 行为的实测结论吗？是 → 写进 `docs/research/` 并按版本标注，AGENTS.md 只留指针。
+
 ## 项目定位
 
 AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code 与 Codex 会话。
@@ -23,37 +28,13 @@ bun run start        # 生产模式：服务端托管 API + WS + 静态前端
 bun run gateway      # 80/443 网关：按 ?mode=dev|prod 反代到 :5173 / :7480（无 token 需 --insecure）
 ```
 
-端到端验证脚本（需服务端已启动，会真实调用 claude/codex CLI）：
+端到端验证（需服务端已启动，会真实调用 claude/codex CLI）：`server/scripts/smoke.ts` 与 `server/scripts/e2e-*.ts`，每个脚本头部注释写明用法与覆盖点（WS 全链路 / 审批 / 斜杠命令 / 回滚 / push / 接力 / codex 各协议探针等）。
 
-```bash
-bun run server/scripts/smoke.ts          # 最小协议验证
-bun run server/scripts/e2e-ws.ts         # WS 全链路：attach/resume/set_model/问答
-bun run server/scripts/e2e-approval.ts   # 权限审批链路
-bun run server/scripts/e2e-slash.ts      # /compact 与 /btw
-bun run server/scripts/e2e-branch-btw-goal.ts  # btw(side_question)/branch(懒分叉)/goal 全链路
-bun run server/scripts/e2e-codex-goal.ts       # codex thread/goal 设置与清除
-bun run server/scripts/e2e-push.ts             # Web Push 全链路（mock push service + RFC 8291 解密 + 能力 URL 审批 + 410 清理）
-bun run server/scripts/e2e-rewind.ts     # rewind_files 与对话回滚
-bun run server/scripts/e2e-codex.ts      # codex app-server 协议探针
-bun run server/scripts/e2e-codex-delta.ts    # delta/子线程事件链协议探针（方向五实测）
-bun run server/scripts/e2e-codex-streaming.ts  # codex 实时流全链路（delta/partial/子代理桶转录断言）
-bun run server/scripts/e2e-codex-paginated.ts  # codex paginated 历史 + thread/revert 原地回滚全链路（方向四）
-bun run server/scripts/e2e-handoff.ts    # 接力双向链路（简报质量/现场确认/血缘）
-```
+服务端配置了 `authToken` 时，e2e 脚本需要 `ANYPLANE_TOKEN` 环境变量才能连上 WS 与 REST（两侧统一由 `e2e-lib` 的 `connect()`/`apiFetch()` 读取）。
 
-服务端配置了 `authToken` 时，e2e 脚本需要 `ANYPLANE_TOKEN` 环境变量才能连上 WS。
+e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干预 CLI 选择（新会话与 resume 均不带 `--model`）。要让 e2e 走自定义/第三方模型，直接配 CLI 自己的默认值即可（均在 home 目录，不进本仓库）：claude 用 `~/.claude/settings.json` 的 `model`（或服务端进程环境变量 `ANTHROPIC_MODEL`，`childEnv` 会透传）；codex 用 `~/.codex/config.toml` 的 `model`。唯一例外是 `e2e-ws.ts` 的 `set_model`——那是被测链路本身，不是默认值配置。
 
-单元测试使用 Bun Test：
-
-```bash
-bun test                 # 跑全量（server/ + scripts/ + web/）
-bun test server/         # 仅服务端测试
-bun test web/            # 仅前端测试
-```
-
-- 测试文件统一命名为 `*.test.ts`，按目录分布：`server/src/backends/claude/`、`scripts/`、`web/src/`。
-- `bun run build` 使用 Vite，只打包生产依赖图，测试文件不会进入 `web/dist`。
-- 仓库仍有大量逻辑依赖 e2e 脚本验证；新增纯函数/工具优先补 `*.test.ts`，涉及真实 CLI 行为的链路改 e2e 脚本。
+单元测试使用 Bun Test（`bun test`，可按目录过滤）：测试文件统一命名 `*.test.ts` 就近放在被测模块旁；`bun run build` 只打包生产依赖图，测试文件不进 `web/dist`。仓库仍有大量逻辑依赖 e2e 脚本验证；新增纯函数/工具优先补 `*.test.ts`，涉及真实 CLI 行为的链路改 e2e 脚本。
 
 ## 架构
 
@@ -61,40 +42,36 @@ bun test web/            # 仅前端测试
 
 ### 服务端（server/src）
 
-- **运行数据目录（约定）**：一切 AnyPlane 自产的运行数据都放 `~/.anyplane/`——`uploads/`（图片附件，hash 命名去重）、`trash/`（claude 会话回收站）、`lineage.json`（接力血缘）、`reasoning/`（codex 思考侧车）、`vapid.json` + `push-subscriptions.json`（推送密钥与订阅注册表）。**这些数据目录不做自动清理**，由用户自行管理。
-- **`push.ts`** — Web Push 分发：inbox 事件（approval/done/error）→ 自实现 VAPID（RFC 8292）+ aes128gcm 载荷（RFC 8291/8188，不依赖 web-push 库——其 node:https 发送路径假定 TLS）。审批推送携带**能力 URL**（`/api/approval-action?k&r&d&s=<per-subscription secret>`），SW 通知按钮可直接审批不打开页面；该端点绕开 authToken（秘密只经加密推送投递，且仅对 pending 中的 requestId 有效）。死订阅（404/410）自动摘除。**订阅 endpoint 白名单**（防注册 SSRF/通知窃听——inbox 事件扇出给全部订阅）：缺省主流推送服务（FCM/Mozilla/Apple/WNS）+ 回环 mock；自托管推送在配置的 `pushAllowHosts` 追加域名（`['*']` = 任意 https）；投递不跟随重定向。
-  **webhook 通道**（ntfy/Bark/Server酱，配置 `pushWebhooks` + `publicUrl`）：与订阅并列 fan-out，配置即信任（无注册面无白名单），渠道方可读通知全文（非端到端加密）。能力密钥 = HMAC(vapid 私钥, 渠道标识) 派生不落状态；直接审批分级——ntfy http action 真一键 POST，Bark/Server酱 落 `GET /api/approval-page` 确认页（GET 只渲染，防预览抓取误触）。
-- **`log.ts`** — 结构化日志：零第三方依赖，提供 `logger(scope)` 结构化接口与 `log.info/warn/error` 兼容入口（自动提取 `[scope]` 前缀为结构化字段）。支持 `ANYPLANE_LOG_LEVEL`（debug/info/warn/error）与 `ANYPLANE_LOG_FORMAT=json`，默认保持人眼可读文本。
-- **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（WS 客户端、待审批、启动偏好、下行 cli 事件 500 条环形缓冲 `cliRing` 与 `cliSeq`、以及 goal/重键等会话级状态），`hubs: Map<sessionKey, Hub>`。所有 WS 消息在 `handleClientMessage` 中分发。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
+- **运行数据目录（约定）**：一切 AnyPlane 自产的运行数据都放 `~/.anyplane/`（uploads/trash/lineage/reasoning/vapid 等）。**不做自动清理**，由用户自行管理。
+- **`push.ts`** — Web Push 分发。决策点：自实现 VAPID + aes128gcm 载荷而**不依赖 web-push 库**（其 node:https 发送路径假定 TLS）；审批推送携带**能力 URL**，SW 通知按钮可直接审批不打开页面——该端点刻意绕开 authToken（秘密只经加密推送投递，且仅对 pending 中的 requestId 有效）；**订阅 endpoint 白名单**防注册 SSRF/通知窃听（inbox 事件扇出给全部订阅）；投递不跟随重定向；死订阅（404/410）自动摘除。**webhook 通道**（ntfy/Bark/Server酱）：配置即信任（无注册面无白名单），渠道方可读通知全文（非端到端加密）；能力密钥 = HMAC(vapid 私钥, 渠道标识) 派生不落状态；Bark/Server酱 的一键审批落 GET 确认页（GET 只渲染，防预览抓取误触）。
+- **`log.ts`** — 结构化日志：零第三方依赖是刻意约束；`ANYPLANE_LOG_LEVEL` / `ANYPLANE_LOG_FORMAT=json` 控制。
+- **`index.ts`** — 入口，REST + WebSocket 枢纽。核心是 **Hub 模型**：每个会话一个 `Hub`（WS 客户端、待审批、启动偏好、下行 cli 事件环形缓冲、goal/重键等会话级状态）。另有全局收件箱频道 `/ws/inbox`（跨会话审批/完成/错误汇总）。
 - **认证**：`auth.ts`——配置 `authToken` 后 `/api` 与 `/ws` 一律校验（Bearer 或 `?token=`）；**绑非回环 host 必须配 token，否则拒绝启动**。静态前端壳不鉴权。**无 token 模式的两道跨源防护**（WS 无 SOP、text/plain 简单请求免 preflight，恶意网页可经浏览器打回环服务）：`Origin` 与 `Host` 须一致或同为回环（缺失放行=非浏览器客户端，`null` 拒绝=file:// 沙箱页）；非 GET `/api` 强制 `content-type: application/json`。配了 token 则两道检查不生效（token 即防线，行为与旧版一致）。
 - **审批规则引擎**：`approvalRules.ts`——`approvalRules` 配置数组按序首中，介入点在 `sessionCallbacks().onApprovalRequest`（双后端一处覆盖），命中即自动裁决不入 pending。**设计红线**：规则只在服务端裁决，绝不进入推送能力 URL 链路（一键审批永远是人触发）；坏规则启动 fail fast（静默跳过 = 用户误以为保护已生效）；每次自动裁决必须广播 `approval_auto` 留痕（UI 系统卡 + 服务端日志）。匹配字段口径与 `summarizeInput` 对齐，不另起一套。
-- **sessionKey 编码**：Claude 会话 `s|<slug>|<sessionId>`、新会话 `n|<encodeURIComponent(cwd)>`、分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息 spawn 时才 `--fork-session --resume`）；Codex 线程 `x|<threadId>`、新线程 `xn|<encodeURIComponent(cwd)>`。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）；Codex key 靠 `thread/read` 惰性解析 cwd。
+- **sessionKey 编码**：`s|`=Claude 会话、`n|`=新会话、`b|`=懒分叉（首条消息 spawn 时才 `--fork-session --resume`）、`x|`=Codex 线程、`xn|`=新线程（构造/解析正本在两后端 `keyFor` 与 `backends/port.ts` 的 `describeKey`，`port.test.ts` 锁死一一对应）。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）。
 - **Hub 生命周期不变量（重要）**：任何后端的会话句柄存活期间，其 Hub 不得删除——否则重连复用旧会话时事件会广播进已删 Hub（消息黑洞）。WS close 处理器按后端判定存活（`processManager.get` / `codexRuntime.get`）。
 - **懒 spawn**：`attach` 只握手不启动 CLI；首条 user 消息 / 无启动参数等价物的控制请求才触发 `ensureSpawned`。未 spawn 时 model/mode/effort 选择缓存在 `hub.spawnOpts`，自定义 env 缓存在 `hub.pendingEnv`（必须排在首条 user 消息之前写入 stdin）。Codex 相反：`x|` 会话 attach 即 `thread/resume`（订阅实时事件），`xn|` 新线程保持懒启动。
-- **后端抽象（backends/）**：`backends/types.ts` 定义两后端共享类型（`SessionSummary`/`HistoryMessage`/`SpawnOptions`/`SessionCallbacks` 等）；Hub 层直接 import 两个后端的模块，以 `isCodexKey` 分发，没有注册表中间层。**统一消息边界是 Claude stream-json 形状**——Codex 事件翻译为该形状，前端与 WS 协议不分叉。`ClaudeSession` 与 `CodexSession` 保持结构化同形（契约见 types.ts 末尾注释）。
-  - `backends/claude/`：`processManager.ts`（CLI 子进程、NDJSON 行泵、busy 语义、空闲回收、Windows 进程树清理）、`discovery.ts`（会话发现 + `readHistory` 分页——`before` 行号游标严格小于、页间零重叠，`subagents` 重载仅首页下发；rewindable 标记基于全量扫描与分页窗口无关）、`tailer.ts`（外部会话 transcript 跟踪）、`agents.ts`（`claude agents --json --all` daemon 视图 SWR 轮询——pid 文件优先、daemon 兜底，独有价值是 background agent 存活态；control.sock 逆向协议版本锁死，刻意不用）、`protocol.ts`（**宽松解析原则：未知字段/未知 type 一律透传**）。
-  - `backends/codex/`：`rpc.ts`（JSON-RPC stdio 客户端，-32001 过载退避）、`runtime.ts`（**单 app-server 进程托管全部线程**，按 threadId 解复用；ephemeral fork 收集器）、`translate.ts`（ThreadItem → stream-json 翻译）、`backend.ts`。
-    **ThreadItem 覆盖以官方 union 为准**（`server/scripts/codex-schema-baseline/v2/ThreadItem.ts`，18 种）：live（`itemStarted`/`itemCompleted`）与历史（`itemsToHistory`）**必须同形**，否则刷新页面卡片凭空消失。`collabAgentToolCall`/`subAgentActivity` 有意只走侧栏桶不进主线；其余未知 type 一律 `log.warn` 留痕后透传/跳过，**不再静默丢弃**（曾丢 hookPrompt/dynamicToolCall/imageView/sleep/imageGeneration 五种，用了 hooks 或生图的会话抄本会凭空缺块）。
-  - **busy 语义（重要）**：Claude 优先信任 `system/session_state_changed`；Codex 用 `thread/status/changed`（active/idle）+ 审批等待合成 requires_action。**running / requires_action 时绝不回收。**注意 **`system/init` 是每个 query turn 的首条流消息，不是 spawn 时发出**——纯控制查询（mcp_status 等）的会话在首个真实 turn 之前没有 init（模型/命令清单那刻才有）；initModel 入库即 `onStatusChange` 回放，前端在权威 idle 且不存在合法草稿时自清陈旧草稿（防服务端重启/断线后"生成中"永挂）。
-  - **上下文占用（环形 UI 数据源，重要）**：两后端同形 `contextUsage`（types.ts 契约），经 status 事件 `context` 字段下发。口径对齐官方 statusline：claude = 最后一条**主线** assistant 消息的 `message.usage`（input+cache，不含 output），**绝不能用 `result.usage` 的 input 侧——它是本 turn 各 API 调用的累计，多调用 turn 结束会虚增近翻倍**（result 只取 output_tokens：assistant 流式快照的 output 恒为 0）；codex = `thread/tokenUsage/updated` 的 `last.totalTokens`（`total` 是累计，两者别混）。窗口大小：claude **以官方 `get_context_usage` 控制请求的 `maxTokens` 为权威**——init 拿到 model 后，若该模型尚未习得则查一次，结果按 model 落 `~/.anyplane/context-windows.json`（`contextWindows.ts`）。**模型名不足以推断窗口**：旧启发式只认 `[1m]` 后缀（否则一律 200k），对 `k3-256k` 这类型号会把 256000 误判成 200000（浏览器实测环形从 15%/200.0k 纠正为 12%/256.0k）。启发式仅作首次见到某模型时的兜底，权威值一到即覆盖，并惠及离线水合（那里没有活进程可问）。窗口按 model 而非 sessionId 存：同模型窗口不变，见过一次即长期有效。`sessionModels.ts`（sessionId→model）仍需保留——离线水合要靠它反查模型名（**transcript 的 `message.model` 缺 `[1m]` 后缀**，实测 "k3" vs init 的 "k3[1m]"）。查询只为拿窗口，`usedTokens` 仍走每条 assistant `message.usage` 的快路径，不加每消息往返。codex 用通知自带 `modelContextWindow`。水合两级：spawn/resume 时回扫 transcript/rollout 尾部（进程内）；**离线水合** `backend.hydratedContextOf`（attach/pushStatus 时无进程也直读 transcript，点开页面即有环形）——mtime 缓存，**列表端点严禁逐行调用**（N 行 × 文件读）。
-- **Codex 关键实现点**：审批 `requestApproval` → 统一审批卡（accept/acceptForSession/decline/cancel），`turn/start` 强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；权限模式近似映射 approvalPolicy+sandbox；**wire 枚举双轨**：`thread/start` 的 `sandbox` 是 kebab-case，`turn/start` 的 `sandboxPolicy` 是 camelCase（0.147.0 实测）；线程被其他进程持有时 resume 报 -32600（UI 显示"被占用"）——writer lock 是跨进程文件锁（`$CODEX_HOME/thread-writer-locks/`），随线程卸载才释放；不 kill 线程进程，断开订阅后 app-server 在**无订阅且无活动满 `thread_unload_delay_secs` 后卸载，该默认值上游已从 30 分钟改为 60 秒**（codex 0.149 实测；`thread_unload_delay_secs = 1800` 可恢复旧行为）。卸载更快不影响体验：重新 attach 走 `thread/resume`。**上下文水合数据源（0.153.4 实测/源码双证）**：paginated 线程的**冷** resume（线程未被该 app-server 进程加载）在应答后自动补发 `thread/tokenUsage/updated`——`excludeTurns:true` 廉价路径也发；**热** resume（60s unload 窗口内线程仍在内存）不发，环形等首个新 turn（窄窗口优雅降级）。legacy 线程 resume 恒不补发，rollout 尾部回扫（`hydrateContextUsage`）仅对 legacy 保留且随 sqlite 化静默失效。**上游线程持久化已切 sqlite（`~/.codex/*.sqlite`，rollout jsonl 停止新增）**。
-  **历史与回滚双轨（方向四，0.153.4 实测）**：新线程 `thread/start` 显式 `historyMode:'paginated'`（0.153 起默认已是，显式锁死防回摆）。**历史**：paginated 走 `thread/turns/list`（**默认降序**，必须显式 `sortDirection:'asc'`；内嵌 items 只有 user/agentMessage 摘要）+ `thread/items/list`（跨 turn 升序分页，entry 为 `{turnId, item}` 包装，item 与 live `item/completed` 同形同 id）——修掉 legacy `thread/read includeTurns` 缺 commandExecution/collabAgentToolCall/reasoning 的上游缺口（0.153.4 未修）；legacy 维持 `thread/read`（`items/list` 对 legacy 报 -32601，借不了分页）。**回滚**：paginated 走 `thread/revert`（原地截断持久历史，thread id/连接/订阅全保留，完成后服务端发 `thread/reverted`；`beforeTurnId` 语义是"该轮及其后全部移除"）——不再有孤立 fork 线程与换 key 导航；legacy 降级 `thread/fork`。revert 期间环里残留的事件会在重连补放中复活"被回滚的未来"——revert 成功即清 `hub.cliRing`（cliSeq 不动保持单调），另有 `thread_reverted` 系统消息入环兜底触发前端权威重载。
-- **Codex 实时流（方向五，0.148 实测）**：`item/agentMessage/delta`、`item/reasoning/textDelta`（deepseek-v4 发 raw content，不发 summaryTextDelta）、`item/commandExecution/outputDelta` 真实到达；`item/reasoning/summaryPartAdded` 仅在见过 summary delta 时补 `\n\n` 分段。命令输出/终端 stdin 追加、MCP 进度取最新，300ms 追尾合并为 **partial tool_result**（`partial:true`——前端更新卡片文本但保持运行态；cliRing 不占序号，终态 `aggregatedOutput` 兜底；缓冲尾留 32KB）。`plan/delta` 官方标注 experimental 且拼接不保证等于成稿，有意不接。子线程实时事件直接推到父连接（旧结论"不被转发"已过时），demux 经路由表转发进侧栏桶，delta/turn/tokenUsage 级不进桶。
-- **`handoff.ts`** — 接力编排：源会话自摘要（Claude 源在线时走 `side_question` 控制通道，离线才 spawn `--fork-session --resume --bare` 一次性问答 / Codex `thread/fork ephemeral:true`）→ 目标会话播种首条消息（简报 + 现场确认指令）→ 血缘写 `~/.anyplane/lineage.json`。进度事件推源 Hub。
-- **AI 会话标题**：首条真实 user 消息 × 首个 init 双条件齐备才触发 `generate_session_title`（`maybeGenerateTitle` 两路调用——懒 spawn 下首条消息常先于 init 到达，只挂一路会漏）；按 sessionId 去重，/clear 重键后自然再生成。CLI `persist:true` 自写 ai-title 进 transcript，discovery 标题链自动接住，**AnyPlane 侧不落任何标题状态**。
+- **后端抽象（backends/）**：**统一消息边界是 Claude stream-json 形状**——Codex 事件翻译为该形状，前端与 WS 协议不分叉。`ClaudeSession` 与 `CodexSession` 保持结构化同形（契约见 `backends/types.ts` 末尾注释）；Hub 层以 `isCodexKey` 分发，没有注册表中间层。
+  - `backends/claude/`：**宽松解析原则（protocol.ts）：未知字段/未知 type 一律透传**。`agents.ts` 的 daemon 视图独有价值是 background agent 存活态；control.sock 逆向协议版本锁死，刻意不用。
+  - `backends/codex/`：**单 app-server 进程托管全部线程**（runtime.ts），按 threadId 解复用。
+    **ThreadItem 覆盖以官方 union 为准**（`server/scripts/codex-schema-baseline/v2/ThreadItem.ts`）：live（`itemStarted`/`itemCompleted`）与历史（`itemsToHistory`）**必须同形**，否则刷新页面卡片凭空消失。`collabAgentToolCall`/`subAgentActivity` 有意只走侧栏桶不进主线；其余未知 type 一律 `log.warn` 留痕后透传/跳过，**不再静默丢弃**（曾丢 hookPrompt/dynamicToolCall/imageView/sleep/imageGeneration 五种，用了 hooks 或生图的会话抄本会凭空缺块）。
+  - **busy 语义（重要）**：Claude 优先信任 `system/session_state_changed`；Codex 用 `thread/status/changed`（active/idle）+ 审批等待合成 requires_action。**running / requires_action 时绝不回收。**注意 **`system/init` 是每个 query turn 的首条流消息，不是 spawn 时发出**——纯控制查询（mcp_status 等）的会话在首个真实 turn 之前没有 init；initModel 入库即 `onStatusChange` 回放，前端在权威 idle 且不存在合法草稿时自清陈旧草稿（防服务端重启/断线后"生成中"永挂）。
+  - **上下文占用（环形 UI 数据源）红线**：① claude 口径 = 最后一条**主线** assistant 消息的 `message.usage`（input+cache，不含 output）——**绝不能用 `result.usage` 的 input 侧，它是本 turn 各 API 调用的累计，多调用 turn 结束会虚增近翻倍**；codex = `thread/tokenUsage/updated` 的 `last.totalTokens`（`total` 是累计，别混）。② 窗口大小以官方 `get_context_usage` 的 `maxTokens` 为权威，模型名启发式只是首见兜底（实测 `k3-256k` 被旧启发式误判成 200k）；权威值按 model 持久化（同模型窗口不变），transcript 的 `message.model` 缺 `[1m]` 后缀故离线水合需靠 sessionId→model 反查。③ **离线水合 `hydratedContextOf` 严禁在列表端点逐行调用**（N 行 × 文件读）。
+- **Codex 后端决策**：审批 `requestApproval` → 统一审批卡（accept/acceptForSession/decline/cancel），`turn/start` 强制 `approvalsReviewer: "user"`（覆盖用户配置的 auto_review）；权限模式近似映射 approvalPolicy+sandbox；线程被占（resume 报 -32600）UI 显示"被占用"，不 kill 线程进程。**历史与回滚双轨**：新线程显式 `historyMode:'paginated'` 锁死防回摆；回滚 paginated 走 `thread/revert`（原地截断持久历史，不换 key 不导航），legacy 降级 `thread/fork`；revert 成功即清 `hub.cliRing`（cliSeq 不动保持单调——否则重连补放会复活"被回滚的未来"），另有 `thread_reverted` 系统消息入环兜底触发前端权威重载。**实时流**：命令输出/进度 delta 经 300ms 追尾合并为 **partial tool_result**（`partial:true`，前端更新文本但保持运行态；cliRing 不占序号，终态 `aggregatedOutput` 兜底）；`plan/delta` 有意不接（experimental 且拼接不保证等于成稿）；子线程事件 demux 进侧栏桶，delta/turn/tokenUsage 级不进桶。
+  **上游行为实测笔记（wire 枚举大小写双轨、writer lock、unload 60s、冷/热 resume 的 tokenUsage 补发差异、turns/list 降序、sqlite 化等）在 `docs/research/2026-09-11-codex-upstream-behavior-notes.md`——改 codex 后端前先读**（笔记按版本标注，随上游腐烂，以协议正本与最新实测为准）。
+- **`handoff.ts`** — 接力编排：源会话自摘要（Claude 源在线时走 `side_question` 控制通道，离线才 spawn `--fork-session --resume --bare` 一次性问答 / Codex `thread/fork ephemeral:true`）→ 目标会话播种首条消息（简报 + 现场确认指令）→ 血缘写 `~/.anyplane/lineage.json`。
+- **AI 会话标题**：首条真实 user 消息 × 首个 init 双条件齐备才触发 `generate_session_title`（懒 spawn 下首条消息常先于 init 到达，只挂一路会漏）；CLI `persist:true` 自写 ai-title 进 transcript，**AnyPlane 侧不落任何标题状态**。
 - **`config.ts`** — 项目根目录 `anyplane.config.json`、`~/.anyplane/config.json`（均可选，但不允许放 `~/.config/`），`ANYPLANE_PORT` / `ANYPLANE_HOST` / `ANYPLANE_TOKEN` / `CLAUDE_CONFIG_DIR` 环境变量覆盖。
 
 ### 前端（web/src）
 
 - 开发前端时不使用任何 emoji 以保持风格一致，统一使用图标库或自行绘制。
-- `pages/SessionList.tsx`（会话列表）+ `pages/Chat.tsx`（聊天主界面，大部分交互逻辑在这）；`App.tsx` 只是双栏布局。
-- 其他前端子系统索引：斜杠命令面板与拦截表（`Chat.tsx`）、推送订阅设置（`SessionList.tsx` + `lib/push.ts`）、推送深链 `#s=<key>`（`App.tsx`）、上下文环形与详情面板（`components/ContextRing.tsx`，输入行「添加图片」左侧，`state.context` 缺省即隐藏；70/90% 阈值变色对齐官方 statusline 示例）。
-- `lib/ws.ts` — WS 客户端（按 sessionKey 连接、自动重连）。每条下行 `cli` 事件带服务端分配的单调 `seq`，客户端跨重连维护 `lastSeq` 高水位并在 `attach` 时通过 `fromSeq` 触发单播补发（照搬官方 Bridge 序号游标模型）；断线太久环底被挤掉时服务端推送 `replay_gap` 引导前端重载历史。`ServerEvent` 联合类型即服务端广播的全部事件种类。
-- **`lib/ingest.ts` — 消息 ingest 归并唯一实现**：live 流、tail 实时追加、历史批量加载三路共用，彻底消灭行为分叉。tool_use ↔ tool_result 跨消息配对成卡；先到的结果全部进入 `pending` 乱序缓冲，待工具块落地时（`pushIngestMsg`/`indexToolBlocks`）补齐修复；真孤儿推迟到批次收尾或权威 idle 时浮现为提示。
-- `lib/blocks.ts` — 消息展示块模型与排版折叠：相邻思考/工具块收进 activity 组（`buildTranscriptRows`）、正文与图片打断分组；`Transcript` 保持纯展示。
-- **抄本滚动与尾部窗口化（`hooks/useTranscriptScroll.ts` + `lib/transcriptWindow.ts`）**：>120 行启用，只挂尾部 80 行，上翻按 60 行/段扩窗 + scrollHeight 增量锚定补偿。三条红线（两次回退的根因，踩坑实录见 ROADMAP）：①初始定位必须先于窗口化——首个非空抄本 layout 阶段 `auto` 直达底部，完成前扩窗门控恒关；②扩窗只认向上滚动——本仓库不存在程序化向上滚动（跟随/回底/锚定补偿全向下，新增向上滚动必须套 ignoreScrollUntil 守卫）；③窗口粒度是渲染行不是消息数。Transcript 行 key 必须保持内容派生（msg.id / 首块 key），索引 key 会让扩窗平移 remount 掉已展开的思考/工具卡。**本地窗口到顶且服务端 hasMore 时走 onReachTop 翻页**——claude 历史分页（readHistory `before` 行号游标 + `hasMore`/`nextBefore`，subagents 仅首页下发），prepend 前必须 `preparePrepend()` 捕获锚点。验收 fixture：`web/transcript-fixture.html`（仅 dev，不进生产构建），`?autorun=1` 自检四段场景（含分页数据源翻页）。
+- 大部分交互逻辑在 `pages/Chat.tsx`；各子系统的入口文件读目录即得，不在此列。
+- `lib/ws.ts` — WS 客户端。每条下行 `cli` 事件带服务端分配的单调 `seq`，客户端跨重连维护 `lastSeq` 高水位并在 `attach` 时通过 `fromSeq` 触发单播补发（照搬官方 Bridge 序号游标模型）；断线太久环底被挤掉时服务端推送 `replay_gap` 引导前端重载历史。
+- **`lib/ingest.ts` — 消息 ingest 归并唯一实现**：live 流、tail 实时追加、历史批量加载三路共用，彻底消灭行为分叉。tool_use ↔ tool_result 跨消息配对成卡；先到的结果进 `pending` 乱序缓冲，待工具块落地时补齐修复；真孤儿推迟到批次收尾或权威 idle 时浮现为提示。
+- **抄本滚动与尾部窗口化三条红线**（两次回退的根因，踩坑实录见 ROADMAP）：①初始定位必须先于窗口化——首个非空抄本 layout 阶段 `auto` 直达底部，完成前扩窗门控恒关；②扩窗只认向上滚动——本仓库不存在程序化向上滚动（跟随/回底/锚定补偿全向下，新增向上滚动必须套 ignoreScrollUntil 守卫）；③窗口粒度是渲染行不是消息数。Transcript 行 key 必须保持内容派生（msg.id / 首块 key），索引 key 会让扩窗平移 remount 掉已展开的思考/工具卡。翻页 prepend 前必须先 `preparePrepend()` 捕获锚点。
 - 过滤规则：`<system-reminder>`/isMeta 不进主抄本，sidechain（子代理）消息不入主流；`compact_boundary` 渲染为分隔线。
-- 后台任务侧栏（`components/TasksPanel.tsx` + `Chat.tsx` 的桶归并）：与主线并行的任务全类型入栏——`task_type` 包括 local_agent（子代理）、local_bash（**CLI 2.1.x 会把耗时前台 Bash 自动后台化并发 task_started**，shell 卡由此而来；shell 无转录，只展示心跳/统计/终态摘要）等。桶的数据源有三——live 事件（task_started/progress/notification）、status 事件携带的服务端权威 `activeTasks` 水合（**task_started 是 live-only 不落盘**，中途接入的客户端只能靠它补建 running 桶，否则首绘即终态）、历史 `resp.subagents` 字段（**只回填「Agent/Task tool_use 在已加载历史窗口内、且主线 tool_result 缺失」的 subagent**——已完成的与调用在分页窗口之外的都不建桶：前者复活即噪声，后者状态不可考（实测窗口外 20 个 subagent 被误判未完成 → 复活 → 水合判终态 → 30s 齐消失）；翻旧账走主线 Agent 工具卡，真在跑的任务由 status activeTasks 权威水合兜底）。**终态语义只有一种**：挂 `evictAfter` 宽限期（30s，镜像官方协调器面板 `PANEL_GRACE_MS`），1s 滴答驱逐、桶清空即收起侧栏，驱逐即永久（重进不再出现）。外部会话（tailer 路径）没有 task_notification，tail 尾到的主线 tool_result 是 running 桶唯一的终态信号，同样走这套驱逐。停止按钮在侧栏运行中卡片上（`stop_task`；早期输入区上方的芯片行已并入面板——大量并行时芯片会遮挡对话区）。面板默认只展示前 5 张卡（深度优先序），其余点「展开」。嵌套 agent（子代理再扇出）按父子缩进分组：血缘 = 水合下发的 `parentToolUseId`（服务端 `toolUseParents` 从侧链消息推导——嵌套的 Agent tool_use 挂在父任务转录里，且实测先于对应 task_started 到达），缺省时渲染期从各桶转录的工具块归属反推；`spawn_depth` 随 task_started 透传入桶。codex 侧由 translate.ts 把 `collabAgentToolCall`/`subAgentActivity` 合成同形状 task 事件，桶键统一为子线程 id；**0.148 起子线程实时事件直接推到父连接（含嵌套孙线程、resume 后同样成立，实测）**——runtime demux 经子线程路由表把 `item/completed` 翻译成 claude sidechain 形状（`parent_tool_use_id`=子线程 id）实时进桶，孙代理 `task_started` 直接携带 `parent_tool_use_id`+`spawn_depth` 血缘；终态再经 `fetchCodexHistory(agentThreadId)` 拉一次兜底（uuid 与 live 同口径，去重幂等）；collabAgentToolCall 同时出主线 Collab 工具卡（Begin 建卡、End 配对），否则 codex 会话主线看不到任何工具调用。
+- 后台任务侧栏三条血泪：① **`task_started` 是 live-only 不落盘**——中途接入的客户端只能靠 status 事件携带的服务端权威 `activeTasks` 水合补建 running 桶，否则首绘即终态；② 历史 `resp.subagents` **只回填「Agent/Task tool_use 在已加载历史窗口内、且主线 tool_result 缺失」的 subagent**——已完成的与调用在分页窗口之外的都不建桶（实测窗口外 20 个 subagent 被误判未完成 → 复活 → 水合判终态 → 30s 齐消失）；③ **终态语义只有一种**：挂 `evictAfter` 宽限期驱逐（镜像官方协调器面板 `PANEL_GRACE_MS`），驱逐即永久，外部会话（tailer 路径）以主线 tool_result 为唯一终态信号走同一套。codex 侧桶键统一为子线程 id；`collabAgentToolCall` 同时出主线 Collab 工具卡（Begin 建卡、End 配对），否则 codex 会话主线看不到任何工具调用。
 
 ### 斜杠命令
 
@@ -108,7 +85,7 @@ bun test web/            # 仅前端测试
 
 ## Windows 平台注意事项
 
-- **Bun <= 1.3.14 存在监听 socket 被子进程继承的 bug**（oven-sh/bun#36936），修复随 1.4.0 发布（1.3.15 稳定版从未发布）。服务端和 `scripts/dev.ts` 启动时都会检查版本并拒绝启动（可用 `ANYPLANE_ALLOW_UNSAFE_BUN=1` 跳过）。已形成的死 PID 监听需重启 Windows 才能释放。
+- **Bun <= 1.3.14 存在监听 socket 被子进程继承的 bug**（oven-sh/bun#36936），修复随 1.4.0 发布。服务端和 `scripts/dev.ts` 启动时都会检查版本并拒绝启动（可用 `ANYPLANE_ALLOW_UNSAFE_BUN=1` 跳过）。已形成的死 PID 监听需重启 Windows 才能释放。
 - `scripts/dev.ts` 故意不用 `bun --watch` 和 `bun run --cwd`：Windows watcher 会在异步 SIGINT 清理完成前杀掉 server；多层包装进程会吞 Ctrl+C。**不要用任务管理器强杀 server**，会绕过 `server.stop(true)` 与子进程树清理。
 - claude 在 Windows 可能是 `.cmd`/`.bat`（需 `cmd.exe /d /s /c` 包装）或 `.exe`；`resolveClaudeCommand()` 优先选真实存在的 `.exe`。
 
@@ -127,15 +104,13 @@ bun test web/            # 仅前端测试
 
 **协议正本优先于文档**：改协议相关代码前先查机器可读的正本，再查文档，最后才靠实测反推——
 `@anthropic-ai/claude-agent-sdk`（官方公开 npm 包）的 `sdk.d.ts` 是 claude stream-json 的类型正本
-（67 个 control subtype / 39 个顶层 type，`check-claude-protocol.ts` 即以它为漂移基线数据源）；
+（`check-claude-protocol.ts` 即以它为漂移基线数据源）；
 `codex app-server generate-ts --experimental` 是 codex 的协议正本（`check-codex-schema.ts` 用它）。
 历史教训：上下文窗口曾靠模型名启发式反推，而官方 `get_context_usage` 一直存在且给权威 `maxTokens`。
 
-`docs/claude-code/` 是官方 Claude Code 文档的本地 Markdown 镜像（gitignore，不进仓库），**协议/CLI/SDK 相关改动的重要开发参考**。用 `bun run docs:claude` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `en/**/*.md`。
+`docs/claude-code/` 与 `docs/codex/` 是两家官方文档的本地 Markdown 镜像（gitignore，不进仓库），**协议/CLI/SDK/app-server 相关改动的重要开发参考**——分别用 `bun run docs:claude` / `bun run docs:codex` 拉取，入口各见 `llms.txt`。
 
-`docs/codex/` 是官方 Codex / ChatGPT Learn 文档的本地 Markdown 镜像（gitignore，不进仓库；`GPT's suggestion.md` 除外）。**app-server / CLI / Skills / MCP 相关改动的重要开发参考**。用 `bun run docs:codex` 拉取或更新；入口见 `llms.txt`，全量见 `llms-full.txt`，单页在 `docs/**/*.md`（关键页：`docs/app-server.md`、`docs/developer-commands.md`、`docs/non-interactive-mode.md`）。
-
-**长文本文档（审计报告/调研记录/规划）放 `docs/` 目录**，各子目录角色与命名约定见 `docs/README.md` 文档地图（如 `docs/audits/2026-08-slash-commands.md` 斜杠命令全景审计、`docs/plans/` 实施计划、`docs/research/` 调研存档、`ROADMAP.md` 后续规划），AGENTS.md 只保留最关键结论并引用路径。
+**长文本文档（审计报告/调研记录/规划）放 `docs/` 目录**，各子目录角色与命名约定见 `docs/README.md` 文档地图，AGENTS.md 只保留最关键结论并引用路径。
 
 README 面向安装用户只保留常用项；用户向参考文档放 `docs/`：配置全集与推送 webhook 细节见 `docs/configuration.md`，域名网关与远程容器部署见 `docs/gateway.md`——改配置项/网关行为时同步这两份。
 
