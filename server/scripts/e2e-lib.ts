@@ -20,6 +20,18 @@ export function exitWithSummary(results: string[]): never {
   process.exit(results.some((r) => r.startsWith('✗')) ? 1 : 0)
 }
 
+/** REST 封装：ANYPLANE_TOKEN 走 Authorization 头（服务端配置 authToken 时裸 fetch 一律 401——
+ *  connect() 的 WS 侧早已带 token，REST 侧曾各自拼 ?token= 或漏带；token 放 header 而非
+ *  query，避免进服务端访问日志）。端口随 ANYPLANE_PORT（默认 7480）。 */
+export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const port = process.env.ANYPLANE_PORT ?? '7480'
+  const token = process.env.ANYPLANE_TOKEN
+  return fetch(`http://localhost:${port}${path}`, {
+    ...init,
+    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers },
+  })
+}
+
 /** WS 连接封装：handlers 数组 + send + open Promise。
  *  服务端配置 authToken 时需要 ANYPLANE_TOKEN 环境变量（否则握手 401）。
  *  端口随 ANYPLANE_PORT（默认 7480），与 e2e-handoff 的 REST BASE 口径一致。 */

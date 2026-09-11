@@ -2,10 +2,7 @@
 // 双向：claude → codex、codex → claude。需服务端已启动（默认 :7480，ANYPLANE_PORT 覆盖）。
 // 用法：bun run server/scripts/e2e-handoff.ts <claudeSessionKey> <codexThreadKey>（均为要操作的源会话 key）
 
-import { connect } from './e2e-lib'
-
-const PORT = process.env.ANYPLANE_PORT ?? '7480'
-const BASE = `http://localhost:${PORT}`
+import { apiFetch, connect } from './e2e-lib'
 
 const CLAUDE_KEY = process.argv[2] ?? ''
 const CODEX_KEY = process.argv[3] ?? ''
@@ -42,7 +39,7 @@ function handoff(fromKey: string, toBackend: 'claude' | 'codex', label: string):
     })
     await open()
     send({ kind: 'attach' })
-    const r = await fetch(`${BASE}/api/handoff`, {
+    const r = await apiFetch('/api/handoff', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ fromKey, toBackend, detail: 'standard' }),
@@ -71,7 +68,7 @@ async function waitTargetFirstTurn(targetKey: string, targetSessionId: string | 
   const deadline = Date.now() + 300_000
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`${BASE}/api/codex/history/${targetSessionId}`)
+      const r = await apiFetch(`/api/codex/history/${targetSessionId}`)
       const data = (await r.json()) as { messages?: Array<{ role: string; blocks: Array<{ kind: string; text?: string }> }> }
       const assistant = (data.messages ?? []).filter((m) => m.role === 'assistant')
       const text = assistant.flatMap((m) => m.blocks.map((b) => b.text ?? '')).join('\n')
@@ -121,7 +118,7 @@ const PROJECT_KEYWORDS = /notebox|搜索|export|简报/i
 
 // 血缘验证
 {
-  const r = await fetch(`${BASE}/api/lineage?key=${encodeURIComponent(CLAUDE_KEY)}`)
+  const r = await apiFetch(`/api/lineage?key=${encodeURIComponent(CLAUDE_KEY)}`)
   const { records } = (await r.json()) as { records: Array<{ fromKey: string; toKey: string }> }
   console.log(`血缘记录（claude 源）: ${records.length} 条`)
   if (records.length === 0) pass = false
