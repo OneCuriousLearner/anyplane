@@ -23,7 +23,14 @@ import type { SpawnOptions } from '../types'
 import { hydratedContextOf, keyForBranch, parseKey, splitExistingKey, type ParsedKey } from './backend'
 import { liveSessionInfo } from './discovery'
 import { processManager, type ClaudeSession } from './processManager'
+import { sessionModelOf } from './sessionModels'
 import { TranscriptTailer } from './tailer'
+
+/** 离线/tail 会话的模型回填：s| key 的 sessionId → init 持久化表；其余 key 形状（n|/b|）无表可查 */
+function offlineModelOf(key: string): string | undefined {
+  const ek = splitExistingKey(key)
+  return ek ? sessionModelOf(ek.sessionId) : undefined
+}
 
 class ClaudePort implements BackendPort {
   readonly name = 'claude' as const
@@ -62,8 +69,10 @@ class ClaudePort implements BackendPort {
       activeTasks: s?.backgroundTasks ?? [],
       slashCommands: s?.slashCommands,
       // spawnOpts.model 是用户显式选择（未 spawn 时的待应用值）；initModel 是进程 init 报告的解析后 ID。
-      // 后者让重连 attach 的页面不必等下一轮就能显示模型（StatusPill 再经 modelNames 映射成配置名）
-      model: hub?.spawnOpts?.model ?? s?.initModel,
+      // 后者让重连 attach 的页面不必等下一轮就能显示模型（StatusPill 再经 modelNames 映射成配置名）。
+      // 都缺席（离线/tail 外部会话）时回退 init 持久化的 sessionId→model 表——与 hydratedContextOf
+      // 的窗口推断同源，避免 StatusPill 退化成 "…" 占位
+      model: hub?.spawnOpts?.model ?? s?.initModel ?? offlineModelOf(key),
       tailing: !!hub?.tailer,
       liveStatus: live?.status,
       goal: hub?.goal ?? null,

@@ -548,6 +548,14 @@ export function mapThreadStatus(status: { type?: string } | undefined): 'idle' |
 export function turnCompletedMsg(threadId: string, turn: Params, lastUsage?: Record<string, number>): CliMessage {
   const failed = turn.status === 'failed'
   const err = turn.error as { message?: string } | null | undefined
+  // 回合耗时：协议正本 Turn.durationMs（0.149.0 实测已下发，见 rollout task_complete.duration_ms）。
+  // 兜底链：snake_case 防御 → startedAt/completedAt（秒）差值；都没有则缺省（页脚只显示 tok）
+  const started = numOr(turn.startedAt)
+  const completed = numOr(turn.completedAt)
+  const durMs =
+    numOr(turn.durationMs) ??
+    numOr(turn.duration_ms) ??
+    (started != null && completed != null ? (completed - started) * 1000 : undefined)
   return {
     type: 'result',
     subtype: failed ? 'error' : 'success',
@@ -556,7 +564,12 @@ export function turnCompletedMsg(threadId: string, turn: Params, lastUsage?: Rec
     session_id: threadId,
     total_cost_usd: 0,
     usage: lastUsage?.outputTokens != null ? { output_tokens: lastUsage.outputTokens } : {},
+    ...(durMs != null && durMs >= 0 ? { duration_ms: Math.round(durMs) } : {}),
   }
+}
+
+function numOr(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
 
 // ---------- 历史（thread.turns）→ HistoryMessage ----------
