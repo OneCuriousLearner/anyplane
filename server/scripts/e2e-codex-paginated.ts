@@ -15,7 +15,7 @@
 // 用法：bun run server/scripts/e2e-codex-paginated.ts [cwd] [legacyThreadId]
 
 import { mkdtempSync } from 'node:fs'
-import { connect, exitWithSummary, makeNote } from './e2e-lib'
+import { apiFetch, connect, exitWithSummary, makeNote } from './e2e-lib'
 
 // 默认每次跑独立目录：xn|<cwd> 是会话 key，跨次复用会撞上服务端残留 Hub/旧线程
 //（实测：同 key 二跑时事件静默不进，turn 悬挂——根因未深挖，用唯一 key 规避整类污染）
@@ -23,9 +23,8 @@ const cwd = process.argv[2] ?? mkdtempSync('/tmp/d4-e2e-')
 const legacyTid = process.argv[3] // 可选：用一个真实 legacy 线程验证 D 组
 const { note, results } = makeNote()
 
-const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
 async function fetchCodexHistory(threadId: string): Promise<Array<{ uuid: string; role: string; rewindable?: boolean; blocks: Array<{ kind: string }> }>> {
-  const res = await fetch(`http://localhost:7480/api/codex/history/${threadId}${tokenQ}`)
+  const res = await apiFetch(`/api/codex/history/${threadId}`)
   if (!res.ok) throw new Error(`history HTTP ${res.status}`)
   return ((await res.json()) as { messages: never[] }).messages
 }

@@ -2,7 +2,7 @@
 // 三条都打到同一个目标消息（幂等：空恢复快照 + 同一截断点），最后发问验证会话可用。
 // 用法：bun run server/scripts/e2e-rewind.ts [cwd] [sessionId]
 import { sanitizePath } from '../src/util'
-import { connect } from './e2e-lib'
+import { apiFetch, connect } from './e2e-lib'
 
 const cwd = process.argv[2] ?? process.cwd()
 const slug = sanitizePath(cwd)
@@ -11,7 +11,12 @@ const key = `s|${slug}|${sessionId}`
 
 // 从 REST 拿一条用户消息 uuid。取最后一条带文本的用户消息：
 // 最早的消息通常早于文件检查点（无快照可恢复），最近的消息最可能有 checkpoint。
-const hist = await (await fetch(`http://localhost:7480/api/history/${slug}/${sessionId}`)).json()
+const histResp = await apiFetch(`/api/history/${slug}/${sessionId}`)
+if (!histResp.ok) {
+  console.error(`拉取历史失败（HTTP ${histResp.status}）——服务端配置了 authToken 时需 ANYPLANE_TOKEN 环境变量`)
+  process.exit(1)
+}
+const hist = await histResp.json()
 // 端点返回 { messages, fileBytes, subagents }（历史响应带子代理水合字段后不再是裸数组）
 const candidates = (hist.messages ?? []).filter(
   (m) =>
@@ -100,6 +105,13 @@ on((ev) => {
       return
     }
     fail(`意外的 rewound: phase=${phase} scope=${String(ev.scope)}`)
+    return
+  }
+  if (ev.kind === 'approval_request') {
+    // 回滚目标若是需审批的消息（如写文件），resume-session-at 重生后 CLI 会重放该 turn
+    // 并把审批路由回 stdio——不裁决会卡在 requires_action 直到超时。e2e 环境一律放行。
+    console.log(`<< approval_request（${String(ev.toolName)}）自动允许`)
+    send({ kind: 'approval', requestId: ev.requestId, decision: { behavior: 'allow' } })
     return
   }
   if (ev.kind === 'error') {
