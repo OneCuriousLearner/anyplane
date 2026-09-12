@@ -28,8 +28,9 @@ export function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
  *  仅挂 onStatusChange 一路；审批/退出/attach 等事件路径仍直调 pushStatus 保证即时。 */
 const STATUS_THROTTLE_MS = 300
 const statusThrottle = new WeakMap<Hub, { timer: ReturnType<typeof setTimeout> | null; dirty: boolean }>()
+type StatusScheduler = (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
 
-export function throttledPushStatus(hub: Hub): void {
+export function throttledPushStatus(hub: Hub, scheduleStatus: StatusScheduler = setTimeout): void {
   let st = statusThrottle.get(hub)
   if (!st) {
     st = { timer: null, dirty: false }
@@ -40,7 +41,7 @@ export function throttledPushStatus(hub: Hub): void {
     return
   }
   pushStatus(hub)
-  st.timer = setTimeout(() => {
+  st.timer = scheduleStatus(() => {
     st.timer = null
     // Hub 可能已回收删除：确认还是同一个 Hub 再补发
     if (st.dirty && hubs.get(hub.key) === hub) {

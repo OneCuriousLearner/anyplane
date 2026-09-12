@@ -22,28 +22,52 @@ function routeResultJson(r: RouteResult): Response {
 const BRANCH_CACHE_TTL_MS = 30_000
 const branchCache = new Map<string, { branch: string | undefined; at: number }>()
 
-function branchOfCached(cwd?: string): string | undefined {
+function branchOfCached(cwd: string | undefined, readBranch: typeof readGitBranch): string | undefined {
   if (!cwd) return undefined
   const hit = branchCache.get(cwd)
   if (hit && Date.now() - hit.at < BRANCH_CACHE_TTL_MS) return hit.branch
-  const branch = readGitBranch(cwd) // 普通仓库与 worktree 都支持
+  const branch = readBranch(cwd) // 普通仓库与 worktree 都支持
   branchCache.set(cwd, { branch, at: Date.now() })
   return branch
 }
 
-export async function handleSessionRoutes(req: Request, url: URL): Promise<Response | undefined> {
+export interface SessionRouteDeps {
+  listCodexSessions: typeof listCodexSessions
+  listSessions: typeof listSessions
+  readGitBranch: typeof readGitBranch
+  statusOf: typeof statusOf
+  portFor: typeof portFor
+  listCodexArchived: typeof codexPort.listArchived
+  listClaudeArchived: typeof claudePort.listArchived
+}
+
+export const defaultSessionRouteDeps: SessionRouteDeps = {
+  listCodexSessions,
+  listSessions,
+  readGitBranch,
+  statusOf,
+  portFor,
+  listCodexArchived: () => codexPort.listArchived(),
+  listClaudeArchived: () => claudePort.listArchived(),
+}
+
+export async function handleSessionRoutes(
+  req: Request,
+  url: URL,
+  deps: SessionRouteDeps = defaultSessionRouteDeps,
+): Promise<Response | undefined> {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     // codex RPC 与 claude 同步扫盘相互独立——先发起 RPC 再扫，墙钟取两者较大值而非相加
     //（此端点被每个打开的标签页 10s 轮询）。中间无 await，rejection 一定先于下方 catch 被接管。
-    const codexP = listCodexSessions()
-    const sessions = listSessions()
+    const codexP = deps.listCodexSessions()
+    const sessions = deps.listSessions()
     const claudeRows = sessions.map((s: SessionInfo) => ({
       ...s,
       backend: 'claude' as const,
-      gitBranch: branchOfCached(s.cwd),
+      gitBranch: branchOfCached(s.cwd, deps.readGitBranch),
       key: keyFor(s.slug, s.sessionId),
       // listSessions 已扫过 pid 文件，复用其结果，不为每行再扫一次（null = 已知不在线）
-      managed: statusOf(
+      managed: deps.statusOf(
         keyFor(s.slug, s.sessionId),
         s.live ? { status: s.status, pid: s.live.pid } : null,
       ),
@@ -62,9 +86,9 @@ export async function handleSessionRoutes(req: Request, url: URL): Promise<Respo
         sizeBytes: 0,
         status: t.status,
         backend: 'codex' as const,
-        gitBranch: branchOfCached(t.cwd),
+        gitBranch: branchOfCached(t.cwd, deps.readGitBranch),
         key: t.key,
-        managed: statusOf(t.key),
+        managed: deps.statusOf(t.key),
       }))
     } catch (e) {
       log.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
@@ -82,19 +106,19 @@ export async function handleSessionRoutes(req: Request, url: URL): Promise<Respo
   if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {
     const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
-    return routeResultJson(await portFor(body.key).archive(body.key))
+    return routeResultJson(await deps.portFor(body.key).archive(body.key))
   }
   if (url.pathname === '/api/sessions/restore' && req.method === 'POST') {
     const body = await readJsonBody<{ key?: string }>(req)
     if (!body.key) return json({ error: '缺少 key' }, { status: 400 })
-    return routeResultJson(await portFor(body.key).restore(body.key))
+    return routeResultJson(await deps.portFor(body.key).restore(body.key))
   }
   // 归档/回收站列表：两后端各自经 port 提供（codex archived + claude trash），
   // 单后端失败在适配器内降级为空数组，互不拖垮
   if (url.pathname === '/api/sessions/archived' && req.method === 'GET') {
     const [codexArchived, claudeTrash] = await Promise.all([
-      codexPort.listArchived(),
-      claudePort.listArchived(),
+      deps.listCodexArchived(),
+      deps.listClaudeArchived(),
     ])
     return json({ entries: [...codexArchived, ...claudeTrash] })
   }
@@ -104,7 +128,7 @@ export async function handleSessionRoutes(req: Request, url: URL): Promise<Respo
     if (!body.key || !title) return json({ error: '缺少 key 或 title' }, { status: 400 })
     // codex 走官方 thread/name/set；claude 仅离线会话（transcript 追加 custom-title），
     // 两路实现见各自适配器
-    return routeResultJson(await portFor(body.key).rename(body.key, title))
+    return routeResultJson(await deps.portFor(body.key).rename(body.key, title))
   }
   return undefined
 }

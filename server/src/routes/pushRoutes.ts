@@ -19,7 +19,21 @@ import { approvalPageHtml, sessionNameOf } from '../push/fanout'
 import { errorMessage } from '../util'
 import { json, readJsonBody } from './http'
 
-export async function handlePushRoutes(req: Request, url: URL): Promise<Response | undefined> {
+export interface PushRouteDeps {
+  addSubscription: typeof addSubscription
+  validSecret: typeof validSecret
+}
+
+export const defaultPushRouteDeps: PushRouteDeps = {
+  addSubscription,
+  validSecret,
+}
+
+export async function handlePushRoutes(
+  req: Request,
+  url: URL,
+  deps: PushRouteDeps = defaultPushRouteDeps,
+): Promise<Response | undefined> {
   if (url.pathname === '/api/push/public-key' && req.method === 'GET') {
     return json({ publicKey: vapidPublicKey(), subscriptions: subscriptionCount(), webhooks: webhookCount() })
   }
@@ -30,7 +44,7 @@ export async function handlePushRoutes(req: Request, url: URL): Promise<Response
     }
     let secret: string
     try {
-      secret = addSubscription(
+      secret = deps.addSubscription(
         { endpoint: body.endpoint, keys: body.keys },
         req.headers.get('user-agent') ?? undefined,
       ).secret
@@ -69,7 +83,7 @@ export async function handlePushRoutes(req: Request, url: URL): Promise<Response
     const requestId = url.searchParams.get('r') ?? ''
     const decision = url.searchParams.get('d') ?? ''
     const secret = url.searchParams.get('s') ?? ''
-    if (!validSecret(secret)) return json({ ok: false, error: '无效的能力密钥' }, { status: 403 })
+    if (!deps.validSecret(secret)) return json({ ok: false, error: '无效的能力密钥' }, { status: 403 })
     if (decision !== 'allow' && decision !== 'deny') {
       return json({ ok: false, error: 'd 只接受 allow/deny' }, { status: 400 })
     }
@@ -94,7 +108,7 @@ export async function handlePushRoutes(req: Request, url: URL): Promise<Response
     const key = url.searchParams.get('k') ?? ''
     const requestId = url.searchParams.get('r') ?? ''
     const secret = url.searchParams.get('s') ?? ''
-    if (!validSecret(secret)) return new Response('无效的能力密钥', { status: 403 })
+    if (!deps.validSecret(secret)) return new Response('无效的能力密钥', { status: 403 })
     const pending = hubs.get(key)?.pendingApprovals.get(requestId)
     return new Response(approvalPageHtml(key, pending), {
       headers: { 'content-type': 'text/html; charset=utf-8' },
