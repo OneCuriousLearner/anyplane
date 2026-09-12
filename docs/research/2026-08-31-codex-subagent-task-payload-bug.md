@@ -1,6 +1,7 @@
 # Codex BUG: 子代理任务消息投递为空（spawn_agent / followup_task Payload 丢失）
 
 - 存档日期：2026-08-31
+- 后续实机 A/B 与上游拓扑（2026-09-13）：见 [2026-09-13-codex-inter-agent-plaintext-delivery.md](./2026-09-13-codex-inter-agent-plaintext-delivery.md)
 - 状态：官方已知问题，openai/codex 仓库多个 issue 未关闭
 - 影响范围：所有依赖多代理协作（spawn_agent / followup_task）的工作流
 
