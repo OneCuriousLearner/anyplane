@@ -137,7 +137,7 @@ describe('thread/reverted 通知与回滚 RPC', () => {
     const first = makeRuntime('legacy')
     const second = makeRuntime('paginated')
 
-    expect(await first.runtime.historyModeOf('same-thread')).toBe('legacy')
+    expect(await first.runtime.threadMeta('same-thread')).toEqual({ historyMode: 'legacy', cwd: undefined })
     expect(await second.runtime.historyModeOf('same-thread')).toBe('paginated')
     expect(await first.runtime.historyModeOf('same-thread')).toBe('legacy')
     expect(first.reads()).toBe(1)

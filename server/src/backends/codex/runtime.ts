@@ -10,10 +10,9 @@ import { log } from '../../log'
 import { CodexSession, type CodexSpawnOpts } from './session'
 import {
   forkAt as forkAtThread,
-  historyModeOf as historyModeOfThread,
   readHistoryForThread,
   revertAt as revertAtThread,
-  threadCwd as threadCwdForThread,
+  threadMeta as threadMetaForThread,
 } from './history'
 
 export { CodexSession, type CodexSpawnOpts } from './session'
@@ -337,8 +336,13 @@ export class CodexRuntime {
     return revertAtThread(this.rpcRequest.bind(this), threadId, beforeTurnId)
   }
 
+  /** 保留拆分前公开方法的兼容面；实际缓存与 RPC 逻辑归 history 模块。 */
+  async threadMeta(threadId: string): Promise<{ historyMode?: string; cwd?: string }> {
+    return threadMetaForThread(this.rpcRequest.bind(this), threadId, this.historyCtx())
+  }
+
   async historyModeOf(threadId: string): Promise<string | undefined> {
-    return historyModeOfThread(this.rpcRequest.bind(this), threadId, this.historyCtx())
+    return (await this.threadMeta(threadId)).historyMode
   }
 
   async forkAt(threadId: string, beforeTurnId: string): Promise<string> {
@@ -346,7 +350,7 @@ export class CodexRuntime {
   }
 
   async threadCwd(threadId: string): Promise<string | undefined> {
-    return threadCwdForThread(this.rpcRequest.bind(this), threadId, this.historyCtx())
+    return (await this.threadMeta(threadId)).cwd
   }
 }
 

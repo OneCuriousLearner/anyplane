@@ -26,6 +26,16 @@ export interface ProcessLifecycle {
   isShuttingDown(): boolean
 }
 
+function fatalDetail(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? `${error.name}: ${error.message}`
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
 /**
  * 服务进程唯一关闭协调器。信号与致命异常共用同一条 stop/dispose 路径；
  * 重入只升级最终退出码，不重复清理。
@@ -91,7 +101,9 @@ export function createProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLifec
   }
 
   const fatal = (kind: 'uncaughtException' | 'unhandledRejection', error: unknown): void => {
-    deps.log.error(`[anyplane] fatal ${kind}:`, error)
+    // 注册 process fatal handler 后 Bun 不再打印默认异常堆栈，必须在这里显式保留。
+    // 拼进首个字符串而非把 Error 作为 logger 变参传入：consoleStyle 会将 Error 压成 message。
+    deps.log.error(`[anyplane] fatal ${kind}: ${fatalDetail(error)}`)
     void shutdown(kind, 1).catch((shutdownError) => {
       deps.log.error('[anyplane] fatal shutdown failed:', shutdownError)
       deps.exit(1)

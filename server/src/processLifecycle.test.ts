@@ -59,7 +59,8 @@ describe('createProcessLifecycle', () => {
     })
 
     const shutdown = lifecycle.shutdown('SIGINT')
-    lifecycle.fatal('unhandledRejection', new Error('boom'))
+    const fatalOrigin = () => new Error('boom')
+    lifecycle.fatal('unhandledRejection', fatalOrigin())
     gate.resolve()
     await shutdown
 
@@ -67,6 +68,7 @@ describe('createProcessLifecycle', () => {
     expect(disposals).toBe(1)
     expect(exits).toEqual([1])
     expect(log.rows.some((row) => row.includes('fatal unhandledRejection') && row.includes('boom'))).toBe(true)
+    expect(log.rows.some((row) => row.includes('\n    at ') && row.includes('processLifecycle.test.ts'))).toBe(true)
     expect(log.rows.some((row) => row.includes('repeated=unhandledRejection'))).toBe(true)
   })
 
