@@ -8,7 +8,9 @@
 
 **Let your agents keep working while you go live your life. When one needs you, the approval is already waiting on your lock screen.**
 
-**[anyplane.run](https://anyplane.run)** · npm: [`anyplane`](https://www.npmjs.com/package/anyplane) · [简体中文](README.zh-CN.md)
+**[anyplane.run](https://anyplane.run)** · npm: [`anyplane`](https://www.npmjs.com/package/anyplane)
+
+> 📄 中文版文档见 [README.zh-CN.md](README.zh-CN.md)。
 
 <p align="center">
   <img src="docs/media/Greeting.png" alt="AnyPlane session view: project-grouped session list and a live conversation" />
