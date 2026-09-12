@@ -7,6 +7,11 @@
 
 官方远程能力（Remote Control / claude.ai/code / codex remoteControl）对 **API-key 与 gateway 用户硬性禁用**
 （Remote Control 文档：订阅限定；v2.1.196 起 ANTHROPIC_BASE_URL 指向 gateway 即禁用）。
+**2026-09-12 复核仍成立且排除范围在扩大**：官方文档明确 Pro/Max/Team/Enterprise 订阅限定、
+API key 不支持、`claude setup-token` 的长期 OAuth 同样被拒（inference-only scope）、
+Bedrock / Google Cloud Agent Platform / Microsoft Foundry 均不可用；v2.1.196 起连指向
+非 `api.anthropic.com` 的本地透明代理也一并禁用（此前该配置尚可工作）。
+上游 issue #50977 是被排除用户的公开诉求，已被官方回绝——本文档所有方向的前提由此成立。
 AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供应商。以下方向都服务于这个定位，
 不追官方云能力（云同步/E2EE/多设备），不与官方 TUI（agent view）赛跑 UI。
 
@@ -27,17 +32,43 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
   ntfy http action 真一键审批，Bark/Server酱 落 `GET /api/approval-page` 确认页（防预览误触）；
   webhook 能力密钥 = HMAC(vapid 私钥, 渠道标识) 派生，不落新状态。验证：`server/src/push.test.ts`
   webhook 段 7 项单测 + 真实服务端 mock 渠道活体全链路（审批 fanout/按钮 POST/确认页/done 扇出）。
-- iOS 实测：需 PWA 加到主屏幕后订阅；图标已备 PNG（icon-192/512）。
+- ~~iOS 实测~~ → **平台能力已查证并落降级（2026-09-12）**：Safari（iOS 与 macOS）**完全忽略**
+  notification `actions`，且不实现 `Notification.maxActions`（caniuse：iOS Safari 至 26.6 仍
+  Not supported；Apple Web Push 文档：通知表面只保留 title/body/tag/data，图标固定为 Web App 自身图标）。
+  按钮在 iPhone 上根本不渲染——**「锁屏一键审批」这条核心卖点在 iOS Web Push 上不成立**，
+  用户只看到「需要审批」却找不到怎么批。152 之前的 Firefox 桌面同理。
+  `sw.js` 已按 `maxActions` 运行时探测降级（**不靠 UA**：iOS 上任何浏览器壳都是 WebKit）：
+  不支持时不挂按钮、裁决入口折进 body、`notificationclick` 直达 `GET /api/approval-page` 确认页
+  而非完整应用壳。**零服务端改动**——`validSecret` 本就同时接受订阅密钥与 webhook 密钥，
+  直接复用 approval-action 上已补全的能力密钥即可。单测锁死两条分支（`web/src/sw.test.ts`，
+  放 src 而非 public 旁边：public 会被原样拷进 `web/dist`）。
+  能力矩阵：Android/桌面 Chrome 一步（通知按钮），iOS/旧 Firefox 两步（通知 → 确认页）。
+  **仍未做**：真机实测（作者无 iPhone；README 与官网已明示，本身作为征集反馈的钩子）。
+  **iOS 上要回到一步审批只有一条路——方向二的原生壳**，见下。
 
 ## 方向二：App 壳（Capacitor，不换技术栈）
 
 **定论**：不做 RN 重写（代码翻倍、维护翻倍，happy 的路线不是我们的路线）；
 用 **Capacitor 套壳现有 PWA** 打出 iOS/Android 原生包——日常开发仍是写 React，新增的只是构建链。
 
-**价值**：
-- App Store / Google Play 上架 = 分发实体（项目里程碑性质的目标）
-- 原生推送（APNs/FCM 插件）比 Web Push 更可靠，方向一可以先在壳内落地
+**价值**（2026-09-12 重排：第一条从「更可靠」这种软论据换成了硬论据，本方向优先级随之上调）：
+- **iOS 上恢复一步审批的唯一路径**。iOS 原生通知**支持**按钮（`UNNotificationCategory` +
+  `UNNotificationAction`）：Capacitor 侧用 `LocalNotifications.registerActionTypes` 在启动时注册
+  category，推送 payload 的 `aps.category` 带上同一标识符，系统即渲染按钮，点击经
+  `pushNotificationActionPerformed` 回传 `actionId`（`PushNotifications` 插件本身没有 action API，
+  但 category 机制跨插件通用——实施时先验证插件版本的可靠性，必要时补原生 delegate）。
+  方向一的降级只把 iOS 从「做不到」救到「两步」；**回到一步必须走原生壳**。
+  对一个把锁屏审批当核心卖点的项目，这条从「里程碑性质的目标」升级为「核心卖点的补全」。
+- App Store / Google Play 上架 = 分发实体
 - 分享面板、生物识别锁（可选）等原生能力解锁
+
+**信任面取舍（必须记下来，否则将来会重新论证一遍）**：
+iOS 的 Web Push 本来就走 APNs，换原生壳**不新增**第三方——这一点不构成阻碍。
+真正的变化是载荷可见性：Web Push 是 aes128gcm 端到端加密的（Apple 读不到正文），
+原生 APNs 推送的载荷 Apple 可读。审批通知的内容只有工具名 + 命令摘要 + 项目名，
+且 ntfy/Bark/Server酱 通道本来就是渠道可读（见 `push.ts` 的 webhook 段注释），
+故该取舍可接受；但**能力 URL 里的 secret 绝不能进 APNs 明文载荷**——
+原生壳应改为推送只带 requestId，客户端持长期凭据回连本机裁决。
 
 **步骤草拟**：
 1. `bun add @capacitor/core @capacitor/cli`，`npx cap init`（构建产物指向 `web/dist`）
@@ -273,6 +304,78 @@ Claude 侧有 `generate_session_title` 自动标题（2026-08-27 已接入），
 **暂不做的原因**：标题质量依赖一次额外问答（每新线程几百 token 成本），且 fork 问答
 在 turn 刚结束时与主线程共享进程管道、可能撞上用户的连续输入；先观察上游是否补齐。
 若做，必须复用现有 collector 超时/拒绝路径，不为标题引入新状态机。
+
+## 方向十：UI 国际化（i18n）
+
+**立项背景（2026-09-12）**：此前 UI 只有简体中文是可接受的——README 也是中文，受众一致。
+2026-09-12 把 `README.md` 换成英文（中文移至 `README.zh-CN.md`）之后，**断层是我们自己制造的**：
+官网英文、npm description 英文、README 英文、Show HN 稿英文，装上打开却是全中文界面。
+英文用户读完英文文档再撞上中文 UI，落差比过去全中文时更刺眼。
+
+**现状**：`web/src` 约 18,344 个中文字符，无任何 i18n 框架；另有硬编码 locale
+（`ChatHeader.tsx` 的 `toLocaleTimeString('zh-CN')`）。服务端 API 错误是英文短码、
+启动日志中英混合、`approvalPageHtml`（webhook/iOS 降级确认页）是中文——**确认页优先级高于主界面**，
+它是 iOS 与 webhook 用户唯一会看到的服务端渲染页面。
+
+**定论**：
+- **不引 i18next / react-intl**。零第三方依赖是本仓库的既定约束（见 `log.ts` 的同款决策）；
+  一个 `key → { en, zh }` 的扁平 map + 语言检测 + `t()` 足够，
+  官网 `site/index.html` 的三语内联字典就是现成的形制参考。
+- 语言检测顺序：显式设置（localStorage）> `navigator.language` > en。
+  **默认英文**——中文用户会主动切，英文用户不会找切换入口。
+- 抽取按可见度排序：确认页 → 审批卡与错误文案 → 会话列表 → 详情抽屉 → 低频面板。
+
+**排期约束（重要）**：**放在拿到第一批英文反馈之后**，不要提前做。
+18K 字符的抽取是纯体力活，为一个还没人用的界面做翻译是典型的沉没成本。
+先发布、先看有没有英文用户真的装上，再决定抽取范围。
+
+## 方向十一：分发与首次上手补完
+
+**立项背景**：生态研究的 Phase 1 清单里，功能性主项（审批规则引擎）已交付，
+剩余项**全部是分发与首次上手类**——与 2026-09-12 实测出的三个卡点同源，
+独立佐证了「瓶颈在可达性而非能力」。这一类此前只存在于研究库的 CHANGELOG，
+主仓库排期文档里没有位置，故立此方向。
+
+**已交付（2026-09-12）**：
+- npm bin 改 Node launcher（`cli/anyplane.mjs`）。原 bin 指向 `#!/usr/bin/env bun` 的 `.ts`，
+  没装 Bun 的机器上 npm shim 只抛 `'"bun"' 不是内部或外部命令`——不说缺什么也不说怎么装。
+  目标用户多是 npm 装 claude/codex CLI 过来的，**没装 Bun 是常态而非例外**。
+  **红线**：已在 Bun 运行时必须直接 `import` 不套子进程——多一层包装会吞 Ctrl+C，
+  绕过 `server.stop(true)` 的子进程树清理（见 AGENTS.md 的 Windows 注意事项）。
+  改造后 `bunx` 路径行为与改造前逐字节一致，回归面只有 Node 路径。
+- README 英文化与中文分离；官网 iOS 表述分平台化、Bun 门槛同步全平台 ≥ 1.4.0。
+
+**待排期**：
+- **Dockerfile**（优先级最高）：单阶段 Bun 镜像 + 双 CLI，挂载 `~/.anyplane` 与 CLI 凭证卷，
+  入口命令与 `bunx anyplane` 一致。对自托管人群是标配，且顺带绕开 Bun 门槛。
+- **双后端登录状态页**：Claude 走 `initialize.account` 或配置目录探测，Codex 走 `account/read`
+  或等效 RPC；列表页展示「Claude 已登录 / Codex 未登录 / API-key 组织用户」。
+  降低首次使用门槛——当前 CLI 未登录时的失败表现为会话起不来，用户不知道该去登录哪个。
+- **公网配方一键脚本**：封装 `docs/public-access.md` 三套配方的最小启动命令，
+  脚本只负责隧道创建与反代，不碰账号体系（保住「不依赖第三方账号」的底线）。
+- **待评估：把 `bun` 放进 `optionalDependencies`**，让 `npx anyplane` 彻底零门槛。
+  代价是包体积从当前量级涨到约 90MB。**先用 launcher 收集数据再决定**——
+  如果安装失败反馈消失，说明一行安装提示已经够了，不必付这个体积。
+
+## 方向十二：上量前的运行韧性与下一轮技术债
+
+**定论**：这些都不是当前痛点，但**全部会在有真实用户之后同时爆发**，
+且届时修复成本远高于现在。不提前做，但要在发布后按用户增长节奏还。
+
+- **全局异常兜底（缺失）**：服务端没有 `uncaughtException` / `unhandledRejection` 处理器。
+  `index.ts` 已有 SIGINT/SIGTERM 优雅退出、EADDRINUSE 自接管，唯独未捕获的 Promise 拒绝
+  会让用户看到「服务突然没了」却拿不到任何可上报的信息。单人维护尤其需要这层——
+  它决定了用户报 bug 时能不能附上有用的东西。**这项成本最低、收益最直接，可以先做。**
+- **下一个上帝文件：`backends/codex/runtime.ts`（约 1,349 行）**。方向六解耦了 `index.ts`
+  与 `Chat.tsx`，但 codex 的 RPC、历史双轨、streaming、子代理路由仍堆在一个文件里，
+  是全仓最大单体与最大回归风险源。拆分口径沿用方向六：先抽纯函数与协议翻译，
+  再切生命周期，**绝不与行为改动混杂**。
+- **零单测的编排层**：`index.ts`、全部 `routes/`、大部分 `hub/` 共 18 个生产文件无同名 test，
+  目前只由 e2e 脚本间接覆盖，而 e2e 不进 CI（需真实 CLI 与模型）。
+  用户上量后这里是回归重灾区。补测优先级：`routes/` > `hub/` > `index.ts`（装配层最难测、收益也最低）。
+- **会话列表的 O(n) 隐患**：列表端点每 10 秒轮询触发全盘 `listSessions()`，
+  缓存未命中时是 O(会话数 × 文件大小)。会话数达数百后开始劣化。
+  **等真实抱怨出现再改增量刷新**——提前优化会把一个简单端点变复杂。
 
 ## 已验证但暂不做的（决策记录）
 
