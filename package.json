@@ -18,7 +18,7 @@
   },
   "license": "MIT",
   "bin": {
-    "anyplane": "cli/anyplane.ts"
+    "anyplane": "cli/anyplane.mjs"
   },
   "files": [
     "cli",
