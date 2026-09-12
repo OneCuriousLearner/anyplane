@@ -1,8 +1,8 @@
-/security-review 审查 the entire anyplane repository：覆盖 server/、web/、scripts/ 下全部 TypeScript/TSX 源码。不要只看当前分支的 pending changes——当前分支是新开的、没有 diff，必须主动把全仓库当作审查对象。
+/security-review 审查 the entire anyplane repository：覆盖 server/、web/（含 public/sw.js）、scripts/、cli/、site/、.github/ 与根 package.json。不要只看当前分支的 pending changes——当前分支是新开的、没有 diff，必须主动把全仓库当作审查对象。不要把对象锁成 TypeScript/TSX。
 
 以下约束与审查目标同属本任务的强制要求：
 
-- 重点关注：注入、认证与授权绕过、CORS/跨源防护、密钥与 token 泄露、SSRF、路径穿越、不安全的默认值、WebSocket 鉴权缺口。
+- 重点关注：注入、认证与授权绕过、CORS/跨源防护、密钥与 token 泄露、SSRF、路径穿越、不安全的默认值、WebSocket 鉴权缺口；以及 cli launcher 会不会把凭据漏进子进程、SW 能力 URL 会不会进通知 payload / 深链、官网是否教用户关掉防线、release.yml 与 package.json 的 bin/files 发布面。
 - 既有设计红线：本仓库 docs/ 与 AGENTS.md 记载了既有的安全设计（如 Origin/Host 一致性校验、审批能力 URL、订阅 endpoint 白名单、authToken 防线），修复时不要破坏这些刻意设计——它们是防线而不是 bug。
 - 证据纪律：只修复确认的真实问题（每项给出 file:line 证据）；疑似但无法确认的列入 PR 描述供人工判断。
 - 执行环境：本项目只使用 Bun（>= 1.3.13），绝不要用 npm / npx / yarn / pnpm；如需运行测试先 bun install，测试命令 bun test（在工作区根目录运行）。
