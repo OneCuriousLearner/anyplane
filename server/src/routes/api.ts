@@ -5,10 +5,27 @@ import { handleMiscRoutes } from './misc'
 import { handlePushRoutes } from './pushRoutes'
 import { handleSessionRoutes } from './sessions'
 
+export type ApiRouteHandler = (req: Request, url: URL) => Promise<Response | undefined>
+
+const defaultHandlers: readonly ApiRouteHandler[] = [
+  handlePushRoutes,
+  handleSessionRoutes,
+  handleMiscRoutes,
+]
+
+/** 按声明顺序分发，首个命中的子路由短路。 */
+export async function dispatchApi(
+  req: Request,
+  url: URL,
+  handlers: readonly ApiRouteHandler[] = defaultHandlers,
+): Promise<Response | undefined> {
+  for (const handler of handlers) {
+    const response = await handler(req, url)
+    if (response !== undefined) return response
+  }
+  return undefined
+}
+
 export async function handleApi(req: Request, url: URL): Promise<Response | undefined> {
-  return (
-    (await handlePushRoutes(req, url)) ??
-    (await handleSessionRoutes(req, url)) ??
-    (await handleMiscRoutes(req, url))
-  )
+  return dispatchApi(req, url)
 }

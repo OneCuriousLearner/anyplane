@@ -17,6 +17,8 @@ export function handleClientMessage(
   raw: string,
   /** 发起方连接：仅重连补发需要单播（其余一律 hub 级广播） */
   ws?: ServerWebSocket<WSData>,
+  /** 编排测试注入；生产调用保持默认 portFor。 */
+  resolvePort: typeof portFor = portFor,
 ): void {
   let data: Record<string, unknown>
   try {
@@ -31,7 +33,7 @@ export function handleClientMessage(
     case 'attach': {
       // 浏览历史只握手，不 spawn。发消息 / 切 model·mode·effort / rewind / btw 时再启动 CLI。
       // 各后端的 attach 策略（warm 预热、codex x| 即 resume）见适配器 onAttach。
-      portFor(hub.key).onAttach(hub, data)
+      resolvePort(hub.key).onAttach(hub, data)
       // 待审批补发只给本次 attach 的连接：走 broadcast 会让已在线的其他客户端
       // 重复收到同一张审批卡（requestId 相同，纯噪声）
       if (ws) {
@@ -69,7 +71,7 @@ export function handleClientMessage(
     case 'tail_subscribe': {
       // 客户端加载完历史后订阅 transcript 追加（from = 历史读取时的文件字节数，无缝衔接）；
       // codex 的实时流走 app-server 订阅，无 tailer 概念（适配器内 no-op）
-      portFor(hub.key).startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
+      resolvePort(hub.key).startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
       break
     }
     case 'user': {
@@ -85,7 +87,7 @@ export function handleClientMessage(
       }))
       const text = String(data.text ?? '')
       void (async () => {
-        const port = portFor(hub.key)
+        const port = resolvePort(hub.key)
         try {
           // ensure 也必须罩在 try 内：fire-and-forget IIFE 里 await 抛在 catch 之外
           // 会变 unhandled rejection——消息无声消失，客户端连错误卡都收不到
@@ -119,7 +121,7 @@ export function handleClientMessage(
       if (subtype === 'set_permission_mode' && extra.mode) {
         hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
       }
-      portFor(hub.key).deliverControl(hub, subtype, extra)
+      resolvePort(hub.key).deliverControl(hub, subtype, extra)
       break
     }
     case 'update_env': {
@@ -128,27 +130,27 @@ export function handleClientMessage(
       const variables = (data.variables as Record<string, string>) ?? {}
       const effort = variables.CLAUDE_CODE_EFFORT_LEVEL
       if (effort) hub.spawnOpts = { ...hub.spawnOpts, effort }
-      portFor(hub.key).updateEnv(hub, variables)
+      resolvePort(hub.key).updateEnv(hub, variables)
       break
     }
     case 'branch': {
       // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session），
       // codex 走既有 thread/fork（RewindPicker 的"从此处分叉"，适配器内拒绝并引导）
-      portFor(hub.key).branch(hub, String(data.name ?? ''))
+      resolvePort(hub.key).branch(hub, String(data.name ?? ''))
       break
     }
     case 'rewind_conversation': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
       // claude=原地截断重 spawn；codex=thread/fork 分叉语义（rewindPending 守卫在适配器内）
-      portFor(hub.key).rewindConversation(hub, at)
+      resolvePort(hub.key).rewindConversation(hub, at)
       break
     }
     case 'rewind_both': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
       // 组合回滚：claude 先 rewind_files 再截断；codex 无文件检查点（适配器内拒绝）
-      portFor(hub.key).rewindBoth(hub, at)
+      resolvePort(hub.key).rewindBoth(hub, at)
       break
     }
     case 'btw': {
@@ -157,7 +159,7 @@ export function handleClientMessage(
       // btw_pending 必须先于校验失败分支发出：前端卡片由它创建，
       // 否则校验失败的 btw_result 找不到卡（按 question 配对）被静默丢弃，用户零反馈
       if (question) broadcast(hub, { kind: 'btw_pending', question })
-      portFor(hub.key).btw(hub, question)
+      resolvePort(hub.key).btw(hub, question)
       break
     }
     case 'query': {
@@ -169,7 +171,7 @@ export function handleClientMessage(
       const extra = (data.extra as Record<string, unknown> | undefined) ?? {}
       const reply = (payload: Record<string, unknown>) => broadcast(hub, { kind: 'query_result', id, ...payload })
       if (!id || !query) return
-      portFor(hub.key).query(hub, query, extra, reply)
+      resolvePort(hub.key).query(hub, query, extra, reply)
       break
     }
     case 'approval': {

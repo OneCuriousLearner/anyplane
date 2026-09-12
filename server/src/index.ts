@@ -23,6 +23,7 @@ import { pushStatus } from './hub/status'
 import type { WSData } from './hub/types'
 import { log } from './log'
 import { isOwnServerProcess, takeoverStaleListeners } from './portTakeover'
+import { createProcessLifecycle, installProcessHandlers } from './processLifecycle'
 import { sessionNameOf } from './push/fanout'
 import { initInbox } from './push/inbox'
 import { handleApi } from './routes/api'
@@ -201,6 +202,18 @@ try {
   process.exit(1)
 }
 
+const lifecycle = createProcessLifecycle({
+  stopServer: () => server.stop(true),
+  disposeBackends: () => {
+    processManager.disposeAll()
+    codexRuntime.disposeAll()
+  },
+  logPortState: (stage) => logWindowsPortState(stage, config.port),
+  exit: (code) => process.exit(code),
+  log,
+})
+installProcessHandlers(process, lifecycle)
+
 // 通配绑定（0.0.0.0/::）时二维码与日志要显示可路由的局域网地址
 function lanAddress(): string {
   for (const addrs of Object.values(networkInterfaces())) {
@@ -249,59 +262,6 @@ if (config.approvalRules?.length) {
   log.info(`[approval] 审批规则引擎已启用：${config.approvalRules.length} 条规则，按序首条命中`)
 }
 
-let shuttingDown = false
-async function shutdown(reason: string): Promise<void> {
-  if (shuttingDown) {
-    log.warn(`[anyplane] shutdown already in progress; repeated=${reason}`)
-    return
-  }
-  shuttingDown = true
-  const started = performance.now()
-  log.info(`[anyplane] shutdown begin reason=${reason} pid=${process.pid}`)
-
-  // 先发起 listener/连接关闭，再清 Claude 子进程。Bun <=1.3.14（修复于 1.4.0）在 Windows
-  // 会让这些子进程继承监听 handle；两边都完成前绝不能 process.exit()。
-  let stopPromise: Promise<void>
-  try {
-    log.info('[anyplane] server.stop(true) begin')
-    stopPromise = Promise.resolve(server.stop(true))
-  } catch (e) {
-    log.error('[anyplane] server.stop(true) invoke failed:', e)
-    stopPromise = Promise.resolve()
-  }
-
-  try {
-    processManager.disposeAll()
-    codexRuntime.disposeAll()
-  } catch (e) {
-    log.error('[anyplane] disposeAll 失败:', e)
-  }
-
-  const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 5_000))
-  const stopped = stopPromise.then(
-    () => 'stopped' as const,
-    (e) => {
-      log.error('[anyplane] server.stop(true) rejected:', e)
-      return 'failed' as const
-    },
-  )
-  const result = await Promise.race([stopped, timeout])
-  log.info(
-    `[anyplane] shutdown server=${result} elapsedMs=${Math.round(performance.now() - started)}`,
-  )
-
-  if (result === 'timeout') {
-    // 到这里 listener 已调用 stop，强退只是最后兜底；正常路径不应触发。
-    log.error('[anyplane] shutdown timed out after 5s; forcing exit')
-    process.exit(1)
-  }
-  logWindowsPortState('after-stop', config.port)
-  log.info(`[anyplane] shutdown complete elapsedMs=${Math.round(performance.now() - started)}`)
-  process.exit(0)
-}
-
-process.on('SIGINT', () => void shutdown('SIGINT'))
-process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('exit', (code) => {
-  log.info(`[anyplane] process exit pid=${process.pid} code=${code} shuttingDown=${shuttingDown}`)
+  log.info(`[anyplane] process exit pid=${process.pid} code=${code} shuttingDown=${lifecycle.isShuttingDown()}`)
 })

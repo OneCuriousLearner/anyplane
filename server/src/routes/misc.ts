@@ -14,7 +14,21 @@ import { resolveUpload } from '../uploads'
 import { errorMessage } from '../util'
 import { json, readJsonBody } from './http'
 
-export async function handleMiscRoutes(req: Request, url: URL): Promise<Response | undefined> {
+export interface MiscRouteDeps {
+  readHistory: typeof readHistory
+  runHandoff: typeof runHandoff
+}
+
+export const defaultMiscRouteDeps: MiscRouteDeps = {
+  readHistory,
+  runHandoff,
+}
+
+export async function handleMiscRoutes(
+  req: Request,
+  url: URL,
+  deps: MiscRouteDeps = defaultMiscRouteDeps,
+): Promise<Response | undefined> {
   if (url.pathname === '/api/fs/list' && req.method === 'GET') {
     // searchParams.get 已完成 URL 解码，禁止再 decodeURIComponent（含 % 的路径会被二次解码破坏）
     const target = url.searchParams.get('path') ?? ''
@@ -33,7 +47,7 @@ export async function handleMiscRoutes(req: Request, url: URL): Promise<Response
     }
     const detail: HandoffDetail =
       body.detail === 'brief' || body.detail === 'detailed' ? body.detail : 'standard'
-    const error = runHandoff(body.fromKey, body.toBackend, detail)
+    const error = deps.runHandoff(body.fromKey, body.toBackend, detail)
     if (error) return json({ error }, { status: 400 })
     return json({ ok: true })
   }
@@ -101,7 +115,7 @@ export async function handleMiscRoutes(req: Request, url: URL): Promise<Response
     }
     const limit = num('limit')
     return json(
-      readHistory(slug, sessionId, {
+      deps.readHistory(slug, sessionId, {
         before: num('before', true),
         limit: limit == null ? undefined : Math.min(limit, 10_000),
       }),
