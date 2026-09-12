@@ -295,8 +295,8 @@
       <h1 data-i18n="h1">Run your agents,<br><em>on any plane.</em></h1>
       <p class="lede" data-i18n="lede">
         Let the agents run — <strong>go live your life.</strong>
-        When Claude Code or Codex needs you, a push notification lands on your lock screen
-        with the ruling buttons already on it.
+        When Claude Code or Codex needs you, the approval lands on your lock screen —
+        clear it there and get back to what you were doing.
       </p>
       <div class="install">
         <span class="cmd"><span class="dollar">$</span> bunx anyplane
@@ -339,7 +339,7 @@
         <div class="gate-card">
           <span class="gate-tag">GATE B</span>
           <h3 data-i18n="gateB.h">Clearance from the lock screen</h3>
-          <p data-i18n="gateB.p">Approvals arrive as push notifications you can rule on without opening the page — capability URLs carry a one-tap secret. Web Push, ntfy, Bark and Server酱 channels included.</p>
+          <p data-i18n="gateB.p">Approvals arrive as push notifications carrying a one-tap capability secret. On Android and desktop Chrome you rule straight from the notification buttons; iOS ignores notification actions, so there the tap opens a two-button confirm page instead — either way you never load the full app. Web Push, ntfy, Bark and Server酱 channels included.</p>
         </div>
         <div class="gate-card">
           <span class="gate-tag">GATE C</span>
@@ -372,7 +372,7 @@
           <h3 data-i18n="step1.h">Run it</h3>
           <pre data-i18n="step1.pre"><span class="c"># one command, front-end prebuilt (via bunx)</span>
 bunx anyplane
-<span class="c"># or straight from npm (Bun still required on PATH)</span>
+<span class="c"># or from npm — it tells you how to get Bun if it's missing</span>
 npm i -g anyplane</pre>
         </div>
         <div class="step">
@@ -382,7 +382,7 @@ npm i -g anyplane</pre>
 <span class="c"># LAN access always requires a token.</span></pre>
         </div>
       </div>
-      <p class="req" data-i18n="req">REQUIRES — Bun ≥ 1.3.13 (Windows ≥ 1.4.0) · claude and/or codex CLI on PATH, logged in</p>
+      <p class="req" data-i18n="req">REQUIRES — Bun ≥ 1.4.0 · claude and/or codex CLI on PATH, logged in</p>
     </div>
   </section>
 </main>
@@ -405,7 +405,7 @@ npm i -g anyplane</pre>
       'meta.title': 'AnyPlane — Run your agents, on any plane',
       'eyebrow': 'SELF-HOSTED · NO ACCOUNT · MIT',
       'h1': 'Run your agents,<br><em>on any plane.</em>',
-      'lede': 'Let the agents run — <strong>go live your life.</strong> When Claude Code or Codex needs you, a push notification lands on your lock screen with the ruling buttons already on it.',
+      'lede': 'Let the agents run — <strong>go live your life.</strong> When Claude Code or Codex needs you, the approval lands on your lock screen — clear it there and get back to what you were doing.',
       'scrollcue': 'SCROLL',
       'boardcap': 'Your agents keep working while you\'re away. <strong>The board comes to your pocket</strong> — approve, deny, or just watch.',
       'proof.cap': 'THE TOWER, LIVE',
@@ -416,7 +416,7 @@ npm i -g anyplane</pre>
       'gateA.h': 'One tower, two runtimes',
       'gateA.p': 'Claude Code and Codex share a single structured message boundary. Approve, rewind, branch, hand off between agents — the same gestures for both, with zero frontend forks.',
       'gateB.h': 'Clearance from the lock screen',
-      'gateB.p': 'Approvals arrive as push notifications you can rule on without opening the page — capability URLs carry a one-tap secret. Web Push, ntfy, Bark and Server酱 channels included.',
+      'gateB.p': 'Approvals arrive as push notifications carrying a one-tap capability secret. On Android and desktop Chrome you rule straight from the notification buttons; iOS ignores notification actions, so there the tap opens a two-button confirm page instead — either way you never load the full app. Web Push, ntfy, Bark and Server酱 channels included.',
       'gateC.h': 'Your tower, your rules',
       'gateC.p': 'Self-hosted and vendor-neutral. Transcripts stay on disk, tokens stay local, no account, no relay. Works with API-key and gateway setups the official remotes exclude.',
       'sec.manual': 'FLIGHT MANUAL — WHAT THE PROTOCOL DEPTH BUYS',
@@ -430,17 +430,17 @@ npm i -g anyplane</pre>
       'm4': 'VAPID (RFC 8292) and aes128gcm payloads (RFC 8291) implemented in-house — no push SDK, no third party reading your approvals.',
       'sec.takeoff': 'TAKEOFF',
       'step1.h': 'Run it',
-      'step1.pre': '<span class="c"># one command, front-end prebuilt (via bunx)</span>\nbunx anyplane\n<span class="c"># or straight from npm (Bun still required on PATH)</span>\nnpm i -g anyplane',
+      'step1.pre': '<span class="c"># one command, front-end prebuilt (via bunx)</span>\nbunx anyplane\n<span class="c"># or from npm — it tells you how to get Bun if it\'s missing</span>\nnpm i -g anyplane',
       'step2.h': 'Configure (optional)',
       'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># LAN access always requires a token.</span>',
-      'req': 'REQUIRES — Bun ≥ 1.3.13 (Windows ≥ 1.4.0) · claude and/or codex CLI on PATH, logged in',
+      'req': 'REQUIRES — Bun ≥ 1.4.0 · claude and/or codex CLI on PATH, logged in',
       'footer': 'MIT · FORMERLY CC-REMOTE',
     },
     'zh-CN': {
       'meta.title': 'AnyPlane — 你的 Agent，随地起降。',
       'eyebrow': '自托管 · 无账号 · MIT',
       'h1': '你的 Agent，<br><em>随地起降。</em>',
-      'lede': '让 agent 跑着任务，<strong>你去生活。</strong>Claude Code 或 Codex 需要你时，推送通知落上锁屏，裁决按钮就在通知上。',
+      'lede': '让 agent 跑着任务，<strong>你去生活。</strong>Claude Code 或 Codex 需要你时，审批落上锁屏——就地放行，然后继续手头的事。',
       'scrollcue': '下滑',
       'boardcap': '你不在电脑前，agent 照样干活。<strong>大屏装进你的口袋</strong>——批准、拒绝，或者只是看着。',
       'proof.cap': '塔台实况',
@@ -451,7 +451,7 @@ npm i -g anyplane</pre>
       'gateA.h': '一座塔台，两种运行时',
       'gateA.p': 'Claude Code 与 Codex 共享同一条结构化消息边界。审批、回滚、分叉、接力——两个 agent 用同一套手势，前端零分叉。',
       'gateB.h': '锁屏上直接放行',
-      'gateB.p': '审批以推送通知送达，无需打开页面即可裁决——能力 URL 携带一次性密钥。内置 Web Push、ntfy、Bark 与 Server酱通道。',
+      'gateB.p': '审批以推送通知送达，能力 URL 携带一次性密钥。Android 与桌面 Chrome 直接按通知上的按钮裁决；iOS 不支持通知按钮，点击改为打开一个两按钮确认页——两种路径都不需要加载完整应用。内置 Web Push、ntfy、Bark 与 Server酱通道。',
       'gateC.h': '你的塔台，你的规则',
       'gateC.p': '自托管、厂商中立。transcript 留在本地磁盘，token 留在本机，没有账号、没有中转。官方遥控排除的 API-key 与网关方案，这里照用。',
       'sec.manual': '飞行手册 — 协议深度换来了什么',
@@ -465,17 +465,17 @@ npm i -g anyplane</pre>
       'm4': 'VAPID（RFC 8292）与 aes128gcm 载荷（RFC 8291）全部自实现——不用推送 SDK，没有第三方读得到你的审批。',
       'sec.takeoff': '起飞',
       'step1.h': '跑起来',
-      'step1.pre': '<span class="c"># 一条命令，前端已预构建（经 bunx）</span>\nbunx anyplane\n<span class="c"># 或直接从 npm 安装（仍需 PATH 中有 Bun）</span>\nnpm i -g anyplane',
+      'step1.pre': '<span class="c"># 一条命令，前端已预构建（经 bunx）</span>\nbunx anyplane\n<span class="c"># 或从 npm 安装——缺 Bun 时会告诉你怎么装</span>\nnpm i -g anyplane',
       'step2.h': '配置（可选）',
       'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># 局域网访问必须配置 token。</span>',
-      'req': '运行要求 — Bun ≥ 1.3.13（Windows ≥ 1.4.0）· PATH 中有已登录的 claude 和/或 codex CLI',
+      'req': '运行要求 — Bun ≥ 1.4.0 · PATH 中有已登录的 claude 和/或 codex CLI',
       'footer': 'MIT · 前身 CC-REMOTE',
     },
     'zh-TW': {
       'meta.title': 'AnyPlane — 你的 Agent，隨地起降。',
       'eyebrow': '自託管 · 無帳號 · MIT',
       'h1': '你的 Agent，<br><em>隨地起降。</em>',
-      'lede': '讓 agent 跑著任務，<strong>你去生活。</strong>Claude Code 或 Codex 需要你時，推播通知落上鎖定畫面，裁決按鈕就在通知上。',
+      'lede': '讓 agent 跑著任務，<strong>你去生活。</strong>Claude Code 或 Codex 需要你時，審批落上鎖定畫面——就地放行，然後繼續手頭的事。',
       'scrollcue': '下滑',
       'boardcap': '你不在電腦前，agent 照樣工作。<strong>大屏裝進你的口袋</strong>——批准、拒絕，或者只是看著。',
       'proof.cap': '塔台實況',
@@ -486,7 +486,7 @@ npm i -g anyplane</pre>
       'gateA.h': '一座塔台，兩種執行環境',
       'gateA.p': 'Claude Code 與 Codex 共用同一條結構化訊息邊界。審批、回溯、分叉、接力——兩個 agent 用同一套手勢，前端零分叉。',
       'gateB.h': '鎖定畫面直接放行',
-      'gateB.p': '審批以推播通知送達，無需開啟頁面即可裁決——能力 URL 攜帶一次性金鑰。內建 Web Push、ntfy、Bark 與 Server醬通道。',
+      'gateB.p': '審批以推播通知送達，能力 URL 攜帶一次性金鑰。Android 與桌面 Chrome 直接按通知上的按鈕裁決；iOS 不支援通知按鈕，點擊改為開啟一個兩按鈕確認頁——兩種路徑都不需要載入完整應用。內建 Web Push、ntfy、Bark 與 Server醬通道。',
       'gateC.h': '你的塔台，你的規則',
       'gateC.p': '自託管、廠商中立。transcript 留在本機磁碟，token 留在本機，沒有帳號、沒有中繼。官方遙控排除的 API-key 與閘道方案，這裡照用。',
       'sec.manual': '飛行手冊 — 協定深度換來了什麼',
@@ -500,10 +500,10 @@ npm i -g anyplane</pre>
       'm4': 'VAPID（RFC 8292）與 aes128gcm 酬載（RFC 8291）全部自行實作——不用推播 SDK，沒有第三方讀得到你的審批。',
       'sec.takeoff': '起飛',
       'step1.h': '跑起來',
-      'step1.pre': '<span class="c"># 一條指令，前端已預建置（經 bunx）</span>\nbunx anyplane\n<span class="c"># 或直接從 npm 安裝（仍需 PATH 中有 Bun）</span>\nnpm i -g anyplane',
+      'step1.pre': '<span class="c"># 一條指令，前端已預建置（經 bunx）</span>\nbunx anyplane\n<span class="c"># 或從 npm 安裝——缺 Bun 時會告訴你怎麼裝</span>\nnpm i -g anyplane',
       'step2.h': '設定（可選）',
       'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># 區網存取必須設定 token。</span>',
-      'req': '執行需求 — Bun ≥ 1.3.13（Windows ≥ 1.4.0）· PATH 中有已登入的 claude 和/或 codex CLI',
+      'req': '執行需求 — Bun ≥ 1.4.0 · PATH 中有已登入的 claude 和/或 codex CLI',
       'footer': 'MIT · 前身 CC-REMOTE',
     },
   };

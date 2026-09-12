@@ -6,78 +6,67 @@
 
 > Run your agents, on any plane.
 
-**让 agent 跑着任务，你去生活。它有事叫你，锁屏按一下就好。**
+**Let your agents keep working while you go live your life. When one needs you, the approval is already waiting on your lock screen.**
 
-**官网 [anyplane.run](https://anyplane.run)**（国内访问可试 [anyplane.cn](https://anyplane.cn)） · npm 包 [`anyplane`](https://www.npmjs.com/package/anyplane)
+**[anyplane.run](https://anyplane.run)** · npm: [`anyplane`](https://www.npmjs.com/package/anyplane) · [简体中文](README.zh-CN.md)
 
 <p align="center">
-  <img src="docs/media/Greeting.png" alt="AnyPlane 会话界面：一次真实对话里向 README 读者打招呼" />
+  <img src="docs/media/Greeting.png" alt="AnyPlane session view: project-grouped session list and a live conversation" />
 </p>
 
-## 它能帮你做什么
+AnyPlane is a self-hosted, vendor-neutral control plane for the coding agents already running on your machine. Open it from your phone or any browser to watch Claude Code and Codex sessions stream, approve the file writes and commands they ask for, and pick up conversations where you left them.
 
-- **离开电脑也能盯着 agent**：手机上查看流式输出、审批文件写入和命令执行，锁屏后推送照样到。
-- **一个界面管两家 agent**：Claude Code 和 Codex 的会话按项目目录分组，随时接续历史对话。
-- **长跑任务交给 agent 自己盯**：设定目标让它干到达成为止，完成、出错、等你审批都会通知你。
-- **会活也能玩出花**：一键分叉当前会话、让一个 agent 接力另一个的工作、回滚对话或文件改动。
+## Why this exists
 
-## 原理
+The official remotes (Claude Code Remote Control, Codex remote) require a claude.ai subscription and route your session through the vendor. They are **unavailable** if you use an API key, an LLM gateway, Bedrock, Vertex, or Foundry — [and as of Claude Code v2.1.196, simply pointing `ANTHROPIC_BASE_URL` at a non-Anthropic host disables Remote Control entirely](https://code.claude.com/docs/en/remote-control).
 
-AnyPlane 不修改官方 CLI。服务端以子进程方式驱动两家 CLI 的 headless 协议——与 claude.ai/code 网页版桥接本地 CLI 用的是同一套本地协议；Codex 的事件在服务端翻译成与 Claude 相同的消息形状，前端因此一套界面通吃。
+AnyPlane is the control plane for everyone in that gap: no account, no relay, no telemetry. Your transcripts stay on your disk, your vendor tokens stay on your machine, and Claude Code and Codex share one interface.
 
-## 快速开始
+## What you get
 
-需要：Bun ≥ 1.4.0，PATH 中有已登录的官方 `claude` CLI；使用 Codex 后端则另需 `codex` CLI（≥ 0.147）。
+- **Watch agents from anywhere.** Streaming output, tool calls paired into cards, background sub-agents in a side panel — on a phone screen, over your LAN or your own tunnel.
+- **Rule on approvals from the lock screen.** When an agent wants to write a file or run a command, a push notification carries a one-tap capability secret. On Android and desktop Chrome you approve or deny straight from the notification buttons. On iOS, where Safari ignores notification actions, the tap opens a two-button confirm page instead — either way you never load the full app.
+- **Two runtimes, one interface.** Claude Code and Codex sessions are grouped by project directory and resumed with full context. The same gestures work on both.
+- **Approval rules, not just afk/yolo.** Auto-allow or auto-deny by tool, command prefix, or working directory; everything else still asks. Every automatic ruling is broadcast and logged.
+- **Notifications that actually reach you.** Web Push (VAPID and aes128gcm implemented in-house, no push SDK), plus ntfy, Bark and Server酱 webhook channels for environments where FCM isn't an option.
+- **Rewind, branch, hand off.** Roll back a conversation or the files it touched, fork a session with its full history, or have one agent hand a summarized brief to another.
+
+## How it works
+
+AnyPlane does not patch or wrap the official CLIs. The server drives each vendor's own headless protocol as a subprocess — Claude Code over stream-json NDJSON (the same local protocol claude.ai/code uses to bridge your CLI), Codex over its app-server JSON-RPC. Codex events are translated server-side into the Claude stream-json message shape, so there is exactly one message boundary and the frontend never forks.
+
+## Quick start
+
+You need **Bun ≥ 1.4.0** and a logged-in official `claude` CLI on your PATH. The Codex backend additionally needs `codex` CLI ≥ 0.147.
 
 ```bash
 bunx anyplane
 ```
 
-打开 <http://localhost:7480> 即可。前端已随 npm 包预构建，无需 clone 仓库；配置文件和运行数据默认放在 `~/.anyplane/`。
+Open <http://localhost:7480>. The frontend ships prebuilt in the npm package — no clone, no build step. Config and runtime data live in `~/.anyplane/`.
 
-从源码运行（开发用，本项目仅使用 Bun，请勿用 npm / yarn / pnpm）：
+Don't have Bun? `npm i -g anyplane` and `npx anyplane` work too — they'll tell you how to install Bun if it's missing.
+
+Running from source (Bun only — do not use npm / yarn / pnpm):
 
 ```bash
 bun install
-bun run build && bun run start   # 生产模式
-bun run dev                      # 开发模式：服务端 + Vite 热更新
+bun run build && bun run start   # production
+bun run dev                      # server + Vite HMR
 ```
 
-## 功能一览
+## Security
 
-**会话管理**
-- 会话按项目目录分组，显示 git 分支与状态徽标；新会话自动生成 AI 标题，支持改名、归档（回收站可恢复）。
-- 接续对话：精准恢复 Claude / Codex 的历史会话，上下文原样带回。
+Running AnyPlane means exposing "start a session on this machine" to whoever can reach the port — and starting a session is equivalent to arbitrary command execution. Take the bind address seriously.
 
-**交互与审批**
-- 流式输出实时渲染 Markdown；工具调用与结果配对成卡片，子代理等后台任务收进右侧栏，可随时停止。
-- agent 请求权限时推到浏览器里裁决，允许/拒绝一键完成；也可以配置全自动模式。
-- 模型、权限模式、effort 运行中随时切换；斜杠命令面板两家后端通吃。
-- 图片可直接粘贴发送；会话详情抽屉里有上下文用量、MCP 管理与 token 计量。
+- Listens on `127.0.0.1` only by default.
+- **Binding a non-loopback address (e.g. `0.0.0.0`) requires `authToken`**, or the server refuses to start.
+- With a token configured, startup prints a QR code containing the tokenized URL — scan it from your phone.
+- For access across networks, prefer Tailscale Funnel, Cloudflare Tunnel, or home IPv6 + DDNS over rolling your own ingress. All three recipes and their security tradeoffs are in [docs/public-access.md](docs/public-access.md).
 
-**通知**
-- Web Push：页面关了也能收到审批/完成/错误通知，审批通知自带允许/拒绝按钮，不打开页面直接裁决。
-- webhook 通道（ntfy / Bark / Server酱）：国内无 FCM 环境的出路，Server酱可直达微信。
+## Configuration
 
-**高级玩法**
-- 接力：一键让另一个 agent 接续本目录工作，自带交接简报。
-- 分叉：当前会话开出分支，携带全部历史，原会话不动。
-- 目标：设定完成条件，agent 持续工作直到达成。
-- 回滚：回滚对话或文件改动；Codex 侧可「从此处分叉」。
-- 收件箱汇总所有会话的待办；PWA 可添加到手机主屏。
-
-## 安全
-
-AnyPlane 的本质是把「在本机起会话」开放给能访问该端口的人，而起会话等价于任意命令执行——请认真对待监听地址。
-
-- 默认只监听 `127.0.0.1`（仅本机），这是安全默认值。
-- **绑定非回环地址（如 `0.0.0.0`）必须同时配置 `authToken`**，否则服务端拒绝启动。
-- 配置 token 后，启动时终端会打印带 token 的扫码 URL 二维码，手机扫码即入。
-- 跨网段访问不建议自建公网穿透；Tailscale funnel / Cloudflare Tunnel / IPv6+DDNS 三套免 VPS 配方见 [docs/public-access.md](docs/public-access.md)。
-
-## 配置
-
-配置文件 `anyplane.config.json`（项目根目录）或 `~/.anyplane/config.json`，均可选。最常用的几项：
+`anyplane.config.json` in the project root or `~/.anyplane/config.json` — both optional.
 
 ```json
 {
@@ -88,20 +77,24 @@ AnyPlane 的本质是把「在本机起会话」开放给能访问该端口的�
 }
 ```
 
-- `permissionPolicy`：`"ask"`（默认，转发 UI 审批）| `"bypass"`（全自动，慎用）。
-- 推送通知需要 HTTPS 或 localhost；iOS 需先把站点添加到主屏幕再订阅。
-- 完整配置项、推送 webhook 通道、环境变量见 [docs/configuration.md](docs/configuration.md)；域名访问（80/443 网关）见 [docs/gateway.md](docs/gateway.md)。
+- `permissionPolicy`: `"ask"` (default, forwards approvals to the UI) or `"bypass"` (fully automatic — use with care).
+- Push notifications require HTTPS or localhost. On iOS the site must be added to the Home Screen before it can subscribe.
+- Full option reference, webhook channels and environment variables: [docs/configuration.md](docs/configuration.md). Domain access via the 80/443 gateway: [docs/gateway.md](docs/gateway.md).
 
-## 已知限制
+## Known limitations
 
-- 部分功能（如 /btw、目标）需要 Claude CLI ≥ 2.1.139。
-- 回滚依赖文件检查点：compact 边界之前的消息不可回滚；Codex 无文件检查点，只能回滚对话或分叉。
-- Codex 不持久化推理过程，AnyPlane 以侧车文件补记（`~/.anyplane/reasoning/`）。
-- 运行数据目录 `~/.anyplane/` 不自动清理，由用户自行管理。
+- Some features (`/btw`, goals) need Claude CLI ≥ 2.1.139.
+- **iOS has never been tested on a real device.** The Web Push path degrades correctly by capability detection (confirm page when notification buttons are unavailable), but the author doesn't own an iPhone. If you try it — working or not — please open an issue.
+- Rewind depends on file checkpoints: messages before a compact boundary can't be rewound, and Codex has no file checkpoints at all (conversation rewind and fork only).
+- Codex doesn't persist reasoning; AnyPlane records it in a sidecar at `~/.anyplane/reasoning/`.
+- `~/.anyplane/` is never cleaned automatically — it's yours to manage.
+- **The UI is currently Simplified Chinese only.** i18n isn't in place yet; the interface is readable but not translated. This is the next thing on the list.
 
-## 开发与贡献
+## Contributing
 
-- 架构决策与开发约定见 [AGENTS.md](AGENTS.md)；发版流程见 [docs/releasing.md](docs/releasing.md)。
-- 长文本文档（调研/规划/审计）放 `docs/`，各子目录角色见 [docs/README.md](docs/README.md)；**入库文档不要描述本地仓库路径、密钥位置等机器相关信息**，确有需要写 `*.local.md`（不进 git）。
-- 端到端验证脚本在 `server/scripts/`（需服务端已启动，会真实调用 claude/codex CLI）。
-- 官方文档本地镜像：`bun run docs:claude` / `bun run docs:codex`，写入 gitignore 的 `docs/claude-code/` 与 `docs/codex/`。
+- Architecture decisions and working conventions: [AGENTS.md](AGENTS.md). Release process: [docs/releasing.md](docs/releasing.md).
+- Long-form docs (research, planning, audits) live in `docs/` — see [docs/README.md](docs/README.md) for the map. Don't commit machine-specific paths or secret locations; use `*.local.md` (gitignored) if you must.
+- End-to-end scripts are in `server/scripts/` and require a running server plus the real CLIs.
+- Local mirrors of the vendor docs: `bun run docs:claude` / `bun run docs:codex`.
+
+MIT. Formerly cc-remote.
