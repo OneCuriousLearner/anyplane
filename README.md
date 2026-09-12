@@ -8,6 +8,8 @@
 
 **Let your agents keep working while you go live your life. When one needs you, the approval is already waiting on your lock screen.**
 
+> Looking for 简体中文？See [README.zh-CN.md](README.zh-CN.md).
+
 **[anyplane.run](https://anyplane.run)** · npm: [`anyplane`](https://www.npmjs.com/package/anyplane) · [简体中文](README.zh-CN.md)
 
 <p align="center">
