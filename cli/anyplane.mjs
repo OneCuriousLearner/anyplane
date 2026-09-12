@@ -18,16 +18,25 @@ const isWin = process.platform === 'win32'
 
 /** PATH 逐项查找 + Bun 官方安装位置兜底（装完没重开终端时 PATH 还没生效） */
 function findBun() {
-  const names = isWin ? ['bun.exe', 'bun.cmd', 'bun'] : ['bun']
+  // Windows 只认 .exe/.cmd：无扩展名的同名文件是 Git Bash 的 sh shim，Node 无法 spawn。
+  // .cmd 只是 cmd 包装（Node 直 spawn 抛 EINVAL），而 npm i -g bun 在 Windows 只生成 shim——
+  // 先按 npm 全局布局解析它背后的真实 exe，解析不到才退回 shim 本体，由调用方套 cmd.exe。
+  const names = isWin ? ['bun.exe', 'bun.cmd'] : ['bun']
+  let shim = null
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (!dir) continue
     for (const name of names) {
       const p = join(dir, name)
-      if (existsSync(p)) return p
+      if (!existsSync(p)) continue
+      if (name === 'bun.exe') return p
+      const real = join(dir, 'node_modules', 'bun', 'bin', 'bun.exe')
+      if (existsSync(real)) return real
+      shim ??= p
     }
   }
   const fallback = isWin ? join(homedir(), '.bun', 'bin', 'bun.exe') : join(homedir(), '.bun', 'bin', 'bun')
-  return existsSync(fallback) ? fallback : null
+  if (existsSync(fallback)) return fallback
+  return shim
 }
 
 function missingBunMessage() {
@@ -72,7 +81,19 @@ if (typeof globalThis.Bun !== 'undefined') {
 
   const { spawn } = await import('node:child_process')
   const entry = fileURLToPath(new URL('./anyplane.ts', import.meta.url))
-  const child = spawn(bun, [entry, ...args], { stdio: 'inherit', windowsHide: false })
+  // .cmd shim 必须经 cmd.exe 承载（同 resolveClaudeCommand 的 /d /s /c 包装）；
+  // Windows 上 Ctrl+C 由控制台送达整个进程组，这层包装不会吞信号
+  const isCmdShim = isWin && bun.toLowerCase().endsWith('.cmd')
+  const spawnArgs = isCmdShim ? ['/d', '/s', '/c', bun, entry, ...args] : [entry, ...args]
+  const spawnCmd = isCmdShim ? 'cmd.exe' : bun
+  // spawn 对损坏的 exe 可能同步抛（Windows EFTYPE），与异步 error 事件走同一条报错路径
+  let child
+  try {
+    child = spawn(spawnCmd, spawnArgs, { stdio: 'inherit', windowsHide: false })
+  } catch (err) {
+    process.stderr.write(`[anyplane] 无法启动 Bun（${bun}）：${err.message}\n`)
+    process.exit(1)
+  }
 
   // Ctrl+C 由终端直接送达子进程（共享 stdio）。父进程按住信号不退，
   // 等子进程跑完自己的优雅关闭再跟随退出——抢先退出会让终端以为命令已经结束。
