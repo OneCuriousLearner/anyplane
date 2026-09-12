@@ -69,7 +69,7 @@ e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干�
 - 大部分交互逻辑在 `pages/Chat.tsx`；各子系统的入口文件读目录即得，不在此列。
 - `lib/ws.ts` — WS 客户端。每条下行 `cli` 事件带服务端分配的单调 `seq`，客户端跨重连维护 `lastSeq` 高水位并在 `attach` 时通过 `fromSeq` 触发单播补发（照搬官方 Bridge 序号游标模型）；断线太久环底被挤掉时服务端推送 `replay_gap` 引导前端重载历史。
 - **`lib/ingest.ts` — 消息 ingest 归并唯一实现**：live 流、tail 实时追加、历史批量加载三路共用，彻底消灭行为分叉。tool_use ↔ tool_result 跨消息配对成卡；先到的结果进 `pending` 乱序缓冲，待工具块落地时补齐修复；真孤儿推迟到批次收尾或权威 idle 时浮现为提示。
-- **抄本滚动与尾部窗口化三条红线**（两次回退的根因，踩坑实录见 ROADMAP）：①初始定位必须先于窗口化——首个非空抄本 layout 阶段 `auto` 直达底部，完成前扩窗门控恒关；②扩窗只认向上滚动——本仓库不存在程序化向上滚动（跟随/回底/锚定补偿全向下，新增向上滚动必须套 ignoreScrollUntil 守卫）；③窗口粒度是渲染行不是消息数。Transcript 行 key 必须保持内容派生（msg.id / 首块 key），索引 key 会让扩窗平移 remount 掉已展开的思考/工具卡。翻页 prepend 前必须先 `preparePrepend()` 捕获锚点。
+- **抄本滚动与尾部窗口化三条红线**（两次回退的根因，踩坑实录见 `docs/research/2026-09-12-transcript-windowing.md`）：①初始定位必须先于窗口化——首个非空抄本 layout 阶段 `auto` 直达底部，完成前扩窗门控恒关；②扩窗只认向上滚动——本仓库不存在程序化向上滚动（跟随/回底/锚定补偿全向下，新增向上滚动必须套 ignoreScrollUntil 守卫）；③窗口粒度是渲染行不是消息数。Transcript 行 key 必须保持内容派生（msg.id / 首块 key），索引 key 会让扩窗平移 remount 掉已展开的思考/工具卡。翻页 prepend 前必须先 `preparePrepend()` 捕获锚点。
 - 过滤规则：`<system-reminder>`/isMeta 不进主抄本，sidechain（子代理）消息不入主流；`compact_boundary` 渲染为分隔线。
 - 后台任务侧栏三条血泪：① **`task_started` 是 live-only 不落盘**——中途接入的客户端只能靠 status 事件携带的服务端权威 `activeTasks` 水合补建 running 桶，否则首绘即终态；② 历史 `resp.subagents` **只回填「Agent/Task tool_use 在已加载历史窗口内、且主线 tool_result 缺失」的 subagent**——已完成的与调用在分页窗口之外的都不建桶（实测窗口外 20 个 subagent 被误判未完成 → 复活 → 水合判终态 → 30s 齐消失）；③ **终态语义只有一种**：挂 `evictAfter` 宽限期驱逐（镜像官方协调器面板 `PANEL_GRACE_MS`），驱逐即永久，外部会话（tailer 路径）以主线 tool_result 为唯一终态信号走同一套。codex 侧桶键统一为子线程 id；`collabAgentToolCall` 同时出主线 Collab 工具卡（Begin 建卡、End 配对），否则 codex 会话主线看不到任何工具调用。
 

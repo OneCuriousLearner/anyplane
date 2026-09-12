@@ -145,7 +145,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
    *  中途接入的客户端缺早期转录——终态经 thread/read 拉全量补齐。
    *  **锚点合并而非全量重建**（实现见 lib/ingest.mergeTerminalHistoryState）：上游 legacy
    *  thread/read 不返回 commandExecution/collabAgentToolCall 等工具项（0.148 实测，
-   *  见 ROADMAP 方向四前置二），重建会把 live 转发来的工具卡抹掉。
+   *  见 docs/research/2026-09-11-codex-upstream-behavior-notes.md），重建会把 live 转发来的工具卡抹掉。
    *  桶在 30s 宽限期内已被驱逐（慢 fetch 晚于驱逐滴答）时丢弃结果——
    *  taskBucket() 重建会产出 status:'running' 且无 evictAfter 的僵尸卡，永不驱逐。 */
   const maybeFetchCodexTranscript = (b: TaskBucket) => {
