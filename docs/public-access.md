@@ -7,6 +7,19 @@
 AnyPlane 是单端口服务（7480 同时托管静态前端 + REST + WebSocket），三套方案都只是把
 `127.0.0.1:7480` 安全地暴露出去，服务端本身零改动。
 
+## 一键脚本（三方案的最小命令封装）
+
+```bash
+bun run public-access funnel            # 方案一
+bun run public-access cf-quick          # 方案二的临时地址（零账号验证用）
+bun run public-access caddy <域名>      # 方案三的反代部分
+```
+
+脚本只做隧道创建与反代（二进制探测 → token 硬检查 → 本地服务预检 → 启动），
+**不碰账号体系**（tailscale up / cloudflared login / DDNS 仍需按下方各方案自理）。
+未配置 `authToken` 一律拒绝执行——隧道层暴露在服务端启动检查之外，token 全靠自觉，
+脚本把自觉变成硬门槛。CF 命名隧道涉及账号与 DNS 配置，不在脚本范围内。
+
 ## 先懂两条路：为什么"通知到了、按钮却点不动"
 
 推送链路和审批回执是**两条方向相反、互不相干的路径**：

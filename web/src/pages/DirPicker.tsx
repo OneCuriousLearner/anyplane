@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { errorMessage, fetchDirList, type DirEntry, type SessionInfo } from '../lib/api'
+import {
+  errorMessage,
+  fetchBackendsStatus,
+  fetchDirList,
+  type BackendsStatus,
+  type DirEntry,
+  type SessionInfo,
+} from '../lib/api'
+import { backendFixHint, backendNeedsAttention } from '../components/BackendStatusCard'
 
 type NodeState =
   | { status: 'loading' }
@@ -26,6 +34,7 @@ export function DirPicker(props: {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState('')
   const [backend, setBackend] = useState<'claude' | 'codex'>('claude')
+  const [backendsStatus, setBackendsStatus] = useState<BackendsStatus | null>(null)
   const [starting, setStarting] = useState(false)
   const [revealing, setRevealing] = useState(false)
   const [notice, setNotice] = useState('')
@@ -79,6 +88,13 @@ export function DirPicker(props: {
   useEffect(() => {
     loadLevel(ROOT)
   }, [loadLevel])
+
+  // 双后端登录状态：选中的后端未装/未登录时在确认栏给指引（60s 服务端缓存，打开一次取一回即可）
+  useEffect(() => {
+    fetchBackendsStatus()
+      .then(setBackendsStatus)
+      .catch(() => {})
+  }, [])
 
   // 覆盖层打开期间锁定背景滚动
   useEffect(() => {
@@ -334,10 +350,18 @@ export function DirPicker(props: {
                 onClick={() => setBackend(b)}
               >
                 {b === 'claude' ? 'Claude' : 'Codex'}
+                {backendsStatus && backendNeedsAttention(backendsStatus[b]) && (
+                  <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" aria-label="未登录或未安装" />
+                )}
               </button>
             ))}
           </div>
         </div>
+        {backendsStatus && backendNeedsAttention(backendsStatus[backend]) && (
+          <div className="mb-2 font-mono text-[10px] leading-snug text-faint">
+            {backendFixHint(backendsStatus[backend], backend)}
+          </div>
+        )}
         <button
           className="w-full rounded-full bg-ink py-2.5 text-sm font-medium text-bg disabled:opacity-40"
           disabled={!selected || starting || revealing}

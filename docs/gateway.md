@@ -19,8 +19,27 @@ bun run gateway --insecure   # 仅授信内网；有 authToken 则可去掉 --in
 
 ## 部署到远程容器
 
-在容器内 `bun run build && bun run start`，配置 `authToken` 后把 7480 端口通过你的域名暴露即可（未配置 token 时严禁绑定非回环地址——服务端会拒绝启动）。
+仓库根目录的 `Dockerfile` 是单阶段 all-in-one 镜像（Bun + claude/codex 双 CLI，构建期完成 `bun install` 与前端构建）：
+
+```bash
+docker build -t anyplane .
+docker run -d --name anyplane -p 7480:7480 \
+  -e ANYPLANE_TOKEN=<至少32位随机串> \
+  -v anyplane-data:/root/.anyplane \
+  -v anyplane-claude:/root/.claude \
+  -v anyplane-codex:/root/.codex \
+  -v "$HOME/projects:/root/projects" \
+  anyplane
+```
+
+- 镜像默认 `ANYPLANE_HOST=0.0.0.0`，因此 **`ANYPLANE_TOKEN` 必填**——不配则服务端拒绝启动（fail-closed，与裸机「非回环必须 token」同一守卫）。
+- `~/.anyplane` 存 AnyPlane 运行数据。
+- **凭证目录两种挂法（择一）**：① 命名卷（推荐，隔离），首次启动后 `docker exec -it anyplane claude auth login` / `codex login` 登录一次（claude 用 API key 则 `-e ANTHROPIC_API_KEY=...` 即可，无需挂卷）；② 直挂宿主 `~/.claude` / `~/.codex` 共享登录态——但容器 CLI 对这些目录可写，版本比宿主新时可能把宿主配置/状态向前迁移（codex 带版本 sqlite 状态尤其敏感），拖累宿主旧 CLI，走这条建议 `--build-arg` 钉到与宿主一致的版本。
+- **会话工作目录只能是容器内可见路径**：要管哪个项目就把哪个目录挂进来（上例 `/root/projects`），新会话目录选择器看到的是容器内路径。
+- Windows 用 Docker Desktop 跑此 Linux 镜像即可；PowerShell 挂卷语法：`-v "$env:USERPROFILE\.claude:/root/.claude"`。
+- 版本可复现：内置 CLI 默认钉在仓库验证过的版本（protocol-drift CI 负责前移），`--build-arg BUN_VERSION=… --build-arg CLAUDE_CODE_VERSION=… --build-arg CODEX_VERSION=…` 可覆盖（如 `latest`）。
+- 手工容器部署（不用 Dockerfile）：容器内 `bun install && bun run build && bun run start`，同样要求配置 token 后绑非回环。
 
 ## 跨网段访问
 
-AnyPlane 不自建公网穿透。三套免 VPS 配方（Tailscale funnel / Cloudflare Tunnel / 家宽 IPv6+DDNS）见 [public-access.md](public-access.md)，含安全红线与手机蜂窝网络验收清单。
+AnyPlane 不自建公网穿透。三套免 VPS 配方（Tailscale funnel / Cloudflare Tunnel / 家宽 IPv6+DDNS）见 [public-access.md](public-access.md)，含安全红线与手机蜂窝网络验收清单；三配方的一键封装为 `bun run public-access <funnel|cf-quick|caddy>`（未配 authToken 拒绝执行）。

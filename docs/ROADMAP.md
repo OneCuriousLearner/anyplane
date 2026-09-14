@@ -32,6 +32,7 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 | 方向五 | Codex 实时流与思考增量对齐（Delta 通知接入） | 2026-09-07 | — |
 | 方向六 | 架构解耦与上帝文件重构（BackendPort 抽象） | 2026-09-07 | — |
 | 方向七 | 长会话虚拟列表与初始定位重构（尾部窗口化） | 2026-09-09 | 4 条可选优化，见下方「抄本窗口化 / 虚拟列表」 |
+| 方向十一 | 分发与首次上手（launcher / README 英文化 / Dockerfile / 登录状态页 / 公网一键脚本） | 2026-09-12 / 09-14 | `bun` 进 optionalDependencies 待 launcher 数据；Docker 镜像未实测构建（CI 盯） |
 
 ## 方向二：App 壳（Capacitor，不换技术栈）
 
@@ -120,24 +121,11 @@ Claude 侧有 `generate_session_title` 自动标题（2026-08-27 已接入），
 
 ## 方向十一：分发与首次上手补完
 
-**立项背景**：生态研究的 Phase 1 清单里，功能性主项（审批规则引擎）已交付，
-剩余项**全部是分发与首次上手类**——与 2026-09-12 实测出的三个卡点同源，
-独立佐证了「瓶颈在可达性而非能力」。这一类此前只存在于研究库的 CHANGELOG，
-主仓库排期文档里没有位置，故立此方向。
-
-已交付项（npm bin 改 Node launcher、README 英文化）见 [delivered.md](delivered.md)。
-
-**待排期**：
-- **Dockerfile**（优先级最高）：单阶段 Bun 镜像 + 双 CLI，挂载 `~/.anyplane` 与 CLI 凭证卷，
-  入口命令与 `bunx anyplane` 一致。对自托管人群是标配，且顺带绕开 Bun 门槛。
-- **双后端登录状态页**：Claude 走 `initialize.account` 或配置目录探测，Codex 走 `account/read`
-  或等效 RPC；列表页展示「Claude 已登录 / Codex 未登录 / API-key 组织用户」。
-  降低首次使用门槛——当前 CLI 未登录时的失败表现为会话起不来，用户不知道该去登录哪个。
-- **公网配方一键脚本**：封装 `docs/public-access.md` 三套配方的最小启动命令，
-  脚本只负责隧道创建与反代，不碰账号体系（保住「不依赖第三方账号」的底线）。
-- **待评估：把 `bun` 放进 `optionalDependencies`**，让 `npx anyplane` 彻底零门槛。
-  代价是包体积从当前量级涨到约 90MB。**先用 launcher 收集数据再决定**——
-  如果安装失败反馈消失，说明一行安装提示已经够了，不必付这个体积。
+**已于 2026-09-12 / 09-14 全部交付**（Dockerfile、双后端登录状态页、公网配方一键脚本，
+交付记录见 [delivered.md](delivered.md)）。原位保留的唯一待评估项：
+**把 `bun` 放进 `optionalDependencies`**，让 `npx anyplane` 彻底零门槛。
+代价是包体积从当前量级涨到约 90MB。**先用 launcher 收集数据再决定**——
+如果安装失败反馈消失，说明一行安装提示已经够了，不必付这个体积。
 
 ## 方向十二：上量前的运行韧性与下一轮技术债
 

@@ -24,6 +24,21 @@ export {
   type RolloutTokenCount,
 } from './mapping'
 
+/** app-server 握手（initialize + initialized）：ensureRpc 与一次性探测（backends/status）
+ *  共用同一参数面——clientInfo/capabilities 只有一份，防两条 spawn 路径漂移。 */
+export async function handshakeAppServer(rpc: RpcClient, timeoutMs = 30_000): Promise<{ codexHome?: string }> {
+  const initRes = (await rpc.request(
+    'initialize',
+    {
+      clientInfo: { name: 'anyplane', title: 'anyplane', version: '0.2.0' },
+      capabilities: { experimentalApi: true },
+    },
+    { timeoutMs },
+  )) as { codexHome?: string }
+  rpc.notify('initialized', {})
+  return initRes
+}
+
 type Params = Record<string, unknown>
 
 // ---------- 运行时单例 ----------
@@ -68,12 +83,8 @@ export class CodexRuntime {
         this.rpc = undefined
         for (const s of this.sessions.values()) s.handleProcessExit()
       }
-      const initRes = (await rpc.request('initialize', {
-        clientInfo: { name: 'anyplane', title: 'anyplane', version: '0.2.0' },
-        capabilities: { experimentalApi: true },
-      })) as { codexHome?: string }
+      const initRes = await handshakeAppServer(rpc)
       if (typeof initRes.codexHome === 'string') this.reportedHome = initRes.codexHome
-      rpc.notify('initialized', {})
       this.rpc = rpc
       log.info('[codex] app-server 已启动并完成握手')
       return rpc
@@ -88,6 +99,12 @@ export class CodexRuntime {
   async rpcRequest(method: string, params?: unknown, timeoutMs?: number): Promise<unknown> {
     const rpc = await this.ensureRpc()
     return rpc.request(method, params, { timeoutMs })
+  }
+
+  /** 只在 app-server 已运行时返回现有连接，绝不触发 spawn。
+   *  状态探测类调用方（backends/status）用它避免为一次查询永久拉起共享进程（懒 spawn 红线）。 */
+  peekRpc(): RpcClient | undefined {
+    return this.rpc && !this.rpc.exited ? this.rpc : undefined
   }
 
   respondSafe(id: number | string, result: unknown): void {
