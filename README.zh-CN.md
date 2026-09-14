@@ -54,13 +54,20 @@ docker build -t anyplane .
 docker run -d --name anyplane -p 7480:7480 \
   -e ANYPLANE_TOKEN=<至少32位随机串> \
   -v anyplane-data:/root/.anyplane \
-  -v "$HOME/.claude:/root/.claude" \
-  -v "$HOME/.codex:/root/.codex" \
+  -v anyplane-claude:/root/.claude \
+  -v anyplane-codex:/root/.codex \
   -v "$HOME/projects:/root/projects" \
   anyplane
 ```
 
-镜像默认绑 `0.0.0.0`，因此 `ANYPLANE_TOKEN` 必填（不配则服务端拒绝启动——刻意的 fail-closed）。挂载两个 CLI 的凭证目录可复用本机登录态；想起会话的项目目录也必须挂进容器（示例为 `/root/projects`），新会话目录选择器里看到的是容器内路径。需要可复现构建时用 `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y` 钉死版本。
+镜像默认绑 `0.0.0.0`，因此 `ANYPLANE_TOKEN` 必填（不配则服务端拒绝启动——刻意的 fail-closed）。想起会话的项目目录必须挂进容器（示例为 `/root/projects`），新会话目录选择器里看到的是容器内路径。需要可复现构建时用 `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y` 钉死版本。
+
+凭证目录两种挂法（择一）：
+
+- **命名卷（推荐，隔离）**，如上例。首次启动后在容器内登录一次：`docker exec -it anyplane claude auth login` / `codex login`。claude 走 API key 时更省事：`-e ANTHROPIC_API_KEY=...`，无需挂卷。
+- **直挂宿主目录**（`-v "$HOME/.claude:/root/.claude"` 等）共享宿主登录态，但容器 CLI 对这些目录**可写**：容器 CLI 比宿主机新时可能把宿主配置/状态文件向前迁移（codex 的带版本 sqlite 状态尤其敏感），反过来弄坏宿主机上较旧的 CLI。走这条建议 `--build-arg` 把容器 CLI 钉到与宿主一致的版本。
+
+Windows（Docker Desktop）跑这个 Linux 镜像即可，无需 Windows 原生镜像；PowerShell 挂卷语法：`-v "$env:USERPROFILE\.claude:/root/.claude"`。
 
 ## 功能一览
 

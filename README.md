@@ -66,13 +66,20 @@ docker build -t anyplane .
 docker run -d --name anyplane -p 7480:7480 \
   -e ANYPLANE_TOKEN=<at-least-32-random-chars> \
   -v anyplane-data:/root/.anyplane \
-  -v "$HOME/.claude:/root/.claude" \
-  -v "$HOME/.codex:/root/.codex" \
+  -v anyplane-claude:/root/.claude \
+  -v anyplane-codex:/root/.codex \
   -v "$HOME/projects:/root/projects" \
   anyplane
 ```
 
-The image binds `0.0.0.0` by default, so `ANYPLANE_TOKEN` is mandatory (the server refuses to start otherwise — fail-closed). Mount the Claude/Codex credential directories to reuse your existing logins, and mount any project directories you want to open sessions in (they must be visible inside the container). Pin CLI versions at build time with `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y`.
+The image binds `0.0.0.0` by default, so `ANYPLANE_TOKEN` is mandatory (the server refuses to start otherwise — fail-closed). Mount any project directories you want to open sessions in (they must be visible inside the container). Pin CLI versions at build time with `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y`.
+
+Credential directories — pick one:
+
+- **Named volumes (recommended, isolated)** as shown above. Log in once inside the container: `docker exec -it anyplane claude auth login` / `codex login`. For Claude with an API key, skip the volume entirely: `-e ANTHROPIC_API_KEY=...`.
+- **Bind-mount your host dirs** (`-v "$HOME/.claude:/root/.claude"` etc.) to share the host login — but the container CLIs can *write* there: a newer container CLI may migrate the host's config/state forward (Codex's versioned sqlite state especially), breaking an older host CLI. If you do this, pin the image CLIs to your host versions via `--build-arg`.
+
+On Windows, Docker Desktop runs this Linux image as-is (no Windows-native image needed); PowerShell volume syntax: `-v "$env:USERPROFILE\.claude:/root/.claude"`.
 
 ## Security
 

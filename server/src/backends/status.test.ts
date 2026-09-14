@@ -3,6 +3,7 @@ import {
   classifyClaudeAuth,
   classifyCodexAccount,
   getBackendsStatus,
+  parseClaudeAuthStatusOutput,
   resetBackendsStatusCache,
 } from './status'
 
@@ -37,6 +38,29 @@ describe('classifyClaudeAuth', () => {
       state: 'token',
       detail: 'quantum',
     })
+  })
+})
+
+describe('parseClaudeAuthStatusOutput（退出码语义：loggedIn?0:1）', () => {
+  // 容器实测锚点：未登录时 exit 1 但 stdout 是合法 JSON——非零退出不能判探测失败
+  test('exit 1 + 未登录 JSON → not-logged-in', () => {
+    const out = JSON.stringify({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' })
+    expect(parseClaudeAuthStatusOutput(1, out)).toEqual({ state: 'not-logged-in' })
+  })
+
+  test('exit 0 + 已登录 JSON → 按 authMethod 分类', () => {
+    const out = JSON.stringify({ loggedIn: true, authMethod: 'oauth_token', apiProvider: 'firstParty' })
+    expect(parseClaudeAuthStatusOutput(0, out)).toEqual({ state: 'token' })
+  })
+
+  test('非 JSON 输出（老版本无子命令等）→ unknown 且留现场', () => {
+    const r = parseClaudeAuthStatusOutput(1, 'error: unknown command auth')
+    expect(r.state).toBe('unknown')
+    expect(r.error).toContain('unknown command auth')
+  })
+
+  test('空输出 → unknown', () => {
+    expect(parseClaudeAuthStatusOutput(2, '').state).toBe('unknown')
   })
 })
 

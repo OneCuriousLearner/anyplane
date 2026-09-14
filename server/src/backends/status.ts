@@ -88,6 +88,18 @@ export function classifyCodexAccount(r: {
 
 const PROBE_TIMEOUT_MS = 20_000
 
+/** auth status 退出码语义（CLI 源码 authStatus 末行）：loggedIn ? 0 : 1——
+ *  未登录也退出 1 且仍输出合法 JSON，因此非零退出 ≠ 探测失败：
+ *  输出可解析为 JSON 一律以 JSON 为准；不可解析才是真失败（老版本无此子命令等）。 */
+export function parseClaudeAuthStatusOutput(code: number, out: string): BackendStatus {
+  try {
+    const parsed = JSON.parse(out) as { loggedIn?: boolean; authMethod?: string; apiProvider?: string }
+    return classifyClaudeAuth(parsed)
+  } catch {
+    return { state: 'unknown', error: `exit ${code}: ${out.trim().slice(0, 200) || '无输出'}` }
+  }
+}
+
 async function probeClaude(): Promise<BackendStatus> {
   const { cmd, prefix } = resolveClaudeCommand()
   let proc: ReturnType<typeof Bun.spawn>
@@ -106,12 +118,7 @@ async function probeClaude(): Promise<BackendStatus> {
     const stdout = proc.stdout
     if (typeof stdout === 'number' || !stdout) return { state: 'unknown', error: 'stdout 不可用' }
     const [code, out] = await Promise.all([proc.exited, new Response(stdout).text()])
-    if (code !== 0) {
-      // auth status 对未登录也退出 0（loggedIn:false）；非零是异常（老版本无此子命令等）
-      return { state: 'unknown', error: `exit ${code}` }
-    }
-    const parsed = JSON.parse(out) as { loggedIn?: boolean; authMethod?: string; apiProvider?: string }
-    return classifyClaudeAuth(parsed)
+    return parseClaudeAuthStatusOutput(code, out)
   } catch (e) {
     return { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
   } finally {

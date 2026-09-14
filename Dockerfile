@@ -6,15 +6,25 @@
 # 运行:  docker run -d --name anyplane -p 7480:7480 \
 #          -e ANYPLANE_TOKEN=<至少32位随机串> \
 #          -v anyplane-data:/root/.anyplane \
-#          -v "$HOME/.claude:/root/.claude" \
-#          -v "$HOME/.codex:/root/.codex" \
+#          -v anyplane-claude:/root/.claude \
+#          -v anyplane-codex:/root/.codex \
 #          -v "$HOME/projects:/root/projects" \
 #          anyplane
+#
+# 凭证目录两种挂法（择一，上面示例是推荐的第一种）：
+#   ① 命名卷（隔离）：首次启动后在容器内登录一次——docker exec -it anyplane claude auth login /
+#      codex login（claude 走 API key 时更省事：-e ANTHROPIC_API_KEY=... 即可，无需挂卷）。
+#   ② 直挂宿主目录（"$HOME/.claude" / "$HOME/.codex"）：共享宿主登录态，但容器 CLI 对这些目录
+#      可写——容器 CLI 比宿主机新时可能把宿主配置/状态文件向前迁移（codex 的带版本 sqlite
+#      状态尤其敏感），反过来弄坏宿主机上较旧的 CLI。走这条建议 --build-arg 把容器 CLI
+#      钉到与宿主一致的版本。
 #
 # ANYPLANE_HOST 默认 0.0.0.0（容器内回环外部不可达）；服务端启动守卫要求绑非回环必须配
 # authToken，因此不配 ANYPLANE_TOKEN 会拒绝启动——这是刻意的 fail-closed。
 # 会话的工作目录只能是容器内可见的路径：把宿主机项目目录挂进来（上例 /root/projects），
 # 再在 Web 的新会话目录选择器里选对应容器路径。
+# Windows（Docker Desktop）跑 Linux 容器即可，无需 Windows 原生镜像；
+# PowerShell 挂卷语法：-v "$env:USERPROFILE\.claude:/root/.claude"
 
 FROM node:22-bookworm-slim
 

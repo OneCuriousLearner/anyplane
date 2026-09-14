@@ -19,8 +19,14 @@
   而非 bun 基底的唯一原因。构建期 `bun install --frozen-lockfile` + `bun run build`。
   入口 `bun cli/anyplane.ts`（跳过 node launcher 包装层：PID 1 即服务进程，`docker stop`
   的 SIGTERM 直达优雅关闭）。默认 `ANYPLANE_HOST=0.0.0.0`，复用「非回环必须 token」守卫
-  实现 fail-closed。版本锚点走 `--build-arg`；CI 新增 docker build job（本机无 docker，
-  构建验证只能交给 CI）。
+  实现 fail-closed。版本锚点走 `--build-arg`；CI 新增 docker build job。
+  **本机实测（2026-09-14）**：TencentOS 无特权容器里 dockerd 需 `--iptables=false`
+  （NAT 不可用），构建改走 buildah `--isolation=chroot --storage-driver=vfs`；
+  镜像构建、fail-closed 拒绝启动、带 token 起服务、双探针在容器内全通。
+  **凭证卷默认改推命名卷**：容器 CLI 对挂载的宿主 `~/.claude`/`~/.codex` 可写，
+  版本比宿主新时会把宿主配置/状态向前迁移（codex 带版本 sqlite 状态尤其敏感）——
+  「替用户更新 CLI」的真实风险点在凭证卷而不在镜像内安装；
+  直挂宿主目录降级为「共享登录态但需钉版本」的可选项（README / gateway.md 同口径）。
 - **双后端登录状态页**：新端点 `GET /api/backends/status`（30s 缓存 + single-flight，
   列表页 10s 轮询不会放大成子进程风暴；`unknown` 不入缓存允许即时重试）。
   Claude 侧探测用官方轻量子命令 `claude auth status --json`（2.1.270 实测有
@@ -28,8 +34,12 @@
   `oauth_token` 在 JSON 里不细分 env/setup-token，统一归「Token」。
   Codex 侧走 `account/read`：`account=null + requiresOpenaiAuth=false` 即自定义 provider
   （API-key 组织用户的典型形态），这条语义实测确认（本机 deepseek 配置）。
-  前端 `BackendStatusCard` 自决可见性——双后端可用不占版面，有问题或空列表（首次上手）才出现；
-  DirPicker 后端切换同步加警示点与修复指引。
+  **容器实测抓到并已修的真 bug**：`claude auth status` 退出码语义是 `loggedIn ? 0 : 1`——
+  未登录退出 1 但 stdout 仍是合法 JSON，初版探针把非零退出误判 `unknown`，
+  恰好错杀「未登录」这个最该正确的状态；修复后提取纯函数 `parseClaudeAuthStatusOutput`
+  并补 4 个回归测试。前端 `BackendStatusCard` 自决可见性——双后端可用不占版面，
+  有问题或空列表（首次上手）才出现；DirPicker 后端切换同步加警示点与修复指引。
+  容器 UI（双后端未登录态）已经 chrome-devtools 截图验证。
 - **公网配方一键脚本**（`bun run public-access <funnel|cf-quick|caddy>`）：只做隧道创建与反代，
   不碰账号体系。**未配 authToken 一律拒绝执行**（集成测试锁定：空 HOME 下 exit 1）——
   隧道层暴露在服务端启动检查之外，token 防线从「靠自觉」升级为脚本硬门槛。
