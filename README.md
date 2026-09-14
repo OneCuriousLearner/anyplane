@@ -72,7 +72,7 @@ docker run -d --name anyplane -p 7480:7480 \
   anyplane
 ```
 
-The image binds `0.0.0.0` by default, so `ANYPLANE_TOKEN` is mandatory (the server refuses to start otherwise — fail-closed). Mount any project directories you want to open sessions in (they must be visible inside the container). Pin CLI versions at build time with `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y`.
+The image binds `0.0.0.0` by default, so `ANYPLANE_TOKEN` is mandatory (the server refuses to start otherwise — fail-closed). Mount any project directories you want to open sessions in (they must be visible inside the container). The baked-in CLI versions default to the ones this repo was verified against (the protocol-drift CI keeps them current); override at build time with `--build-arg CLAUDE_CODE_VERSION=latest` etc.
 
 Credential directories — pick one:
 

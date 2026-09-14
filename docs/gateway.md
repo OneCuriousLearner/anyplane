@@ -37,7 +37,7 @@ docker run -d --name anyplane -p 7480:7480 \
 - **凭证目录两种挂法（择一）**：① 命名卷（推荐，隔离），首次启动后 `docker exec -it anyplane claude auth login` / `codex login` 登录一次（claude 用 API key 则 `-e ANTHROPIC_API_KEY=...` 即可，无需挂卷）；② 直挂宿主 `~/.claude` / `~/.codex` 共享登录态——但容器 CLI 对这些目录可写，版本比宿主新时可能把宿主配置/状态向前迁移（codex 带版本 sqlite 状态尤其敏感），拖累宿主旧 CLI，走这条建议 `--build-arg` 钉到与宿主一致的版本。
 - **会话工作目录只能是容器内可见路径**：要管哪个项目就把哪个目录挂进来（上例 `/root/projects`），新会话目录选择器看到的是容器内路径。
 - Windows 用 Docker Desktop 跑此 Linux 镜像即可；PowerShell 挂卷语法：`-v "$env:USERPROFILE\.claude:/root/.claude"`。
-- 版本可复现：`--build-arg BUN_VERSION=1.x.y --build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c`。
+- 版本可复现：内置 CLI 默认钉在仓库验证过的版本（protocol-drift CI 负责前移），`--build-arg BUN_VERSION=… --build-arg CLAUDE_CODE_VERSION=… --build-arg CODEX_VERSION=…` 可覆盖（如 `latest`）。
 - 手工容器部署（不用 Dockerfile）：容器内 `bun install && bun run build && bun run start`，同样要求配置 token 后绑非回环。
 
 ## 跨网段访问

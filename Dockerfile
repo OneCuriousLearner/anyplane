@@ -28,11 +28,15 @@
 
 FROM node:22-bookworm-slim
 
-# 全局工具的版本锚点：bun 锁 minor 吃 patch（仓库门槛 >=1.4.0，见 AGENTS.md Windows 说明）；
-# 双 CLI 默认 latest，协议漂移由 protocol-drift CI 盯梢，需要可复现构建时经 --build-arg 钉死。
+# 全局工具版本锚点。
+# 双 CLI 默认钉在「当前 master 端到端验证过」的版本（2026-09-14 容器实测：auth status /
+# account/read / 会话驱动全通）——AnyPlane 驱动的是两家 CLI 的 headless 协议，latest 随时可能
+# 引入未验证的协议漂移；protocol-drift CI 每周检查 latest，检查通过后把 pin 前移到该版本
+# （一行 PR）。想要最新可用 --build-arg CLAUDE_CODE_VERSION=latest 显式覆盖。
+# bun 锁 minor 吃 patch（仓库门槛 >=1.4.0，见 AGENTS.md Windows 说明；patch 级漂移风险低）。
 ARG BUN_VERSION=1.4
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=latest
+ARG CLAUDE_CODE_VERSION=2.1.270
+ARG CODEX_VERSION=0.154.0
 
 # git：claude/codex 会话内的 git 操作依赖它（slim 镜像不带）。
 # bun 与双 CLI 全部走 npm 官方分发：codex 的 bin 是 node 启动脚本，必须随镜像带 Node；

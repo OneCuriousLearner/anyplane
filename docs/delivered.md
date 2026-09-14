@@ -20,6 +20,9 @@
   入口 `bun cli/anyplane.ts`（跳过 node launcher 包装层：PID 1 即服务进程，`docker stop`
   的 SIGTERM 直达优雅关闭）。默认 `ANYPLANE_HOST=0.0.0.0`，复用「非回环必须 token」守卫
   实现 fail-closed。版本锚点走 `--build-arg`；CI 新增 docker build job。
+  **双 CLI 默认钉已验证版本（非 latest）**：latest 构建会把未经任何验证的 CLI 组合装进镜像，
+  protocol-drift CI 的漂移检出对 docker 用户就毫无保护价值——钉版让漂移期间用户天然停在
+  好版本上，CI 检查通过后 pin 前移（一行 PR）；bun 维持 minor 轨（1.4.x）吃 patch。
   **本机实测（2026-09-14）**：TencentOS 无特权容器里 dockerd 需 `--iptables=false`
   （NAT 不可用），构建改走 buildah `--isolation=chroot --storage-driver=vfs`；
   镜像构建、fail-closed 拒绝启动、带 token 起服务、双探针在容器内全通。

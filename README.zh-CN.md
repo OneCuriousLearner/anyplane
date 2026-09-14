@@ -60,7 +60,7 @@ docker run -d --name anyplane -p 7480:7480 \
   anyplane
 ```
 
-镜像默认绑 `0.0.0.0`，因此 `ANYPLANE_TOKEN` 必填（不配则服务端拒绝启动——刻意的 fail-closed）。想起会话的项目目录必须挂进容器（示例为 `/root/projects`），新会话目录选择器里看到的是容器内路径。需要可复现构建时用 `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y` 钉死版本。
+镜像默认绑 `0.0.0.0`，因此 `ANYPLANE_TOKEN` 必填（不配则服务端拒绝启动——刻意的 fail-closed）。想起会话的项目目录必须挂进容器（示例为 `/root/projects`），新会话目录选择器里看到的是容器内路径。内置 CLI 版本默认钉在本仓库验证过的版本上（protocol-drift CI 负责前移），需要别的版本时用 `--build-arg CLAUDE_CODE_VERSION=latest` 等覆盖。
 
 凭证目录两种挂法（择一）：
 
