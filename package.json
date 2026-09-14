@@ -26,6 +26,8 @@
     "web/dist",
     "scripts/gateway.ts",
     "scripts/gateway-lib.ts",
+    "scripts/public-access.ts",
+    "scripts/public-access-lib.ts",
     "anyplane.config.example.json"
   ],
   "dependencies": {
@@ -48,6 +50,7 @@
     "build": "bun run --cwd web build",
     "start": "bun run --cwd server start",
     "gateway": "bun scripts/gateway.ts",
+    "public-access": "bun scripts/public-access.ts",
     "docs:claude": "bun scripts/fetch-claude-docs.ts",
     "docs:codex": "bun scripts/fetch-codex-docs.ts",
     "test": "bun test",
