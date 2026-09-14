@@ -19,8 +19,25 @@ bun run gateway --insecure   # 仅授信内网；有 authToken 则可去掉 --in
 
 ## 部署到远程容器
 
-在容器内 `bun run build && bun run start`，配置 `authToken` 后把 7480 端口通过你的域名暴露即可（未配置 token 时严禁绑定非回环地址——服务端会拒绝启动）。
+仓库根目录的 `Dockerfile` 是单阶段 all-in-one 镜像（Bun + claude/codex 双 CLI，构建期完成 `bun install` 与前端构建）：
+
+```bash
+docker build -t anyplane .
+docker run -d --name anyplane -p 7480:7480 \
+  -e ANYPLANE_TOKEN=<至少32位随机串> \
+  -v anyplane-data:/root/.anyplane \
+  -v "$HOME/.claude:/root/.claude" \
+  -v "$HOME/.codex:/root/.codex" \
+  -v "$HOME/projects:/root/projects" \
+  anyplane
+```
+
+- 镜像默认 `ANYPLANE_HOST=0.0.0.0`，因此 **`ANYPLANE_TOKEN` 必填**——不配则服务端拒绝启动（fail-closed，与裸机「非回环必须 token」同一守卫）。
+- `~/.anyplane` 存 AnyPlane 运行数据；`~/.claude` / `~/.codex` 存双 CLI 凭证（挂宿主目录即复用本机登录态，或在容器内重新 login）。
+- **会话工作目录只能是容器内可见路径**：要管哪个项目就把哪个目录挂进来（上例 `/root/projects`），新会话目录选择器看到的是容器内路径。
+- 版本可复现：`--build-arg BUN_VERSION=1.x.y --build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c`。
+- 手工容器部署（不用 Dockerfile）：容器内 `bun install && bun run build && bun run start`，同样要求配置 token 后绑非回环。
 
 ## 跨网段访问
 
-AnyPlane 不自建公网穿透。三套免 VPS 配方（Tailscale funnel / Cloudflare Tunnel / 家宽 IPv6+DDNS）见 [public-access.md](public-access.md)，含安全红线与手机蜂窝网络验收清单。
+AnyPlane 不自建公网穿透。三套免 VPS 配方（Tailscale funnel / Cloudflare Tunnel / 家宽 IPv6+DDNS）见 [public-access.md](public-access.md)，含安全红线与手机蜂窝网络验收清单；三配方的一键封装为 `bun run public-access <funnel|cf-quick|caddy>`（未配 authToken 拒绝执行）。

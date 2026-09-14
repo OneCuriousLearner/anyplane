@@ -10,6 +10,31 @@
 
 ---
 
+## 方向十一（续）：Dockerfile、双后端登录状态页、公网一键脚本——2026-09-14
+
+方向十一剩余三项全部交付；「`bun` 进 optionalDependencies」维持原判（先用 launcher 数据说话）。
+
+- **Dockerfile（单阶段 all-in-one）**：`node:22-bookworm-slim` 基底 + npm 官方分发装
+  `bun@1.4` 与双 CLI——codex 的 bin 是 node 启动脚本，镜像必须带 Node，这是选 node 基底
+  而非 bun 基底的唯一原因。构建期 `bun install --frozen-lockfile` + `bun run build`。
+  入口 `bun cli/anyplane.ts`（跳过 node launcher 包装层：PID 1 即服务进程，`docker stop`
+  的 SIGTERM 直达优雅关闭）。默认 `ANYPLANE_HOST=0.0.0.0`，复用「非回环必须 token」守卫
+  实现 fail-closed。版本锚点走 `--build-arg`；CI 新增 docker build job（本机无 docker，
+  构建验证只能交给 CI）。
+- **双后端登录状态页**：新端点 `GET /api/backends/status`（30s 缓存 + single-flight，
+  列表页 10s 轮询不会放大成子进程风暴；`unknown` 不入缓存允许即时重试）。
+  Claude 侧探测用官方轻量子命令 `claude auth status --json`（2.1.270 实测有
+  `loggedIn/authMethod/apiProvider`），比 ROADMAP 设想的 `initialize.account` 握手便宜一个量级；
+  `oauth_token` 在 JSON 里不细分 env/setup-token，统一归「Token」。
+  Codex 侧走 `account/read`：`account=null + requiresOpenaiAuth=false` 即自定义 provider
+  （API-key 组织用户的典型形态），这条语义实测确认（本机 deepseek 配置）。
+  前端 `BackendStatusCard` 自决可见性——双后端可用不占版面，有问题或空列表（首次上手）才出现；
+  DirPicker 后端切换同步加警示点与修复指引。
+- **公网配方一键脚本**（`bun run public-access <funnel|cf-quick|caddy>`）：只做隧道创建与反代，
+  不碰账号体系。**未配 authToken 一律拒绝执行**（集成测试锁定：空 HOME 下 exit 1）——
+  隧道层暴露在服务端启动检查之外，token 防线从「靠自觉」升级为脚本硬门槛。
+  CF 命名隧道涉账号与 DNS，明确不在脚本范围内。
+
 ## 方向十二（部分）：上量前的运行韧性——2026-09-12
 
 前三项已按风险完成；第四项（会话列表 O(n)）只做了隔离实验与方向选择，尚未修改生产路径，仍在 ROADMAP。

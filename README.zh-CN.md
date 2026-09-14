@@ -45,6 +45,23 @@ bun run build && bun run start   # 生产模式
 bun run dev                      # 开发模式：服务端 + Vite 热更新
 ```
 
+### Docker
+
+单阶段镜像，内置 Bun 与双 CLI——本机不需要装 Bun/Node：
+
+```bash
+docker build -t anyplane .
+docker run -d --name anyplane -p 7480:7480 \
+  -e ANYPLANE_TOKEN=<至少32位随机串> \
+  -v anyplane-data:/root/.anyplane \
+  -v "$HOME/.claude:/root/.claude" \
+  -v "$HOME/.codex:/root/.codex" \
+  -v "$HOME/projects:/root/projects" \
+  anyplane
+```
+
+镜像默认绑 `0.0.0.0`，因此 `ANYPLANE_TOKEN` 必填（不配则服务端拒绝启动——刻意的 fail-closed）。挂载两个 CLI 的凭证目录可复用本机登录态；想起会话的项目目录也必须挂进容器（示例为 `/root/projects`），新会话目录选择器里看到的是容器内路径。需要可复现构建时用 `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y` 钉死版本。
+
 ## 功能一览
 
 **会话管理**
@@ -75,7 +92,7 @@ AnyPlane 的本质是把「在本机起会话」开放给能访问该端口的�
 - 默认只监听 `127.0.0.1`（仅本机），这是安全默认值。
 - **绑定非回环地址（如 `0.0.0.0`）必须同时配置 `authToken`**，否则服务端拒绝启动。
 - 配置 token 后，启动时终端会打印带 token 的扫码 URL 二维码，手机扫码即入。
-- 跨网段访问不建议自建公网穿透；Tailscale funnel / Cloudflare Tunnel / IPv6+DDNS 三套免 VPS 配方见 [docs/public-access.md](docs/public-access.md)。
+- 跨网段访问不建议自建公网穿透；Tailscale funnel / Cloudflare Tunnel / IPv6+DDNS 三套免 VPS 配方见 [docs/public-access.md](docs/public-access.md)，或用一键封装 `bun run public-access funnel | cf-quick | caddy <域名>`（未配 authToken 会拒绝执行）。
 
 ## 配置
 

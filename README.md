@@ -57,6 +57,23 @@ bun run build && bun run start   # production
 bun run dev                      # server + Vite HMR
 ```
 
+### Docker
+
+Single-stage image with Bun and both CLIs baked in — no local Bun/Node required:
+
+```bash
+docker build -t anyplane .
+docker run -d --name anyplane -p 7480:7480 \
+  -e ANYPLANE_TOKEN=<at-least-32-random-chars> \
+  -v anyplane-data:/root/.anyplane \
+  -v "$HOME/.claude:/root/.claude" \
+  -v "$HOME/.codex:/root/.codex" \
+  -v "$HOME/projects:/root/projects" \
+  anyplane
+```
+
+The image binds `0.0.0.0` by default, so `ANYPLANE_TOKEN` is mandatory (the server refuses to start otherwise — fail-closed). Mount the Claude/Codex credential directories to reuse your existing logins, and mount any project directories you want to open sessions in (they must be visible inside the container). Pin CLI versions at build time with `--build-arg CLAUDE_CODE_VERSION=x.y.z --build-arg CODEX_VERSION=a.b.c --build-arg BUN_VERSION=1.x.y`.
+
 ## Security
 
 Running AnyPlane means exposing "start a session on this machine" to whoever can reach the port — and starting a session is equivalent to arbitrary command execution. Take the bind address seriously.
@@ -64,7 +81,7 @@ Running AnyPlane means exposing "start a session on this machine" to whoever can
 - Listens on `127.0.0.1` only by default.
 - **Binding a non-loopback address (e.g. `0.0.0.0`) requires `authToken`**, or the server refuses to start.
 - With a token configured, startup prints a QR code containing the tokenized URL — scan it from your phone.
-- For access across networks, prefer Tailscale Funnel, Cloudflare Tunnel, or home IPv6 + DDNS over rolling your own ingress. All three recipes and their security tradeoffs are in [docs/public-access.md](docs/public-access.md).
+- For access across networks, prefer Tailscale Funnel, Cloudflare Tunnel, or home IPv6 + DDNS over rolling your own ingress. All three recipes and their security tradeoffs are in [docs/public-access.md](docs/public-access.md) — or use the one-command wrapper: `bun run public-access funnel | cf-quick | caddy <domain>` (refuses to run without an `authToken`).
 
 ## Configuration
 
