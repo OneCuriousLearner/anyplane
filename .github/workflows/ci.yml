@@ -26,3 +26,12 @@ jobs:
       - run: bun test
 
       - run: bun run build
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # 只构建不推送：验证 Dockerfile 可构建 + 双 CLI 在镜像内可执行（RUN 行有版本断言）
+      - run: docker build -t anyplane:ci .

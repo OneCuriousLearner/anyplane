@@ -1,0 +1,19 @@
+# 构建上下文最小化 + 防泄密（镜像内 bun install / bun run build 会重建被排除的产物）
+
+.git
+.github
+node_modules
+**/node_modules
+web/dist
+
+# 本地配置与凭证：镜像配置一律走 -e 环境变量或运行时挂载
+anyplane.config.json
+*.local.md
+
+# 文档与官网：运行时用不到（docs/media 的 README 图片也不在镜像内引用）
+docs
+site
+
+# 开发期产物与杂项
+*.log
+.DS_Store
