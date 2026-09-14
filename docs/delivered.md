@@ -10,6 +10,29 @@
 
 ---
 
+## 方向十二（续）：Codex 会话发现改读盘优先——2026-09-14
+
+方向十一评审发现「状态探测经 ensureRpc 永久拉起 app-server」时实证出更深的既有行为：
+`/api/sessions` 的 codex 线程发现（10s 轮询）本身就会永久拉起 app-server（闲置实测
+~120MB RSS），失败时每轮重试无退避。本次把会话发现改为三轨：
+
+- **app-server 已运行**（有 live 会话）→ RPC 全保真（含 live status），零新增成本。
+- **未运行 → 读盘**（`backends/codex/discovery.ts`）：扫 rollout 文件头 + `session_index.jsonl`，
+  镜像上游 `rollout/list.rs` 的 HeadTailSummary 与 `filters.rs` 的 source 映射
+  （{cli,vscode,exec,mcp}），名字以 session_index 为准（同名后写胜出）；**不读 state_N.sqlite**
+  （版本号内嵌文件名是明确的内部格式，且列表页用不到 sidecar 元数据）。
+- **读盘失败 → RPC 兜底 + 60s 失败退避**（防崩溃重试循环）；漂移跳线：目录非空找不到
+  rollout 文件、或全部文件解析不出 session_meta，抛错回退而非静默空列表。
+
+两个只有真实数据才抓得到的 bug（均已修并锁回归）：① fork 文件会把父线程的
+session_meta 拷进第二行（上游 list.rs:1145 同款注释），解析被覆盖会产生父线程幻影行
+（本机 104 行中 37 行是幻影）——只认第一条 session_meta；② resume 续跑产生同 id
+多文件，需按 thread id 去重（取最新 mtime，preview/createdAt 从旧文件回填）。
+
+已知取舍：磁盘格式是内部实现不是协议面，故所有识别规则都标注上游源码出处；
+读盘行不带 live status（外部活跃的 codex 会话显示离线，attach 后 WS 状态接管）；
+名字只取 session_index（sqlite 双写备份不读）。
+
 ## 方向十一（续）：Dockerfile、双后端登录状态页、公网一键脚本——2026-09-14
 
 方向十一剩余三项全部交付；「`bun` 进 optionalDependencies」维持原判（先用 launcher 数据说话）。

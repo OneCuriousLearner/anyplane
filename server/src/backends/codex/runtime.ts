@@ -292,11 +292,15 @@ export class CodexRuntime {
   }
 
   /** 分页拉取：cursor 翻页直到无 nextCursor 或达到 limitPages */
-  private async paginate(method: string, baseParams: Params, limitPages = 3): Promise<Params[]> {
+  private async paginate(method: string, baseParams: Params, limitPages = 3, client?: RpcClient): Promise<Params[]> {
     const out: Params[] = []
     let cursor: string | null = null
     for (let page = 0; page < limitPages; page++) {
-      const res = (await this.rpcRequest(method, { ...baseParams, cursor, limit: 100 })) as {
+      const res = (
+        client
+          ? await client.request(method, { ...baseParams, cursor, limit: 100 })
+          : await this.rpcRequest(method, { ...baseParams, cursor, limit: 100 })
+      ) as {
         data?: Params[]
         nextCursor?: string | null
       }
@@ -342,6 +346,23 @@ export class CodexRuntime {
       'thread/list',
       { sortKey: 'updated_at', sourceKinds: ['cli', 'vscode', 'exec', 'appServer'] },
       limitPages,
+    )
+  }
+
+  /** 仅在 app-server 已运行时拉线程列表（复用现有连接，绝不触发 spawn）。
+   *  会话发现的活态全保真路径（含 live status）；未运行返回 undefined，调用方走读盘。 */
+  async listThreadsIfLive(opts: { archived?: boolean; limitPages?: number } = {}): Promise<Params[] | undefined> {
+    const rpc = this.peekRpc()
+    if (!rpc) return undefined
+    if (opts.archived) {
+      const res = (await rpc.request('thread/list', { archived: true, limit: 100 })) as { data?: Params[] }
+      return res.data ?? []
+    }
+    return this.paginate(
+      'thread/list',
+      { sortKey: 'updated_at', sourceKinds: ['cli', 'vscode', 'exec', 'appServer'] },
+      opts.limitPages ?? 3,
+      rpc,
     )
   }
 
