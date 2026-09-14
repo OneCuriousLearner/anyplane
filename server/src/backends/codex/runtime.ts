@@ -39,6 +39,15 @@ export async function handshakeAppServer(rpc: RpcClient, timeoutMs = 30_000): Pr
   return initRes
 }
 
+/** 会话发现的来源过滤（active 与 archived 统一口径；'appServer' 经上游 filters.rs 映射为 mcp）。
+ *  discovery.ts 读盘轨的 INCLUDED_SOURCES 与此一一对应——改动必须三处对账。 */
+export const THREAD_SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer'] as const
+
+/** thread/list 的公共过滤参数。modelProviders: [] = 包含全部 provider（上游语义）——
+ *  缺省时上游只回当前 config 的 provider，切换过 provider 的用户会整段丢历史；
+ *  AnyPlane 面向多 provider 用户（厂商中立定位），会话发现必须全量。 */
+const THREAD_LIST_FILTERS = { sourceKinds: [...THREAD_SOURCE_KINDS], modelProviders: [] as string[] }
+
 type Params = Record<string, unknown>
 
 // ---------- 运行时单例 ----------
@@ -65,6 +74,13 @@ export class CodexRuntime {
   private collectors = new Map<string, EphemeralCollector>()
   /** initialize 应答的 codexHome（rollout 水合定位 sessions/ 目录用） */
   private reportedHome: string | undefined
+  /** app-server 闲置回收计时器：无 live 会话且无收集器后到时 kill（重连廉价） */
+  private rpcIdleTimer: Timer | undefined
+  /** 计划内关停标记：onExit 日志区分崩溃与回收 */
+  private plannedShutdown = false
+
+  /** app-server 闲置回收时长：超时后进程被杀，会话发现回到读盘轨 */
+  static readonly RPC_IDLE_SHUTDOWN_MS = 10 * 60 * 1000
 
   /** codex 数据根目录：initialize 上报值优先，回退 CODEX_HOME env / ~/.codex */
   get home(): string {
@@ -74,12 +90,19 @@ export class CodexRuntime {
   async ensureRpc(): Promise<RpcClient> {
     if (this.rpc && !this.rpc.exited) return this.rpc
     if (this.starting) return this.starting
+    // 有新的真实使用：取消闲置回收
+    this.cancelRpcIdleShutdown()
     this.starting = (async () => {
       const rpc = RpcClient.spawn(['codex', 'app-server', '--stdio'])
       rpc.onNotification = (n) => this.demux(n.method, n.params as Params)
       rpc.onServerRequest = (r) => this.demuxRequest(r.id, r.method, r.params as Params)
       rpc.onExit = (code) => {
-        log.error(`[codex] app-server 退出 code=${code}`)
+        if (this.plannedShutdown) {
+          log.info(`[codex] app-server 已按闲置回收退出 code=${code}`)
+          this.plannedShutdown = false
+        } else {
+          log.error(`[codex] app-server 退出 code=${code}`)
+        }
         this.rpc = undefined
         for (const s of this.sessions.values()) s.handleProcessExit()
       }
@@ -105,6 +128,30 @@ export class CodexRuntime {
    *  状态探测类调用方（backends/status）用它避免为一次查询永久拉起共享进程（懒 spawn 红线）。 */
   peekRpc(): RpcClient | undefined {
     return this.rpc && !this.rpc.exited ? this.rpc : undefined
+  }
+
+  /** 无 live 会话且无 ephemeral 收集器时启动闲置回收计时；
+   *  进程常驻与否只看「还有没有真实使用」，不看多久前用过（评审：进程一旦拉活即恒活）。 */
+  scheduleRpcIdleShutdownIfIdle(delayMs: number = CodexRuntime.RPC_IDLE_SHUTDOWN_MS): void {
+    this.cancelRpcIdleShutdown()
+    if (!this.rpc || this.rpc.exited) return
+    if (this.sessions.size > 0 || this.collectors.size > 0) return
+    this.rpcIdleTimer = setTimeout(() => {
+      this.rpcIdleTimer = undefined
+      if (!this.rpc || this.rpc.exited) return
+      if (this.sessions.size > 0 || this.collectors.size > 0) return
+      log.info(`[codex] app-server 闲置 ${Math.round(delayMs / 60000)}min，回收进程（会话发现回到读盘轨）`)
+      this.plannedShutdown = true
+      this.rpc.kill()
+      this.rpc = undefined
+    }, delayMs)
+  }
+
+  private cancelRpcIdleShutdown(): void {
+    if (this.rpcIdleTimer) {
+      clearTimeout(this.rpcIdleTimer)
+      this.rpcIdleTimer = undefined
+    }
   }
 
   respondSafe(id: number | string, result: unknown): void {
@@ -266,6 +313,8 @@ export class CodexRuntime {
     if (!s) return
     this.sessions.delete(key)
     s.dispose()
+    // 最后一个会话句柄消失：app-server 进入闲置回收倒计时（读盘轨重新接管列表）
+    this.scheduleRpcIdleShutdownIfIdle()
   }
 
   /** handoff 播种线程拿到真实 threadId 后的重键：会话不换，map 键跟随 xn|→x|。
@@ -340,13 +389,14 @@ export class CodexRuntime {
       }))
   }
 
-  /** 会话发现：thread/list 分页拉全（含 cli/exec/appServer 来源） */
+  /** 会话发现：thread/list 分页拉全（来源过滤与读盘轨统一口径） */
   async listThreads(limitPages = 3): Promise<Params[]> {
-    return this.paginate(
-      'thread/list',
-      { sortKey: 'updated_at', sourceKinds: ['cli', 'vscode', 'exec', 'appServer'] },
-      limitPages,
-    )
+    return this.paginate('thread/list', { sortKey: 'updated_at', ...THREAD_LIST_FILTERS }, limitPages)
+  }
+
+  /** 归档线程列表：与活跃列表同一来源过滤与分页深度（旧的 limit=100 单页是历史遗留口径分裂） */
+  async listThreadsArchived(limitPages = 3): Promise<Params[]> {
+    return this.paginate('thread/list', { archived: true, ...THREAD_LIST_FILTERS }, limitPages)
   }
 
   /** 仅在 app-server 已运行时拉线程列表（复用现有连接，绝不触发 spawn）。
@@ -355,15 +405,9 @@ export class CodexRuntime {
     const rpc = this.peekRpc()
     if (!rpc) return undefined
     if (opts.archived) {
-      const res = (await rpc.request('thread/list', { archived: true, limit: 100 })) as { data?: Params[] }
-      return res.data ?? []
+      return this.paginate('thread/list', { archived: true, ...THREAD_LIST_FILTERS }, opts.limitPages ?? 3, rpc)
     }
-    return this.paginate(
-      'thread/list',
-      { sortKey: 'updated_at', sourceKinds: ['cli', 'vscode', 'exec', 'appServer'] },
-      opts.limitPages ?? 3,
-      rpc,
-    )
+    return this.paginate('thread/list', { sortKey: 'updated_at', ...THREAD_LIST_FILTERS }, opts.limitPages ?? 3, rpc)
   }
 
   async readHistory(threadId: string): Promise<HistoryMessage[]> {

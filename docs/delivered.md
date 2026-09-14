@@ -29,6 +29,18 @@ session_meta 拷进第二行（上游 list.rs:1145 同款注释），解析被�
 （本机 104 行中 37 行是幻影）——只认第一条 session_meta；② resume 续跑产生同 id
 多文件，需按 thread id 去重（取最新 mtime，preview/createdAt 从旧文件回填）。
 
+评审第二轮又修十一处（recall 模式 15 条中采纳 13 条）：
+① live RPC 失败也落读盘（原来只在读盘失败时落 RPC，单向兜底）；② **app-server 闲置
+10min 自动回收**——进程一旦拉活即恒活会让读盘轨成死代码，回收条件只看「无 live 会话
+句柄且无 ephemeral 收集器」；③ readdir→stat 竞态不再中止整轮扫描；④ 瞬时 IO 错误
+不写缓存（一次抖动曾被固化成线程长期消失）；⑤ readdir 错误码区分（ENOENT=空列表，
+EACCES/EIO 走兜底）；⑥ 漂移跳线只认 rollout-* 文件（.DS_Store/骨架目录不再假触发），
+不可识别后缀（.jsonl.zst 压缩形态）计入跳线；⑦ sawSessionMeta 需拿到字符串 id
+（上游改名 id 时跳线必须有效）；⑧ **入列要求 preview**（上游 list.rs:819-820 硬要求，
+本机实测 5 个零用户消息线程在 RPC 轨本就不可见）；⑨ 扫描预算对齐上游 210 行且按
+完整换行截断；⑩ 双轨统一去重与统一过滤口径（archived 补上 sourceKinds——
+**行为变化**：`modelProviders: []` 让换过 provider 的用户的历史线程全部可见，
+此前上游默认只回当前 provider 的线程）；⑪ 退避按 active/archived 分离。
 已知取舍：磁盘格式是内部实现不是协议面，故所有识别规则都标注上游源码出处；
 读盘行不带 live status（外部活跃的 codex 会话显示离线，attach 后 WS 状态接管）；
 名字只取 session_index（sqlite 双写备份不读）。
