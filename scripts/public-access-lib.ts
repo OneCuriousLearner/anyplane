@@ -1,5 +1,7 @@
-// 公网配方一键脚本的纯逻辑：参数解析、Caddyfile 渲染、token 解析。
-// 与 public-access.ts 的副作用层分离（gateway.ts/gateway-lib.ts 同款拆分），便于 bun test 锁定。
+// 公网配方一键脚本的逻辑层：参数解析、Caddyfile 渲染、token/端口解析、run() 主流程。
+// 与 public-access.ts 的副作用层分离（gateway.ts/gateway-lib.ts 同款拆分）：
+// run() 的全部副作用（进程、网络、文件、配置）经 RunDeps 注入，测试在进程内跑——
+// 绝不能为测试去 spawn 真实隧道二进制（在本机跑 bun test 不应可能改写 tailnet 配置）。
 
 export type Recipe = 'funnel' | 'cf-quick' | 'caddy'
 
@@ -101,4 +103,111 @@ export function nextStepsHint(publicUrl: string): string {
     ``,
     `验收清单（蜂窝网络，非 Wi-Fi）见 docs/public-access.md 末节。`,
   ].join('\n')
+}
+
+// ---------- run() 主流程（副作用全部经 RunDeps 注入） ----------
+
+export interface RunDeps {
+  /** anyplane 配置文件（loadAnyplaneConfigFile：cwd → 项目根 → ~/.anyplane） */
+  loadConfig(): Record<string, unknown>
+  env: Record<string, string | undefined>
+  platform: NodeJS.Platform
+  which(bin: string): string | null
+  exists(p: string): boolean
+  /** 本地服务可达性预检 */
+  serverUp(port: number): Promise<boolean>
+  /** caddy 配置落盘目录（~/.anyplane/caddy，0700） */
+  stateDir(): string
+  writeFile(path: string, content: string): Promise<unknown>
+  /** 前台托管子进程（cf-quick/caddy），返回退出码 */
+  foreground(cmd: string[]): Promise<number>
+  /** 同步执行（funnel）：echo 时子进程输出直透终端 */
+  spawnSync(cmd: string[], echo?: boolean): { exitCode: number; stdout: string }
+  out(msg: string): void
+  err(msg: string): void
+}
+
+export async function run(argv: string[], deps: RunDeps): Promise<number> {
+  const fail = (msg: string): number => {
+    deps.err(`[public-access] ${msg}`)
+    return 1
+  }
+
+  if (argv.length === 0 || argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') {
+    deps.out(USAGE)
+    return argv.length === 0 ? 1 : 0
+  }
+
+  let args
+  try {
+    args = parseArgs(argv)
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e))
+  }
+
+  // loadConfig 抛错（坏 approvalRules 是刻意 fail-fast）向上传播，由包装层统一成可读报错
+  const configFile = deps.loadConfig()
+  // 安全红线：未配置 authToken 一律拒绝——隧道层暴露在服务端启动检查之外，token 全靠自觉，
+  // 本脚本把自觉变成硬门槛（集成测试锁定：任何配置候选都不得穿透进这条判定）
+  if (!resolveToken(deps.env, configFile)) {
+    return fail(
+      '拒绝执行：未配置 authToken。公网暴露时 token 是唯一防线（隧道/反代层在服务端启动检查之外）。\n' +
+        '请在 anyplane.config.json 设置 "authToken"（≥32 随机字符）或 ANYPLANE_TOKEN 环境变量后重试。',
+    )
+  }
+  const port = resolvePort(args.port, deps.env, configFile)
+  // 隧道起了才发现本地服务没跑是最常见的白忙一场
+  if (!(await deps.serverUp(port))) {
+    return fail(`127.0.0.1:${port} 无响应——AnyPlane 服务端未在运行。请先启动（bunx anyplane / bun run start）。`)
+  }
+
+  const whichOrFail = (bin: string, installHint: string): string | number => {
+    const hit = deps.which(bin)
+    return hit ?? fail(`未找到 ${bin}。${installHint}`)
+  }
+
+  switch (args.recipe) {
+    case 'funnel': {
+      const tailscale = whichOrFail('tailscale', '安装见 https://tailscale.com/download')
+      if (typeof tailscale !== 'string') return tailscale
+      // POSIX 无 TUN 的云容器/沙箱整套不可用，直接 fail 指到方案二（Windows 无此概念）
+      if (deps.platform !== 'win32' && !deps.exists('/dev/net/tun')) {
+        return fail('无 /dev/net/tun：无特权容器/沙箱跑不了 Tailscale，请改用 cf-quick。')
+      }
+      deps.out(`[public-access] tailscale funnel --bg ${port}`)
+      const r = deps.spawnSync([tailscale, 'funnel', '--bg', String(port)], true)
+      if (r.exitCode !== 0) return fail(`tailscale funnel 退出码 ${r.exitCode}（ACL 未开 funnel 或 tailnet 未 up？）`)
+      // funnel 地址 = 机器名.tailnet 名.ts.net，从 status 解析（失败不致命，用户可自查）
+      const st = deps.spawnSync([tailscale, 'status', '--json'])
+      let url = 'https://<机器名>.<tailnet名>.ts.net'
+      try {
+        const j = JSON.parse(st.stdout) as { Self?: { DNSName?: string } }
+        if (j.Self?.DNSName) url = `https://${j.Self.DNSName.replace(/\.$/, '')}`
+      } catch {}
+      deps.out(nextStepsHint(url))
+      deps.out(`撤销: tailscale funnel --bg ${port} off`)
+      return 0
+    }
+    case 'cf-quick': {
+      const cloudflared = whichOrFail(
+        'cloudflared',
+        '安装见 https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/',
+      )
+      if (typeof cloudflared !== 'string') return cloudflared
+      deps.out(`[public-access] cloudflared tunnel --url http://localhost:${port}`)
+      deps.out('[public-access] 启动后从输出里复制 https://<随机>.trycloudflare.com（Ctrl+C 停止并释放）')
+      // 前台托管：URL 由 cloudflared 自己打印，比解析输出再打印一遍更不易漂移
+      return deps.foreground([cloudflared, 'tunnel', '--url', `http://localhost:${port}`])
+    }
+    case 'caddy': {
+      const caddy = whichOrFail('caddy', '安装见 https://caddyserver.com/docs/install')
+      if (typeof caddy !== 'string') return caddy
+      const file = `${deps.stateDir()}/Caddyfile`
+      await deps.writeFile(file, renderCaddyfile(args.domain!, port, args.httpsPort))
+      deps.out(`[public-access] Caddyfile 已写入 ${file}`)
+      deps.out(`[public-access] caddy run（前台；Ctrl+C 停止）。入站 :${args.httpsPort} 需在路由器/防火墙放行`)
+      deps.out(nextStepsHint(`https://${args.domain}:${args.httpsPort}`))
+      return deps.foreground([caddy, 'run', '--config', file])
+    }
+  }
 }

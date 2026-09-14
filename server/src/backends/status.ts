@@ -1,11 +1,13 @@
 // 双后端登录状态探测：会话列表页的「该去登录哪个」指引数据源。
 // Claude 走官方 `claude auth status --json`（轻量子命令，不起会话）；
 // Codex 走 app-server `account/read` RPC（协议正本，覆盖自定义 provider 场景）。
-// 两侧探测都有成本（spawn 子命令 / 冷启动 app-server），模块级 TTL 缓存 + single-flight。
+// 探测有成本（spawn 子命令/子进程），模块级 TTL 缓存 + single-flight；
+// **懒 spawn 红线**：探测绝不留下常驻进程（见 probeCodex）。
 
 import { childEnv } from '../util'
 import { resolveClaudeCommand } from './claude/processManager'
-import { codexRuntime } from './codex/runtime'
+import { RpcClient } from './codex/rpc'
+import { codexRuntime, handshakeAppServer } from './codex/runtime'
 
 /** 宏观登录态：列表页按此渲染徽标与指引 */
 export type BackendLoginState =
@@ -90,13 +92,15 @@ const PROBE_TIMEOUT_MS = 20_000
 
 /** auth status 退出码语义（CLI 源码 authStatus 末行）：loggedIn ? 0 : 1——
  *  未登录也退出 1 且仍输出合法 JSON，因此非零退出 ≠ 探测失败：
- *  输出可解析为 JSON 一律以 JSON 为准；不可解析才是真失败（老版本无此子命令等）。 */
-export function parseClaudeAuthStatusOutput(code: number, out: string): BackendStatus {
+ *  输出可解析为 JSON 一律以 JSON 为准；不可解析才是真失败（老版本无此子命令等）。
+ *  stderrTail 仅用于给 unknown 留现场（升级通知等 stderr 噪音已正常消费，不会堵管道）。 */
+export function parseClaudeAuthStatusOutput(code: number, out: string, stderrTail = ''): BackendStatus {
   try {
     const parsed = JSON.parse(out) as { loggedIn?: boolean; authMethod?: string; apiProvider?: string }
     return classifyClaudeAuth(parsed)
   } catch {
-    return { state: 'unknown', error: `exit ${code}: ${out.trim().slice(0, 200) || '无输出'}` }
+    const detail = (out.trim() || stderrTail.trim()).slice(0, 200) || '无输出'
+    return { state: 'unknown', error: `exit ${code}: ${detail}` }
   }
 }
 
@@ -117,8 +121,15 @@ async function probeClaude(): Promise<BackendStatus> {
   try {
     const stdout = proc.stdout
     if (typeof stdout === 'number' || !stdout) return { state: 'unknown', error: 'stdout 不可用' }
-    const [code, out] = await Promise.all([proc.exited, new Response(stdout).text()])
-    return parseClaudeAuthStatusOutput(code, out)
+    const stderr = proc.stderr
+    // stderr 必须同步消费：持而不读时子进程写满 OS 管道缓冲（Linux ~64KB）即阻塞，
+    // stdout 读不完挂到超时被杀 → 健康后端被误报 unknown
+    const [code, out, errText] = await Promise.all([
+      proc.exited,
+      new Response(stdout).text(),
+      typeof stderr === 'number' || !stderr ? Promise.resolve('') : new Response(stderr).text(),
+    ])
+    return parseClaudeAuthStatusOutput(code, out, errText)
   } catch (e) {
     return { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
   } finally {
@@ -127,29 +138,64 @@ async function probeClaude(): Promise<BackendStatus> {
 }
 
 async function probeCodex(): Promise<BackendStatus> {
-  // 先查二进制再碰 RPC：未安装时 ensureRpc 的 spawn 失败路径又慢又吵
-  if (!Bun.which('codex')) return { state: 'not-installed' }
+  // 先查二进制再碰 RPC：未安装时连一次性 spawn 都省掉。
+  // Windows 的 npm 全局布局只有 .cmd shim（cli/anyplane.ts whichAny 同款探测）
+  const codexBin =
+    Bun.which('codex') ??
+    (process.platform === 'win32' ? (Bun.which('codex.cmd') ?? Bun.which('codex.exe')) : null)
+  if (!codexBin) return { state: 'not-installed' }
+
+  // 会话在跑 → 复用共享连接，零成本
+  const live = codexRuntime.peekRpc()
+  if (live) {
+    try {
+      const res = (await live.request('account/read', {}, { timeoutMs: PROBE_TIMEOUT_MS })) as {
+        account: CodexAccount | null
+        requiresOpenaiAuth: boolean
+      }
+      return classifyCodexAccount(res)
+    } catch (e) {
+      return { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+
+  // 会话没跑 → 一次性 spawn：握手 → account/read → kill。
+  // 不能走 codexRuntime.ensureRpc()——那会永久拉起共享 app-server，
+  // 只装不用的 Claude 用户打开列表页就白背一个常驻进程（懒 spawn 红线）。
+  let rpc: RpcClient | undefined
   try {
-    const res = (await codexRuntime.rpcRequest('account/read', {}, PROBE_TIMEOUT_MS)) as {
+    rpc = RpcClient.spawn(['codex', 'app-server', '--stdio'])
+    // 无主请求（探测期间不应出现）拒绝掉避免悬挂，与 runtime.demuxRequest 同款兜底
+    rpc.onServerRequest = (r) => {
+      try {
+        rpc?.respond(r.id, { decision: 'decline' })
+      } catch {}
+    }
+    await handshakeAppServer(rpc, PROBE_TIMEOUT_MS)
+    const res = (await rpc.request('account/read', {}, { timeoutMs: PROBE_TIMEOUT_MS })) as {
       account: CodexAccount | null
       requiresOpenaiAuth: boolean
     }
     return classifyCodexAccount(res)
   } catch (e) {
     return { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
+  } finally {
+    rpc?.kill()
   }
 }
 
 // ---------- 缓存 + single-flight ----------
 
-const CACHE_TTL_MS = 30_000
+// 与前端轮询（60s）同频：unknown 同规则入缓存——不缓存会让「app-server 启动即崩」
+// 演变成每个标签页每 30s 一次的 spawn 崩溃重试循环；60s 的恢复延迟对登录指引场景可接受
+const CACHE_TTL_MS = 60_000
 let cached: BackendsStatus | undefined
 let inflight: Promise<BackendsStatus> | undefined
 
 export type ProbeDeps = { probeClaude: () => Promise<BackendStatus>; probeCodex: () => Promise<BackendStatus> }
 const defaultDeps: ProbeDeps = { probeClaude, probeCodex }
 
-/** 双后端并行探测；30s 内重复调用走缓存（列表页 10s 轮询不会放大成子进程风暴） */
+/** 双后端并行探测；TTL 内重复调用走缓存（列表页轮询不会放大成子进程风暴） */
 export async function getBackendsStatus(deps: ProbeDeps = defaultDeps): Promise<BackendsStatus> {
   if (cached && Date.now() - cached.checkedAt < CACHE_TTL_MS) return cached
   if (inflight) return inflight
@@ -159,8 +205,7 @@ export async function getBackendsStatus(deps: ProbeDeps = defaultDeps): Promise<
       deps.probeCodex().catch((e) => ({ state: 'unknown', error: String(e) }) as BackendStatus),
     ])
     const result: BackendsStatus = { checkedAt: Date.now(), claude, codex }
-    // unknown 不入缓存：探测失败应允许下次立即重试，缓存会放大瞬时故障
-    if (claude.state !== 'unknown' && codex.state !== 'unknown') cached = result
+    cached = result
     return result
   })()
   try {

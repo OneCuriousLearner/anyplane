@@ -30,22 +30,32 @@
   版本比宿主新时会把宿主配置/状态向前迁移（codex 带版本 sqlite 状态尤其敏感）——
   「替用户更新 CLI」的真实风险点在凭证卷而不在镜像内安装；
   直挂宿主目录降级为「共享登录态但需钉版本」的可选项（README / gateway.md 同口径）。
-- **双后端登录状态页**：新端点 `GET /api/backends/status`（30s 缓存 + single-flight，
-  列表页 10s 轮询不会放大成子进程风暴；`unknown` 不入缓存允许即时重试）。
+- **双后端登录状态页**：新端点 `GET /api/backends/status`（60s 缓存 + single-flight，
+  与前端轮询同频，探针成本不随轮询放大）。
   Claude 侧探测用官方轻量子命令 `claude auth status --json`（2.1.270 实测有
   `loggedIn/authMethod/apiProvider`），比 ROADMAP 设想的 `initialize.account` 握手便宜一个量级；
   `oauth_token` 在 JSON 里不细分 env/setup-token，统一归「Token」。
   Codex 侧走 `account/read`：`account=null + requiresOpenaiAuth=false` 即自定义 provider
   （API-key 组织用户的典型形态），这条语义实测确认（本机 deepseek 配置）。
-  **容器实测抓到并已修的真 bug**：`claude auth status` 退出码语义是 `loggedIn ? 0 : 1`——
-  未登录退出 1 但 stdout 仍是合法 JSON，初版探针把非零退出误判 `unknown`，
-  恰好错杀「未登录」这个最该正确的状态；修复后提取纯函数 `parseClaudeAuthStatusOutput`
-  并补 4 个回归测试。前端 `BackendStatusCard` 自决可见性——双后端可用不占版面，
-  有问题或空列表（首次上手）才出现；DirPicker 后端切换同步加警示点与修复指引。
+  **评审驱动的四处修正**：① `claude auth status` 退出码语义是 `loggedIn ? 0 : 1`——
+  未登录退出 1 但 stdout 仍是合法 JSON，初版探针把非零退出误判 `unknown`（容器实测抓出，
+  提取纯函数 `parseClaudeAuthStatusOutput` 并补回归测试）；② codex 探测改**一次性
+  spawn+kill**（会话在跑则复用共享连接）——`ensureRpc()` 会永久拉起 app-server，
+  违背懒 spawn 红线；握手参数抽成 `handshakeAppServer` 与 ensureRpc 共用防漂移；
+  ③ 探针 stderr 持而不读会在子进程写满管道时阻塞到超时误报 unknown，改为同步消费；
+  ④ 缓存含 unknown（不缓存会让「app-server 启动即崩」演变成 spawn 崩溃重试循环）。
+  前端 `BackendStatusCard` 自决可见性——双后端可用不占版面，有问题或空列表（首次上手）
+  才出现；DirPicker 警示与状态卡共用 `backendFixHint` 唯一文案源。
   容器 UI（双后端未登录态）已经 chrome-devtools 截图验证。
+  **已知边界（非本项引入，未动）**：`/api/sessions` 的 codex 线程发现本身就会
+  ensureRpc 永久拉起 app-server（10s 轮询），失败时每轮重试 spawn——懒 spawn 语义
+  在会话发现层的取舍是另一笔账。
 - **公网配方一键脚本**（`bun run public-access <funnel|cf-quick|caddy>`）：只做隧道创建与反代，
-  不碰账号体系。**未配 authToken 一律拒绝执行**（集成测试锁定：空 HOME 下 exit 1）——
-  隧道层暴露在服务端启动检查之外，token 防线从「靠自觉」升级为脚本硬门槛。
+  不碰账号体系。**未配 authToken 一律拒绝执行**——隧道层暴露在服务端启动检查之外，
+  token 防线从「靠自觉」升级为脚本硬门槛。逻辑层 `run()` 的全部副作用经 RunDeps 注入，
+  测试在进程内覆盖（评审发现旧 spawn 集成测试只隔离 HOME，仓库根 anyplane.config.json
+  会穿透 token 门槛，本机跑 bun test 可能真执行 `tailscale funnel`）；包装层薄壳 +
+  顶层异常兜底（配置解析错误给可读一行而非 unhandled rejection 堆栈）。
   CF 命名隧道涉账号与 DNS，明确不在脚本范围内。
 
 ## 方向十二（部分）：上量前的运行韧性——2026-09-12

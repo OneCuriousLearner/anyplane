@@ -126,7 +126,7 @@ describe('getBackendsStatus 缓存与并发', () => {
     expect(calls).toBe(1)
   })
 
-  test('unknown 结果不入缓存，下次调用重新探测', async () => {
+  test('unknown 同规则入缓存：防 app-server 启动即崩时的 spawn 崩溃重试循环', async () => {
     resetBackendsStatusCache()
     let calls = 0
     const deps = {
@@ -138,6 +138,6 @@ describe('getBackendsStatus 缓存与并发', () => {
     }
     await getBackendsStatus(deps)
     await getBackendsStatus(deps)
-    expect(calls).toBe(2)
+    expect(calls).toBe(1)
   })
 })

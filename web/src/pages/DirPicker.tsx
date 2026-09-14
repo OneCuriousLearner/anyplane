@@ -7,7 +7,7 @@ import {
   type DirEntry,
   type SessionInfo,
 } from '../lib/api'
-import { backendNeedsAttention } from '../components/BackendStatusCard'
+import { backendFixHint, backendNeedsAttention } from '../components/BackendStatusCard'
 
 type NodeState =
   | { status: 'loading' }
@@ -89,7 +89,7 @@ export function DirPicker(props: {
     loadLevel(ROOT)
   }, [loadLevel])
 
-  // 双后端登录状态：选中的后端未装/未登录时在确认栏给指引（30s 服务端缓存，打开一次取一回即可）
+  // 双后端登录状态：选中的后端未装/未登录时在确认栏给指引（60s 服务端缓存，打开一次取一回即可）
   useEffect(() => {
     fetchBackendsStatus()
       .then(setBackendsStatus)
@@ -359,13 +359,7 @@ export function DirPicker(props: {
         </div>
         {backendsStatus && backendNeedsAttention(backendsStatus[backend]) && (
           <div className="mb-2 font-mono text-[10px] leading-snug text-faint">
-            {backend === 'claude'
-              ? backendsStatus.claude.state === 'not-installed'
-                ? 'Claude CLI 未安装：npm i -g @anthropic-ai/claude-code'
-                : 'Claude 未登录：终端运行 claude auth login，或配置 ANTHROPIC_API_KEY / 网关 token'
-              : backendsStatus.codex.state === 'not-installed'
-                ? 'Codex CLI 未安装：npm i -g @openai/codex'
-                : 'Codex 未登录：终端运行 codex login，或在 ~/.codex/config.toml 配置自定义 provider'}
+            {backendFixHint(backendsStatus[backend], backend)}
           </div>
         )}
         <button

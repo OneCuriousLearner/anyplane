@@ -156,7 +156,7 @@ export async function handleMiscRoutes(
   if (url.pathname === '/api/claude/model-names' && req.method === 'GET') {
     return json({ models: resolveTierModelNames(url.searchParams.get('cwd') ?? undefined) })
   }
-  // 双后端登录状态（列表页「该去登录哪个」指引；30s 服务端缓存，探针成本不随轮询放大）
+  // 双后端登录状态（列表页「该去登录哪个」指引；60s 服务端缓存，探针成本不随轮询放大）
   if (url.pathname === '/api/backends/status' && req.method === 'GET') {
     try {
       return json(await deps.getBackendsStatus())
