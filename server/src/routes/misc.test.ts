@@ -75,3 +75,37 @@ describe('GET /api/history/:slug/:sessionId 查询参数', () => {
     expect(await response!.json()).toEqual({ messages: [], fileBytes: 0, hasMore: false })
   })
 })
+
+describe('GET /api/backends/status', () => {
+  test('透传探测结果；探测抛错返回 500', async () => {
+    const ok = await handleMiscRoutes(
+      new Request('http://localhost/api/backends/status'),
+      new URL('http://localhost/api/backends/status'),
+      deps({
+        getBackendsStatus: async () => ({
+          checkedAt: 1,
+          claude: { state: 'subscription' },
+          codex: { state: 'not-logged-in' },
+        }),
+      }),
+    )
+    expect(ok?.status).toBe(200)
+    expect(await ok!.json()).toEqual({
+      checkedAt: 1,
+      claude: { state: 'subscription' },
+      codex: { state: 'not-logged-in' },
+    })
+
+    const boom = await handleMiscRoutes(
+      new Request('http://localhost/api/backends/status'),
+      new URL('http://localhost/api/backends/status'),
+      deps({
+        getBackendsStatus: async () => {
+          throw new Error('probe exploded')
+        },
+      }),
+    )
+    expect(boom?.status).toBe(500)
+    expect(await boom!.json()).toEqual({ error: 'probe exploded' })
+  })
+})

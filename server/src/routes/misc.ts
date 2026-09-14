@@ -1,11 +1,12 @@
 // 其余 REST 路由：fs/list、handoff、lineage、uploads、history（claude/codex）、
-// codex/models、config、claude/model-names。
+// codex/models、config、claude/model-names、backends/status。
 
 import { readHistory, sanitizePath } from '../backends/claude/discovery'
 import { resolveTierModelNames } from '../backends/claude/modelNames'
 import { readHistory as readCodexHistory } from '../backends/codex/backend'
 import { codexRuntime } from '../backends/codex/runtime'
 import { describeKey } from '../backends/port'
+import { getBackendsStatus } from '../backends/status'
 import { config } from '../config'
 import { FsBrowseError, listDirectories } from '../fsbrowse'
 import { lineageFor, type HandoffDetail } from '../handoff'
@@ -17,11 +18,13 @@ import { json, readJsonBody } from './http'
 export interface MiscRouteDeps {
   readHistory: typeof readHistory
   runHandoff: typeof runHandoff
+  getBackendsStatus: typeof getBackendsStatus
 }
 
 export const defaultMiscRouteDeps: MiscRouteDeps = {
   readHistory,
   runHandoff,
+  getBackendsStatus,
 }
 
 export async function handleMiscRoutes(
@@ -152,6 +155,14 @@ export async function handleMiscRoutes(
   // 各档实际配置的模型名（StatusPill 透传显示；每次调用实时读盘，配置改动即见）
   if (url.pathname === '/api/claude/model-names' && req.method === 'GET') {
     return json({ models: resolveTierModelNames(url.searchParams.get('cwd') ?? undefined) })
+  }
+  // 双后端登录状态（列表页「该去登录哪个」指引；30s 服务端缓存，探针成本不随轮询放大）
+  if (url.pathname === '/api/backends/status' && req.method === 'GET') {
+    try {
+      return json(await deps.getBackendsStatus())
+    } catch (e) {
+      return json({ error: errorMessage(e) }, { status: 500 })
+    }
   }
   return undefined
 }

@@ -245,6 +245,36 @@ export async function fetchConfig(): Promise<ServerConfigInfo> {
   return r.json()
 }
 
+/** 后端宏观登录态（与服务端 backends/status.ts 的 BackendLoginState 一一对应） */
+export type BackendLoginState =
+  | 'subscription'
+  | 'api-key'
+  | 'token'
+  | 'third-party'
+  | 'custom-provider'
+  | 'not-logged-in'
+  | 'not-installed'
+  | 'unknown'
+
+export interface BackendStatus {
+  state: BackendLoginState
+  detail?: string
+  error?: string
+}
+
+export interface BackendsStatus {
+  checkedAt: number
+  claude: BackendStatus
+  codex: BackendStatus
+}
+
+/** 双后端登录状态（30s 服务端缓存；探测失败整体 500，单侧失败落在该侧 state=unknown） */
+export async function fetchBackendsStatus(): Promise<BackendsStatus> {
+  const r = await apiFetch('/api/backends/status')
+  if (!r.ok) throw await apiError(r)
+  return r.json()
+}
+
 export interface TierModelName {
   /** 显示名（_MODEL_NAME 优先，缺省回退模型 ID） */
   name: string

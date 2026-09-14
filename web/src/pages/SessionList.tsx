@@ -17,6 +17,7 @@ import { InboxSocket, type InboxApproval } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
+import { BackendStatusCard } from '../components/BackendStatusCard'
 import { getThemeChoice, setThemeChoice, toggleTheme, type ThemeChoice } from '../lib/theme'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -553,6 +554,8 @@ export function SessionList(props: {
           </div>
         ) : (
         <>
+        {/* 登录状态卡：双后端都可用时自隐藏；空列表（首次上手）常显 */}
+        <BackendStatusCard alwaysShow={!loading && sessions.length === 0} />
         {loading && <p className="p-4 font-mono text-xs text-faint">加载中…</p>}
         {!loading && sessions.length === 0 && (
           <div className="p-4 text-sm text-muted">
