@@ -66,3 +66,33 @@ export function modeCookie(mode: Mode, secure: boolean): string {
 export function isOwnGatewayCmd(cmdline: string): boolean {
   return cmdline.replace(/\0/g, ' ').includes('scripts/gateway.ts')
 }
+
+/**
+ * Bun.serve 在 HTTP/1.0 / 无 Host 探测下会把 req.url 收成相对路径（"/"），
+ * `new URL("/")` 抛 ERR_INVALID_URL（公网 nmap Trinity 探针就是这条路径）。
+ * 绝对 URL 原样解析；相对路径用 Host 或 fallbackOrigin 补全；仍失败返回 null。
+ */
+export function parseRequestUrl(
+  raw: string,
+  hostHeader?: string | null,
+  fallbackOrigin = 'http://127.0.0.1',
+): URL | null {
+  try {
+    return new URL(raw)
+  } catch {
+    let origin = fallbackOrigin
+    const host = hostHeader?.trim()
+    if (host) {
+      try {
+        origin = `${new URL(fallbackOrigin).protocol}//${host}`
+      } catch {
+        origin = `http://${host}`
+      }
+    }
+    try {
+      return new URL(raw, origin)
+    } catch {
+      return null
+    }
+  }
+}

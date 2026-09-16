@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { detectProtocol, isOwnGatewayCmd, modeCookie, pickMode, type Mode } from './gateway-lib'
+import { detectProtocol, isOwnGatewayCmd, modeCookie, parseRequestUrl, pickMode, type Mode } from './gateway-lib'
 import { loadAnyplaneConfigFile } from '../server/src/config'
 import { describePid, listListenPids, terminatePids } from '../server/src/portTakeover'
 import { ensurePrivateDir, escapeHtml as htmlEscape } from '../server/src/util'
@@ -156,7 +156,7 @@ async function probe(target: string): Promise<boolean> {
   }
 }
 
-function htmlPage(title: string, body: string): Response {
+function htmlPage(title: string, body: string, status = 200): Response {
   return new Response(
     `<!doctype html><meta charset="utf-8"><title>${htmlEscape(title)}</title>
 <style>
@@ -165,7 +165,7 @@ function htmlPage(title: string, body: string): Response {
   .ok{color:#86efac} .bad{color:#fca5a5}
 </style>
 <h1>${htmlEscape(title)}</h1>${body}`,
-    { headers: { 'content-type': 'text/html; charset=utf-8' } },
+    { status, headers: { 'content-type': 'text/html; charset=utf-8' } },
   )
 }
 
@@ -193,8 +193,7 @@ function filterReqHeaders(req: Request, proto: string, target: string): Headers 
   return out
 }
 
-async function proxyHttp(req: Request, target: string, proto: string, mode: Mode): Promise<Response> {
-  const url = new URL(req.url)
+async function proxyHttp(req: Request, url: URL, target: string, proto: string, mode: Mode): Promise<Response> {
   const dest = new URL(url.pathname + url.search, target)
   const init: RequestInit = {
     method: req.method,
@@ -213,36 +212,44 @@ async function proxyHttp(req: Request, target: string, proto: string, mode: Mode
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     const isDev = mode === 'dev'
+    // 友好提示页必须带真 502：状态码 200 会让浏览器缓存/监控/搜索引擎把
+    // "后端未就绪"当成正常页面，排障方向完全反掉。
     return htmlPage(
       '502 后端未就绪',
       `<p>${isDev ? '开发模式（Vite :5173）' : '生产模式（server :7480）'}连不上：<code>${htmlEscape(msg)}</code></p>
 <p>请在本机运行 <code>${isDev ? 'bun run dev' : 'bun run start'}</code>，然后刷新。</p>
 <p><a href="/__gateway">网关状态</a> · <a href="/?mode=dev">开发</a> · <a href="/?mode=prod">生产</a></p>`,
+      502,
     )
   }
 }
 
-function makeFetch(cfg: GatewayCfg): (req: Request, srv: { upgrade: (req: Request, opts: { data: WSProxyData }) => boolean }) => Promise<Response | undefined> {
+function makeFetch(
+  cfg: GatewayCfg,
+  fallbackOrigin: string,
+): (req: Request, srv: { upgrade: (req: Request, opts: { data: WSProxyData }) => boolean }) => Promise<Response | undefined> {
   return async (req, srv) => {
-    const url = new URL(req.url)
-    const proto = url.protocol === 'https:' ? 'https' : 'http'
-    const host = req.headers.get('host') ?? ''
-    const secure = proto === 'https'
+    try {
+      const url = parseRequestUrl(req.url, req.headers.get('host'), fallbackOrigin)
+      if (!url) return new Response('Bad Request', { status: 400 })
+      const proto = url.protocol === 'https:' ? 'https' : 'http'
+      const host = req.headers.get('host') ?? ''
+      const secure = proto === 'https'
 
-    if (url.pathname === '/__gateway') {
-      const mode = pickMode(host, req.headers.get('cookie'), cfg.devHost, url.searchParams.get('mode'))
-      const [devUp, prodUp] = await Promise.all([probe(cfg.devTarget), probe(cfg.prodTarget)])
-      return htmlPage(
-        'anyplane gateway',
-        `<p>当前模式：<strong>${mode === 'dev' ? '开发 Vite :5173' : '生产 server :7480'}</strong></p>
+      if (url.pathname === '/__gateway') {
+        const mode = pickMode(host, req.headers.get('cookie'), cfg.devHost, url.searchParams.get('mode'))
+        const [devUp, prodUp] = await Promise.all([probe(cfg.devTarget), probe(cfg.prodTarget)])
+        return htmlPage(
+          'anyplane gateway',
+          `<p>当前模式：<strong>${mode === 'dev' ? '开发 Vite :5173' : '生产 server :7480'}</strong></p>
 <p>Vite ${devUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'} ·
 server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'}</p>
 <p>切换：<a href="/?mode=dev">开发</a> · <a href="/?mode=prod">生产</a></p>
 <p>第二域名（永远开发）：<code>${htmlEscape(cfg.devHost)}</code></p>
 <p>生产域名：<code>${htmlEscape(cfg.prodHost)}</code></p>
 <p>本机仍可直接用 <code>http://127.0.0.1:5173</code> / <code>http://127.0.0.1:7480</code>。</p>`,
-      )
-    }
+        )
+      }
 
     const queryMode = url.searchParams.get('mode')
     const mode = pickMode(host, req.headers.get('cookie'), cfg.devHost, queryMode)
@@ -264,7 +271,7 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
       return new Response('WebSocket upgrade failed', { status: 400 })
     }
 
-    const res = await proxyHttp(req, target, proto, mode)
+    const res = await proxyHttp(req, url, target, proto, mode)
     const sticky = queryMode === 'dev' || queryMode === 'prod' ? queryMode : undefined
     if (sticky) {
       const headers = new Headers(res.headers)
@@ -272,6 +279,13 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
       return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
     }
     return res
+    } catch (e) {
+      // 400 只给请求本身有问题（parseRequestUrl 返回 null，见上）；能走到这里的
+      // 都是网关自身未预期的异常，按 HTTP 语义报 500。
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`[gateway] 请求处理失败 ${JSON.stringify(req.url)}: ${msg}`)
+      return new Response('Internal Server Error', { status: 500 })
+    }
   }
 }
 
@@ -523,19 +537,20 @@ if (!token && cfg.insecure) {
 }
 
 const tls = await ensureCerts(cfg)
-const fetchHandler = makeFetch(cfg)
+const fetchHttp = makeFetch(cfg, 'http://127.0.0.1')
+const fetchTls = makeFetch(cfg, 'https://127.0.0.1')
 
 const internalHttp = Bun.serve<WSProxyData>({
   hostname: '127.0.0.1',
   port: 0,
-  fetch: fetchHandler,
+  fetch: fetchHttp,
   websocket: wsHandler,
 })
 const internalTls = Bun.serve<WSProxyData>({
   hostname: '127.0.0.1',
   port: 0,
   tls: { cert: tls.cert, key: tls.key },
-  fetch: fetchHandler,
+  fetch: fetchTls,
   websocket: wsHandler,
 })
 
