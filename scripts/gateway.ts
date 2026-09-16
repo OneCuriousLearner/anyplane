@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { detectProtocol, isOwnGatewayCmd, modeCookie, pickMode, type Mode } from './gateway-lib'
+import { detectProtocol, isOwnGatewayCmd, modeCookie, parseRequestUrl, pickMode, type Mode } from './gateway-lib'
 import { loadAnyplaneConfigFile } from '../server/src/config'
 import { describePid, listListenPids, terminatePids } from '../server/src/portTakeover'
 import { ensurePrivateDir, escapeHtml as htmlEscape } from '../server/src/util'
@@ -193,8 +193,7 @@ function filterReqHeaders(req: Request, proto: string, target: string): Headers 
   return out
 }
 
-async function proxyHttp(req: Request, target: string, proto: string, mode: Mode): Promise<Response> {
-  const url = new URL(req.url)
+async function proxyHttp(req: Request, url: URL, target: string, proto: string, mode: Mode): Promise<Response> {
   const dest = new URL(url.pathname + url.search, target)
   const init: RequestInit = {
     method: req.method,
@@ -222,27 +221,32 @@ async function proxyHttp(req: Request, target: string, proto: string, mode: Mode
   }
 }
 
-function makeFetch(cfg: GatewayCfg): (req: Request, srv: { upgrade: (req: Request, opts: { data: WSProxyData }) => boolean }) => Promise<Response | undefined> {
+function makeFetch(
+  cfg: GatewayCfg,
+  fallbackOrigin: string,
+): (req: Request, srv: { upgrade: (req: Request, opts: { data: WSProxyData }) => boolean }) => Promise<Response | undefined> {
   return async (req, srv) => {
-    const url = new URL(req.url)
-    const proto = url.protocol === 'https:' ? 'https' : 'http'
-    const host = req.headers.get('host') ?? ''
-    const secure = proto === 'https'
+    try {
+      const url = parseRequestUrl(req.url, req.headers.get('host'), fallbackOrigin)
+      if (!url) return new Response('Bad Request', { status: 400 })
+      const proto = url.protocol === 'https:' ? 'https' : 'http'
+      const host = req.headers.get('host') ?? ''
+      const secure = proto === 'https'
 
-    if (url.pathname === '/__gateway') {
-      const mode = pickMode(host, req.headers.get('cookie'), cfg.devHost, url.searchParams.get('mode'))
-      const [devUp, prodUp] = await Promise.all([probe(cfg.devTarget), probe(cfg.prodTarget)])
-      return htmlPage(
-        'anyplane gateway',
-        `<p>当前模式：<strong>${mode === 'dev' ? '开发 Vite :5173' : '生产 server :7480'}</strong></p>
+      if (url.pathname === '/__gateway') {
+        const mode = pickMode(host, req.headers.get('cookie'), cfg.devHost, url.searchParams.get('mode'))
+        const [devUp, prodUp] = await Promise.all([probe(cfg.devTarget), probe(cfg.prodTarget)])
+        return htmlPage(
+          'anyplane gateway',
+          `<p>当前模式：<strong>${mode === 'dev' ? '开发 Vite :5173' : '生产 server :7480'}</strong></p>
 <p>Vite ${devUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'} ·
 server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'}</p>
 <p>切换：<a href="/?mode=dev">开发</a> · <a href="/?mode=prod">生产</a></p>
 <p>第二域名（永远开发）：<code>${htmlEscape(cfg.devHost)}</code></p>
 <p>生产域名：<code>${htmlEscape(cfg.prodHost)}</code></p>
 <p>本机仍可直接用 <code>http://127.0.0.1:5173</code> / <code>http://127.0.0.1:7480</code>。</p>`,
-      )
-    }
+        )
+      }
 
     const queryMode = url.searchParams.get('mode')
     const mode = pickMode(host, req.headers.get('cookie'), cfg.devHost, queryMode)
@@ -264,7 +268,7 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
       return new Response('WebSocket upgrade failed', { status: 400 })
     }
 
-    const res = await proxyHttp(req, target, proto, mode)
+    const res = await proxyHttp(req, url, target, proto, mode)
     const sticky = queryMode === 'dev' || queryMode === 'prod' ? queryMode : undefined
     if (sticky) {
       const headers = new Headers(res.headers)
@@ -272,6 +276,11 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
       return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
     }
     return res
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`[gateway] 请求处理失败 ${JSON.stringify(req.url)}: ${msg}`)
+      return new Response('Bad Request', { status: 400 })
+    }
   }
 }
 
@@ -523,19 +532,20 @@ if (!token && cfg.insecure) {
 }
 
 const tls = await ensureCerts(cfg)
-const fetchHandler = makeFetch(cfg)
+const fetchHttp = makeFetch(cfg, 'http://127.0.0.1')
+const fetchTls = makeFetch(cfg, 'https://127.0.0.1')
 
 const internalHttp = Bun.serve<WSProxyData>({
   hostname: '127.0.0.1',
   port: 0,
-  fetch: fetchHandler,
+  fetch: fetchHttp,
   websocket: wsHandler,
 })
 const internalTls = Bun.serve<WSProxyData>({
   hostname: '127.0.0.1',
   port: 0,
   tls: { cert: tls.cert, key: tls.key },
-  fetch: fetchHandler,
+  fetch: fetchTls,
   websocket: wsHandler,
 })
 

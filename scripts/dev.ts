@@ -52,27 +52,35 @@ console.log(
   `[dev] launcher pid=${process.pid} bun=${Bun.version} children=${children.map(({ name, proc }) => `${name}:${proc.pid}`).join(',')}`,
 )
 
-const exits = children.map(async ({ name, proc }) => {
-  const code = await proc.exited
-  console.log(`[dev] child-exit name=${name} pid=${proc.pid} code=${code}`)
-  return code
-})
-
 const delay = (ms: number) => new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), ms))
 let stopping = false
+let exitCode = 0
 
-async function stop(reason: string): Promise<void> {
+async function stop(reason: string, opts?: { killRemaining?: boolean; code?: number }): Promise<void> {
   if (stopping) {
     console.warn(`[dev] shutdown already in progress; repeated=${reason}`)
     return
   }
   stopping = true
+  if (opts?.code != null) exitCode = Math.max(exitCode, opts.code)
   const started = performance.now()
   console.log(`[dev] shutdown begin reason=${reason}; waiting up to 5s for graceful child exit`)
 
-  // Ctrl+C 是控制台事件，Windows 会同时发给同一控制台中的 server 和 Vite。
-  // 不要立刻 proc.kill()/process.exit()：那会在 server.stop() 完成前硬杀 server，
-  // 并触发 Bun <=1.3.14（修复于 1.4.0）的监听 socket 继承问题。
+  // 子进程被单独 SIGTERM（典型：另一份 bun run start / bun run dev 的 port-takeover
+  // 只杀了 :7480）时，控制台不会把信号广播给 Vite，必须主动收掉，否则 Vite 继续
+  // 把 /api 与 /ws 打到空端口，刷 ECONNREFUSED。
+  // Ctrl+C 仍不立刻 kill：Windows 会把 SIGINT 同时发给同一控制台里的 server 和 Vite，
+  // 立刻 proc.kill() 会在 server.stop() 完成前硬杀，并触发 Bun <=1.3.14 的 socket 继承问题。
+  if (opts?.killRemaining) {
+    const alive = children.filter(({ proc }) => proc.exitCode === null)
+    for (const { name, proc } of alive) {
+      console.warn(`[dev] stopping sibling name=${name} pid=${proc.pid}`)
+      try {
+        proc.kill('SIGTERM')
+      } catch {}
+    }
+  }
+
   const graceful = Promise.all(exits)
   const result = await Promise.race([graceful, delay(5_000)])
 
@@ -88,8 +96,18 @@ async function stop(reason: string): Promise<void> {
   }
 
   console.log(`[dev] shutdown complete elapsedMs=${Math.round(performance.now() - started)}`)
-  process.exit(0)
+  process.exit(exitCode)
 }
+
+const exits = children.map(async ({ name, proc }) => {
+  const code = await proc.exited
+  console.log(`[dev] child-exit name=${name} pid=${proc.pid} code=${code}`)
+  if (!stopping) {
+    console.error(`[dev] child stopped unexpectedly name=${name} pid=${proc.pid} code=${code}`)
+    void stop(`child-exit:${name}`, { killRemaining: true, code: code === 0 ? 1 : code })
+  }
+  return code
+})
 
 process.on('SIGINT', () => void stop('SIGINT'))
 process.on('SIGTERM', () => void stop('SIGTERM'))

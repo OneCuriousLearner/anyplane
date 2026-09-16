@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { detectProtocol, isOwnGatewayCmd, parseCookieMode, pickMode } from './gateway-lib'
+import { detectProtocol, isOwnGatewayCmd, parseCookieMode, parseRequestUrl, pickMode } from './gateway-lib'
 
 describe('detectProtocol', () => {
   test('TLS ClientHello', () => {
@@ -41,5 +41,69 @@ describe('isOwnGatewayCmd', () => {
   test('cmdline 含 scripts/gateway.ts → 自己人；其余进程不误杀', () => {
     expect(isOwnGatewayCmd('bun\0--bun\0scripts/gateway.ts\0--insecure')).toBe(true)
     expect(isOwnGatewayCmd('/usr/sbin/sshd')).toBe(false)
+  })
+})
+
+describe('parseRequestUrl', () => {
+  test('绝对 URL 原样解析', () => {
+    const u = parseRequestUrl('http://cc-remote.devcloud.woa.com/?mode=dev', 'cc-remote.devcloud.woa.com')
+    expect(u?.href).toBe('http://cc-remote.devcloud.woa.com/?mode=dev')
+    expect(parseRequestUrl('https://example.com/x', null)?.protocol).toBe('https:')
+  })
+  test('相对路径 + Host 补成绝对 URL', () => {
+    const u = parseRequestUrl('/', 'cc-remote.devcloud.woa.com', 'http://127.0.0.1')
+    expect(u?.href).toBe('http://cc-remote.devcloud.woa.com/')
+  })
+  test('HTTP/1.0 无 Host（nmap Trinity 探针）不抛错', () => {
+    expect(() => new URL('/')).toThrow()
+    expect(() => new URL('/nice%20ports%2C/Tri%6Eity.txt%2ebak')).toThrow()
+    expect(parseRequestUrl('/', null)?.pathname).toBe('/')
+    const probe = parseRequestUrl('/nice%20ports%2C/Tri%6Eity.txt%2ebak', null)
+    expect(probe).not.toBeNull()
+    expect(decodeURIComponent(probe!.pathname).toLowerCase()).toContain('trinity')
+  })
+  test('TLS fallback 保持 https', () => {
+    expect(parseRequestUrl('/', 'example.com', 'https://127.0.0.1')?.protocol).toBe('https:')
+  })
+  test('无法补全时返回 null', () => {
+    expect(parseRequestUrl('http://[', null)).toBeNull()
+  })
+  test('Bun.serve 收到 HTTP/1.0 无 Host 时 parseRequestUrl 仍能解析', async () => {
+    const { createConnection } = await import('node:net')
+    let resolveRaw!: (u: string) => void
+    const got = new Promise<string>((r) => {
+      resolveRaw = r
+    })
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        resolveRaw(req.url)
+        return new Response('ok')
+      },
+    })
+    try {
+      const port = server.port
+      if (!port) throw new Error('no port')
+      const raw = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('HTTP/1.0 probe timed out')), 2000)
+        void got.then((u) => {
+          clearTimeout(timer)
+          resolve(u)
+        })
+        const sock = createConnection({ host: '127.0.0.1', port }, () => {
+          sock.write('GET /nice%20ports%2C/Tri%6Eity.txt%2ebak HTTP/1.0\r\n\r\n')
+        })
+        sock.on('error', (e) => {
+          clearTimeout(timer)
+          reject(e)
+        })
+        void got.then(() => sock.end())
+      })
+      expect(raw.startsWith('http://') || raw.startsWith('https://')).toBe(false)
+      expect(decodeURIComponent(parseRequestUrl(raw, null)!.pathname).toLowerCase()).toContain('trinity')
+    } finally {
+      server.stop(true)
+    }
   })
 })
