@@ -156,7 +156,7 @@ async function probe(target: string): Promise<boolean> {
   }
 }
 
-function htmlPage(title: string, body: string): Response {
+function htmlPage(title: string, body: string, status = 200): Response {
   return new Response(
     `<!doctype html><meta charset="utf-8"><title>${htmlEscape(title)}</title>
 <style>
@@ -165,7 +165,7 @@ function htmlPage(title: string, body: string): Response {
   .ok{color:#86efac} .bad{color:#fca5a5}
 </style>
 <h1>${htmlEscape(title)}</h1>${body}`,
-    { headers: { 'content-type': 'text/html; charset=utf-8' } },
+    { status, headers: { 'content-type': 'text/html; charset=utf-8' } },
   )
 }
 
@@ -212,11 +212,14 @@ async function proxyHttp(req: Request, url: URL, target: string, proto: string, 
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     const isDev = mode === 'dev'
+    // 友好提示页必须带真 502：状态码 200 会让浏览器缓存/监控/搜索引擎把
+    // "后端未就绪"当成正常页面，排障方向完全反掉。
     return htmlPage(
       '502 后端未就绪',
       `<p>${isDev ? '开发模式（Vite :5173）' : '生产模式（server :7480）'}连不上：<code>${htmlEscape(msg)}</code></p>
 <p>请在本机运行 <code>${isDev ? 'bun run dev' : 'bun run start'}</code>，然后刷新。</p>
 <p><a href="/__gateway">网关状态</a> · <a href="/?mode=dev">开发</a> · <a href="/?mode=prod">生产</a></p>`,
+      502,
     )
   }
 }
@@ -277,9 +280,11 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
     }
     return res
     } catch (e) {
+      // 400 只给请求本身有问题（parseRequestUrl 返回 null，见上）；能走到这里的
+      // 都是网关自身未预期的异常，按 HTTP 语义报 500。
       const msg = e instanceof Error ? e.message : String(e)
       console.error(`[gateway] 请求处理失败 ${JSON.stringify(req.url)}: ${msg}`)
-      return new Response('Bad Request', { status: 400 })
+      return new Response('Internal Server Error', { status: 500 })
     }
   }
 }
