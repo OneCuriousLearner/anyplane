@@ -53,6 +53,9 @@ console.log(
 )
 
 const delay = (ms: number) => new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), ms))
+// Bun 对信号杀死的进程 exitCode 恒为 null（退出码只记录正常 exit），
+// 必须同时看 signalCode，否则已死的兄弟进程会被误判存活、重复收 SIGTERM。
+const isAlive = (proc: (typeof children)[number]['proc']) => proc.exitCode === null && proc.signalCode === null
 let stopping = false
 let exitCode = 0
 
@@ -72,7 +75,7 @@ async function stop(reason: string, opts?: { killRemaining?: boolean; code?: num
   // Ctrl+C 仍不立刻 kill：Windows 会把 SIGINT 同时发给同一控制台里的 server 和 Vite，
   // 立刻 proc.kill() 会在 server.stop() 完成前硬杀，并触发 Bun <=1.3.14 的 socket 继承问题。
   if (opts?.killRemaining) {
-    const alive = children.filter(({ proc }) => proc.exitCode === null)
+    const alive = children.filter(({ proc }) => isAlive(proc))
     for (const { name, proc } of alive) {
       console.warn(`[dev] stopping sibling name=${name} pid=${proc.pid}`)
       try {
@@ -85,7 +88,7 @@ async function stop(reason: string, opts?: { killRemaining?: boolean; code?: num
   const result = await Promise.race([graceful, delay(5_000)])
 
   if (result === 'timeout') {
-    const alive = children.filter(({ proc }) => proc.exitCode === null)
+    const alive = children.filter(({ proc }) => isAlive(proc))
     console.error(`[dev] graceful timeout; force-kill=${alive.map(({ name, proc }) => `${name}:${proc.pid}`).join(',') || 'none'}`)
     for (const { proc } of alive) {
       try {
