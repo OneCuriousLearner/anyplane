@@ -160,6 +160,10 @@ O(会话数 × 文件大小)"表述；但稀疏文件与未清 OS 缓存会影�
 
 ## 方向十三：结构性债务偿还（外部架构评审的行动项）
 
+> **进度（2026-09-17）**：13.1 / 13.2 已交付（`@anyplane/protocol` 单一类型正本 +
+> Biome 红线规则进 CI，见两小节末尾）；13.3 / 13.4 待排期；13.5 时机红线不动；
+> 13.6 仅剩 GitHub 设置开关（仓库 owner 手工）。
+
 **立项背景（2026-09-17）**：一次外部视角的全量架构评审，
 完整发现与证据见 [audits/2026-09-17-architecture-review.md](audits/2026-09-17-architecture-review.md)
 （九条结构性发现 + 分支清理清单 + 未覆盖面）。本节只记**做什么、什么顺序、为什么是这个顺序**。
@@ -183,6 +187,12 @@ web 有完整 `ServerEvent` 20+ kind 联合，server 侧是 `broadcast(payload: 
 **为什么排第一**：纯类型迁移，零运行时风险，且 `tsc --noEmit` 会自动把所有已漂之处一次暴露。
 这也是 `lib/ingest.ts`「唯一实现，消灭行为分叉」原则的同一思路，向类型层推广。
 
+**交付（2026-09-17）**：`protocol/` workspace 落地（纯类型零运行时，`import type` 编译期擦除，
+npm 发布面不含本包）；`broadcast`/`HubServices`/`statusOf`/`pushCliRing` 全链路判别联合化。
+tsc 如预期暴露了全部已漂点并就地修复：inbox `snapshot` 变体入联合、`/api/config` 的
+`authRequired` 补声明、lineage nodes 诚实化为 `LineageNode`（服务端从未发过 `mtime/status/
+managed`）、`rewindPending` 确认为前端未消费的死字段（入类型并标注预留）。
+
 ### 13.2 装 linter 并把红线写成规则（P0）
 
 **问题**：20,930 行生产代码无 ESLint / Biome / Prettier。
@@ -197,6 +207,16 @@ web 有完整 `ServerEvent` 20+ kind 联合，server 侧是 `broadcast(payload: 
 **附带发现**：15 个 e2e 脚本全部不在 CI，而私有 subtype（`side_question` /
 `generate_session_title`）的唯一防线就是 e2e——最脆弱的部位防线是手动的。
 不需要真实模型调用的部分（审批链路、WS 补发、`/clear` 重键）应以 mock CLI 搬进 CI。
+
+**交付（2026-09-17）**：Biome 2.5 落地，`bun run lint`（`biome ci`）进 CI 双平台矩阵。
+规则哲学定型为「只守 bug 类与红线」：formatter / organizeImports / 纯风格规则一律关闭
+（仓库风格本就一致，60+ 文件装饰性 diff 换不来 bug 预防）。四条依赖红线写成
+`noRestrictedImports` 并探针实测命中（适配器↛hub、hub↛push、routes↛具体 port、
+protocol 不出包；两处存量违列入豁免清单，13.3 后移除）。**未覆盖**：时序红线
+（ensure 零 await）——GritQL 插件实测匹配不到 class 方法定义（Biome 2.5 限制），
+维持注释守护，根治留待 API 形状改造；e2e mock CLI 进 CI 仍未做，单列排期。
+首跑顺手清掉存量卫生问题（死变量/死 import、39 处缺 `type` 的 button、async
+Promise executor、隐式 any let 等）。
 
 ### 13.3 `BackendPort` 能力声明化 + 解模块环（P1）
 

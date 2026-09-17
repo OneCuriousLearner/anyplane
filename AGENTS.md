@@ -19,12 +19,13 @@ AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code �
 **本项目仅使用 Bun（>= 1.4.0，全平台同一门槛）。绝不要用 npm / npx / yarn / pnpm。**
 
 ```bash
-bun install          # 安装依赖（Bun workspaces: server + web）
+bun install          # 安装依赖（Bun workspaces: server + web + protocol）
 bun run dev          # 开发模式：并行拉起 server(:7480) + Vite(:5173, 代理 /api 与 /ws)
 bun run dev:server   # 仅服务端
 bun run dev:web      # 仅 Vite
 bun run build        # 构建前端到 web/dist
 bun run start        # 生产模式：服务端托管 API + WS + 静态前端
+bun run lint         # Biome lint（CI 同口径；无 formatter——纯风格规则刻意全关）
 bun run gateway      # 80/443 网关：按 ?mode=dev|prod 反代到 :5173 / :7480（无 token 需 --insecure）
 ```
 
@@ -52,6 +53,8 @@ e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干�
 - **Hub 生命周期不变量（重要）**：任何后端的会话句柄存活期间，其 Hub 不得删除——否则重连复用旧会话时事件会广播进已删 Hub（消息黑洞）。WS close 处理器按后端判定存活（`processManager.get` / `codexRuntime.get`）。
 - **懒 spawn**：`attach` 只握手不启动 CLI；首条 user 消息 / 无启动参数等价物的控制请求才触发 `ensureSpawned`。未 spawn 时 model/mode/effort 选择缓存在 `hub.spawnOpts`，自定义 env 缓存在 `hub.pendingEnv`（必须排在首条 user 消息之前写入 stdin）。Codex 相反：`x|` 会话 attach 即 `thread/resume`（订阅实时事件），`xn|` 新线程保持懒启动。
 - **后端抽象（backends/）**：**统一消息边界是 Claude stream-json 形状**——Codex 事件翻译为该形状，前端与 WS 协议不分叉。`ClaudeSession` 与 `CodexSession` 保持结构化同形（契约见 `backends/types.ts` 末尾注释）；Hub 层以 `isCodexKey` 分发，没有注册表中间层。
+- **前后端契约类型正本在 `@anyplane/protocol`**（protocol/ workspace，纯类型零运行时，`import type` 编译期擦除）：ServerEvent/ClientCommand/SessionState/HistoryMessage/审批与 REST 形状。新增 WS 事件先改这里——`broadcast()` 是判别联合卡口，不改协议包服务端编译不过。不要在本包 import 任何 server/web 模块（vendor 协议类型留在各后端内部）。
+- **依赖红线已由 Biome 机械执行**（biome.jsonc 的 noRestrictedImports，报错文案即规则意图）：适配器↛hub 运行时（hub/types 纯类型豁免）、hub↛push、routes↛具体 port（sessions/misc 两处存量豁免除外）、protocol 不出包。例外要进豁免清单并写明原因，不许静默绕过。时序红线（ensure 零 await）仍只有注释守护——GritQL 插件够不到 class 方法（Biome 2.5 限制）。
   - `backends/claude/`：**宽松解析原则（protocol.ts）：未知字段/未知 type 一律透传**。`agents.ts` 的 daemon 视图独有价值是 background agent 存活态；control.sock 逆向协议版本锁死，刻意不用。
   - `backends/codex/`：**单 app-server 进程托管全部线程**（runtime.ts），按 threadId 解复用。
     **ThreadItem 覆盖以官方 union 为准**（`server/scripts/codex-schema-baseline/v2/ThreadItem.ts`）：live（`itemStarted`/`itemCompleted`）与历史（`itemsToHistory`）**必须同形**，否则刷新页面卡片凭空消失。`collabAgentToolCall`/`subAgentActivity` 有意只走侧栏桶不进主线；其余未知 type 一律 `log.warn` 留痕后透传/跳过，**不再静默丢弃**（曾丢 hookPrompt/dynamicToolCall/imageView/sleep/imageGeneration 五种，用了 hooks 或生图的会话抄本会凭空缺块）。
