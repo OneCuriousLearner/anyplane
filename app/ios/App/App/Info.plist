@@ -66,5 +66,12 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- AnyPlane 壳直连用户自托管服务端，局域网 http（如 192.168.x.x:7480）场景需要放开 ATS；
+	     与 Android usesCleartextTraffic 同级取舍——服务器地址完全由用户自己填写。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
