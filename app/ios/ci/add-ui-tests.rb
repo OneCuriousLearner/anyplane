@@ -34,6 +34,8 @@ attrs = proj.root_object.attributes['TargetAttributes'] ||= {}
 attrs[test_target.uuid] = { 'TargetApplication' => app_target.uuid }
 
 test_target.build_configurations.each do |config|
+  config.build_settings['PRODUCT_NAME'] = 'AppUITests'
+  config.build_settings['SWIFT_VERSION'] = '5.0'
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'run.anyplane.uitests'
   config.build_settings['GENERATE_INFOPLIST_FILE'] = 'YES'
   config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
