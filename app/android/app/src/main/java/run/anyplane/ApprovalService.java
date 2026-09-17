@@ -104,7 +104,42 @@ public class ApprovalService extends Service {
         String wsUrl = serverUrl.replaceFirst("^http", "ws") + "/ws/inbox"
             + (token == null || token.isEmpty() ? "" : "?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8));
         Log.d(TAG, "连接 " + serverUrl + "（token " + (token == null || token.isEmpty() ? "无" : "有") + "）");
-        ws = http.newWebSocket(new Request.Builder().url(wsUrl).build(), new Listener());
+        Request.Builder rb = new Request.Builder().url(wsUrl);
+        String cookies = p.getString(AnyPlaneBridgePlugin.PREF_COOKIES, "");
+        if (cookies != null && !cookies.isEmpty()) {
+            // SSO 网关路径：WebView 摘来的会话 cookie（configure 时写入）
+            rb.header("Cookie", cookies);
+        }
+        ws = http.newWebSocket(rb.build(), new Listener());
+    }
+
+    /** 原生侧遥测：WS 生命周期/失败原因上报 /api/client-log（尽力而为，不阻塞主链） */
+    private void report(String tag, String msg) {
+        SharedPreferences p = AnyPlaneBridgePlugin.prefs(this);
+        String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
+        String token = p.getString(AnyPlaneBridgePlugin.PREF_TOKEN, "");
+        String cookies = p.getString(AnyPlaneBridgePlugin.PREF_COOKIES, "");
+        if (serverUrl == null || serverUrl.isEmpty()) return;
+        new Thread(() -> {
+            try {
+                okhttp3.Request.Builder rb = new okhttp3.Request.Builder()
+                    .url(serverUrl + "/api/client-log")
+                    .post(okhttp3.RequestBody.create(
+                        new JSONObject().put("tag", tag).put("msg", msg).toString(),
+                        okhttp3.MediaType.get("application/json")));
+                if (token != null && !token.isEmpty()) rb.header("authorization", "Bearer " + token);
+                if (cookies != null && !cookies.isEmpty()) rb.header("Cookie", cookies);
+                new OkHttpClient.Builder()
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS)
+                    .build()
+                    .newCall(rb.build())
+                    .execute()
+                    .close();
+            } catch (Exception ignored) {
+                // 上报通道本身不可达时静默（主链日志仍在 logcat）
+            }
+        }).start();
     }
 
     private void scheduleReconnect() {
@@ -137,6 +172,7 @@ public class ApprovalService extends Service {
             retryDelaySec = 1;
             Log.d(TAG, "inbox 已连接");
             updateOngoing("已连接");
+            report("svc-ws-open", "inbox 已连接");
         }
 
         @Override
@@ -152,12 +188,14 @@ public class ApprovalService extends Service {
         @Override
         public void onClosed(WebSocket webSocket, int code, String reason) {
             Log.d(TAG, "连接关闭 code=" + code);
+            report("svc-ws-closed", "code=" + code + " reason=" + reason);
             scheduleReconnect();
         }
 
         @Override
         public void onFailure(WebSocket webSocket, Throwable t, Response response) {
             Log.w(TAG, "连接失败: " + t + (response != null ? " http=" + response.code() : ""));
+            report("svc-ws-fail", String.valueOf(t) + (response != null ? " http=" + response.code() : ""));
             scheduleReconnect();
         }
     }

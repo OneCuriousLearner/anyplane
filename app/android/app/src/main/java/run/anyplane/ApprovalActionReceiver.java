@@ -37,6 +37,7 @@ public class ApprovalActionReceiver extends BroadcastReceiver {
                 SharedPreferences p = AnyPlaneBridgePlugin.prefs(context);
                 String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
                 String token = p.getString(AnyPlaneBridgePlugin.PREF_TOKEN, "");
+                String cookies = p.getString(AnyPlaneBridgePlugin.PREF_COOKIES, "");
                 if (serverUrl != null && !serverUrl.isEmpty()) {
                     JSONObject body = new JSONObject()
                         .put("key", key)
@@ -47,6 +48,9 @@ public class ApprovalActionReceiver extends BroadcastReceiver {
                         .post(RequestBody.create(body.toString(), MediaType.get("application/json")));
                     if (token != null && !token.isEmpty()) {
                         rb.header("authorization", "Bearer " + token);
+                    }
+                    if (cookies != null && !cookies.isEmpty()) {
+                        rb.header("Cookie", cookies);
                     }
                     try (Response r = new OkHttpClient().newCall(rb.build()).execute()) {
                         delivered = r.isSuccessful() || r.code() == 409;

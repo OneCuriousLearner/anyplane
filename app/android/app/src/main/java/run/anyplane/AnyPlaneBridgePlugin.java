@@ -36,6 +36,7 @@ public class AnyPlaneBridgePlugin extends Plugin {
     static final String PREFS = "anyplane.bridge";
     static final String PREF_SERVER_URL = "serverUrl";
     static final String PREF_TOKEN = "token";
+    static final String PREF_COOKIES = "cookies";
     static final int REQ_POST_NOTIFICATIONS = 42;
 
     static SharedPreferences prefs(Context ctx) {
@@ -70,8 +71,23 @@ public class AnyPlaneBridgePlugin extends Plugin {
             serverUrl = serverUrl.substring(0, serverUrl.length() - 1);
         }
         Context ctx = getContext();
-        prefs(ctx).edit().putString(PREF_SERVER_URL, serverUrl).putString(PREF_TOKEN, token).apply();
-        Log.d(TAG, "configure: " + serverUrl + "（token " + (token.isEmpty() ? "无" : "有") + "），启动审批服务");
+        // 摘 WebView cookie 供原生网络栈使用：服务端地址若在企业 SSO 网关之后
+        // （如内网统一认证），WebView 持 SSO 会话而 OkHttp cookie 罐为空——
+        // 原生 WS/POST 会被网关弹回（实机：常驻通知卡「重连中」）。
+        String cookies = "";
+        try {
+            String c = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
+            if (c != null) cookies = c;
+        } catch (Exception ignored) {
+            // WebView 尚未就绪等场景：留空，按无 cookie 连
+        }
+        prefs(ctx).edit()
+            .putString(PREF_SERVER_URL, serverUrl)
+            .putString(PREF_TOKEN, token)
+            .putString(PREF_COOKIES, cookies)
+            .apply();
+        Log.d(TAG, "configure: " + serverUrl + "（token " + (token.isEmpty() ? "无" : "有")
+            + "，cookie " + (cookies.isEmpty() ? "无" : "有") + "），启动审批服务");
         ContextCompat.startForegroundService(ctx, new Intent(ctx, ApprovalService.class));
         ensureNotificationPermission();
     }
