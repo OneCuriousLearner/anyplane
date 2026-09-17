@@ -2,11 +2,13 @@
 # 不手改 pbxproj 入库——CI 每次现生成（xcodeproj gem，macos runner 上 gem install）。
 # 用法：ruby app/ios/ci/add-ui-tests.rb
 require 'xcodeproj'
+require 'fileutils'
 
+# 注意：本脚本在 working-directory=app 下执行，路径以 app/ 为根
 PROJ_PATH = 'ios/App/App.xcodeproj'
 SCHEME_DIR = 'ios/App/App.xcodeproj/xcshareddata/xcschemes'
 SCHEME_PATH = "#{SCHEME_DIR}/App.xcscheme"
-TEST_SRC = 'app/ios/ci/AppUITests.swift'
+TEST_SRC = 'ios/ci/AppUITests.swift'
 
 proj = Xcodeproj::Project.open(PROJ_PATH)
 app_target = proj.targets.find { |t| t.name == 'App' }
@@ -35,7 +37,7 @@ end
 proj.save
 
 # scheme 落 shared 路径，xcodebuild -scheme App 才能找到
-Dir.mkdir(SCHEME_DIR) unless Dir.exist?(SCHEME_DIR)
+FileUtils.mkdir_p(SCHEME_DIR)
 scheme = File.exist?(SCHEME_PATH) ? Xcodeproj::XCScheme.new(SCHEME_PATH) : Xcodeproj::XCScheme.new
 scheme.add_build_target(app_target)
 scheme.add_test_target(test_target)
