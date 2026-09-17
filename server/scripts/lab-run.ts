@@ -34,7 +34,6 @@ const ctrl = (subtype: string, extra: Record<string, unknown> = {}) => ({
 })
 
 const isResult = (m: any) => m.type === 'result'
-const isInit = (m: any) => m.type === 'system' && m.subtype === 'init'
 
 const SCENARIOS: Record<string, Step[]> = {
   // 1. 基线：简单问答，观察 init/stream_event/assistant/user/result 全套
@@ -118,7 +117,7 @@ child.stdout!.on('data', (d) => {
   const s = d.toString()
   outLog.write(s)
   buf += s
-  let idx
+  let idx: number | undefined
   while ((idx = buf.indexOf('\n')) >= 0) {
     const line = buf.slice(0, idx).trim()
     buf = buf.slice(idx + 1)

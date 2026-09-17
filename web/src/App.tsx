@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { SessionList } from './pages/SessionList'
 import { Chat } from './pages/Chat'
 import { AnyPlaneMark } from './components/AnyPlaneMark'
-import { ClaudeMark } from './components/ClaudeMark'
 import { ModeBadge } from './components/ModeBadge'
 import { getToken, onAuthRequired, setToken } from './lib/auth'
 import type { SessionInfo } from '@anyplane/protocol'
@@ -182,6 +181,7 @@ export default function App() {
             type="password"
             defaultValue={getToken() ?? ''}
             placeholder="authToken"
+            // biome-ignore lint/a11y/noAutofocus: 全屏令牌门禁页，唯一可操作元素即此输入框
             autoFocus
             className="min-w-0 flex-1 rounded-full bg-surface px-4 py-2 text-sm outline-none placeholder:text-faint focus:bg-surface2"
           />
@@ -205,6 +205,7 @@ export default function App() {
       {/* 移动端：选中后隐藏列表；桌面端：双栏常显，右缘可拖宽 */}
       <div className={`relative h-full bg-surface/40 ${selected ? 'hidden md:block' : 'block'}`}>
         <SessionList selectedKey={selected?.key} onSelect={(s) => selectSession(s)} />
+        {/* biome-ignore lint/a11y/useSemanticElements: 可拖拽分隔条需要 aria-valuenow/min/max，原生 <hr> 不支持——这是 ARIA 窗口分隔条模式的标准写法 */}
         <div
           role="separator"
           aria-orientation="vertical"

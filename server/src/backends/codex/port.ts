@@ -201,7 +201,7 @@ class CodexPort implements BackendPort {
   }
 
   query(
-    hub: Hub,
+    _hub: Hub,
     query: string,
     _extra: Record<string, unknown>,
     reply: (payload: QueryResultPayload) => void,

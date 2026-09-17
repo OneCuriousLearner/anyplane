@@ -193,7 +193,7 @@ export function DirPicker(props: {
           style={{ paddingLeft: indent }}
         >
           <span className="truncate">{st.message}</span>
-          <button className="shrink-0 text-muted underline" onClick={() => loadLevel(path)}>
+          <button type="button" className="shrink-0 text-muted underline" onClick={() => loadLevel(path)}>
             重试
           </button>
         </div>
@@ -222,7 +222,7 @@ export function DirPicker(props: {
           }`}
           style={{ paddingLeft: 8 + depth * 16 }}
         >
-          <button
+          <button type="button"
             className="w-5 shrink-0 text-center font-mono text-xs text-faint hover:text-ink"
             onClick={(ev) => {
               ev.stopPropagation()
@@ -248,7 +248,7 @@ export function DirPicker(props: {
       {/* 报头 */}
       <div className="flex items-center justify-between px-4 py-3">
         <h2 className="font-mono text-sm tracking-widest text-muted uppercase">选择项目目录</h2>
-        <button
+        <button type="button"
           className="grid h-8 w-8 place-items-center rounded-full bg-surface2 text-muted hover:text-ink"
           onClick={props.onClose}
           aria-label="关闭"
@@ -306,7 +306,7 @@ export function DirPicker(props: {
 
       {/* 手动输入兜底 */}
       <div className="mt-1">
-        <button
+        <button type="button"
           className="flex w-full items-center gap-1 px-4 py-2 font-mono text-[11px] text-faint hover:text-muted"
           onClick={() => setManualOpen(!manualOpen)}
         >
@@ -321,7 +321,7 @@ export function DirPicker(props: {
               onChange={(e) => setManualCwd(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && start(manualCwd.trim())}
             />
-            <button
+            <button type="button"
               className="rounded-full bg-ink px-4 text-sm text-bg disabled:opacity-40"
               disabled={!manualCwd.trim() || starting}
               onClick={() => start(manualCwd.trim())}
@@ -338,14 +338,14 @@ export function DirPicker(props: {
           <div className="truncate font-mono text-xs text-muted">{selected || '未选择目录'}</div>
           <div className="flex shrink-0 rounded-full bg-surface p-0.5 font-mono text-[11px]">
             {(['claude', 'codex'] as const).map((b) => (
-              <button
+              <button type="button"
                 key={b}
                 className={`rounded-full px-3 py-1 ${backend === b ? 'bg-surface2 text-ink' : 'text-faint hover:text-muted'}`}
                 onClick={() => setBackend(b)}
               >
                 {b === 'claude' ? 'Claude' : 'Codex'}
                 {backendsStatus && backendNeedsAttention(backendsStatus[b]) && (
-                  <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" aria-label="未登录或未安装" />
+                  <span role="img" className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" aria-label="未登录或未安装" />
                 )}
               </button>
             ))}
@@ -356,7 +356,7 @@ export function DirPicker(props: {
             {backendFixHint(backendsStatus[backend], backend)}
           </div>
         )}
-        <button
+        <button type="button"
           className="w-full rounded-full bg-ink py-2.5 text-sm font-medium text-bg disabled:opacity-40"
           disabled={!selected || starting || revealing}
           onClick={() => start(selected)}

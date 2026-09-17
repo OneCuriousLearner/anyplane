@@ -1,7 +1,7 @@
 // 新会话目录选择器的本地目录列举：仅目录、单层、懒加载友好
 // DirEntry/DirListResult 正本在 @anyplane/protocol（前端 DirPicker 共用）
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { DirEntry, DirListResult } from '@anyplane/protocol'
@@ -77,7 +77,7 @@ export function listDirectories(target: string): DirListResult {
   }
   if (!isDir) throw new FsBrowseError(400, `不是目录: ${target}`)
 
-  let dirents
+  let dirents: Dirent[] | undefined
   try {
     dirents = readdirSync(target, { withFileTypes: true })
   } catch (e) {

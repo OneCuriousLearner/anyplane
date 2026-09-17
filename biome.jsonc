@@ -1,0 +1,207 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "root": true,
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.js",
+      "**/*.mjs",
+      "!**/dist",
+      "!**/server/scripts/codex-schema-baseline",
+      "!**/docs"
+    ]
+  },
+  // formatter 刻意关闭：仓库风格本就一致（单引号/无分号/2 空格），格式化的唯一收益是
+  // 消灭风格漂移，代价是 60+ 文件装饰性 diff + blame 断层 + 与在研分支冲突——不值。
+  // Biome 在本仓的角色 = 红线与 bug 类规则的机械执行，不是风格警察。
+  "formatter": {
+    "enabled": false
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        // import 排序同属风格类 churn，关闭
+        "organizeImports": "off"
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "asNeeded",
+      "trailingCommas": "all",
+      "arrowParentheses": "always"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        // 仓库惯用法：契约保证下的定点断言是刻意风格（与「生产代码零 as any」纪律互补，不互斥）
+        "noNonNullAssertion": "off",
+        // 以下为纯风格规则（不改变语义、不预防 bug），一律关闭——lint 只守 bug 类与红线
+        "useTemplate": "off",
+        "useImportType": "off"
+      },
+      "complexity": {
+        "useLiteralKeys": "off",
+        "useOptionalChain": "off",
+        "noUselessSwitchCase": "off",
+        "noUselessEscapeInRegex": "off",
+        "noUselessEmptyExport": "off",
+        "noUselessContinue": "off",
+        "noUselessLabel": "off"
+      },
+      "correctness": {
+        // WS 回调在 React 渲染外触发，hooks 依赖数组多处刻意省略（ref+state 双写模式，
+        // 见 docs/audits/2026-09-17-architecture-review.md 发现六）；13.4 store 化后再评估
+        "useExhaustiveDependencies": "off",
+        // switch 内 lexical 声明本仓写法一贯（case 块带大括号），风格类
+        "noSwitchDeclarations": "off"
+      },
+      "suspicious": {
+        // 抄本行 key 红线（内容派生）由 AGENTS.md 明记；MessageView 块级静态列表的存量
+        // index key 是否影响展开态需逐处核实，治理单列（不在本规则一刀切）
+        "noArrayIndexKey": "off",
+        // `??=` 缓存与 while((m = re.exec())) 是本仓刻意惯用法
+        "noAssignInExpressions": "off",
+        // 标签语义化属风格类（现存量为 handlers 内组织标签，无 bug 风险）
+        "noConfusingLabels": "off",
+        "noImplicitAnyLet": "error"
+      },
+      "a11y": {
+        // 键盘可达性/静态元素交互的治理涉及组件语义改造，属独立轮次（本仓 UI 走自定义组件层）
+        "useKeyWithClickEvents": "off",
+        "noStaticElementInteractions": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["server/scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            // e2e/探针脚本对 wire JSON 的 `as any` 断言是刻意宽松（ tsconfig 也不含此目录）
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    },
+    {
+      // 依赖红线①：适配器绝不 import hub 编排层运行时代码——回调经 HubServices 注入；
+      // hub/types 是纯类型叶子模块（type-only 不构成运行时环），显式豁免
+      "includes": ["server/src/backends/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/hub", "**/hub/**", "!**/hub/types"],
+                    "message": "依赖红线：适配器禁止 import hub 编排层运行时代码（回调走 HubServices 注入；hub/types 纯类型已豁免）"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      // 依赖红线②：hub/* 绝不 import push/*（循环风险——push/* 合法方向是 push→hub），
+      // inbox 事件经 hub/broadcast 的 InboxSink 注册器流出
+      "includes": ["server/src/hub/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/push", "**/push/**"],
+                    "message": "依赖红线：hub 禁止 import push（push→hub 为允许方向；inbox 事件走 InboxSink 注入）"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      // 既有豁免：socket.ts 的 push/inbox 引用（addInboxClient/inboxSnapshot/removeInboxClient）
+      // 当前不构成模块环（push/inbox 不回指 socket），但属红线豁免清单而非先例——
+      // 新增 hub→push import 一律走装配注入
+      "includes": ["server/src/hub/socket.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
+    {
+      // 依赖红线③：routes 一律经 portFor 分发，禁止直连具体后端 port/runtime
+      //（审计发现七；现两处存量由下方豁免清单覆盖，13.3 注册表化后移除豁免）
+      "includes": ["server/src/routes/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/backends/claude/port", "**/backends/codex/port", "**/backends/codex/runtime"],
+                    "message": "依赖红线：routes 禁止直连具体 port/runtime，一律经 backends/port 的 portFor 分发"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      // 13.3 治理前存量豁免（审计发现七点名：sessions.ts 直连两 port，misc.ts 直连 codexRuntime）
+      "includes": ["server/src/routes/sessions.ts", "server/src/routes/misc.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
+    {
+      // protocol 包红线：纯类型、零依赖——禁止任何出包 import（vendor 协议类型尤其不许反向流入）
+      "includes": ["protocol/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["../**"],
+                    "message": "protocol 包纯类型零依赖：禁止出包 import（契约类型只能自包含）"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

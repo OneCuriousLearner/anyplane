@@ -32,7 +32,7 @@ export function ApprovalCard(props: {
         {inputStr.length > 2000 ? inputStr.slice(0, 2000) + '\n…（截断）' : inputStr}
       </pre>
       <div className="mt-3 flex gap-2">
-        <button
+        <button type="button"
           className="flex-1 rounded-full bg-ink py-2 text-sm font-medium text-bg"
           onClick={() => {
             const input = approval.input as Record<string, unknown> | undefined
@@ -41,7 +41,7 @@ export function ApprovalCard(props: {
         >
           ✓ 允许
         </button>
-        <button
+        <button type="button"
           className="flex-1 rounded-full py-2 text-sm text-accent hover:bg-accent/10"
           onClick={() => onDecision({ behavior: 'deny', message: '用户在远程端拒绝了该操作' })}
         >
@@ -134,6 +134,7 @@ function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (
                 </OptionButton>
                 {otherSelected && (
                   <textarea
+                    // biome-ignore lint/a11y/noAutofocus: 「其他」选项展开即键盘输入场景，焦点直达是刻意 UX
                     autoFocus
                     value={otherAnswers[question.question] ?? ''}
                     onChange={(event) => setOtherAnswers((current) => ({ ...current, [question.question]: event.target.value }))}
@@ -152,14 +153,14 @@ function AskUserQuestionCard(props: { input: AskUserQuestionInput; onDecision: (
         })}
       </div>
       <div className="mt-3 flex gap-2">
-        <button
+        <button type="button"
           className="flex-1 rounded-full bg-ink py-2 text-sm font-medium text-bg disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!canSubmit}
           onClick={() => onDecision({ behavior: 'allow', updatedInput: withAskUserQuestionAnswers(input, selections, otherAnswers) })}
         >
           提交回答
         </button>
-        <button
+        <button type="button"
           className="rounded-full px-4 py-2 text-sm text-accent hover:bg-accent/10"
           onClick={() => onDecision({ behavior: 'deny', message: '用户未回答这些问题' })}
         >

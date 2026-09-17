@@ -23,6 +23,9 @@ jobs:
 
       - run: bun run typecheck
 
+      # Biome（lint only，无 formatter）：依赖红线 noRestrictedImports + bug 类规则
+      - run: bun run lint
+
       - run: bun test
 
       - run: bun run build

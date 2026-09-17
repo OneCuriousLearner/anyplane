@@ -137,7 +137,7 @@ export function StatusPill(props: {
         style={{ bottom: panelPos.bottom, left: panelPos.left, width: panelPos.width }}
       >
         {/* mode 行 */}
-        <button
+        <button type="button"
           className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left hover:bg-surface"
           onClick={() => setSub(sub === 'mode' ? null : 'mode')}
         >
@@ -152,7 +152,7 @@ export function StatusPill(props: {
               const mm = MODE_META[m] ?? { dot: 'bg-faint', label: m, short: m, desc: '' }
               const active = modeKey === m
               return (
-                <button
+                <button type="button"
                   key={m}
                   className={`flex w-full items-center gap-3 rounded-[8px] px-3 py-2 text-left hover:bg-surface ${
                     active ? 'bg-surface2' : ''
@@ -173,7 +173,7 @@ export function StatusPill(props: {
         )}
 
         {/* model 行 */}
-        <button
+        <button type="button"
           className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left hover:bg-surface"
           onClick={() => setSub(sub === 'model' ? null : 'model')}
         >
@@ -194,7 +194,7 @@ export function StatusPill(props: {
                 props.model === m ||
                 (!!props.model && props.modelNames?.[m]?.id?.toLowerCase() === props.model.toLowerCase())
               return (
-                <button
+                <button type="button"
                   key={m}
                   title={resolveModel(m).title}
                   className={`flex w-full items-center gap-3 rounded-[8px] px-3 py-2 text-left hover:bg-surface ${
@@ -223,7 +223,7 @@ export function StatusPill(props: {
 
   return (
     <div ref={rootRef} className="relative min-w-0 max-w-full">
-      <button
+      <button type="button"
         ref={triggerRef}
         onClick={() => {
           const next = !open

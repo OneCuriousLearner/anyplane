@@ -22,6 +22,7 @@ export function AnyPlaneMark(props: { className?: string; fullBleed?: boolean })
       role="img"
       aria-label="AnyPlane"
       className={`inline-flex [&_svg]:h-full [&_svg]:w-full ${props.className ?? ''}`}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: 内容是仓内静态 SVG 资源（?raw 导入），非外部输入
       dangerouslySetInnerHTML={{ __html: markup({ fullBleed: props.fullBleed }) }}
     />
   )

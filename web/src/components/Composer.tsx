@@ -193,7 +193,7 @@ export function Composer(props: {
             {/* 完整清单可滚动（CLI initialize 握手报告多少就列多少），自有命令置顶；键盘导航时高亮行跟随滚动 */}
             <div ref={slashScrollRef} className="max-h-60 overflow-y-auto">
               {slashHints.map((c, i) => (
-                <button
+                <button type="button"
                   key={c.name}
                   className={`flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left ${
                     i === slashActive ? 'bg-surface' : 'hover:bg-surface'
@@ -219,7 +219,7 @@ export function Composer(props: {
         <div className="relative">
           {/* ↓ 与输入块同列、贴在正上方；不放进磨砂块内，否则 backdrop 只能糊到父级内部 */}
           {!atBottom && (
-            <button
+            <button type="button"
               className="absolute bottom-full right-0 z-40 mb-2 grid h-9 w-9 place-items-center rounded-full bg-surface2/85 text-ink shadow-lg backdrop-blur-xl hover:bg-surface2"
               onClick={onScrollToBottom}
               title="回到底部"
@@ -234,7 +234,7 @@ export function Composer(props: {
             <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px]">
               <span className="text-faint">工作中，发送：</span>
               {(['steer', 'queue'] as const).map((m) => (
-                <button
+                <button type="button"
                   key={m}
                   className={`rounded-full px-2.5 py-0.5 ${
                     sendMode === m ? 'bg-surface text-ink' : 'text-faint hover:text-muted'
@@ -259,7 +259,7 @@ export function Composer(props: {
               {pendingImages.map((img, i) => (
                 <span key={i} className="relative">
                   <img src={imgPreviewSrc(img)} alt={img.name} className="h-14 w-14 rounded-[10px] object-cover" />
-                  <button
+                  <button type="button"
                     className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-accent text-[9px] leading-none text-white"
                     onClick={() => onPendingImagesChange((prev) => prev.filter((_, j) => j !== i))}
                   >

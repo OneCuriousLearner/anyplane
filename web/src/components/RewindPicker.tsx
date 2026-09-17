@@ -53,7 +53,7 @@ export function RewindPicker(props: {
           <h2 className="font-mono text-xs tracking-widest text-muted uppercase">
             {isCodex ? (codexRevert ? '回滚到…' : codexFork ? '从…分叉' : '回滚 / 分叉') : '回滚到…'}
           </h2>
-          <button className="text-faint hover:text-ink" onClick={props.onClose}>
+          <button type="button" className="text-faint hover:text-ink" onClick={props.onClose}>
             ✕
           </button>
         </div>
@@ -90,7 +90,7 @@ export function RewindPicker(props: {
               </details>
             )}
             {isCodex ? (
-              <button
+              <button type="button"
                 className="mt-2 w-full rounded-full bg-ink py-1.5 font-mono text-[11px] font-medium text-bg"
                 onClick={() => props.onRewindConversation(t.uuid)}
               >
@@ -98,19 +98,19 @@ export function RewindPicker(props: {
               </button>
             ) : (
             <div className="grid grid-cols-2 gap-2">
-              <button
+              <button type="button"
                 className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-muted hover:text-ink"
                 onClick={() => props.onRewindFiles(t.uuid)}
               >
                 仅回滚文件
               </button>
-              <button
+              <button type="button"
                 className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-muted hover:text-ink"
                 onClick={() => props.onRewindConversation(t.uuid)}
               >
                 仅回滚对话
               </button>
-              <button
+              <button type="button"
                 className="col-span-2 rounded-full bg-ink py-1.5 font-mono text-[11px] font-medium text-bg"
                 onClick={() => props.onRewindBoth(t.uuid)}
               >

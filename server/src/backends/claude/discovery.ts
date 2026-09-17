@@ -1,7 +1,7 @@
 // 会话发现：扫描 ~/.claude/projects/<slug>/<sessionId>.jsonl
 // 合并 ~/.claude/sessions/<pid>.json 的活跃状态
 
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync, type Stats } from 'node:fs'
 import { basename, join } from 'node:path'
 import { saveUpload } from '../../uploads'
 import { config } from '../../config'
@@ -212,7 +212,7 @@ export function listSessions(): DiscoveredSession[] {
 
   for (const slug of readdirSync(projectsDir)) {
     const dir = join(projectsDir, slug)
-    let st
+    let st: Stats | undefined
     try {
       st = statSync(dir)
     } catch {

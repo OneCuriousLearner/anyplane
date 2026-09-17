@@ -3,8 +3,6 @@ import type { SessionState } from '@anyplane/protocol'
 import { fmtTokens, usageSummary } from '../lib/blocks'
 import { PopupPanel } from './PopupPanel'
 
-type ContextUsage = NonNullable<SessionState['context']>
-
 /** 占用占比 → 颜色级（对齐官方 statusline 示例的 70/90 阈值；设计语言内只有灰阶 + 审批红） */
 function toneOf(pct: number): string {
   if (pct >= 90) return 'text-accent'

@@ -309,7 +309,7 @@ export class ThreadTranslator {
         const receiver = (item.receiverThreadIds ?? []).filter(Boolean)[0]
         const blockId = receiver ?? item.id
         const toolUse = { ...this.toolUseBlock(item), id: blockId }
-        const r = collabToolResultFromItem(item, blockId)
+        const r = collabToolResultFromItem(item)
         return [
           side({ type: 'assistant', uuid: item.id, message: { role: 'assistant', content: [toolUse] } }),
           side({
@@ -424,8 +424,8 @@ function collabTerminalStatus(status?: string): 'completed' | 'failed' | 'stoppe
   }
 }
 
-/** collab 工具项的结果文本与失败标记（主线配对卡与子线程桶卡共用，blockId 为配对键） */
-function collabToolResultFromItem(item: ThreadItem, blockId: string): { text: string; isError: boolean } {
+/** collab 工具项的结果文本与失败标记（主线配对卡与子线程桶卡共用） */
+function collabToolResultFromItem(item: ThreadItem): { text: string; isError: boolean } {
   const isError = item.status === 'failed' || item.status === 'interrupted'
   const parts: string[] = [`${String(item.tool ?? '?')} → ${String(item.status ?? '?')}`]
   const receivers = (item.receiverThreadIds ?? []).filter(Boolean)
@@ -438,7 +438,7 @@ function collabToolResultFromItem(item: ThreadItem, blockId: string): { text: st
 }
 
 function collabToolResultMsg(item: ThreadItem): CliMessage {
-  const r = collabToolResultFromItem(item, item.id!)
+  const r = collabToolResultFromItem(item)
   return toolResultMsg(item.id!, r.text, r.isError)
 }
 
