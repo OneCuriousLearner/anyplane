@@ -34,12 +34,11 @@
             android:name=".ApprovalService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />
+            android:stopWithTask="false"
+        />
 
         <!-- 通知按钮裁决：仅接受壳内显式 Intent -->
-        <receiver
-            android:name=".ApprovalActionReceiver"
-            android:exported="false" />
+        <receiver android:name=".ApprovalActionReceiver" android:exported="false" />
     </application>
 
     <!-- Permissions -->

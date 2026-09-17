@@ -416,8 +416,6 @@ export function SessionList(props: {
           </IconBtn>
         </div>
       </header>
-      {/* 原生壳内权限/桥异常横幅（浏览器渲染 null） */}
-      <NativeNotifyBanner />
       {themeMenuOpen &&
         // portal 到 body：与通知菜单同理由（侧栏窄时防探出），位置锚定顶栏左下角
         createPortal(
@@ -529,6 +527,9 @@ export function SessionList(props: {
           否则分组头 sticky top 相对含 padding 的 scrollport 计算，会把分组头推过首行） */}
       <div className="flex-1 overflow-y-auto px-2 pb-3">
         <div className="h-[58px] shrink-0" aria-hidden />
+        {/* 原生壳权限/桥异常横幅（浏览器渲染 null）。必须在滚动流内、顶栏占位之后：
+            顶栏是 absolute 悬浮层，横幅放它外面会被压住并把列表整体下顶（实机踩坑） */}
+        <NativeNotifyBanner />
         {view === 'archived' ? (
           <div>
             {archived.length === 0 && <p className="p-4 font-mono text-xs text-faint">回收站为空</p>}
