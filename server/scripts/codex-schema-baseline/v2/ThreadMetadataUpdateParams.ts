@@ -14,4 +14,10 @@ projectId?: string | null,
  * Omit a field to leave it unchanged, set it to `null` to clear it, or
  * provide a string to replace the stored value.
  */
-gitInfo?: ThreadMetadataGitInfoUpdateParams | null, };
+gitInfo?: ThreadMetadataGitInfoUpdateParams | null,
+/**
+ * Save the client's Daybreak choice for this persistent thread.
+ * Omitted or null leaves it unchanged. This does not select a turn's
+ * `cyberAccessProgram` or grant access.
+ */
+daybreakEnabled?: boolean | null, };
