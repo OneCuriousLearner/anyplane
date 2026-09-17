@@ -13,7 +13,8 @@ import { isInternalUserMessage, type CliMessage } from './protocol'
  *  正本已移至 server/src/util.ts（叶子层，供 processManager 水合复用而不成环），此处 re-export 兼容既有引用。 */
 export { sanitizePath } from '../../util'
 
-export type SessionStatus = 'busy' | 'idle' | 'waiting' | 'offline'
+/** 状态词表正本在 @anyplane/protocol（SessionInfo.status 共用同一闭集） */
+import type { HistoryBlock, HistoryMessage, SessionStatus, SubagentHistory } from '@anyplane/protocol'
 
 const KNOWN_STATUS: readonly SessionStatus[] = ['busy', 'idle', 'waiting', 'offline']
 
@@ -282,7 +283,6 @@ export function listSessions(): DiscoveredSession[] {
 // ---------- 历史消息（供 UI 首次加载） ----------
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 import 自用 + re-export 兼容既有 import 路径
-import type { HistoryBlock, HistoryMessage, SubagentHistory } from '@anyplane/protocol'
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
 function toolResultText(rc: unknown): string {

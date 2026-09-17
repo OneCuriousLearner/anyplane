@@ -3,9 +3,10 @@
 // 真实实现（/ws/inbox 扇出 + Web Push 分发）在 push/inbox.ts，由装配层 initInbox() 一次性接线。
 
 import type { InboxEvent, ServerEvent } from '@anyplane/protocol'
+import type { ServerWebSocket } from 'bun'
 import { pushCliRing } from '../cliReplay'
 import { errFields, log } from '../log'
-import type { Hub } from './types'
+import type { Hub, WSData } from './types'
 
 /** inbox 事件的真实出口（push/inbox.ts 注册）：/ws/inbox 扇出 + Web Push 分发 */
 export interface InboxSink {
@@ -39,6 +40,16 @@ export function publishInbox(ev: InboxEvent): void {
     return
   }
   inboxSink.publish(ev)
+}
+
+/** 定向单播唯一出口（socket.ts 的握手/补发、messages.ts 的重连补发共用）：
+ *  与 broadcast 同一竞态语义——向刚关闭的连接发送是预期内噪声，降 debug 留痕 */
+export function sendTo(ws: ServerWebSocket<WSData>, payload: ServerEvent): void {
+  try {
+    ws.send(JSON.stringify(payload))
+  } catch (e) {
+    log.debug('[ws] 下行单播失败（连接可能已关闭）', errFields(e))
+  }
 }
 
 /** 待审批重放：socket 接入（socket.ts，单播）与 attach（messages.ts，单播给发起连接）共用——

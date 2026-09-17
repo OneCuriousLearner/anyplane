@@ -4,11 +4,13 @@
 
 import type {
   ArchivedEntry,
+  BackendName,
   BackendsStatus,
   CodexModelInfo,
   CreateSessionResponse,
   DirListResult,
   HistoryResponse,
+  LineageRecord,
   LineageResponse,
   ServerConfigInfo,
   SessionInfo,
@@ -94,7 +96,7 @@ export async function fetchCodexHistory(threadId: string): Promise<HistoryRespon
 
 export async function createSession(
   cwd: string,
-  backend?: 'claude' | 'codex',
+  backend?: BackendName,
 ): Promise<CreateSessionResponse> {
   const r = await postJson('/api/sessions', { cwd, backend })
   return r.json()
@@ -166,11 +168,11 @@ export async function fetchClaudeModelNames(cwd?: string): Promise<Record<string
   return ((await r.json()) as { models?: Record<string, TierModelName> }).models ?? {}
 }
 
-/** 发起接力：进度经源会话 WS 推送（handoff_pending/done/error） */
+/** 发起接力：进度经源会话 WS 推送（handoff_pending/done/error）；detail 词表即 LineageRecord.detail */
 export async function startHandoff(
   fromKey: string,
-  toBackend: 'claude' | 'codex',
-  detail: 'brief' | 'standard' | 'detailed' = 'standard',
+  toBackend: BackendName,
+  detail: LineageRecord['detail'] = 'standard',
 ): Promise<void> {
   const r = await postJson('/api/handoff', { fromKey, toBackend, detail })
   if (!r.ok) throw await apiError(r)

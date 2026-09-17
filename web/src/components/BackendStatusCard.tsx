@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { BackendStatus, BackendsStatus } from '@anyplane/protocol'
+import type { BackendName, BackendStatus, BackendsStatus } from '@anyplane/protocol'
 import { fetchBackendsStatus } from '../lib/api'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
 
 /** 未装/未登录的修复指引：状态卡 metaOf 与 DirPicker 警示共用唯一文案源（改指引只改这里） */
-export function backendFixHint(s: BackendStatus, backend: 'claude' | 'codex'): string | undefined {
+export function backendFixHint(s: BackendStatus, backend: BackendName): string | undefined {
   if (s.state === 'not-installed') {
     return backend === 'claude' ? 'npm i -g @anthropic-ai/claude-code' : 'npm i -g @openai/codex'
   }
@@ -18,7 +18,7 @@ export function backendFixHint(s: BackendStatus, backend: 'claude' | 'codex'): s
 }
 
 /** 各登录态的展示：点色、主文案、（可选）修复指引 */
-function metaOf(s: BackendStatus, backend: 'claude' | 'codex'): {
+function metaOf(s: BackendStatus, backend: BackendName): {
   dot: string
   label: string
   hint?: string
@@ -43,7 +43,7 @@ function metaOf(s: BackendStatus, backend: 'claude' | 'codex'): {
   }
 }
 
-function BackendRow(props: { backend: 'claude' | 'codex'; status: BackendStatus }) {
+function BackendRow(props: { backend: BackendName; status: BackendStatus }) {
   const m = metaOf(props.status, props.backend)
   return (
     <div className="flex items-start gap-2.5 py-1.5">

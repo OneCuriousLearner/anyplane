@@ -7,7 +7,7 @@ import { portFor } from '../backends/port'
 import { replayCliSince } from '../cliReplay'
 import { errFields, log } from '../log'
 import { errorMessage } from '../util'
-import { broadcast, broadcastError, replayApprovals } from './broadcast'
+import { broadcast, broadcastError, replayApprovals, sendTo } from './broadcast'
 import { resolveApproval, rewindBusy } from './lifecycle'
 import { pushStatus } from './status'
 import type { Hub, WSData } from './types'
@@ -39,13 +39,7 @@ export function handleClientMessage(
       // 待审批补发只给本次 attach 的连接：走 broadcast 会让已在线的其他客户端
       // 重复收到同一张审批卡（requestId 相同，纯噪声）
       if (ws) {
-        replayApprovals(hub, (p: ServerEvent) => {
-          try {
-            ws.send(JSON.stringify(p))
-          } catch (e) {
-            log.debug(`[ws ${hub.key}] 审批补发单播失败`, errFields(e))
-          }
-        })
+        replayApprovals(hub, (p) => sendTo(ws, p))
       } else {
         replayApprovals(hub, (p) => broadcast(hub, p))
       }
@@ -54,13 +48,7 @@ export function handleClientMessage(
       // 且已在线的其他客户端会收到重复投递。
       const fromSeq = typeof data.fromSeq === 'number' ? data.fromSeq : undefined
       if (fromSeq !== undefined && ws) {
-        const unicast = (p: ServerEvent) => {
-          try {
-            ws.send(JSON.stringify(p))
-          } catch (e) {
-            log.debug(`[ws ${hub.key}] 补发单播失败`, errFields(e))
-          }
-        }
+        const unicast = (p: ServerEvent) => sendTo(ws, p)
         // 环里已挤掉起点时告知缺口，由前端重载历史补全（transcript 是权威事实源）
         const gap = replayCliSince(hub, fromSeq, unicast)
         if (gap) {

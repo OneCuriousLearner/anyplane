@@ -13,7 +13,7 @@
 // 本模块只剩服务端内部类型（SpawnOptions / SessionCallbacks / SessionSummary）——
 // 新增前后端共享类型一律去 protocol 包，不要写在这里。
 
-import type { BackendName } from '@anyplane/protocol'
+import type { BackendName, SessionStatus } from '@anyplane/protocol'
 import type { CliMessage } from './claude/protocol'
 
 /** 会话列表项（聚合 Claude discovery 与 Codex thread/list） */
@@ -28,7 +28,7 @@ export interface SessionSummary {
   lastPrompt?: string
   mtime: number
   sizeBytes?: number
-  status: 'busy' | 'idle' | 'waiting' | 'offline'
+  status: SessionStatus
   live?: { pid: number; startedAt?: string | number; kind?: string }
 }
 

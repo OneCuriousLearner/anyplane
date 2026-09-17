@@ -3,7 +3,7 @@
 // （moreBtnRef 与 idCopied 是本组件私有的展示态，随 JSX 一并下沉。）
 
 import { useRef, useState } from 'react'
-import type { LineageResponse, SessionInfo, SessionState } from '@anyplane/protocol'
+import type { BackendName, LineageResponse, SessionInfo, SessionState } from '@anyplane/protocol'
 import type { NavigateSession } from '../lib/sessionHash'
 import { makeSessionInfo } from '../lib/api'
 import { copyText } from '../lib/chatText'
@@ -323,7 +323,7 @@ export function ChatHeader(props: {
             .map((r) => {
               const fromKey = r.fromResolvedKey ?? r.fromKey
               const toKey = r.toResolvedKey ?? r.toKey
-              const node = (k: string, backend: 'claude' | 'codex') => {
+              const node = (k: string, backend: BackendName) => {
                 const info = lineage.nodes[k]
                 const current = k === session.key
                 return (

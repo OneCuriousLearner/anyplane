@@ -28,10 +28,6 @@ import { learnedContextWindow, rememberContextWindow } from './contextWindows'
 import { rememberSessionModel } from './sessionModels'
 import { log } from '../../log'
 
-// 共享类型正本在 ../types（后端无关抽象层）；此处 re-export 兼容既有 import 路径
-export type { ApprovalDecision } from '@anyplane/protocol'
-export type { SpawnOptions } from '../types'
-
 /** Claude Code session_state_changed 三态 */
 export type SessionRunState = 'idle' | 'running' | 'requires_action'
 

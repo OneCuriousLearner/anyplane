@@ -6,7 +6,7 @@
 import type { ServerWebSocket } from 'bun'
 import type { TranscriptTailer } from '../backends/claude/tailer'
 import type { SpawnOptions } from '../backends/types'
-import type { CliEventPayload } from '../cliReplay'
+import type { CliRingSlot } from '../cliReplay'
 
 export interface PendingApproval {
   requestId: string
@@ -36,7 +36,7 @@ export interface Hub {
   /** 下行 cli 事件的单调序号（重连补发用，见 cliReplay.ts） */
   cliSeq?: number
   /** 最近 CLI_RING_CAP 条可落盘 cli 事件的环形缓冲（不含 stream_event） */
-  cliRing?: Array<{ seq: number; payload: CliEventPayload }>
+  cliRing?: CliRingSlot[]
   /** 未 spawn 时缓存启动偏好；已 spawn 时记录当前选择，供 UI 重连恢复 */
   spawnOpts?: Partial<SpawnOptions>
   /** 除 effort 外、需要在进程启动后按顺序写入 stdin 的环境变量 */

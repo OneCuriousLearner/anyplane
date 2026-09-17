@@ -5,10 +5,11 @@ import { spawn } from 'bun'
 import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { codexRuntime } from './backends/codex/runtime'
-import type { BackendName } from '@anyplane/protocol'
+import type { BackendName, LineageRecord } from '@anyplane/protocol'
 import { ccDataDir, childEnv, pumpLines, readJsonFile, writeJsonFile } from './util'
 
-export type HandoffDetail = 'brief' | 'standard' | 'detailed'
+/** 简报详略词表：wire 正本是 protocol LineageRecord.detail，此处派生别名（不另立联合） */
+export type HandoffDetail = LineageRecord['detail']
 
 const BRIEF_LIMITS: Record<HandoffDetail, number> = { brief: 300, standard: 500, detailed: 800 }
 
@@ -121,7 +122,6 @@ export async function generateCodexBrief(
 // ---------- 血缘 ----------
 
 // LineageRecord 正本在 @anyplane/protocol（前端接力链渲染共用同一形状）
-import type { LineageRecord } from '@anyplane/protocol'
 
 function lineagePath(): string {
   return join(ccDataDir(), 'lineage.json')

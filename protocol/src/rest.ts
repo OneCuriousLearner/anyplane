@@ -3,6 +3,9 @@
 import type { SessionState } from './state'
 import type { BackendName } from './types'
 
+/** 会话宏观状态词表（pid 文件/daemon/列表行的闭集；claude 侧未知值一律降级 idle，见 discovery.normalizeStatus） */
+export type SessionStatus = 'busy' | 'idle' | 'waiting' | 'offline'
+
 /** GET /api/sessions 的聚合行（claude discovery 与 codex thread/list 归一后的列表项） */
 export interface SessionInfo {
   /** sessionId / threadId */
@@ -13,7 +16,7 @@ export interface SessionInfo {
   lastPrompt?: string
   mtime: number
   sizeBytes: number
-  status: 'busy' | 'idle' | 'waiting' | 'offline'
+  status: SessionStatus
   live?: { pid: number; startedAt?: string | number; kind?: string }
   backend: BackendName
   /** 项目目录的 git 分支（非仓库为空） */

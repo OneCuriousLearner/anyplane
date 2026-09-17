@@ -1,5 +1,7 @@
 // /rewind 消息选择器：列出用户消息，支持"仅回滚文件"与"回滚对话+文件"
 
+import type { BackendName } from '@anyplane/protocol'
+
 export interface RewindTarget {
   uuid: string
   /** 清理内部标签后的单行摘要。 */
@@ -34,7 +36,7 @@ export function RewindPicker(props: {
   /** codex：回滚语义按线程 historyMode 分流（status 下发）——
    *  paginated：thread/revert 原地截断，会话不变；legacy：thread/fork 分叉新线程；
    *  缺省（status 未下发）：中性文案，绝不谎报「原会话不动」 */
-  mode?: 'claude' | 'codex'
+  mode?: BackendName
   historyMode?: string
 }) {
   const isCodex = props.mode === 'codex'

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ArchivedEntry, SessionInfo } from '@anyplane/protocol'
+import type { ArchivedEntry, BackendName, InboxApproval, SessionInfo } from '@anyplane/protocol'
 import {
   apiFetch,
   archiveSession,
@@ -12,7 +12,6 @@ import {
   renameSession,
   restoreSession,
 } from '../lib/api'
-import type { InboxApproval } from '@anyplane/protocol'
 import { InboxSocket } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
@@ -354,7 +353,7 @@ export function SessionList(props: {
     return m
   }, [sessions])
 
-  const startNew = async (cwd: string, backend: 'claude' | 'codex') => {
+  const startNew = async (cwd: string, backend: BackendName) => {
     const { key, slug } = await createSession(cwd, backend)
     setPickerOpen(false)
     props.onSelect(makeSessionInfo({ key, slug, sessionId: 'new', cwd, backend, status: 'offline' }))

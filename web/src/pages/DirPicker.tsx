@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { BackendsStatus, DirEntry, SessionInfo } from '@anyplane/protocol'
+import type { BackendName, BackendsStatus, DirEntry, SessionInfo } from '@anyplane/protocol'
 import { errorMessage, fetchBackendsStatus, fetchDirList } from '../lib/api'
 import { backendFixHint, backendNeedsAttention } from '../components/BackendStatusCard'
 
@@ -21,13 +21,13 @@ function baseName(cwd: string): string {
 
 export function DirPicker(props: {
   sessions: SessionInfo[]
-  onStart: (cwd: string, backend: 'claude' | 'codex') => Promise<void>
+  onStart: (cwd: string, backend: BackendName) => Promise<void>
   onClose: () => void
 }) {
   const [tree, setTree] = useState<Map<string, NodeState>>(new Map())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState('')
-  const [backend, setBackend] = useState<'claude' | 'codex'>('claude')
+  const [backend, setBackend] = useState<BackendName>('claude')
   const [backendsStatus, setBackendsStatus] = useState<BackendsStatus | null>(null)
   const [starting, setStarting] = useState(false)
   const [revealing, setRevealing] = useState(false)
