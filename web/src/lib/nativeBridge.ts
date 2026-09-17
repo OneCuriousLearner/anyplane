@@ -158,6 +158,11 @@ function navBridge(method: string, params: Record<string, string>): void {
   location.href = `anyplane-bridge://${method}${q ? `?${q}` : ''}`
 }
 
+/** Android 电池优化豁免（vivo/国产 ROM 后台省电掐长连的对症出口），导航桥直发 */
+export function requestBatteryExemptionNav(): void {
+  if (Capacitor.getPlatform() === 'android') navBridge('requestBatteryExemption', {})
+}
+
 /** native→JS 事件入口（evaluateJavascript 推入，与 JSI 无关的独立机制） */
 function registerNativeEventHook(): void {
   ;(window as unknown as { __anyplaneNativeEvent?: (ev: unknown) => void }).__anyplaneNativeEvent = (ev) => {

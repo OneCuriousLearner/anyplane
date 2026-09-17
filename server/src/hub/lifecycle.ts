@@ -40,14 +40,17 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
 /**
  * 审批解析共享路径：WS approval 消息与推送直接审批（/api/approval-action）共用。
  * 返回 false 表示 requestId 已不在 pending（重复点击/已在别处处理）。
+ * 注意：approval_resolved 广播是幂等清理信号——即使 pending 已不存在也照发：
+ * 页面断线错过 resolved 事件会留下点不动的死卡（实机反馈），广播让它自愈；
+ * 无卡可清的客户端只是过滤掉一条未知 id，无代价。
  */
 export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
-  if (!hub.pendingApprovals.delete(requestId)) return false
-  deliverApproval(hub, requestId, decision)
+  const had = hub.pendingApprovals.delete(requestId)
+  if (had) deliverApproval(hub, requestId, decision)
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   pushStatus(hub)
-  return true
+  return had
 }
 
 /** REST 审批公共核的返回：路由层把 ok:false 映射为对应 HTTP 状态码。 */

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   apiFetch,
@@ -19,6 +19,11 @@ import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
 import { BackendStatusCard } from '../components/BackendStatusCard'
 import { NativeNotifyBanner } from '../components/NativeNotifyBanner'
+import {
+  getNativeBridgeStatus,
+  requestBatteryExemptionNav,
+  subscribeNativeBridge,
+} from '../lib/nativeBridge'
 import { getThemeChoice, setThemeChoice, toggleTheme, type ThemeChoice } from '../lib/theme'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -151,6 +156,8 @@ export function SessionList(props: {
   const [pushTestBusy, setPushTestBusy] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
   const [notifyMenuOpen, setNotifyMenuOpen] = useState(false)
+  const nativeBridge = useSyncExternalStore(subscribeNativeBridge, getNativeBridgeStatus)
+  const nativeAndroid = nativeBridge.active && nativeBridge.platform === 'android'
   // 主题长按菜单：timer 计时 500ms 长按，long 标记吞掉随后那次 click
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const themeTimer = useRef<number | undefined>(undefined)
@@ -492,6 +499,23 @@ export function SessionList(props: {
                   action={pushSupported() ? (pushEndpoint ? '退订' : '订阅') : undefined}
                 />
               </button>
+              {/* 原生壳（Android）：后台保活入口——国产 ROM 省电会掐前台服务长连 */}
+              {nativeAndroid && (
+                <button
+                  className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5 text-left hover:bg-surface"
+                  onClick={() => {
+                    requestBatteryExemptionNav()
+                    setNotifyMenuOpen(false)
+                  }}
+                >
+                  <NotifyRow
+                    on={false}
+                    title="后台保活"
+                    desc="常驻通知频繁「重连中」时：点此关闭电池优化"
+                    action="去设置"
+                  />
+                </button>
+              )}
               {/* webhook 通道：配置文件管理（ntfy/Bark/Server酱），只读展示 */}
               <div className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5">
                 <NotifyRow

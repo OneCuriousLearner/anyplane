@@ -57,6 +57,8 @@ public class AnyPlaneBridgePlugin extends Plugin {
             );
         } else if ("openNotificationSettings".equals(method)) {
             openSettings();
+        } else if ("requestBatteryExemption".equals(method)) {
+            requestBatteryExemption();
         }
         return true;
     }
@@ -115,6 +117,17 @@ public class AnyPlaneBridgePlugin extends Plugin {
         Intent i = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
             .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getContext().getPackageName())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(i);
+    }
+
+    /** 电池优化豁免：国产 ROM 后台省电会掐前台服务的长连 socket（实机 RST 确诊），
+     *  侧载分发不走 Play 审核，ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 合规可用 */
+    private void requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        Intent i = new Intent(
+            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:" + getContext().getPackageName())
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i);
     }
 
