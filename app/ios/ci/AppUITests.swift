@@ -12,7 +12,9 @@ final class AppUITests: XCTestCase {
     }
 
     func testApprovalNotificationAction() throws {
-        let app = XCUIApplication()
+        // 显式 bundle id 起宿主（TargetApplication 属性在手工注入的工程里不可靠，
+        // 报 "No target application path specified"——用 bundle id 最稳）
+        let app = XCUIApplication(bundleIdentifier: "run.anyplane")
         app.launch()
 
         // 通知权限弹窗（iOS 16+ 系统 alert 在 SpringBoard 进程）
