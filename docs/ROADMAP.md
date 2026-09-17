@@ -229,16 +229,15 @@ Claude 与 Codex 各自 adapter 翻译进来。这是让 vendor-neutral 从 slog
 **时机红线**：在确定要接第三家**之前**不要动——两后端时现有决策的收益是真的；
 但必须在接之前动完，**不能等接的时候临时改**。
 
-### 13.6 仓库卫生：远端分支自动清理（随手做）
+### 13.6 仓库卫生：打开「合并后自动删分支」（随手做）
 
-33 个远端分支中 30 个已完全并入 master（领先 0 提交）；另 3 个有未合并提交，
-其中 2 个已判定可删（详见审计文档附录 A）。
+2026-09-17 已清完当时的可删远端（清点与判定见审计文档附录 A）。
+远端现只留 `master`、方向二在研的 `feat/capacitor-shell`、以及本方向文档分支。
 
-**根因不是忘了删，是没有自动删**：仓库设置未开启
-「Automatically delete head branches」，而机器评审流程每次运行新建带时间戳的分支
+**还没做、也是唯一剩余项**：打开 GitHub 仓库设置里的
+「Automatically delete head branches」。机器评审流程每次运行仍会新建带时间戳的分支
 （`claude-code-review-*` / `claude-security-review-*` / `claude-simplify-*` /
-`claude-test-coverage-*` / `claude-test-cleanup-*` 五类共 15 个）。
-**先开开关再清理**，否则是无限循环的体力活。
+`claude-test-coverage-*` / `claude-test-cleanup-*`）；不开这个开关，下一批又会堆回来。
 
 ### 明确不在本方向内
 

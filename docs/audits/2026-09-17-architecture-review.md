@@ -251,23 +251,24 @@ e2e 中不需要真实模型调用的部分（审批链路、WS 补发、重键�
 
 ---
 
-## 附录 A：远端分支清理清单（2026-09-17 清点）
+## 附录 A：远端分支清理清单（2026-09-17 清点当时；当日已执行）
 
-33 个远端分支中 **30 个已完全并入 master（领先 0 提交）**，属纯垃圾。另 3 个有未合并提交：
+> 本节是清点当日的快照，**不是待办**。可删远端已于同日删除；
+> 当时 33 个远端里 30 个已完全并入 master（领先 0 提交）。另 3 个有未合并提交：
 
-| 分支 | 未合并 | 判定 | 依据 |
+| 分支 | 未合并 | 当时判定 | 依据 |
 |---|---|---|---|
-| `claude-simplify-20260828-173531` | +3 | **可删** | 分叉点 2026-08-27，master 自那以来 208 提交；`merge-tree` 冲突 5 文件，含被方向六彻底重构的 `server/src/index.ts`。改动意图是「复用 helper 减重复」，已被后续重构覆盖 |
-| `fix/onboarding-funnel` | +1 | **可删** | 唯一改动是 README 加中文索引行；master 已有等价且位置更好的 `> 📄 中文版文档见 …` |
+| `claude-simplify-20260828-173531` | +3 | **可删（已删）** | 分叉点 2026-08-27，master 自那以来 208 提交；`merge-tree` 冲突 5 文件，含被方向六彻底重构的 `server/src/index.ts`。改动意图是「复用 helper 减重复」，已被后续重构覆盖 |
+| `fix/onboarding-funnel` | +1 | **可删（已删）** | 唯一改动是 README 加中文索引行；master 已有等价且位置更好的 `> 📄 中文版文档见 …` |
 | `feat/capacitor-shell` | +1 | **保留** | 方向二在研分支（2026-09-17 活跃） |
 
-机器生成分支共 5 类前缀、19 个：`claude-code-review-*`(3)、`claude-security-review-*`(3)、
-`claude-simplify-*`(4)、`claude-test-coverage-*`(3)、`claude-test-cleanup-*`(2)、
-另有 `worktree-*`(2)、`agent/*`(1)、以及已合并的特性分支若干。
+机器生成分支共 5 类前缀：`claude-code-review-*`(3)、`claude-security-review-*`(3)、
+`claude-simplify-*`(4)、`claude-test-coverage-*`(3)、`claude-test-cleanup-*`(2)，
+另有 `worktree-*`(2)、`agent/*`(1)、以及已合并的特性分支若干——上述可删项已一并清掉。
 
-**根因不是忘了删，是没有自动删**。GitHub 仓库设置里的
-「Automatically delete head branches」未开启（PR 合并后自动删分支），
-而机器评审流程每次运行都新建一个带时间戳的分支。不开这个开关，清理是无限循环的体力活。
+**还没做的只有开关**：GitHub 仓库设置里的「Automatically delete head branches」仍未开启。
+机器评审流程每次运行都新建一个带时间戳的分支；不开这个开关，下一批还会堆回来。
+剩余行动见 ROADMAP 方向十三 13.6。
 
 ## 附录 B：本次评审未覆盖面
 
