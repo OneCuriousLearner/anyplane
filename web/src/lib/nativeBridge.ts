@@ -278,6 +278,9 @@ export async function setupNativeBridge(): Promise<void> {
               id: 42,
               title: '审批 · CI-Test',
               body: 'simulator spike 测试通知',
+              // 延迟 15s 触发：前台送达会被 willPresent 吞掉（不进通知中心），
+              // 等测试把 app 压到后台再送达（spike 实测前台调度不现身）
+              schedule: { at: new Date(Date.now() + 15000) },
               actionTypeId: ACTION_TYPE,
               extra: { key: 's|ci|test', requestId: 'ci-test-1' },
             },

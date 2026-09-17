@@ -49,10 +49,7 @@ final class AppUITests: XCTestCase {
             return
         }
 
-        // 等页面加载 + 授权落地 + 钩子调度（钩子会等 granted 后才 schedule）
-        sleep(10)
-
-        // 退回桌面，拉出通知中心
+        // 授权落地后立即压后台——钩子把通知延迟 15s 触发，后台送达才进通知中心
         XCUIDevice.shared.press(.home)
         sleep(2)
         let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01))
