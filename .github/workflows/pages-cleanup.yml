@@ -1,0 +1,45 @@
+name: Pages deployment cleanup
+
+# Cloudflare Pages 不自动回收部署：preview 已关后只剩 master 生产部署按 PR 节奏增长，
+# 堆积超 ~100 后项目无法删除（错误码 8000076）。每周兜底清理一次，保留最近 N 个。
+#
+# 需要的仓库配置（首次启用前）：
+#   - secret CLOUDFLARE_API_TOKEN：Cloudflare API Token，权限 = Account → Cloudflare Pages: Edit
+#   - variable CLOUDFLARE_ACCOUNT_ID：账户 ID（dashboard 右侧栏或 URL 里）
+#   - variable PAGES_PROJECT（可选，默认 anyplane）
+# 手动触发默认 dry-run，确认清单无误后再取消勾选实删。
+
+on:
+  schedule:
+    # 每周日 03:41 UTC（避开整点拥堵）
+    - cron: '41 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只打印将删除的清单，不实际删除'
+        type: boolean
+        default: true
+
+# 不需要任何仓库内容读写权限
+permissions: {}
+
+concurrency:
+  group: pages-deploy-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: prune old deployments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: prune pages deployments
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAGES_PROJECT: ${{ vars.PAGES_PROJECT }}
+          DRY_RUN: ${{ github.event_name == 'schedule' && '0' || (inputs.dry_run && '1' || '0') }}
+        run: bun run scripts/cleanup-pages-deployments.ts
