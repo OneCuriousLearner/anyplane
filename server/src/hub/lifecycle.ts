@@ -4,6 +4,7 @@ import { portFor } from '../backends/port'
 import type { ApprovalDecision } from '../backends/types'
 import { errorMessage } from '../util'
 import { broadcast, broadcastError, publishInbox } from './broadcast'
+import { hubs } from './registry'
 import { pushStatus } from './status'
 import type { Hub } from './types'
 
@@ -47,4 +48,38 @@ export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalD
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   pushStatus(hub)
   return true
+}
+
+/** REST 审批公共核的返回：路由层把 ok:false 映射为对应 HTTP 状态码。 */
+export type RestApprovalResult =
+  | { ok: true; toolName: string }
+  | { ok: false; status: 400 | 409; error: string }
+
+/**
+ * REST 审批公共核：能力 URL（/api/approval-action，secret 鉴权）与
+ * 原生壳令牌端点（/api/approvals/resolve，Bearer 鉴权）共用。
+ * decision 只接受 allow/deny；allow 沿用 pending 里的原始 input；
+ * denyMessage 由调用方给出（留痕文案区分触发通道）。
+ */
+export function resolveApprovalRest(
+  key: string,
+  requestId: string,
+  decision: string,
+  denyMessage: string,
+): RestApprovalResult {
+  if (decision !== 'allow' && decision !== 'deny') {
+    return { ok: false, status: 400, error: '只接受 allow/deny' }
+  }
+  const hub = hubs.get(key)
+  const pending = hub?.pendingApprovals.get(requestId)
+  if (!hub || !pending) return { ok: false, status: 409, error: '该审批已处理或不存在' }
+  const ok = resolveApproval(
+    hub,
+    requestId,
+    decision === 'allow'
+      ? { behavior: 'allow', updatedInput: pending.input }
+      : { behavior: 'deny', message: denyMessage },
+  )
+  if (!ok) return { ok: false, status: 409, error: '该审批已处理或不存在' }
+  return { ok: true, toolName: pending.toolName }
 }

@@ -76,6 +76,23 @@
   var KEY = 'anyplane.serverUrl';
   var app = document.getElementById('app');
 
+  // 冷启动通知 action 接力：进程被回收后点通知按钮，localNotificationActionPerformed
+  // 只会投递到当前已加载页面（即本引导页）。远端 AnyPlane 页面与本页不同源
+  // （localStorage 不共享），故转成 ?nativeAction= query 带过去，
+  // 由 web/src/lib/nativeBridge.ts 启动时消费（载荷只有 key/requestId/actionId，无凭据）。
+  var pendingAction = null;
+  try {
+    var LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+    if (LN) {
+      LN.addListener('localNotificationActionPerformed', function (ev) {
+        var extra = ev.notification && ev.notification.extra;
+        if (extra && typeof extra.key === 'string' && typeof extra.requestId === 'string') {
+          pendingAction = { key: extra.key, requestId: extra.requestId, actionId: ev.actionId };
+        }
+      });
+    }
+  } catch (e) { /* 桥不可用时静默降级为普通跳转 */ }
+
   function normalize(raw) {
     var s = (raw || '').trim();
     if (!s) return null;
@@ -88,6 +105,11 @@
     } catch (e) {
       return null;
     }
+  }
+
+  function targetUrl(origin) {
+    if (!pendingAction) return origin;
+    return origin + '/?nativeAction=' + encodeURIComponent(JSON.stringify(pendingAction));
   }
 
   function showForm(err) {
@@ -122,7 +144,7 @@
       '<a class="btn ghost" href="#reconfigure">重新配置</a>';
     // 留出可点「重新配置」的窗口；#reconfigure 由下方 hashchange 接住
     setTimeout(function () {
-      if (location.hash !== '#reconfigure') location.replace(origin);
+      if (location.hash !== '#reconfigure') location.replace(targetUrl(origin));
     }, 900);
   }
 

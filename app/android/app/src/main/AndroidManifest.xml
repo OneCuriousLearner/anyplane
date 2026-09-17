@@ -39,4 +39,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+ 通知运行时权限（LocalNotifications.requestPermissions 触发弹窗） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

@@ -1,7 +1,7 @@
 // Web Push 订阅管理与能力 URL 审批路由：
 // /api/push/*、/api/approval-action、/api/approval-page。
 
-import { resolveApproval } from '../hub/lifecycle'
+import { resolveApprovalRest } from '../hub/lifecycle'
 import { hubs } from '../hub/registry'
 import { log } from '../log'
 import {
@@ -79,28 +79,14 @@ export async function handlePushRoutes(
   }
   // 推送直接审批（能力 URL：secret 鉴权，不走 authToken——该 URL 只经加密推送投递到订阅设备）
   if (url.pathname === '/api/approval-action' && req.method === 'POST') {
-    const key = url.searchParams.get('k') ?? ''
-    const requestId = url.searchParams.get('r') ?? ''
-    const decision = url.searchParams.get('d') ?? ''
     const secret = url.searchParams.get('s') ?? ''
     if (!deps.validSecret(secret)) return json({ ok: false, error: '无效的能力密钥' }, { status: 403 })
-    if (decision !== 'allow' && decision !== 'deny') {
-      return json({ ok: false, error: 'd 只接受 allow/deny' }, { status: 400 })
-    }
-    const hub = hubs.get(key)
-    if (!hub || !hub.pendingApprovals.has(requestId)) {
-      return json({ ok: false, error: '该审批已处理或不存在' }, { status: 409 })
-    }
-    const pending = hub.pendingApprovals.get(requestId)!
-    const ok = resolveApproval(
-      hub,
-      requestId,
-      decision === 'allow'
-        ? { behavior: 'allow', updatedInput: pending.input }
-        : { behavior: 'deny', message: '用户在推送通知上拒绝了该操作' },
-    )
-    log.info(`[push] 通知直接审批 ${decision}：${sessionNameOf(key)} · ${pending.toolName}`)
-    return json({ ok })
+    const key = url.searchParams.get('k') ?? ''
+    const decision = url.searchParams.get('d') ?? ''
+    const r = resolveApprovalRest(key, url.searchParams.get('r') ?? '', decision, '用户在推送通知上拒绝了该操作')
+    if (!r.ok) return json({ ok: false, error: r.error }, { status: r.status })
+    log.info(`[push] 通知直接审批 ${decision}：${sessionNameOf(key)} · ${r.toolName}`)
+    return json({ ok: true })
   }
   // webhook 通知的审批确认页（Bark/Server酱 无原生按钮：点链接进此页，按钮再 POST 到 approval-action）。
   // GET 只渲染不执行——通知链接被预览/抓取也不会误触审批。能力 URL 模型同 approval-action。
