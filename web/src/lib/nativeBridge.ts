@@ -157,9 +157,9 @@ async function continueNativeSetup(): Promise<void> {
   // 权限弹窗与服务启动严格解耦：requestPermissions 在部分国产 ROM 上可能永不
   // resolve（弹窗回调丢失），串行 await 会把 configure 一并拖死且零报错——
   // 第三轮实机症状「还是没有任何通知」的头号嫌疑。服务先行，权限结果只更新状态条。
-  const current = await LN.checkPermissions().catch(() => null)
+  const current = await withTimeout(LN.checkPermissions(), 3000)
   if (current) setStatus({ permission: current.display })
-  clientLog('perm-check', `display=${current?.display ?? '查询失败'}`)
+  clientLog('perm-check', current ? `display=${current.display}` : 'TIMEOUT（checkPermissions 未返回）')
   void LN.requestPermissions()
     .then((p) => setStatus({ permission: p.display }))
     .catch(() => {})
@@ -225,12 +225,15 @@ export async function setupNativeBridge(): Promise<void> {
     LN = await import('@capacitor/local-notifications')
       .then((m) => m.LocalNotifications)
       .catch(() => null)
+    clientLog('ln-import', LN ? 'ok' : 'fail（LN=null）')
     if (!LN) {
       setStatus({ error: '通知组件加载失败：可能是应用缓存了旧页面，请彻底关闭应用重进' })
       return
     }
 
-    await LN.registerActionTypes({
+    // 逐步遥测（第四轮教训：国产 ROM 的 JS↔native 通道可能整段挂起，
+    // 每个原生调用都可能永 pending——每一步都要留下到达证据）
+    await withTimeout(LN.registerActionTypes({
       types: [
         {
           id: ACTION_TYPE,
@@ -241,13 +244,13 @@ export async function setupNativeBridge(): Promise<void> {
           ],
         },
       ],
-    })
+    }), 3000).then((r) => clientLog('register-action-types', r === null ? 'TIMEOUT' : 'ok'))
 
-    await LN.addListener('localNotificationActionPerformed', (ev) => {
+    await withTimeout(LN.addListener('localNotificationActionPerformed', (ev) => {
       const extra = ev.notification.extra as { key?: unknown; requestId?: unknown } | undefined
       if (typeof extra?.key !== 'string' || typeof extra.requestId !== 'string') return
       void act({ key: extra.key, requestId: extra.requestId, actionId: ev.actionId })
-    })
+    }), 3000).then((r) => clientLog('add-listener', r === null ? 'TIMEOUT' : 'ok'))
 
     setupStage = 'ready'
     await continueNativeSetup()
