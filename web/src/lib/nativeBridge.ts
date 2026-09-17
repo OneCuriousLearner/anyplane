@@ -15,7 +15,7 @@
 //     零可见迹象。
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import type { LocalNotificationsPlugin } from '@capacitor/local-notifications'
+import { LocalNotifications, type LocalNotificationsPlugin } from '@capacitor/local-notifications'
 import { postJson } from './api'
 import { getToken } from './auth'
 import { InboxSocket, type InboxEvent } from './inbox'
@@ -218,21 +218,13 @@ export async function setupNativeBridge(): Promise<void> {
 
   if (!Capacitor.isNativePlatform()) return
   setStatus({ active: true, platform: Capacitor.getPlatform() })
-  clientLog('setup', `platform=${Capacitor.getPlatform()} origin=${location.origin}`)
+  // BRIDGE_REV：判别「设备跑的是不是最新包」——每轮改动自增，setup 必带
+  clientLog('setup', `rev=6 platform=${Capacitor.getPlatform()} origin=${location.origin}`)
   try {
-    // 动态 import 失败的最典型原因是旧缓存 index.html 引用已不存在的块（实机踩坑），
-    // 之前这会无声地杀掉整个桥——现在进状态条
-    LN = await import('@capacitor/local-notifications')
-      .then((m) => m.LocalNotifications)
-      .catch(() => null)
-    clientLog('ln-import', LN ? 'ok' : 'fail（LN=null）')
-    if (!LN) {
-      setStatus({ error: '通知组件加载失败：可能是应用缓存了旧页面，请彻底关闭应用重进' })
-      return
-    }
-
-    // 逐步遥测（第四轮教训：国产 ROM 的 JS↔native 通道可能整段挂起，
-    // 每个原生调用都可能永 pending——每一步都要留下到达证据）
+    // 静态 import（早期版本是动态 import + 独立 chunk：国产 ROM 上 chunk 拉取可能挂起，
+    // 整桥死在半路且无声——静态引入消除独立 fetch，代价是浏览器多载一个 10KB 级包）
+    LN = LocalNotifications
+    clientLog('ln-import', 'static ok')
     await withTimeout(LN.registerActionTypes({
       types: [
         {
