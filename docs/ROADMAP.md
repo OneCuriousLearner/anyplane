@@ -44,24 +44,39 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
   （`app/www/index.html`：填服务器地址 → 存 localStorage → WebView 跳转该源）。
   理由：AnyPlane 的模型本就是「浏览器开服务端地址」，hosted 下 `/api` `/ws` 相对源不变、
   web/ 零改动，前端版本永远与服务端匹配；打包模式要引入可配 API base + 处理版本漂移。
-- 已落地：Android 构建链（JDK 21 + SDK，`assembleDebug` 出 4.3MB APK）、
-  iOS 工程走 SPM + GHA macos-latest 无签名编译（两次 CI 绿）、
-  审批本地通知链路（`web/src/lib/nativeBridge.ts`：自持 `/ws/inbox` → 批准/拒绝按钮 →
-  新端点 `POST /api/approvals/resolve` Bearer 裁决，与能力 URL 共用 `resolveApprovalRest`）、
-  冷启动 action 经引导页 `?nativeAction=` query 接力（localStorage 跨源不共享）。
-  浏览器侧回归（chrome-devtools）：relay 消费 → POST 409、引导页表单/跳转/重配全通。
+- **Android 侧已于 2026-09-17 真机全链路验收通过（vivo OriginOS 6 / Android 16）**：
+  锁屏审批通知出现、按钮裁决闭环、死卡自愈、前台服务常驻。验收标准「Android APK
+  侧载可用（连接/审批/推送全通）」✅ 已达成。
+- 已落地：Android 构建链（JDK 21 + SDK）、iOS 工程走 SPM + GHA macos-latest 无签名编译、
+  审批通知架构（`ApprovalService` 原生前台服务自持 `/ws/inbox` + 原生通知按钮 +
+  广播接收器裁决 POST，进程死了也能裁决）、审批裁决端点 `POST /api/approvals/resolve`
+  （Bearer，与能力 URL 共用 `resolveApprovalRest`）、导航桥（JSI 失效绕行）、
+  cookie 摘取过 SSO 网关、权限自愈合横幅 + `/api/client-log` 设备遥测。
 - **Android 推送选型已定（偏离「复用方向一登记端点」的暗示）**：不依赖 FCM/厂商通道——
-  壳活着期间由页面 WS 直接驱动本地通知，零第三方、国内网络可用。
-  代价：WebView 被杀后链路断，后台存活需前台服务（后续项）。iOS 后台送达仍绕不开 APNs。
-- 待实机/模拟器验证：~~通知按钮渲染与 actionId 回传~~（Android 真机前台链路已验过：
-  会话列表/审批卡/裁决正常）；原生常驻服务的锁屏通知与按钮裁决（前台服务
-  ApprovalService 已于 09-17 实装，待复验）、后台存活边界（OEM 白名单/Doze）、
-  iOS simulator action spike、APNs 接入。
+  前台服务自持 WS + 本地通知，零第三方、国内网络可用。iOS 无此选项（见 APNs 待办）。
+- 待办：iOS simulator action spike（GHA，设备免费）、iOS APNs 服务端接入（需 $99 账号）、
+  开机自启、`allowNavigation` 通配收紧（自定义 WebViewClient）、Keystore 包装令牌、
+  各 OEM 保活设置页适配（豁免入口已给，vivo 实测仍需手动一次）。
+
+**价值**（2026-09-12 重排：第一条从「更可靠」这种软论据换成了硬论据，本方向优先级随之上调）：
 - 实机踩坑记录（已修）：① Capacitor 默认把外源跳转甩系统浏览器（`Bridge.launchIntent`），
   hosted 壳必须配 `server.allowNavigation`——通配语义经 `HostMask.java` 源码核实；
   ②「锁屏后无通知」坐实了页面 WS 驱动的天花板，前台服务由此从后续项提前为核心链路；
   ③ 挖孔重叠：Capacitor 8 模板无边距配置项，走 CSS `var(--sat)/--sab`（设计系统原预留）
-  + `windowLightStatusBar=false`。
+  + `windowLightStatusBar=false`；
+  ④ **POST_NOTIFICATIONS 未授予 = 整条链路零可见迹象**（前台服务常驻通知也一并被系统
+  吞掉）——已做权限自愈合横幅 + 服务端 HTML no-cache + 前台挂账事件切后台补发；
+  ⑤ **`isPluginAvailable` 在 hosted 远端页恒 false**（PluginHeaders 由本地拦截器生成，
+  不注入远端页）——原生插件探测只能 registerPlugin 后真调一次看死活，任何「存在才调用」
+  的门卫写法都会静默全灭（实机症状：「去开启」点了毫无反应）；
+  ⑥ **vivo OriginOS 的 WebView 对远端页整段废除 `addJavascriptInterface`**（实机确诊：
+  一切插件调用永 pending，系统权限弹窗从未出现）——绕行架构已实装（b60b2d4）：
+  JS→native 走 `anyplane-bridge://` 导航拦截（`Plugin.shouldOverrideLoad` 官方挂点），
+  native→JS 走 `evaluateJavascript` 回推（独立机制），系统权限弹窗改原生直发。
+  **这是 hosted 模式在国产 ROM 上的通用风险，iOS 不受影响（WKWebView 独立通道）。**
+  验证环境：容器无 KVM，TCG 软模拟可用但 WebView 渲染必崩；原生链路靠
+  「adb root 预置 shared_prefs + am start-foreground-service + adb reverse tcp:7480」
+  直测（全链路已实证：通知 actions=2、按钮广播 POST 200、真实会话解锁执行）。
 
 **价值**（2026-09-12 重排：第一条从「更可靠」这种软论据换成了硬论据，本方向优先级随之上调）：
 - **iOS 上恢复一步审批的唯一路径**。iOS 原生通知**支持**按钮（`UNNotificationCategory` +
