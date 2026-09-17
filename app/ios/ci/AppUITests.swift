@@ -78,8 +78,10 @@ final class AppUITests: XCTestCase {
             }
             approve = springboard.buttons["批准"]
             if !approve.waitForExistence(timeout: 5) {
-                let dumpSwiped = springboard.buttons.debugDescription.prefix(700)
-                XCTFail("通知上未出现「批准」按钮。长按后 buttons: \(dumpExpanded); 半滑后 buttons: \(dumpSwiped)")
+                let shortlook = springboard.descendants(matching: .any)
+                    .matching(NSPredicate(format: "identifier CONTAINS 'ShortLook'"))
+                    .debugDescription.prefix(1500)
+                XCTFail("通知上未出现「批准」按钮。ShortLook 子树: \(shortlook)")
                 return
             }
         }
