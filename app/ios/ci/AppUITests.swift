@@ -27,19 +27,22 @@ final class AppUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "run.anyplane")
         app.launch()
 
-        // 主动交互几次，让 interruption monitor 有机会在 idle 点触发
+        // 主动交互让 interruption monitor 在 idle 点触发——必须避开屏幕中央：
+        // 那里是系统弹窗的按钮区，居中 tap 曾误点「不允许」把权限永久拒绝（flaky 根因）
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allowBtn = springboard.buttons["Allow"]
-        _ = allowBtn.waitForExistence(timeout: 15) // 等弹窗出现（也可能已被系统记住授权）
-        var guardLeft = 15
-        while allowBtn.exists && guardLeft > 0 {
-            app.tap() // 驱动监听器在 idle 点触发
+        let safeTap = app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.08))
+        for _ in 0..<3 {
+            safeTap.tap()
             sleep(1)
-            guardLeft -= 1
         }
-        if allowBtn.exists {
-            allowBtn.tap() // 监听器没接住：手动兜底
+        let allowBtn = springboard.alerts.firstMatch.buttons["Allow"]
+        if allowBtn.waitForExistence(timeout: 20) {
+            allowBtn.tap()
             sleep(1)
+            if allowBtn.exists {
+                allowBtn.tap() // 偶发首击不中，补一次
+                sleep(1)
+            }
         }
         if allowBtn.exists {
             XCTFail("权限弹窗无法消除。alerts=\(springboard.alerts.debugDescription.prefix(500)); buttons=\(springboard.buttons.debugDescription.prefix(500))")

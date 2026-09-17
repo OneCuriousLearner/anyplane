@@ -59,6 +59,8 @@ jobs:
         run: |
           gem install xcodeproj --no-document
           ruby ../app/ios/ci/add-ui-tests.rb
+          xcrun simctl shutdown all || true
+          xcrun simctl erase all
           xcodebuild test -project ios/App/App.xcodeproj -scheme App \
             -configuration Debug -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
