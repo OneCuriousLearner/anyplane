@@ -261,6 +261,27 @@ export async function setupNativeBridge(): Promise<void> {
       void act({ key: extra.key, requestId: extra.requestId, actionId: ev.actionId })
     }), 3000).then((r) => clientLog('add-listener', r === null ? 'TIMEOUT' : 'ok'))
 
+    // CI/模拟器 spike 钩子（?testNotify=1）：3s 后调度一条带审批按钮的测试通知，
+    // 验证「权限弹窗 → 注册 actionType → 调度 → 系统渲染按钮 → action 回传 → POST」。
+    // 裁决对象是虚构的（服务端 409 属预期），断言点是 POST 本身到达。
+    if (new URLSearchParams(location.search).get('testNotify') === '1') {
+      setTimeout(() => {
+        void LN.schedule({
+          notifications: [
+            {
+              id: 42,
+              title: '审批 · CI-Test',
+              body: 'simulator spike 测试通知',
+              actionTypeId: ACTION_TYPE,
+              extra: { key: 's|ci|test', requestId: 'ci-test-1' },
+            },
+          ],
+        })
+          .then(() => clientLog('test-notify', 'scheduled'))
+          .catch((e) => clientLog('test-notify-fail', String(e)))
+      }, 3000)
+    }
+
     setupStage = 'ready'
     await continueNativeSetup()
   } catch (e) {
