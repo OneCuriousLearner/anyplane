@@ -76,7 +76,7 @@ jobs:
       - name: Export screenshots
         if: always()
         run: |
-          xcrun xcresulttool export attachments --path /tmp/spike.xcresult --outputPath /tmp/attachments || true
+          xcrun xcresulttool export attachments --path /tmp/spike.xcresult --output-path /tmp/attachments || true
           ls -la /tmp/attachments || true
 
       - name: Upload artifacts
