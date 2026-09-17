@@ -60,8 +60,37 @@ export function consumeNativeActionParam(): NativeAction | null {
 }
 
 export async function setupNativeBridge(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return
-  const { LocalNotifications } = await import('@capacitor/local-notifications')
+  const native = Capacitor.isNativePlatform()
+  const LocalNotifications = native
+    ? (await import('@capacitor/local-notifications')).LocalNotifications
+    : null
+
+  const act = async (a: NativeAction): Promise<void> => {
+    if (a.actionId === 'approve' || a.actionId === 'deny') {
+      const r = await postJson('/api/approvals/resolve', {
+        key: a.key,
+        requestId: a.requestId,
+        decision: a.actionId === 'approve' ? 'allow' : 'deny',
+      }).catch(() => null)
+      // 409 = 已在别处裁决（或上游已超时），静默；401 已由 api 层触发令牌页
+      if (r && !r.ok && r.status !== 409) {
+        await LocalNotifications?.schedule({
+          notifications: [{ id: notifId(a.requestId), title: '审批未送达', body: '请打开应用确认会话状态' }],
+        }).catch(() => {})
+      }
+    } else {
+      // 点通知正文：深链进对应会话（hash 路由接管，见 App.tsx）
+      location.hash = sessionHashUrl(a.key)
+    }
+    await LocalNotifications?.cancel({ notifications: [{ id: notifId(a.requestId) }] }).catch(() => {})
+  }
+
+  // 冷启动 action 接力：?nativeAction= 只可能由壳内引导页注入，但消费与平台无关——
+  // 浏览器里同样成立，让这条链路可被 chrome-devtools 直接回归
+  const cold = consumeNativeActionParam()
+  if (cold) void act(cold)
+
+  if (!LocalNotifications) return
 
   await LocalNotifications.registerActionTypes({
     types: [
@@ -76,34 +105,11 @@ export async function setupNativeBridge(): Promise<void> {
     ],
   })
 
-  const act = async (a: NativeAction): Promise<void> => {
-    if (a.actionId === 'approve' || a.actionId === 'deny') {
-      const r = await postJson('/api/approvals/resolve', {
-        key: a.key,
-        requestId: a.requestId,
-        decision: a.actionId === 'approve' ? 'allow' : 'deny',
-      }).catch(() => null)
-      // 409 = 已在别处裁决（或上游已超时），静默；401 已由 api 层触发令牌页
-      if (r && !r.ok && r.status !== 409) {
-        await LocalNotifications.schedule({
-          notifications: [{ id: notifId(a.requestId), title: '审批未送达', body: '请打开应用确认会话状态' }],
-        }).catch(() => {})
-      }
-    } else {
-      // 点通知正文：深链进对应会话（hash 路由接管，见 App.tsx）
-      location.hash = sessionHashUrl(a.key)
-    }
-    await LocalNotifications.cancel({ notifications: [{ id: notifId(a.requestId) }] }).catch(() => {})
-  }
-
   await LocalNotifications.addListener('localNotificationActionPerformed', (ev) => {
     const extra = ev.notification.extra as { key?: unknown; requestId?: unknown } | undefined
     if (typeof extra?.key !== 'string' || typeof extra.requestId !== 'string') return
     void act({ key: extra.key, requestId: extra.requestId, actionId: ev.actionId })
   })
-
-  const cold = consumeNativeActionParam()
-  if (cold) void act(cold)
 
   const perm = await LocalNotifications.requestPermissions()
   if (perm.display !== 'granted') return

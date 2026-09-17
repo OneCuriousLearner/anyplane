@@ -39,6 +39,23 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 **定论**：不做 RN 重写（代码翻倍、维护翻倍，happy 的路线不是我们的路线）；
 用 **Capacitor 套壳现有 PWA** 打出 iOS/Android 原生包——日常开发仍是写 React，新增的只是构建链。
 
+**进行中进展（2026-09-17，分支 `feat/capacitor-shell`，已推远端）**：
+- **形态偏离原步骤草稿：hosted 而非打包**。`webDir` 不指向 `web/dist`，壳内只有引导页
+  （`app/www/index.html`：填服务器地址 → 存 localStorage → WebView 跳转该源）。
+  理由：AnyPlane 的模型本就是「浏览器开服务端地址」，hosted 下 `/api` `/ws` 相对源不变、
+  web/ 零改动，前端版本永远与服务端匹配；打包模式要引入可配 API base + 处理版本漂移。
+- 已落地：Android 构建链（JDK 21 + SDK，`assembleDebug` 出 4.3MB APK）、
+  iOS 工程走 SPM + GHA macos-latest 无签名编译（两次 CI 绿）、
+  审批本地通知链路（`web/src/lib/nativeBridge.ts`：自持 `/ws/inbox` → 批准/拒绝按钮 →
+  新端点 `POST /api/approvals/resolve` Bearer 裁决，与能力 URL 共用 `resolveApprovalRest`）、
+  冷启动 action 经引导页 `?nativeAction=` query 接力（localStorage 跨源不共享）。
+  浏览器侧回归（chrome-devtools）：relay 消费 → POST 409、引导页表单/跳转/重配全通。
+- **Android 推送选型已定（偏离「复用方向一登记端点」的暗示）**：不依赖 FCM/厂商通道——
+  壳活着期间由页面 WS 直接驱动本地通知，零第三方、国内网络可用。
+  代价：WebView 被杀后链路断，后台存活需前台服务（后续项）。iOS 后台送达仍绕不开 APNs。
+- 待实机/模拟器验证：通知按钮渲染与 actionId 回传（Android 真机侧载；
+  iOS simulator + XCUITest 或 simctl 方案待搭）、后台存活边界、APKs 接入。
+
 **价值**（2026-09-12 重排：第一条从「更可靠」这种软论据换成了硬论据，本方向优先级随之上调）：
 - **iOS 上恢复一步审批的唯一路径**。iOS 原生通知**支持**按钮（`UNNotificationCategory` +
   `UNNotificationAction`）：Capacitor 侧用 `LocalNotifications.registerActionTypes` 在启动时注册
