@@ -15,9 +15,11 @@ export {}
 
 const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID
 const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN
-const PROJECT = process.env.PAGES_PROJECT ?? 'anyplane'
-const KEEP_PRODUCTION = Number(process.env.KEEP_PRODUCTION ?? 10)
-const KEEP_PREVIEW = Number(process.env.KEEP_PREVIEW ?? 3)
+// 可选项一律用 || 而非 ??：GitHub Actions 的 env 对未配置变量注入的是空字符串而非 undefined，
+// '' ?? default 会拿到空串（曾导致 PAGES_PROJECT='' → API 404 Project not found）。
+const PROJECT = process.env.PAGES_PROJECT || 'anyplane'
+const KEEP_PRODUCTION = Number(process.env.KEEP_PRODUCTION || 10)
+const KEEP_PREVIEW = Number(process.env.KEEP_PREVIEW || 3)
 const DRY_RUN = process.argv.includes('--dry') || process.env.DRY_RUN === '1'
 
 if (!ACCOUNT_ID || !API_TOKEN) {
