@@ -37,11 +37,28 @@ interface AnyPlaneBridgePlugin {
 }
 
 // ---------------------------------------------------------------------------
+// 设备侧遥测：静默死无法本地排查时，把里程碑直接写进服务端日志（/api/client-log）
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+}
+
+function clientLog(tag: string, msg: string): void {
+  void postJson('/api/client-log', { tag, msg }).catch(() => {})
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))])
+}
+
+// ---------------------------------------------------------------------------
 // 状态外置：横幅 UI 的唯一事实源
 
 export type NativeBridgeStatus = {
   /** 是否在原生壳内 */
   active: boolean
+  /** 壳平台（android/ios/web） */
+  platform: string
   /** 通知权限（unknown=尚未查询） */
   permission: 'unknown' | 'granted' | 'prompt' | 'prompt-with-rationale' | 'denied'
   /** 通知生产权在谁手里 */
@@ -50,7 +67,7 @@ export type NativeBridgeStatus = {
   error: string | null
 }
 
-let status: NativeBridgeStatus = { active: false, permission: 'unknown', service: 'off', error: null }
+let status: NativeBridgeStatus = { active: false, platform: 'web', permission: 'unknown', service: 'off', error: null }
 const listeners = new Set<() => void>()
 
 function setStatus(patch: Partial<NativeBridgeStatus>): void {
@@ -136,13 +153,19 @@ async function act(a: NativeAction): Promise<void> {
 /** 权限补授后的续跑（横幅按钮路径） */
 async function continueNativeSetup(): Promise<void> {
   if (!LN || setupStage === 'done') return
-  const perm = await LN.requestPermissions()
-  setStatus({ permission: perm.display })
 
-  // Android 原生常驻服务在场时让权（见文件头职责 1）。
-  // 探测只能真调一次看死活，不能用 isPluginAvailable：hosted 模式下 PluginHeaders
-  // 不会注入远端页（它由本地拦截器生成），导致该 API 对我们的插件恒 false——
-  // 实机实证：分支永不进入，服务永不启动，「去开启」也因此什么都不做。
+  // 权限弹窗与服务启动严格解耦：requestPermissions 在部分国产 ROM 上可能永不
+  // resolve（弹窗回调丢失），串行 await 会把 configure 一并拖死且零报错——
+  // 第三轮实机症状「还是没有任何通知」的头号嫌疑。服务先行，权限结果只更新状态条。
+  const current = await LN.checkPermissions().catch(() => null)
+  if (current) setStatus({ permission: current.display })
+  clientLog('perm-check', `display=${current?.display ?? '查询失败'}`)
+  void LN.requestPermissions()
+    .then((p) => setStatus({ permission: p.display }))
+    .catch(() => {})
+
+  // 原生插件探测只能真调一次看死活，不能用 isPluginAvailable：hosted 模式下
+  // PluginHeaders 不会注入远端页（它由本地拦截器生成），该 API 对我们的插件恒 false。
   const bridge = registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge')
   try {
     const sync = async (): Promise<void> => {
@@ -157,12 +180,14 @@ async function continueNativeSetup(): Promise<void> {
     })
     setupStage = 'done'
     setStatus({ service: 'plugin' })
+    clientLog('configure', '原生服务已配置')
     return
-  } catch {
-    // 原生插件缺失（iOS / 旧壳）：落 JS 兜底路径
+  } catch (e) {
+    // 原生插件缺失（iOS / 旧壳）或服务启动被 ROM 拒绝：落 JS 兜底路径
+    clientLog('configure-fail', errMsg(e))
   }
 
-  if (perm.display !== 'granted') return
+  if (current?.display !== 'granted') return
   setupStage = 'done'
   setStatus({ service: 'js-fallback' })
   new InboxSocket((ev: InboxEvent) => {
@@ -192,7 +217,8 @@ export async function setupNativeBridge(): Promise<void> {
   if (cold) void act(cold)
 
   if (!Capacitor.isNativePlatform()) return
-  setStatus({ active: true })
+  setStatus({ active: true, platform: Capacitor.getPlatform() })
+  clientLog('setup', `platform=${Capacitor.getPlatform()} origin=${location.origin}`)
   try {
     // 动态 import 失败的最典型原因是旧缓存 index.html 引用已不存在的块（实机踩坑），
     // 之前这会无声地杀掉整个桥——现在进状态条
@@ -233,20 +259,28 @@ export async function setupNativeBridge(): Promise<void> {
 /** 横幅「去开启」按钮：重问一次权限；被永久拒绝（返回 denied 且不再弹窗）时跳系统设置页 */
 export async function requestNativeNotificationPermission(): Promise<void> {
   if (!LN) return
-  const before = (await LN.checkPermissions()).display
-  const perm = await LN.requestPermissions()
-  setStatus({ permission: perm.display })
-  if (perm.display === 'granted') {
+  clientLog('banner-tap', '用户点击去开启')
+  const before = (await LN.checkPermissions().catch(() => null))?.display ?? 'unknown'
+  if (before === 'granted') {
+    setStatus({ permission: 'granted' })
     await continueNativeSetup()
     return
   }
-  // 已经问过且仍拒绝：再调 requestPermissions 也不会弹了，直接送设置页
-  if (before === 'denied') {
-    // 同 continueNativeSetup：isPluginAvailable 在 hosted 远端页不可信，真调一次
+  // requestPermissions 在部分国产 ROM 上可能既不弹窗也不 resolve（回调丢失）——
+  // 3s 超时视为被拒，直接送系统通知设置页；绝不串行等待
+  const perm = await withTimeout(LN.requestPermissions(), 3000)
+  if (perm) setStatus({ permission: perm.display })
+  clientLog('perm-request', perm ? `result=${perm.display}` : 'timeout（ROM 未返回）')
+  if (perm?.display === 'granted') {
+    await continueNativeSetup()
+    return
+  }
+  if (before === 'denied' || perm === null || perm.display === 'denied') {
     try {
       await registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge').openNotificationSettings()
-    } catch {
-      // iOS 暂无此插件：引导文案已在横幅里，用户手动进系统设置
+      clientLog('settings', '已打开系统通知设置页')
+    } catch (e) {
+      clientLog('settings-fail', errMsg(e))
     }
   }
 }

@@ -67,6 +67,15 @@ export async function handleMiscRoutes(
     log.info(`[app] 原生壳通知审批 ${body.decision}：${body.key} · ${r.toolName}`)
     return json({ ok: true })
   }
+  // 客户端遥测：原生壳把关键里程碑（权限状态/插件调用成败/异常）上报到服务端日志——
+  // 设备侧静默死无法本地排查时的唯一事实来源（方向二实机调试产出）
+  if (url.pathname === '/api/client-log' && req.method === 'POST') {
+    const body = await readJsonBody<{ tag?: string; msg?: string }>(req)
+    const tag = String(body.tag ?? '').slice(0, 40)
+    const msg = String(body.msg ?? '').slice(0, 300)
+    if (tag) log.info(`[client:${tag}] ${msg}`)
+    return json({ ok: true })
+  }
   if (url.pathname === '/api/lineage' && req.method === 'GET') {
     const key = url.searchParams.get('key') ?? ''
     const records = lineageFor(key)

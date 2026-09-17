@@ -172,3 +172,36 @@ describe('POST /api/approvals/resolve（原生壳一键审批）', () => {
     }
   })
 })
+
+describe('POST /api/client-log（设备侧遥测）', () => {
+  test('正常上报返回 ok；空 tag 不落日志', async () => {
+    const logs: string[] = []
+    const { log } = await import('../log')
+    const orig = log.info
+    log.info = (m: unknown) => {
+      logs.push(String(m))
+    }
+    try {
+      const ok = await handleMiscRoutes(
+        new Request('http://localhost/api/client-log', {
+          method: 'POST',
+          body: JSON.stringify({ tag: 'native', msg: 'configure ok' }),
+        }),
+        new URL('http://localhost/api/client-log'),
+        deps({}),
+      )
+      expect(ok?.status).toBe(200)
+      expect(logs).toEqual(['[client:native] configure ok'])
+
+      const empty = await handleMiscRoutes(
+        new Request('http://localhost/api/client-log', { method: 'POST', body: JSON.stringify({ msg: 'x' }) }),
+        new URL('http://localhost/api/client-log'),
+        deps({}),
+      )
+      expect(empty?.status).toBe(200)
+      expect(logs.length).toBe(1)
+    } finally {
+      log.info = orig
+    }
+  })
+})
