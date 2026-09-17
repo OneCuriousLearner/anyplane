@@ -54,9 +54,19 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
   cookie 摘取过 SSO 网关、权限自愈合横幅 + `/api/client-log` 设备遥测。
 - **Android 推送选型已定（偏离「复用方向一登记端点」的暗示）**：不依赖 FCM/厂商通道——
   前台服务自持 WS + 本地通知，零第三方、国内网络可用。iOS 无此选项（见 APNs 待办）。
-- 待办：iOS simulator action spike（GHA，设备免费）、iOS APNs 服务端接入（需 $99 账号）、
-  开机自启、`allowNavigation` 通配收紧（自定义 WebViewClient）、Keystore 包装令牌、
-  各 OEM 保活设置页适配（豁免入口已给，vivo 实测仍需手动一次）。
+- 待办：~~iOS simulator action spike~~（09-18 收官，结论如下）、iOS APNs 服务端接入
+  （**暂缓，见下**）、开机自启（已做）、`allowNavigation` 通配收紧（已做，
+  插件白名单）、Keystore 包装令牌（已做）、各 OEM 保活设置页适配
+  （豁免入口已给，vivo 实测仍需手动一次）。
+
+**iOS spike 结论（2026-09-18，`app-ios-spike.yml` 全绿收官）**：通知链路在 iOS 模拟器
+（iPhone 17 / iOS 26.5）上「权限弹窗 → registerActionTypes → 调度 → 锁屏送达」全通，
+但 **ShortLook 展开卡不渲染 action 按钮——裸应用判别器（零 Capacitor 纯
+UNUserNotification）复现同款缺失，定性为 iOS 26 平台回归而非插件问题**
+（外部社区同报可操作通知异常）。按钮断言已转 `XCTExpectFailure` 自更新监视器：
+回归存在套件绿，Apple 修复后套件自动变红报警。**APNs 服务端接入与 $99 账号暂缓**
+——推送落地的是同一层坏掉的 ShortLook，投进去也出不来按钮；iOS 一步审批的
+替代路径现状：通知点正文进 app 内审批（两步，永远可用）。
 
 **价值**（2026-09-12 重排：第一条从「更可靠」这种软论据换成了硬论据，本方向优先级随之上调）：
 - 实机踩坑记录（已修）：① Capacitor 默认把外源跳转甩系统浏览器（`Bridge.launchIntent`），
