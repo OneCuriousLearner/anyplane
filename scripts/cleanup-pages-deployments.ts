@@ -24,8 +24,10 @@ if (!ACCOUNT_ID || !API_TOKEN) {
   console.error('缺少 CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN 环境变量')
   process.exit(1)
 }
-if (KEEP_PRODUCTION < 1 || KEEP_PREVIEW < 0) {
-  console.error('KEEP_PRODUCTION 必须 >= 1，KEEP_PREVIEW 必须 >= 0')
+// Number('abc')=NaN 会绕过 < 1 比较（NaN 比较恒 false），且 slice(NaN)=slice(0) 等于全量标记删除
+// ——保留数必须是整数，否则 fail fast，绝不带病运行。
+if (!Number.isInteger(KEEP_PRODUCTION) || KEEP_PRODUCTION < 1 || !Number.isInteger(KEEP_PREVIEW) || KEEP_PREVIEW < 0) {
+  console.error('KEEP_PRODUCTION 必须是 >= 1 的整数，KEEP_PREVIEW 必须是 >= 0 的整数')
   process.exit(1)
 }
 
@@ -75,8 +77,10 @@ const doomed: Deployment[] = []
 for (const [env, list] of Object.entries(byEnv) as [keyof typeof byEnv, Deployment[]][]) {
   const excess = list.slice(keepOf[env])
   // 红线：最新生产部署永不在删除集内（理论上 slice 已保证，这里是防御双保险）
-  doomed.push(...excess.filter((d) => !(env === 'production' && d === list[0])))
-  console.log(`${env}: 共 ${list.length} 个，保留 ${Math.min(keepOf[env], list.length)} 个，待删 ${excess.length} 个`)
+  // 红线过滤后的真实删除集才进日志——否则红线生效时「待删」会比实际删除数虚高
+  const doomedInEnv = excess.filter((d) => !(env === 'production' && d === list[0]))
+  doomed.push(...doomedInEnv)
+  console.log(`${env}: 共 ${list.length} 个，保留 ${Math.min(keepOf[env], list.length)} 个，待删 ${doomedInEnv.length} 个`)
 }
 
 if (doomed.length === 0) {
