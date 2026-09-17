@@ -139,9 +139,12 @@ async function continueNativeSetup(): Promise<void> {
   const perm = await LN.requestPermissions()
   setStatus({ permission: perm.display })
 
-  // Android 原生常驻服务在场时让权（见文件头职责 1）
-  if (Capacitor.isPluginAvailable('AnyPlaneBridge')) {
-    const bridge = registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge')
+  // Android 原生常驻服务在场时让权（见文件头职责 1）。
+  // 探测只能真调一次看死活，不能用 isPluginAvailable：hosted 模式下 PluginHeaders
+  // 不会注入远端页（它由本地拦截器生成），导致该 API 对我们的插件恒 false——
+  // 实机实证：分支永不进入，服务永不启动，「去开启」也因此什么都不做。
+  const bridge = registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge')
+  try {
     const sync = async (): Promise<void> => {
       await bridge.configure({ serverUrl: location.origin, token: getToken() ?? '' })
       const pending = await bridge.consumePendingOpen()
@@ -155,6 +158,8 @@ async function continueNativeSetup(): Promise<void> {
     setupStage = 'done'
     setStatus({ service: 'plugin' })
     return
+  } catch {
+    // 原生插件缺失（iOS / 旧壳）：落 JS 兜底路径
   }
 
   if (perm.display !== 'granted') return
@@ -236,7 +241,12 @@ export async function requestNativeNotificationPermission(): Promise<void> {
     return
   }
   // 已经问过且仍拒绝：再调 requestPermissions 也不会弹了，直接送设置页
-  if (before === 'denied' && Capacitor.isPluginAvailable('AnyPlaneBridge')) {
-    await registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge').openNotificationSettings()
+  if (before === 'denied') {
+    // 同 continueNativeSetup：isPluginAvailable 在 hosted 远端页不可信，真调一次
+    try {
+      await registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge').openNotificationSettings()
+    } catch {
+      // iOS 暂无此插件：引导文案已在横幅里，用户手动进系统设置
+    }
   }
 }
