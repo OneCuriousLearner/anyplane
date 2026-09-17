@@ -54,11 +54,28 @@ final class AppUITests: XCTestCase {
         // 找到测试通知并长按展开操作
         let notification = springboard.staticTexts["审批 · CI-Test"]
         XCTAssertTrue(notification.waitForExistence(timeout: 40), "测试通知未出现在通知中心")
-        notification.press(forDuration: 1.2)
-        sleep(1)
+        notification.press(forDuration: 1.5)
+        sleep(2)
 
-        let approve = springboard.buttons["批准"]
-        XCTAssertTrue(approve.waitForExistence(timeout: 5), "通知上未出现「批准」按钮")
+        var approve = springboard.buttons["批准"]
+        if !approve.waitForExistence(timeout: 5) {
+            // 备选路径：左滑出「选项」菜单（部分 iOS 版本长按不展开行内按钮）
+            notification.swipeLeft()
+            sleep(1)
+            let options = springboard.buttons["Options"]
+            if options.waitForExistence(timeout: 3) {
+                options.tap()
+                sleep(1)
+            }
+            approve = springboard.buttons["批准"]
+        }
+        if !approve.waitForExistence(timeout: 5) {
+            let dump = springboard.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS '批'"))
+                .debugDescription.prefix(800)
+            XCTFail("通知上未出现「批准」按钮。含批元素: \(dump); buttons=\(springboard.buttons.debugDescription.prefix(500))")
+            return
+        }
         approve.tap()
 
         // 等 act() 的 POST 落桩（/tmp/resolve.log 由 shell 侧断言）
