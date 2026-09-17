@@ -26,9 +26,14 @@ file_ref = group.new_file(File.expand_path(TEST_SRC))
 file_ref.name = 'AppUITests.swift'
 test_target.add_file_references([file_ref])
 
+# Xcode 14+ 默认 XCTRunner：不设 TEST_HOST/BUNDLE_LOADER（两者与 XCTRunner 互斥，
+# 错误 "sets both USES_XCTRUNNER and either TEST_HOST or RUNTIME_TEST_HOST"），
+# 宿主应用经 TargetApplication 属性关联
+test_target.add_dependency(app_target)
+attrs = proj.root_object.attributes['TargetAttributes'] ||= {}
+attrs[test_target.uuid] = { 'TargetApplication' => app_target.uuid }
+
 test_target.build_configurations.each do |config|
-  config.build_settings['TEST_HOST'] = '$(BUILT_PRODUCTS_DIR)/App.app/App'
-  config.build_settings['BUNDLE_LOADER'] = '$(TEST_HOST)'
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'run.anyplane.uitests'
   config.build_settings['GENERATE_INFOPLIST_FILE'] = 'YES'
   config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
