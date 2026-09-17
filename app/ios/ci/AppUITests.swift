@@ -9,6 +9,16 @@ final class AppUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        // 权限弹窗中断监听：弹窗一出现就点 Allow（在事件循环 idle 点自动触发，
+        // 比手动等按钮稳——iOS 各版本弹窗宿主/层级有差异时的标准做法）
+        addUIInterruptionMonitor(withDescription: "notification-permission") { alert in
+            let allow = alert.buttons["Allow"]
+            if allow.exists {
+                allow.tap()
+                return true
+            }
+            return false
+        }
     }
 
     func testApprovalNotificationAction() throws {
@@ -17,11 +27,17 @@ final class AppUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "run.anyplane")
         app.launch()
 
-        // 通知权限弹窗（iOS 16+ 系统 alert 在 SpringBoard 进程）
+        // 主动交互几次，让 interruption monitor 有机会在 idle 点触发
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for _ in 0..<5 {
+            app.tap()
+            sleep(1)
+        }
+        // 弹窗应已被监听器处理；若按钮仍在说明监听器没接住——把层级写进失败信息
         let allow = springboard.buttons["Allow"]
-        if allow.waitForExistence(timeout: 10) {
-            allow.tap()
+        if allow.exists {
+            XCTFail("监听器未接住权限弹窗。alerts=\(springboard.alerts.debugDescription.prefix(600)); buttons=\(springboard.buttons.debugDescription.prefix(600))")
+            return
         }
 
         // 等页面加载 + 授权落地 + 钩子调度（钩子会等 granted 后才 schedule）
