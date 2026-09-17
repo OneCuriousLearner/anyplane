@@ -32,12 +32,12 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
-        BridgeState.appInForeground = true;
+        BridgeState.setForeground(true);
     }
 
     @Override
     public void onPause() {
         super.onPause();
-        BridgeState.appInForeground = false;
+        BridgeState.setForeground(false);
     }
 }

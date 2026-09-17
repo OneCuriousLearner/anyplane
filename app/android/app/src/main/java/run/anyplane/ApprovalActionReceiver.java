@@ -27,6 +27,7 @@ public class ApprovalActionReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (key == null || requestId == null || action == null) return;
         final String decision = "approve".equals(action) ? "allow" : "deny";
+        android.util.Log.d("AnyPlaneAction", "收到按钮裁决 " + decision + " requestId=" + requestId);
         NotificationManagerCompat.from(context).cancel(ApprovalService.notifId(requestId));
 
         final PendingResult pending = goAsync();
@@ -49,6 +50,7 @@ public class ApprovalActionReceiver extends BroadcastReceiver {
                     }
                     try (Response r = new OkHttpClient().newCall(rb.build()).execute()) {
                         delivered = r.isSuccessful() || r.code() == 409;
+                        android.util.Log.d("AnyPlaneAction", "裁决 POST 结果 http=" + r.code());
                     }
                 }
             } catch (Exception ignored) {

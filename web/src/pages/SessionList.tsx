@@ -18,6 +18,7 @@ import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } fr
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
 import { BackendStatusCard } from '../components/BackendStatusCard'
+import { NativeNotifyBanner } from '../components/NativeNotifyBanner'
 import { getThemeChoice, setThemeChoice, toggleTheme, type ThemeChoice } from '../lib/theme'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -415,6 +416,8 @@ export function SessionList(props: {
           </IconBtn>
         </div>
       </header>
+      {/* 原生壳内权限/桥异常横幅（浏览器渲染 null） */}
+      <NativeNotifyBanner />
       {themeMenuOpen &&
         // portal 到 body：与通知菜单同理由（侧栏窄时防探出），位置锚定顶栏左下角
         createPortal(
