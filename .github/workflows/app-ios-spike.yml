@@ -29,9 +29,11 @@ jobs:
         run: |
           ruby -e '
             c = File.read("capacitor.config.ts")
-            c.sub!("webDir: '"'"'www'"'"',", "webDir: '"'"'www'"'"',\n  server: { url: '"'"'http://127.0.0.1:7480/?testNotify=1'"'"' },") or abort("inject failed")
+            # 必须插进既有 server 块——另起 server 键会被后面的 allowNavigation 块覆盖
+            c.sub!("allowNavigation: ['"'"'*'"'"'],", "url: '"'"'http://127.0.0.1:7480/?testNotify=1'"'"',\n    allowNavigation: ['"'"'*'"'"'],") or abort("inject failed")
             File.write("capacitor.config.ts", c)
           '
+          grep -A2 'url:' capacitor.config.ts
           bunx cap sync ios
 
       # 桩服务器：静态托管 dist + 记录裁决 POST
