@@ -22,13 +22,15 @@ cd android && ./gradlew assembleDebug   # 出 app-debug.apk
 ## 架构要点
 
 - 首启引导页填服务器地址（存 localStorage），随后 WebView 跳转该源；业务页面与原生源内一致，`/api`、`/ws` 零改动。
-- **审批通知（Android，实机验证后的架构）**：`ApprovalService` 前台服务在原生层自持 `/ws/inbox`，审批事件落原生通知（批准/拒绝按钮）；按钮裁决由 `ApprovalActionReceiver` 直接 POST `/api/approvals/resolve`（Bearer），进程死了也能被广播拉起——不依赖 WebView/JS 在场。前台时不发通知（页面内审批卡已覆盖）。页面 WS + LocalNotifications 的 JS 路径只保留给 iOS（APNs 接入前的兜底）与缺插件的旧壳。
-- 冷启动接力有两条平行的路，按通知来源分：原生通知点正文 → MainActivity extras → `consumePendingOpen`；LocalNotifications 插件通知（iOS/JS 路径）→ 引导页捕获 → `?nativeAction=` query 接力（localStorage 跨源不共享）。
+- **审批通知（Android，2026-09-17 真机验收通过的架构）**：`ApprovalService` 前台服务在原生层自持 `/ws/inbox`，审批事件落原生通知（批准/拒绝按钮）；按钮裁决由 `ApprovalActionReceiver` 直接 POST `/api/approvals/resolve`（Bearer + 摘来的 SSO cookie），进程死了也能被广播拉起——不依赖 WebView/JS 在场。前台时不发通知（页面内审批卡已覆盖），切后台一刻补发挂账。
+- **JS↔原生通道是 `anyplane-bridge://` 导航拦截，不是 JSI**：vivo OriginOS 的 WebView 对远端页整段废除 `addJavascriptInterface`（实机确诊，一切插件调用永 pending）；导航拦截任何 WebView 都可用。native→JS 走 `evaluateJavascript`（独立机制）。iOS 保留 JSI 页面路径（WKWebView 正常）。
+- 冷启动接力：原生通知点正文 → MainActivity 缓冲 → 页面加载后 `evaluateJavascript` 推 hash 深链。
 - Android 允许 cleartext（`usesCleartextTraffic="true"`）、iOS 放开 ATS（`NSAllowsArbitraryLoads`）——均为「用户自填服务器地址」的刻意取舍，覆盖局域网 http。
-- `allowNavigation: ['*']` 是 spike 期的刻意放宽（hosted 模式的服务器地址运行时才知道，静态配置只能通配）；收紧项：自定义原生 WebViewClient 白名单收窄到本地源+用户配置源。
+- 导航白名单由 `AnyPlaneBridgePlugin.shouldOverrideLoad` 强制执行：本地源 + 已配置服务器源壳内加载，其余外链甩外部浏览器（`allowNavigation: ['*']` 仅为兜底）。已知限制：SSO 前置部署的交互式登录跳转也会被甩到外部浏览器。
+- token/cookie 经 `SecureStore`（Android Keystore AES/GCM）落盘，历史明文自动迁移重加密；开机自启 `BootReceiver`（配置过服务器地址才拉起）。
+- SSO 网关后置的服务端：`configure` 时从 `CookieManager` 摘 WebView 会话 cookie，原生 WS/POST 统一携带（本机 woa 网关实测必须）。
 
 ## 已知待办
 
-- Android 后台驻留边界：`START_STICKY` + `stopWithTask="false"` 已覆盖划卡；Doze 深睡与 OEM 激进清理（小米/华为等）仍需用户在系统设置里给 app 加白/关电池优化；开机自启未做。
-- iOS 后台送达必须走 APNs（需开发者账号；模拟器 spike 用 `simctl push` 验证 action 渲染，未做）。
-- 令牌在原生层落 SharedPreferences 明文（与 WebView localStorage 同级敏感度）；Keystore 包装是加固项。
+- Android 后台驻留边界：`START_STICKY` + `stopWithTask="false"` + 开机自启已覆盖常规路径；Doze 深睡与各 OEM 保活设置页差异仍需用户侧一次性加白（豁免入口在通知菜单「后台保活」，vivo 实测需手动一次）。
+- iOS 后台送达必须走 APNs（需开发者账号；模拟器 spike 与 `simctl push` 验证在推进中）。

@@ -10,24 +10,16 @@ import android.os.Build;
 import android.util.Log;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
-import com.getcapacitor.PluginCall;
-import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * JS ↔ 原生桥。两条通道：
- *
- * ① JSI（configure/consumePendingOpen/openNotificationSettings 的 PluginMethod）——
- *    标准 Capacitor 通道，在 vivo OriginOS 的 WebView 上对远端页整体失效（实机：
- *    一切插件调用永 pending，权限弹窗从未出现）。
- * ② 导航拦截（anyplane-bridge://<method>?<query>，经 shouldOverrideLoad）——
- *    纯页面导航，任何 WebView 都可用。JS 侧 location.href 触发，被本方法吞掉执行。
- *    vivo 实机的生产通道（见 web/src/lib/nativeBridge.ts 的 nav 段）。
- *
+ * JS ↔ 原生桥，单一通道：anyplane-bridge://<method>?<query> 导航拦截（shouldOverrideLoad）。
+ * 纯页面导航，任何 WebView 都可用——选它的原因：vivo OriginOS 的 WebView 对远端页
+ * （hosted 模式）整段废除 addJavascriptInterface（实机：一切插件调用永 pending，
+ * 系统权限弹窗从未出现），标准 Capacitor JSI 插件方法因此整体不可用并已移除。
  * 返回路径（native→JS）一律用 WebView.evaluateJavascript——与 JSI 无关的独立机制。
- * 令牌落 SharedPreferences，敏感度与 WebView localStorage 同级（设备本地，明文）。
+ * 令牌与 cookie 落 SharedPreferences，敏感度与 WebView localStorage 同级（设备本地）。
  */
 @CapacitorPlugin(name = "AnyPlaneBridge")
 public class AnyPlaneBridgePlugin extends Plugin {
@@ -47,18 +39,41 @@ public class AnyPlaneBridgePlugin extends Plugin {
 
     @Override
     public Boolean shouldOverrideLoad(Uri url) {
-        if (url == null || !"anyplane-bridge".equals(url.getScheme())) return null;
-        String method = String.valueOf(url.getHost());
-        Log.d(TAG, "导航桥调用: " + method);
-        if ("configure".equals(method)) {
-            configureNative(
-                safe(url.getQueryParameter("serverUrl")),
-                safe(url.getQueryParameter("token"))
+        if (url == null) return null;
+        if ("anyplane-bridge".equals(url.getScheme())) {
+            String method = String.valueOf(url.getHost());
+            Log.d(TAG, "导航桥调用: " + method);
+            if ("configure".equals(method)) {
+                configureNative(
+                    safe(url.getQueryParameter("serverUrl")),
+                    safe(url.getQueryParameter("token"))
+                );
+            } else if ("openNotificationSettings".equals(method)) {
+                openSettings();
+            } else if ("requestBatteryExemption".equals(method)) {
+                requestBatteryExemption();
+            }
+            return true;
+        }
+        // 导航白名单（spike 期 allowNavigation ['*'] 的收紧；插件判定优先于 mask）：
+        // 本地源与已配置的服务器源可在壳内加载，其余一律甩外部浏览器——聊天内容里的
+        // 外链不得把带插件桥的 WebView 导航到任意外源。已知限制：SSO 前置的部署若需
+        // 交互式登录，登录跳转也会被甩到外部浏览器（该场景暂无通用解，见 README）。
+        String scheme = url.getScheme();
+        if (!"http".equals(scheme) && !"https".equals(scheme)) return null; // data/blob 等交默认处理
+        String host = url.getHost();
+        if ("localhost".equals(host)) return false;
+        SharedPreferences p = prefs(getContext());
+        String serverUrl = p.getString(PREF_SERVER_URL, "");
+        if (serverUrl == null || serverUrl.isEmpty()) return false; // 引导期全放行
+        Uri server = Uri.parse(serverUrl);
+        if (host != null && host.equals(server.getHost())) return false;
+        try {
+            getContext().startActivity(
+                new Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             );
-        } else if ("openNotificationSettings".equals(method)) {
-            openSettings();
-        } else if ("requestBatteryExemption".equals(method)) {
-            requestBatteryExemption();
+        } catch (Exception ignored) {
+            // 无浏览器可接时静默吞掉
         }
         return true;
     }
@@ -83,11 +98,11 @@ public class AnyPlaneBridgePlugin extends Plugin {
         } catch (Exception ignored) {
             // WebView 尚未就绪等场景：留空，按无 cookie 连
         }
-        prefs(ctx).edit()
-            .putString(PREF_SERVER_URL, serverUrl)
-            .putString(PREF_TOKEN, token)
-            .putString(PREF_COOKIES, cookies)
-            .apply();
+        SharedPreferences sp = prefs(ctx);
+        sp.edit().putString(PREF_SERVER_URL, serverUrl).apply();
+        // token/cookie 走 Keystore 包装（设备本地敏感信息不再明文落盘）
+        SecureStore.putSecret(sp, PREF_TOKEN, token);
+        SecureStore.putSecret(sp, PREF_COOKIES, cookies);
         Log.d(TAG, "configure: " + serverUrl + "（token " + (token.isEmpty() ? "无" : "有")
             + "，cookie " + (cookies.isEmpty() ? "无" : "有") + "），启动审批服务");
         ContextCompat.startForegroundService(ctx, new Intent(ctx, ApprovalService.class));
@@ -142,38 +157,5 @@ public class AnyPlaneBridgePlugin extends Plugin {
 
     private void pushPermState(String display) {
         pushPermState(getActivity(), display);
-    }
-
-    // ---------- 通道 ①：JSI（在通道正常的 WebView 上保留） ----------
-
-    @PluginMethod
-    public void configure(PluginCall call) {
-        configureNative(safe(call.getString("serverUrl")), safe(call.getString("token")));
-        call.resolve(new JSObject().put("ok", true));
-    }
-
-    @PluginMethod
-    public void disable(PluginCall call) {
-        Context ctx = getContext();
-        prefs(ctx).edit().clear().apply();
-        ctx.stopService(new Intent(ctx, ApprovalService.class));
-        call.resolve();
-    }
-
-    @PluginMethod
-    public void consumePendingOpen(PluginCall call) {
-        JSObject r = new JSObject();
-        if (BridgeState.pendingOpenKey != null) {
-            r.put("key", BridgeState.pendingOpenKey);
-            BridgeState.pendingOpenKey = null;
-        }
-        call.resolve(r);
-    }
-
-    /** 权限被永久拒绝时的出口：直达本应用的通知设置页（运行时请求已无法再弹） */
-    @PluginMethod
-    public void openNotificationSettings(PluginCall call) {
-        openSettings();
-        call.resolve();
     }
 }

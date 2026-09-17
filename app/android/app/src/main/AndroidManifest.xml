@@ -39,6 +39,16 @@
 
         <!-- 通知按钮裁决：仅接受壳内显式 Intent -->
         <receiver android:name=".ApprovalActionReceiver" android:exported="false" />
+
+        <!-- 开机自启审批服务（配置过服务器地址才拉起；系统保护广播，导出安全） -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->
@@ -50,4 +60,5 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- 侧载分发下请求电池优化豁免（vivo/国产 ROM 后台省电会掐后台长连，实机确诊） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>

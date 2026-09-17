@@ -14,7 +14,7 @@
 //     的横幅靠它给出可操作的出口。实机教训：POST_NOTIFICATIONS 未授予时整条链路
 //     零可见迹象。
 
-import { Capacitor, registerPlugin } from '@capacitor/core'
+import { Capacitor } from '@capacitor/core'
 import { LocalNotifications, type LocalNotificationsPlugin } from '@capacitor/local-notifications'
 import { postJson } from './api'
 import { getToken } from './auth'
@@ -26,22 +26,8 @@ const QUERY_PARAM = 'nativeAction'
 
 export type NativeAction = { key: string; requestId: string; actionId: string }
 
-/** app/android 侧的 AnyPlaneBridge 插件（自研，非 npm 插件） */
-interface AnyPlaneBridgePlugin {
-  configure(opts: { serverUrl: string; token: string }): Promise<{ ok: boolean }>
-  disable(): Promise<void>
-  /** 取走「点通知正文」暂存在原生层的会话 key（点批准/拒绝不经过这里） */
-  consumePendingOpen(): Promise<{ key?: string }>
-  /** 权限被永久拒绝时的出口：跳本应用系统通知设置页 */
-  openNotificationSettings(): Promise<void>
-}
-
 // ---------------------------------------------------------------------------
 // 设备侧遥测：静默死无法本地排查时，把里程碑直接写进服务端日志（/api/client-log）
-
-function errMsg(e: unknown): string {
-  return e instanceof Error ? `${e.name}: ${e.message}` : String(e)
-}
 
 function clientLog(tag: string, msg: string): void {
   void postJson('/api/client-log', { tag, msg }).catch(() => {})
@@ -196,33 +182,15 @@ async function continueNativeSetup(): Promise<void> {
     return
   }
 
-  // iOS / 其他：JSI 通道（WKWebView messageHandlers 无此问题）。
-  // 权限弹窗与服务启动严格解耦：requestPermissions 挂起（部分 ROM 回调丢失）不会拖死后续。
+  // iOS：WKWebView 的 JSI 正常，但自研插件只有 Android 实现——通知生产权在页面 JS：
+  // 权限 OK 后自持 /ws/inbox + LocalNotifications（APNs 接入前的前台兜底）。
+  // 权限弹窗与后续解耦：requestPermissions 挂起（部分 ROM 回调丢失）不会拖死主链。
   const current = await withTimeout(LN.checkPermissions(), 3000)
   if (current) setStatus({ permission: current.display })
   clientLog('perm-check', current ? `display=${current.display}` : 'TIMEOUT（checkPermissions 未返回）')
   void LN.requestPermissions()
     .then((p) => setStatus({ permission: p.display }))
     .catch(() => {})
-
-  const bridge = registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge')
-  try {
-    const sync = async (): Promise<void> => {
-      await bridge.configure({ serverUrl: location.origin, token: getToken() ?? '' })
-      const pending = await bridge.consumePendingOpen()
-      if (pending.key) location.hash = sessionHashUrl(pending.key)
-    }
-    await sync()
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') void sync()
-    })
-    setupStage = 'done'
-    setStatus({ service: 'plugin' })
-    clientLog('configure', '原生服务已配置')
-    return
-  } catch (e) {
-    clientLog('configure-fail', errMsg(e))
-  }
 
   if (current?.display !== 'granted') return
   setupStage = 'done'
@@ -318,20 +286,11 @@ export async function requestNativeNotificationPermission(): Promise<void> {
     return
   }
   // requestPermissions 在部分国产 ROM 上可能既不弹窗也不 resolve（回调丢失）——
-  // 3s 超时视为被拒，直接送系统通知设置页；绝不串行等待
+  // 3s 超时视为被拒，绝不串行等待。iOS 暂无自研插件，被拒后靠横幅文案引导手动进设置。
   const perm = await withTimeout(LN.requestPermissions(), 3000)
   if (perm) setStatus({ permission: perm.display })
   clientLog('perm-request', perm ? `result=${perm.display}` : 'timeout（ROM 未返回）')
   if (perm?.display === 'granted') {
     await continueNativeSetup()
-    return
-  }
-  if (before === 'denied' || perm === null || perm.display === 'denied') {
-    try {
-      await registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge').openNotificationSettings()
-      clientLog('settings', '已打开系统通知设置页')
-    } catch (e) {
-      clientLog('settings-fail', errMsg(e))
-    }
   }
 }

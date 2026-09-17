@@ -14,9 +14,8 @@ const config: CapacitorConfig = {
   server: {
     // 服务器地址运行时由用户填（任意 host），静态配置只能放通配——否则壳内跳转
     // 会被 WebViewClient 甩给系统浏览器（Bridge.launchIntent 的默认行为）。
-    // TODO(方向二 收紧项)：自定义原生 WebViewClient，白名单收窄到「本地源 + 用户已配置的源」，
-    // 防止聊天内容里的外链把带插件桥的 WebView 导航到任意外源（当前插件面只有本地通知，
-    // 风险有限，故 spike 期先放通）。
+    // 实际白名单由 AnyPlaneBridgePlugin.shouldOverrideLoad 强制执行（本地源+已配置
+    // 服务器源，其余外链甩外部浏览器）；此处的 ['*'] 只是插件放行后的兜底。
     allowNavigation: ['*'],
   },
 };

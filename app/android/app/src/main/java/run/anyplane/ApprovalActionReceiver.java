@@ -36,8 +36,8 @@ public class ApprovalActionReceiver extends BroadcastReceiver {
             try {
                 SharedPreferences p = AnyPlaneBridgePlugin.prefs(context);
                 String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
-                String token = p.getString(AnyPlaneBridgePlugin.PREF_TOKEN, "");
-                String cookies = p.getString(AnyPlaneBridgePlugin.PREF_COOKIES, "");
+                String token = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_TOKEN);
+                String cookies = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_COOKIES);
                 if (serverUrl != null && !serverUrl.isEmpty()) {
                     JSONObject body = new JSONObject()
                         .put("key", key)

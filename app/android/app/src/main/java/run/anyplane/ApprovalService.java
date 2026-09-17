@@ -95,7 +95,7 @@ public class ApprovalService extends Service {
     private void connect() {
         SharedPreferences p = AnyPlaneBridgePlugin.prefs(this);
         String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
-        String token = p.getString(AnyPlaneBridgePlugin.PREF_TOKEN, "");
+        String token = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_TOKEN);
         if (serverUrl == null || serverUrl.isEmpty()) {
             Log.w(TAG, "未配置服务器地址，服务退出");
             stopSelf();
@@ -105,10 +105,14 @@ public class ApprovalService extends Service {
             + (token == null || token.isEmpty() ? "" : "?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8));
         Log.d(TAG, "连接 " + serverUrl + "（token " + (token == null || token.isEmpty() ? "无" : "有") + "）");
         Request.Builder rb = new Request.Builder().url(wsUrl);
-        String cookies = p.getString(AnyPlaneBridgePlugin.PREF_COOKIES, "");
+        String cookies = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_COOKIES);
         if (cookies != null && !cookies.isEmpty()) {
             // SSO 网关路径：WebView 摘来的会话 cookie（configure 时写入）
             rb.header("Cookie", cookies);
+        }
+        // 防御双连：onStartCommand 可被重复投递（STICKY 重投/多次 start），旧连接先收掉
+        if (ws != null) {
+            ws.close(1000, "reconnect");
         }
         ws = http.newWebSocket(rb.build(), new Listener());
     }
@@ -117,8 +121,8 @@ public class ApprovalService extends Service {
     private void report(String tag, String msg) {
         SharedPreferences p = AnyPlaneBridgePlugin.prefs(this);
         String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
-        String token = p.getString(AnyPlaneBridgePlugin.PREF_TOKEN, "");
-        String cookies = p.getString(AnyPlaneBridgePlugin.PREF_COOKIES, "");
+        String token = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_TOKEN);
+        String cookies = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_COOKIES);
         if (serverUrl == null || serverUrl.isEmpty()) return;
         new Thread(() -> {
             try {
@@ -172,7 +176,6 @@ public class ApprovalService extends Service {
             retryDelaySec = 1;
             Log.d(TAG, "inbox 已连接");
             updateOngoing("已连接");
-            report("svc-ws-open", "inbox 已连接");
         }
 
         @Override
