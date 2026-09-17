@@ -2,6 +2,8 @@ name: Pages deployment cleanup
 
 # Cloudflare Pages 不自动回收部署：preview 已关后只剩 master 生产部署按 PR 节奏增长，
 # 堆积超 ~100 后项目无法删除（错误码 8000076）。每周兜底清理一次，保留最近 N 个。
+# 注意：Preview branches=None 只跳过构建，CF 仍为每次分支 push 建墓碑部署记录且计入上限
+# ——堆积主驱动是全部分支 push 次数，实测见 docs/research/2026-09-17-cf-pages-preview-tombstones.md
 #
 # 需要的仓库配置（首次启用前）：
 #   - secret CLOUDFLARE_API_TOKEN：Cloudflare API Token，权限 = Account → Cloudflare Pages: Edit
