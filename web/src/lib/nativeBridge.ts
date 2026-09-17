@@ -266,7 +266,7 @@ export async function setupNativeBridge(): Promise<void> {
     // 裁决对象是虚构的（服务端 409 属预期），断言点是 POST 本身到达。
     if (new URLSearchParams(location.search).get('testNotify') === '1') {
       setTimeout(() => {
-        void LN.schedule({
+        void LocalNotifications.schedule({
           notifications: [
             {
               id: 42,
