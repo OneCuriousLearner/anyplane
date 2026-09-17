@@ -24,8 +24,8 @@ final class AppUITests: XCTestCase {
             allow.tap()
         }
 
-        // 等页面加载 + 钩子调度（页面加载 3s 后 schedule，再给足渲染余量）
-        sleep(12)
+        // 等页面加载 + 授权落地 + 钩子调度（钩子会等 granted 后才 schedule）
+        sleep(10)
 
         // 退回桌面，拉出通知中心
         XCUIDevice.shared.press(.home)
@@ -37,7 +37,7 @@ final class AppUITests: XCTestCase {
 
         // 找到测试通知并长按展开操作
         let notification = springboard.staticTexts["审批 · CI-Test"]
-        XCTAssertTrue(notification.waitForExistence(timeout: 15), "测试通知未出现在通知中心")
+        XCTAssertTrue(notification.waitForExistence(timeout: 40), "测试通知未出现在通知中心")
         notification.press(forDuration: 1.2)
         sleep(1)
 
