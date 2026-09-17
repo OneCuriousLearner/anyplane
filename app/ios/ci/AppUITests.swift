@@ -1,16 +1,16 @@
 import XCTest
 
-// iOS simulator spike：通知 action 全链验证。
-// 被测应用由 CI 以 server.url=http://127.0.0.1:7480/?testNotify=1 构建：
-// 页面加载后 3s 调度「审批 · CI-Test」本地通知（批准/拒绝两个 action），
-// 本用例完成权限弹窗授权 → 退到桌面 → 通知中心点「批准」，
-// 裁决 POST 是否到达桩服务器由 CI shell 侧断言（/tmp/resolve.log 含 ci-test-1）。
+// iOS simulator spike：通知 action 全链验证 + 裸应用判别器。
+// testApprovalNotificationAction：被测应用由 CI 以 server.url 注入构建，
+//   页面钩子调度「审批 · CI-Test」本地通知（批准/拒绝），验证
+//   权限 → registerActionTypes → 调度 → ShortLook 按钮 → action 回传 → POST 落桩。
+// testBareDiscriminator：零 Capacitor 裸应用注册同款 category/通知——
+//   若同样渲染不出按钮 → iOS 26 平台回归实锤；若能渲染 → 问题在 Capacitor 插件。
 final class AppUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        // 权限弹窗中断监听：弹窗一出现就点 Allow（在事件循环 idle 点自动触发，
-        // 比手动等按钮稳——iOS 各版本弹窗宿主/层级有差异时的标准做法）
+        // 权限弹窗中断监听：弹窗一出现就点 Allow（事件循环 idle 点自动触发）
         addUIInterruptionMonitor(withDescription: "notification-permission") { alert in
             let allow = alert.buttons["Allow"]
             if allow.exists {
@@ -22,13 +22,19 @@ final class AppUITests: XCTestCase {
     }
 
     func testApprovalNotificationAction() throws {
-        // 显式 bundle id 起宿主（TargetApplication 属性在手工注入的工程里不可靠，
-        // 报 "No target application path specified"——用 bundle id 最稳）
-        let app = XCUIApplication(bundleIdentifier: "run.anyplane")
+        try driveNotificationActionTest(bundleId: "run.anyplane", expectResolvePost: true)
+    }
+
+    func testBareDiscriminator() throws {
+        try driveNotificationActionTest(bundleId: "run.anyplane.bare", expectResolvePost: false)
+    }
+
+    private func driveNotificationActionTest(bundleId: String, expectResolvePost: Bool) throws {
+        // 显式 bundle id 起宿主（TargetApplication 属性在手工注入的工程里不可靠）
+        let app = XCUIApplication(bundleIdentifier: bundleId)
         app.launch()
 
-        // 主动交互让 interruption monitor 在 idle 点触发——必须避开屏幕中央：
-        // 那里是系统弹窗的按钮区，居中 tap 曾误点「不允许」把权限永久拒绝（flaky 根因）
+        // 主动交互让 interruption monitor 在 idle 点触发——避开屏幕中央（系统弹窗按钮区）
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let safeTap = app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.08))
         for _ in 0..<3 {
@@ -40,26 +46,28 @@ final class AppUITests: XCTestCase {
             allowBtn.tap()
             sleep(1)
             if allowBtn.exists {
-                allowBtn.tap() // 偶发首击不中，补一次
+                allowBtn.tap()
                 sleep(1)
             }
         }
         if allowBtn.exists {
-            XCTFail("权限弹窗无法消除。alerts=\(springboard.alerts.debugDescription.prefix(500)); buttons=\(springboard.buttons.debugDescription.prefix(500))")
+            XCTFail("权限弹窗无法消除。alerts=\(springboard.alerts.debugDescription.prefix(500))")
             return
         }
 
-        // 授权落地后立即压后台——钩子把通知延迟 15s 触发，后台送达才进通知中心
+        // 授权落地后立即压后台——通知延迟触发，后台送达才进通知中心
         XCUIDevice.shared.press(.home)
         sleep(2)
+
+        // 拉出通知中心
         let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01))
         let bottom = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
         top.press(forDuration: 0.05, thenDragTo: bottom)
         sleep(2)
 
-        // 找到测试通知：先下拉展开（iOS 经典展开手势，比长按可靠），再长按兜底
+        // 找到测试通知：先下拉展开，再长按兜底
         let notification = springboard.staticTexts["审批 · CI-Test"]
-        XCTAssertTrue(notification.waitForExistence(timeout: 40), "测试通知未出现在通知中心")
+        XCTAssertTrue(notification.waitForExistence(timeout: 40), "[\(bundleId)] 测试通知未出现在通知中心")
         let nCenter = notification.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         let nBelow = notification.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 2.5))
         nCenter.press(forDuration: 0.05, thenDragTo: nBelow)
@@ -75,12 +83,14 @@ final class AppUITests: XCTestCase {
             let shortlook = springboard.descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier CONTAINS 'ShortLook'"))
                 .debugDescription.prefix(1500)
-            XCTFail("通知上未出现「批准」按钮（疑 iOS 26 可操作通知渲染回归）。ShortLook 子树: \(shortlook)")
+            XCTFail("[\(bundleId)] 通知上未出现「批准」按钮。ShortLook 子树: \(shortlook)")
             return
         }
         approve.tap()
 
-        // 等 act() 的 POST 落桩（/tmp/resolve.log 由 shell 侧断言）
-        sleep(5)
+        if expectResolvePost {
+            // 等 act() 的 POST 落桩（/tmp/resolve.log 由 shell 侧断言）
+            sleep(5)
+        }
     }
 }

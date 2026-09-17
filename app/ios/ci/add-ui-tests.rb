@@ -43,11 +43,32 @@ test_target.build_configurations.each do |config|
 end
 proj.save
 
+# 裸应用判别器目标（零 Capacitor 的同款通知：区分平台回归 vs 插件问题）
+bare_existing = proj.targets.find { |t| t.name == 'BareApp' }
+proj.remove_target(bare_existing) if bare_existing.respond_to?(:remove_target) && bare_existing
+bare_target = proj.new_target(:application, 'BareApp', :ios, '15.0')
+bare_target.product_type = 'com.apple.product-type.application'
+bare_ref = group.new_file(File.expand_path('ios/ci/BareAppDelegate.swift'))
+bare_ref.name = 'BareAppDelegate.swift'
+bare_target.add_file_references([bare_ref])
+bare_target.build_configurations.each do |config|
+  config.build_settings['PRODUCT_NAME'] = 'BareApp'
+  config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'run.anyplane.bare'
+  config.build_settings['SWIFT_VERSION'] = '5.0'
+  config.build_settings['GENERATE_INFOPLIST_FILE'] = 'YES'
+  config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+  config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
+  # 纯代码 UIWindow：不要 scene manifest / storyboard
+  config.build_settings['INFOPLIST_KEY_UILaunchStoryboardName'] = ''
+end
+proj.save
+
 # scheme 落 shared 路径，xcodebuild -scheme App 才能找到
 FileUtils.mkdir_p(SCHEME_DIR)
 scheme = File.exist?(SCHEME_PATH) ? Xcodeproj::XCScheme.new(SCHEME_PATH) : Xcodeproj::XCScheme.new
 scheme.add_build_target(app_target)
+scheme.add_build_target(bare_target)
 scheme.add_test_target(test_target)
 scheme.set_launch_target(app_target)
 scheme.save_as(PROJ_PATH, 'App', true)
-puts 'AppUITests 目标与 scheme 注入完成'
+puts 'AppUITests 与 BareApp 目标及 scheme 注入完成'
