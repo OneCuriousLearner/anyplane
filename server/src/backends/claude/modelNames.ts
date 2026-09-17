@@ -6,14 +6,8 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { TierModelName } from '@anyplane/protocol'
 import { config } from '../../config'
-
-export interface TierModelName {
-  /** 显示名（_MODEL_NAME 优先，缺省回退模型 ID） */
-  name: string
-  /** 模型 ID（仅当与显示名不同才携带，供 tooltip） */
-  id?: string
-}
 
 const TIERS = ['haiku', 'sonnet', 'opus', 'fable'] as const
 

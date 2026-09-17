@@ -1,9 +1,12 @@
 // Hub 模型与 WS 数据面的共享类型：纯类型模块，零运行时依赖。
 // （原本定义在 index.ts；S2 拆出后这里是唯一正本，backends/port.ts 也 type-import 这里。）
+// InboxEvent 是前后端共享契约，正本在 @anyplane/protocol（含 snapshot 变体——
+// 历史上本模块只声明 4 种而 push/inbox.ts 运行时发第 5 种，漂移即由此类双正本产生）。
 
 import type { ServerWebSocket } from 'bun'
 import type { TranscriptTailer } from '../backends/claude/tailer'
 import type { SpawnOptions } from '../backends/types'
+import type { CliEventPayload } from '../cliReplay'
 
 export interface PendingApproval {
   requestId: string
@@ -33,7 +36,7 @@ export interface Hub {
   /** 下行 cli 事件的单调序号（重连补发用，见 cliReplay.ts） */
   cliSeq?: number
   /** 最近 CLI_RING_CAP 条可落盘 cli 事件的环形缓冲（不含 stream_event） */
-  cliRing?: Array<{ seq: number; payload: Record<string, unknown> }>
+  cliRing?: Array<{ seq: number; payload: CliEventPayload }>
   /** 未 spawn 时缓存启动偏好；已 spawn 时记录当前选择，供 UI 重连恢复 */
   spawnOpts?: Partial<SpawnOptions>
   /** 除 effort 外、需要在进程启动后按顺序写入 stdin 的环境变量 */
@@ -57,10 +60,3 @@ export interface Hub {
   /** sessionNameOf 的 s|/x| key cwd 缓存：反查（listSessions / CodexSession.cwd）至多一次（'' = 已查过、未知） */
   nameCwd?: string
 }
-
-/** 全局收件箱（/ws/inbox）的事件种类：跨会话审批/完成/错误汇总 */
-export type InboxEvent =
-  | { type: 'approval'; key: string; requestId: string; toolName: string; input: unknown }
-  | { type: 'approval_resolved'; key: string; requestId: string }
-  | { type: 'done'; key: string; ok: boolean }
-  | { type: 'error'; key: string; message: string }

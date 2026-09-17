@@ -4,7 +4,8 @@
 // 用 FakeWebSocket + 捕获式 setTimeout 全同步驱动（同基类测试的模式）。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { SessionSocket, type ClientCommand, type ServerEvent } from './ws'
+import type { ClientCommand, ServerEvent } from '@anyplane/protocol'
+import { SessionSocket } from './ws'
 
 class FakeWebSocket {
   static readonly CONNECTING = 0

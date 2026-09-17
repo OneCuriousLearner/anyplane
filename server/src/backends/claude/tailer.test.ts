@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { HistoryMessage } from './discovery'
+import type { HistoryMessage } from '@anyplane/protocol'
 import { TranscriptTailer } from './tailer'
 
 let dir = ''

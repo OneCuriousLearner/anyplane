@@ -3,7 +3,8 @@
 // 粒度是「完整消息」而非 token 增量——token 级流式只有 spawn 路径（stream-json 协议）才有。
 
 import { closeSync, existsSync, openSync, readSync, statSync, watch, type FSWatcher } from 'node:fs'
-import { entryToHistoryMessage, isSelectableRewindTarget, type HistoryMessage } from './discovery'
+import type { HistoryMessage } from '@anyplane/protocol'
+import { entryToHistoryMessage, isSelectableRewindTarget } from './discovery'
 
 export interface TailerEvents {
   onMessage: (msg: HistoryMessage) => void

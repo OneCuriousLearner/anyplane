@@ -2,9 +2,10 @@
 // 依赖红线：hub/* 绝不 import push/*（循环）——inbox 事件经 InboxSink 注册器流出，
 // 真实实现（/ws/inbox 扇出 + Web Push 分发）在 push/inbox.ts，由装配层 initInbox() 一次性接线。
 
+import type { InboxEvent, ServerEvent } from '@anyplane/protocol'
 import { pushCliRing } from '../cliReplay'
 import { errFields, log } from '../log'
-import type { Hub, InboxEvent } from './types'
+import type { Hub } from './types'
 
 /** inbox 事件的真实出口（push/inbox.ts 注册）：/ws/inbox 扇出 + Web Push 分发 */
 export interface InboxSink {
@@ -42,15 +43,16 @@ export function publishInbox(ev: InboxEvent): void {
 
 /** 待审批重放：socket 接入（socket.ts，单播）与 attach（messages.ts，单播给发起连接）共用——
  *  未裁决的审批补发给目标，不向 Hub 内其他在线客户端广播（重复审批卡） */
-export function replayApprovals(hub: Hub, send: (payload: unknown) => void): void {
+export function replayApprovals(hub: Hub, send: (payload: ServerEvent) => void): void {
   for (const a of hub.pendingApprovals.values()) {
     send({ kind: 'approval_request', ...a })
   }
 }
 
-export function broadcast(hub: Hub, payload: unknown): void {
-  const kind = (payload as { kind?: string } | null | undefined)?.kind
-  if (kind === 'cli') pushCliRing(hub, payload as Record<string, unknown>)
+/** 下行事件唯一卡口：payload 必须是 ServerEvent 判别联合的成员——
+ *  新增事件先改 @anyplane/protocol，否则这里编译不过（前端同步获得类型） */
+export function broadcast(hub: Hub, payload: ServerEvent): void {
+  if (payload.kind === 'cli') pushCliRing(hub, payload)
   const text = JSON.stringify(payload)
   for (const ws of hub.clients) {
     try {
@@ -62,8 +64,8 @@ export function broadcast(hub: Hub, payload: unknown): void {
     }
   }
   // 错误事件同步进全局收件箱（审批/完成由各自路径单独发布）
-  if (kind === 'error') {
-    publishInbox({ type: 'error', key: hub.key, message: String((payload as { message?: unknown }).message ?? '') })
+  if (payload.kind === 'error') {
+    publishInbox({ type: 'error', key: hub.key, message: payload.message })
   }
 }
 

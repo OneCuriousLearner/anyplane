@@ -2,7 +2,8 @@
 // sessionKey：已存在线程 `x|<threadId>`；新线程 `xn|<encodeURIComponent(cwd)>`。
 // threadId 全局唯一且 thread/read 可反查 cwd，不受 claude slug 删除问题影响。
 
-import type { SessionSummary, HistoryMessage } from '../types'
+import type { HistoryMessage } from '@anyplane/protocol'
+import type { SessionSummary } from '../types'
 import { log } from '../../log'
 import { listThreadsFromDisk } from './discovery'
 import { codexRuntime } from './runtime'

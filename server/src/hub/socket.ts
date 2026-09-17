@@ -1,5 +1,6 @@
 // Bun.serve 的 websocket handlers：连接生命周期 + 下行保活 + 上行分发。
 
+import type { ServerEvent } from '@anyplane/protocol'
 import type { ServerWebSocket } from 'bun'
 import { portFor } from '../backends/port'
 import { log } from '../log'
@@ -10,6 +11,11 @@ import { handleClientMessage } from './messages'
 import { getHub, hubs } from './registry'
 import { statusOf } from './status'
 import type { WSData, WSDataInbox } from './types'
+
+/** 直连单播的类型化出口（broadcast 之外的 ws.send 一律走这里，事件形状受 ServerEvent 约束） */
+function sendEvent(ws: ServerWebSocket<WSData>, ev: ServerEvent): void {
+  ws.send(JSON.stringify(ev))
+}
 
 // 30s 协议层下行 ping：前端 ReconnectingSocket 没有应用层心跳，空闲会话的 /ws 长连接
 // 可能数分钟无任何消息——Bun.serve 默认 idleTimeout=120s 会把它静默掐断（前端重连虽无感，
@@ -28,8 +34,8 @@ export function wsOpen(ws: ServerWebSocket<WSData>): void {
   const hub = getHub(ws.data.key)
   hub.clients.add(ws)
   portFor(ws.data.key).sessionOf(ws.data.key)?.attachClient()
-  ws.send(JSON.stringify({ kind: 'status', state: statusOf(ws.data.key, undefined, true) }))
-  replayApprovals(hub, (p) => ws.send(JSON.stringify(p)))
+  sendEvent(ws, { kind: 'status', state: statusOf(ws.data.key, undefined, true) })
+  replayApprovals(hub, (p) => sendEvent(ws, p))
 }
 
 export function wsMessage(ws: ServerWebSocket<WSData>, raw: string | Buffer): void {
@@ -40,7 +46,7 @@ export function wsMessage(ws: ServerWebSocket<WSData>, raw: string | Buffer): vo
   } catch (e) {
     log.error(`[ws ${hub.key}] 处理消息异常:`, e) // 原对象打日志保留堆栈
     try {
-      ws.send(JSON.stringify({ kind: 'error', message: errorMessage(e) }))
+      sendEvent(ws, { kind: 'error', message: errorMessage(e) })
     } catch {}
   }
 }

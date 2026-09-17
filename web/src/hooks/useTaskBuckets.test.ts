@@ -1,6 +1,6 @@
 // selectHistoryBuckets 纯函数单测：历史加载时哪些 subagent 该回填成桶
 import { describe, expect, test } from 'bun:test'
-import type { SubagentHistory } from '../lib/api'
+import type { SubagentHistory } from '@anyplane/protocol'
 import type { ChatMsg } from '../lib/blocks'
 import { selectHistoryBuckets } from './useTaskBuckets'
 

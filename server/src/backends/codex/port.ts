@@ -1,6 +1,7 @@
 // codex 后端适配器：把 codexRuntime 的能力包装成 BackendPort。
 // 方法体多为 index.ts 原 codex 分支的逐字搬迁——重构红线是零行为改动。
 
+import type { ArchivedEntry, QueryResultPayload, SessionState } from '@anyplane/protocol'
 import { defaultPermissionMode } from '../../config'
 import { generateCodexBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
@@ -11,7 +12,6 @@ import {
   btwDeliver,
   btwRejectNoSession,
   hubServices,
-  type ArchivedEntry,
   type BackendPort,
   type RouteResult,
   type SessionHandle,
@@ -37,7 +37,7 @@ class CodexPort implements BackendPort {
   notifyExternalGate(_key: string): void {}
 
   /** 与 claude 适配器的 statusOf 同形，供列表 managed 字段与 WS status 复用 */
-  statusOf(key: string, cx: StatusContext): Record<string, unknown> {
+  statusOf(key: string, cx: StatusContext): SessionState {
     const s = codexRuntime.get(key)
     const hub = cx.hub
     const waiting = (s?.waiting ?? false) || (hub?.pendingApprovals.size ?? 0) > 0
@@ -204,7 +204,7 @@ class CodexPort implements BackendPort {
     hub: Hub,
     query: string,
     _extra: Record<string, unknown>,
-    reply: (payload: Record<string, unknown>) => void,
+    reply: (payload: QueryResultPayload) => void,
   ): void {
     // codex 仅 mcp_status 有对应物 mcpServerStatus/list（动作类一律拒绝）
     if (query !== 'mcp_status') {

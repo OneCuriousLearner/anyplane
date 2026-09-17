@@ -1,5 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createSession, errorMessage, fetchClaudeModelNames, fetchCodexHistory, fetchCodexModels, fetchConfig, fetchHistory, fetchLineage, makeSessionInfo, startHandoff, type CodexModelInfo, type LineageResponse, type ServerConfigInfo, type SessionInfo, type TierModelName } from '../lib/api'
+import type {
+  CodexModelInfo,
+  LineageResponse,
+  ServerConfigInfo,
+  SessionInfo,
+  TierModelName,
+} from '@anyplane/protocol'
+import {
+  createSession,
+  errorMessage,
+  fetchClaudeModelNames,
+  fetchCodexHistory,
+  fetchCodexModels,
+  fetchConfig,
+  fetchHistory,
+  fetchLineage,
+  makeSessionInfo,
+  startHandoff,
+} from '../lib/api'
 import { SessionSocket } from '../lib/ws'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { ChatHeader } from '../components/ChatHeader'

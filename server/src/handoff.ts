@@ -5,7 +5,7 @@ import { spawn } from 'bun'
 import { join } from 'node:path'
 import { resolveClaudeCommand } from './backends/claude/processManager'
 import { codexRuntime } from './backends/codex/runtime'
-import type { BackendName } from './backends/types'
+import type { BackendName } from '@anyplane/protocol'
 import { ccDataDir, childEnv, pumpLines, readJsonFile, writeJsonFile } from './util'
 
 export type HandoffDetail = 'brief' | 'standard' | 'detailed'
@@ -120,21 +120,8 @@ export async function generateCodexBrief(
 
 // ---------- 血缘 ----------
 
-export interface LineageRecord {
-  id: string
-  at: string
-  fromKey: string
-  toKey: string
-  /** 解析后的真实会话 key（s|slug|sid / x|threadId）；目标 sessionId 就绪后回填 */
-  fromResolvedKey?: string
-  toResolvedKey?: string
-  fromBackend: BackendName
-  toBackend: BackendName
-  cwd: string
-  detail: HandoffDetail
-  brief: string
-  briefUsage?: Record<string, number>
-}
+// LineageRecord 正本在 @anyplane/protocol（前端接力链渲染共用同一形状）
+import type { LineageRecord } from '@anyplane/protocol'
 
 function lineagePath(): string {
   return join(ccDataDir(), 'lineage.json')

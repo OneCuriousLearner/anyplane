@@ -6,11 +6,12 @@
 // session.key 变化 effect 与历史加载里显式调用（reset 先于建连的顺序纪律在 Chat）。
 
 import { useEffect, useRef, useState } from 'react'
-import { fetchCodexHistory, type HistoryMessage, type HistoryResponse, type SubagentHistory } from '../lib/api'
+import { fetchCodexHistory } from '../lib/api'
+import type { HistoryMessage, HistoryResponse, SubagentHistory } from '@anyplane/protocol'
 import type { ChatMsg } from '../lib/blocks'
 import { cliSidechainToHistory } from '../lib/chatText'
 import { appendHistoryMsg, mergeTerminalHistoryState, type IngestState, type PendingResult, type ToolPos } from '../lib/ingest'
-import type { SessionState } from '../lib/ws'
+import type { SessionState } from '@anyplane/protocol'
 import type { TaskFeed } from '../components/TasksPanel'
 
 /** 历史桶回填的选择口径（resetFromHistory 用；纯函数便于单测）：

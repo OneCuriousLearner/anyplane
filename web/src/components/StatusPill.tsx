@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { resolveModel as resolveModelName, type ServerConfigInfo, type TierModelName } from '../lib/api'
+import type { ServerConfigInfo, TierModelName } from '@anyplane/protocol'
+import { resolveModel as resolveModelName } from '../lib/api'
 
 // ---- 视觉编码（E2 液态玻璃 token：唯一彩色面 = 审批红，其余走灰阶） ----
 // mode：色点（危险度语义）  effort：档位 glyph（强度渐强）

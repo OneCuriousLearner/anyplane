@@ -5,9 +5,10 @@
 //（codexCfg/codexModelId/codexEffortLevels/codexModeOf）也一并内聚进来。
 
 import { useEffect, useRef, useState } from 'react'
-import { resolveModel, type CodexModelInfo, type ServerConfigInfo, type TierModelName } from '../lib/api'
+import type { CodexModelInfo, ServerConfigInfo, TierModelName } from '@anyplane/protocol'
+import { resolveModel } from '../lib/api'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
-import type { SessionState } from '../lib/ws'
+import type { SessionState } from '@anyplane/protocol'
 import { ContextRing } from './ContextRing'
 import { StatusPill } from './StatusPill'
 

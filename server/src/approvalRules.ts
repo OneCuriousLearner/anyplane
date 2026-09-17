@@ -6,7 +6,7 @@
 //   WebFetch → input.url 的域名（后缀匹配）。
 // 未知字段 / 坏正则在配置加载时即报错（fail fast），不静默吞掉。
 
-import type { ApprovalDecision } from './backends/types'
+import type { ApprovalDecision } from '@anyplane/protocol'
 
 // ---------- 配置形状（anyplane.config.json 的 approvalRules 数组元素） ----------
 

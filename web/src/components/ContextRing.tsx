@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import type { SessionState } from '../lib/ws'
+import type { SessionState } from '@anyplane/protocol'
 import { fmtTokens, usageSummary } from '../lib/blocks'
 import { PopupPanel } from './PopupPanel'
 

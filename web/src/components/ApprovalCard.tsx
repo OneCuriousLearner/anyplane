@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ApprovalDecision } from '../lib/decision'
+import type { ApprovalDecision } from '@anyplane/protocol'
 import {
   isAskUserQuestionAnswered,
   parseAskUserQuestionInput,

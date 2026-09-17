@@ -8,11 +8,13 @@
 // 拆开后同 commit 按声明序执行，行为等价）。
 
 import { useEffect, useRef, useState } from 'react'
-import { fetchHistory, makeSessionInfo, type HistoryResponse, type SessionInfo } from '../lib/api'
+import { fetchHistory, makeSessionInfo } from '../lib/api'
+import type { HistoryResponse, SessionInfo } from '@anyplane/protocol'
 import type { NavigateSession } from '../lib/sessionHash'
 import { nextId, type Block } from '../lib/blocks'
 import { appendHistoryMsg, flushStrayResults, type IngestState } from '../lib/ingest'
-import { SessionSocket, type ServerEvent, type SessionState } from '../lib/ws'
+import type { ServerEvent, SessionState } from '@anyplane/protocol'
+import { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
 import type { TranscriptIngestApi } from './useTranscriptIngest'
 

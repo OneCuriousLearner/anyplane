@@ -2,7 +2,8 @@
 // F2 从 pages/Chat.tsx 逐字切出——纯展示组件；查询由 onRunQuery 回调发回组合层
 //（query_result 应答在 Chat 的 WS 分发里落到 detailContent/mcpServers/contextData/settingsData）。
 
-import { resolveModel, type TierModelName } from '../lib/api'
+import type { TierModelName } from '@anyplane/protocol'
+import { resolveModel } from '../lib/api'
 import { fmtTokens } from '../lib/blocks'
 
 /** claude mcp_status 应答里的单个服务器（buildMcpServerStatuses 形状） */

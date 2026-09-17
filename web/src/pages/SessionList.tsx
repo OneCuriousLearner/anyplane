@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { ArchivedEntry, SessionInfo } from '@anyplane/protocol'
 import {
   apiFetch,
   archiveSession,
@@ -10,10 +11,9 @@ import {
   postJson,
   renameSession,
   restoreSession,
-  type ArchivedEntry,
-  type SessionInfo,
 } from '../lib/api'
-import { InboxSocket, type InboxApproval } from '../lib/inbox'
+import type { InboxApproval } from '@anyplane/protocol'
+import { InboxSocket } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'

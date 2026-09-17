@@ -3,10 +3,10 @@
 // （moreBtnRef 与 idCopied 是本组件私有的展示态，随 JSX 一并下沉。）
 
 import { useRef, useState } from 'react'
-import type { LineageResponse, SessionInfo } from '../lib/api'
+import type { LineageResponse, SessionInfo, SessionState } from '@anyplane/protocol'
 import type { NavigateSession } from '../lib/sessionHash'
+import { makeSessionInfo } from '../lib/api'
 import { copyText } from '../lib/chatText'
-import type { SessionState } from '../lib/ws'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
 import { PopupPanel } from './PopupPanel'
@@ -330,7 +330,9 @@ export function ChatHeader(props: {
                   <button
                     key={k}
                     disabled={!info}
-                    onClick={() => info && onNavigate?.(info)}
+                    // LineageNode 只是导航身份（key/slug/sessionId/cwd），占位字段由
+                    // makeSessionInfo 补齐，权威状态随后由 WS status 覆盖
+                    onClick={() => info && onNavigate?.(makeSessionInfo(info))}
                     className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 ${
                       current
                         ? 'bg-surface2 text-ink'

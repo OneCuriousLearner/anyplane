@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  errorMessage,
-  fetchBackendsStatus,
-  fetchDirList,
-  type BackendsStatus,
-  type DirEntry,
-  type SessionInfo,
-} from '../lib/api'
+import type { BackendsStatus, DirEntry, SessionInfo } from '@anyplane/protocol'
+import { errorMessage, fetchBackendsStatus, fetchDirList } from '../lib/api'
 import { backendFixHint, backendNeedsAttention } from '../components/BackendStatusCard'
 
 type NodeState =

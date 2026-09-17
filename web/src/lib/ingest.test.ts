@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { HistoryMessage } from './api'
+import type { HistoryMessage } from '@anyplane/protocol'
 import type { ToolBlock } from './blocks'
 import {
   appendHistoryMsg,

@@ -3,7 +3,7 @@
 // tool_use/tool_result 序列，前端零改动渲染 Codex 会话。
 
 import type { CliMessage } from '../claude/protocol'
-import type { HistoryBlock, HistoryMessage } from '../types'
+import type { HistoryBlock, HistoryMessage } from '@anyplane/protocol'
 import { resolveUpload } from '../../uploads'
 import { log } from '../../log'
 
@@ -714,5 +714,3 @@ function userInputBlocks(content: unknown): HistoryBlock[] {
   if (texts.join('\n').trim()) blocks.push({ kind: 'text', text: texts.join('\n') })
   return [...blocks, ...images]
 }
-
-export type { HistoryMessage }

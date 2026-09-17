@@ -16,13 +16,25 @@ import { errorMessage } from '../util'
 import { isCodexKey } from './codex/backend'
 import { claudePort } from './claude/port'
 import { codexPort } from './codex/port'
-import type { ApprovalDecision, BackendName, SessionCallbacks, SpawnOptions } from './types'
+import type {
+  ApprovalDecision,
+  ArchivedEntry,
+  BackendName,
+  BackgroundTask,
+  ContextUsageInfo,
+  ImageAttachment,
+  QueryResultPayload,
+  ServerEvent,
+  SessionState,
+  TokenUsage,
+} from '@anyplane/protocol'
+import type { SessionCallbacks, SpawnOptions } from './types'
 
 /** 适配器回调编排层的服务面（装配层 initBackendPorts 注入一次；适配器禁止 import index.ts） */
 export interface HubServices {
-  broadcast(hub: Hub, payload: unknown): void
+  broadcast(hub: Hub, payload: ServerEvent): void
   broadcastError(hub: Hub, message: string): void
-  pushStatus(hub: Hub, extra?: Record<string, unknown>): void
+  pushStatus(hub: Hub, extra?: Partial<SessionState>): void
   sessionCallbacks(hub: Hub): SessionCallbacks
   getHub(key: string): Hub
   /** 会话显示名（推送/日志用）；实现在 push 域，由装配层注入 */
@@ -44,12 +56,7 @@ export function hubServices(): HubServices {
   return services
 }
 
-/** 浏览器上传的图片附件（base64）；codex 侧落盘后走 localImage */
-export interface ImageAttachment {
-  name: string
-  mediaType: string
-  dataBase64: string
-}
+// ---------- 会话句柄面 ----------
 
 /** Hub 可见的最小会话句柄面：ClaudeSession/CodexSession 已结构化同形（契约见 types.ts
  *  末尾注释），两个类文件零改动——TS 结构类型自动兼容本接口。
@@ -60,16 +67,16 @@ export interface SessionHandle {
   readonly exited: boolean
   readonly busy: boolean
   readonly waiting: boolean
-  readonly sessionState: string
+  readonly sessionState: 'idle' | 'running' | 'requires_action'
   readonly connectedClients: number
-  readonly tokenUsage: unknown
-  readonly contextUsage: unknown
+  readonly tokenUsage: TokenUsage | undefined
+  readonly contextUsage: ContextUsageInfo | undefined
   /** 会话 cwd（codex 句柄有 getter；claude 缺席——x| key 的 sessionNameOf 反查用，
    *  可选属性使 ClaudeSession 无需改动即结构化兼容） */
   readonly cwd?: string
   /** 后台任务表（claude 专属；codex 缺席——恒空数组会被 hydrateTasks 误读为权威空） */
   readonly activeTaskCount?: number
-  readonly backgroundTasks?: unknown[]
+  readonly backgroundTasks?: BackgroundTask[]
   sendUserText(text: string, sendMode?: 'steer' | 'queue', images?: ImageAttachment[]): void
   sendApproval(requestId: string, decision: ApprovalDecision): void
   sendControl(subtype: string, extra?: Record<string, unknown>): void
@@ -99,21 +106,6 @@ export interface StatusContext {
 /** REST 管理面结果：路由层原样映射为 HTTP 响应（状态码逐字保留） */
 export type RouteResult = { ok: true } | { ok: false; error: string; status: number }
 
-/** 归档/回收站列表行（/api/sessions/archived）：claude=trash（trashedAt/sizeBytes），
- *  codex=archived threads（title/lastPrompt/cwd/mtime）——两后端字段并集，缺省即不渲染 */
-export interface ArchivedEntry {
-  key: string
-  sessionId: string
-  slug: string
-  backend: BackendName
-  title?: string
-  lastPrompt?: string
-  cwd?: string
-  mtime?: number
-  trashedAt?: string
-  sizeBytes?: number
-}
-
 export interface BackendPort {
   readonly name: BackendName
   /** 当前存活（或已退出待回收）的会话句柄；取代编排层散落的 isCodexKey ? codexRuntime.get : processManager.get */
@@ -123,7 +115,7 @@ export interface BackendPort {
   /** 外部门禁（control.sock 生态）通知：claude 转发句柄方法；codex 无对应物，no-op */
   notifyExternalGate(key: string): void
   /** 会话状态派生（两后端函数体分别在各自适配器内；公共字段走 baseStatusOf） */
-  statusOf(key: string, cx: StatusContext): Record<string, unknown>
+  statusOf(key: string, cx: StatusContext): SessionState
 
   /** attach 分流：claude 懒启动（warm/opts 才 spawn）；codex x| 即 resume、xn| 懒启动 */
   onAttach(hub: Hub, msg: Record<string, unknown>): void
@@ -161,7 +153,7 @@ export interface BackendPort {
     hub: Hub,
     query: string,
     extra: Record<string, unknown>,
-    reply: (payload: Record<string, unknown>) => void,
+    reply: (payload: QueryResultPayload) => void,
   ): void
 
   // ---------- handoff（接力） ----------
@@ -198,7 +190,7 @@ export function baseStatusOf(
   s: SessionHandle | undefined,
   hub: Hub | undefined,
   waiting: boolean,
-): Record<string, unknown> {
+): SessionState {
   return {
     spawned: !!s && !s.exited,
     busy: (s?.busy ?? false) || waiting,

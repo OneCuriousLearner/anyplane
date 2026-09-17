@@ -1,6 +1,6 @@
 // Codex wire → 统一形状的纯映射（无 I/O、无状态）。
 
-import type { ApprovalDecision } from '../types'
+import type { ApprovalDecision } from '@anyplane/protocol'
 
 /** claude permissionMode 或 codex 预设 → codex {approvalPolicy, sandbox}（近似映射）
  *  codex 预设（UI 原生展示）：

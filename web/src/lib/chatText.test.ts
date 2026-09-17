@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { cliSidechainToHistory, statusLineOf } from './chatText'
-import type { SessionState } from './ws'
+import type { SessionState } from '@anyplane/protocol'
 
 const baseState: SessionState = { spawned: false, busy: false }
 

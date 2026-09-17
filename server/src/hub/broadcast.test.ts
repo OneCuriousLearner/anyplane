@@ -5,7 +5,8 @@
 //   throw 会把普通错误广播变成异常）
 import { describe, expect, test } from 'bun:test'
 import { broadcast, broadcastError, publishInbox, replayApprovals, resetInboxSinkForTest, setInboxSink } from './broadcast'
-import type { Hub, InboxEvent } from './types'
+import type { InboxEvent } from '@anyplane/protocol'
+import type { Hub } from './types'
 
 interface FakeWs {
   sent: string[]
@@ -91,17 +92,17 @@ describe('broadcast：投递与环/收件箱接线', () => {
     hub.clients.add(dead as never)
     hub.clients.add(alive as never)
     collectInbox()
-    broadcast(hub, { kind: 'status', state: { busy: true } })
-    expect(alive.sent).toEqual([JSON.stringify({ kind: 'status', state: { busy: true } })])
+    broadcast(hub, { kind: 'status', state: { spawned: true, busy: true } })
+    expect(alive.sent).toEqual([JSON.stringify({ kind: 'status', state: { spawned: true, busy: true } })])
   })
 
   test('kind=cli 分配单调 seq 并入环；其他 kind 不占环、不带 seq', () => {
     const hub = makeHub()
     collectInbox()
-    const first = { kind: 'cli', msg: { type: 'user' } }
-    const second = { kind: 'cli', msg: { type: 'assistant' } }
+    const first = { kind: 'cli' as const, msg: { type: 'user' } }
+    const second = { kind: 'cli' as const, msg: { type: 'assistant' } }
     broadcast(hub, first)
-    broadcast(hub, { kind: 'status', state: {} })
+    broadcast(hub, { kind: 'status', state: { spawned: false, busy: false } })
     broadcast(hub, second)
     expect(hub.cliSeq).toBe(2)
     expect(first).toMatchObject({ seq: 1 })
@@ -113,7 +114,7 @@ describe('broadcast：投递与环/收件箱接线', () => {
     const hub = makeHub('s|slug|sid')
     const events = collectInbox()
     broadcastError(hub, 'boom')
-    broadcast(hub, { kind: 'status', state: {} })
+    broadcast(hub, { kind: 'status', state: { spawned: false, busy: false } })
     expect(events).toEqual([{ type: 'error', key: 's|slug|sid', message: 'boom' }])
   })
 

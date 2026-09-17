@@ -3,7 +3,7 @@
 // 分叉会话 `b|<encodeURIComponent(cwd)>|<sourceSessionId>`（懒分叉：首条消息才 --fork-session）。
 
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
-import type { ContextUsageInfo } from '../types'
+import type { ContextUsageInfo } from '@anyplane/protocol'
 import { listSessions, sessionMetaOf } from './discovery'
 import { contextUsageOf, contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
 import { sessionModelOf } from './sessionModels'

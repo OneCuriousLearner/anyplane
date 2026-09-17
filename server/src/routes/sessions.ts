@@ -1,8 +1,9 @@
 // 会话列表与管理路由：/api/sessions（GET/POST）+ archive/restore/archived/rename。
 // git 分支缓存也在这里（仅列表端点使用）。
 
+import type { CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
 import { keyFor, keyForNew } from '../backends/claude/backend'
-import { listSessions, sanitizePath, type SessionInfo } from '../backends/claude/discovery'
+import { type DiscoveredSession, listSessions, sanitizePath } from '../backends/claude/discovery'
 import { keyForNew as codexKeyForNew, listSessions as listCodexSessions } from '../backends/codex/backend'
 import { claudePort } from '../backends/claude/port'
 import { codexPort } from '../backends/codex/port'
@@ -61,7 +62,7 @@ export async function handleSessionRoutes(
     //（此端点被每个打开的标签页 10s 轮询）。中间无 await，rejection 一定先于下方 catch 被接管。
     const codexP = deps.listCodexSessions()
     const sessions = deps.listSessions()
-    const claudeRows = sessions.map((s: SessionInfo) => ({
+    const claudeRows: SessionInfo[] = sessions.map((s: DiscoveredSession) => ({
       ...s,
       backend: 'claude' as const,
       gitBranch: branchOfCached(s.cwd, deps.readGitBranch),
@@ -73,10 +74,10 @@ export async function handleSessionRoutes(
       ),
     }))
     // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
-    let codexRows: Record<string, unknown>[] = []
+    let codexRows: SessionInfo[] = []
     try {
       const threads = await codexP
-      codexRows = threads.map((t) => ({
+      codexRows = threads.map((t): SessionInfo => ({
         sessionId: t.id,
         cwd: t.cwd,
         slug: 'codex',
@@ -98,10 +99,11 @@ export async function handleSessionRoutes(
   if (url.pathname === '/api/sessions' && req.method === 'POST') {
     const body = await readJsonBody<{ cwd?: string; backend?: string }>(req)
     if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
-    if (body.backend === 'codex') {
-      return json({ key: codexKeyForNew(body.cwd), slug: 'codex', backend: 'codex' })
-    }
-    return json({ key: keyForNew(body.cwd), slug: sanitizePath(body.cwd), backend: 'claude' })
+    const res: CreateSessionResponse =
+      body.backend === 'codex'
+        ? { key: codexKeyForNew(body.cwd), slug: 'codex', backend: 'codex' }
+        : { key: keyForNew(body.cwd), slug: sanitizePath(body.cwd), backend: 'claude' }
+    return json(res)
   }
   if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {
     const body = await readJsonBody<{ key?: string }>(req)

@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react'
-import {
-  fetchBackendsStatus,
-  type BackendStatus,
-  type BackendsStatus,
-} from '../lib/api'
+import type { BackendStatus, BackendsStatus } from '@anyplane/protocol'
+import { fetchBackendsStatus } from '../lib/api'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
 

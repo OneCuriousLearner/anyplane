@@ -26,7 +26,7 @@ function normalizeStatus(raw: string | undefined): SessionStatus {
   return raw && (KNOWN_STATUS as readonly string[]).includes(raw) ? (raw as SessionStatus) : 'idle'
 }
 
-export interface SessionInfo {
+export interface DiscoveredSession {
   sessionId: string
   /** 项目原始路径（从 jsonl 首行 cwd 字段还原；读不到则为 undefined） */
   cwd?: string
@@ -187,14 +187,14 @@ export function sessionMetaOf(slug: string, sessionId: string): ReturnType<typeo
   }
 }
 
-export function listSessions(): SessionInfo[] {
+export function listSessions(): DiscoveredSession[] {
   const projectsDir = join(config.claudeConfigDir, 'projects')
   const live = readPidFiles()
   // daemon 视图（agents --json --all，SWR 缓存）：pid 文件优先，daemon 兜底；
   // background agent 无 pid 文件，其"活着"状态只有这里能拿到
   const agents = daemonAgents()
   /** pid 文件未覆盖时，用 daemon 信息合成 live（background 活着=busy，interactive 按其 status） */
-  const daemonLiveOf = (sessionId: string): SessionInfo['live'] & { status?: SessionStatus } | undefined => {
+  const daemonLiveOf = (sessionId: string): DiscoveredSession['live'] & { status?: SessionStatus } | undefined => {
     if (live.has(sessionId)) return undefined
     const a = agents.get(sessionId)
     if (!a) return undefined
@@ -207,7 +207,7 @@ export function listSessions(): SessionInfo[] {
     }
     return undefined
   }
-  const out: SessionInfo[] = []
+  const out: DiscoveredSession[] = []
   if (!existsSync(projectsDir)) return out
 
   for (const slug of readdirSync(projectsDir)) {
@@ -282,8 +282,7 @@ export function listSessions(): SessionInfo[] {
 // ---------- 历史消息（供 UI 首次加载） ----------
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 import 自用 + re-export 兼容既有 import 路径
-import type { HistoryBlock, HistoryMessage, SubagentHistory } from '../types'
-export type { HistoryMessage } from '../types'
+import type { HistoryBlock, HistoryMessage, SubagentHistory } from '@anyplane/protocol'
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
 function toolResultText(rc: unknown): string {
