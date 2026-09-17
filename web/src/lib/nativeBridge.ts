@@ -150,13 +150,49 @@ async function act(a: NativeAction): Promise<void> {
   await LN?.cancel({ notifications: [{ id: notifId(a.requestId) }] }).catch(() => {})
 }
 
+/** 导航桥：anyplane-bridge://<method>?<query> 经 shouldOverrideLoad 拦截执行——
+ *  纯页面导航，不依赖 addJavascriptInterface（vivo OriginOS 的 WebView 对远端页
+ *  整段废除 JSI 通道，实机确诊）。仅 Android 使用；被拦截的导航不进历史。 */
+function navBridge(method: string, params: Record<string, string>): void {
+  const q = new URLSearchParams(params).toString()
+  location.href = `anyplane-bridge://${method}${q ? `?${q}` : ''}`
+}
+
+/** native→JS 事件入口（evaluateJavascript 推入，与 JSI 无关的独立机制） */
+function registerNativeEventHook(): void {
+  ;(window as unknown as { __anyplaneNativeEvent?: (ev: unknown) => void }).__anyplaneNativeEvent = (ev) => {
+    const e = ev as { type?: string; display?: NativeBridgeStatus['permission'] }
+    if (e?.type === 'perm' && e.display) {
+      clientLog('native-perm', `display=${e.display}`)
+      setStatus({ permission: e.display })
+    }
+  }
+}
+
 /** 权限补授后的续跑（横幅按钮路径） */
 async function continueNativeSetup(): Promise<void> {
   if (!LN || setupStage === 'done') return
 
-  // 权限弹窗与服务启动严格解耦：requestPermissions 在部分国产 ROM 上可能永不
-  // resolve（弹窗回调丢失），串行 await 会把 configure 一并拖死且零报错——
-  // 第三轮实机症状「还是没有任何通知」的头号嫌疑。服务先行，权限结果只更新状态条。
+  // Android：导航桥通道（JSI 在 vivo OriginOS 的 WebView 上对远端页整段失效——实机）。
+  // configure 由原生执行：启动前台服务 + 原生直发系统权限弹窗（ensureNotificationPermission）；
+  // 权限结果经 __anyplaneNativeEvent 回推。这条链上没有任何 JSI 调用。
+  if (Capacitor.getPlatform() === 'android') {
+    const sync = (): void => {
+      navBridge('configure', { serverUrl: location.origin, token: getToken() ?? '' })
+    }
+    sync()
+    // 回前台时重同步：捡起登录态变化（重登录换 token）
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') sync()
+    })
+    setupStage = 'done'
+    setStatus({ service: 'plugin' })
+    clientLog('configure-nav', '已发导航桥 configure')
+    return
+  }
+
+  // iOS / 其他：JSI 通道（WKWebView messageHandlers 无此问题）。
+  // 权限弹窗与服务启动严格解耦：requestPermissions 挂起（部分 ROM 回调丢失）不会拖死后续。
   const current = await withTimeout(LN.checkPermissions(), 3000)
   if (current) setStatus({ permission: current.display })
   clientLog('perm-check', current ? `display=${current.display}` : 'TIMEOUT（checkPermissions 未返回）')
@@ -164,8 +200,6 @@ async function continueNativeSetup(): Promise<void> {
     .then((p) => setStatus({ permission: p.display }))
     .catch(() => {})
 
-  // 原生插件探测只能真调一次看死活，不能用 isPluginAvailable：hosted 模式下
-  // PluginHeaders 不会注入远端页（它由本地拦截器生成），该 API 对我们的插件恒 false。
   const bridge = registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge')
   try {
     const sync = async (): Promise<void> => {
@@ -174,7 +208,6 @@ async function continueNativeSetup(): Promise<void> {
       if (pending.key) location.hash = sessionHashUrl(pending.key)
     }
     await sync()
-    // 回前台时重同步：捡起登录态变化（重登录换 token）与等待中的深链
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') void sync()
     })
@@ -183,7 +216,6 @@ async function continueNativeSetup(): Promise<void> {
     clientLog('configure', '原生服务已配置')
     return
   } catch (e) {
-    // 原生插件缺失（iOS / 旧壳）或服务启动被 ROM 拒绝：落 JS 兜底路径
     clientLog('configure-fail', errMsg(e))
   }
 
@@ -219,12 +251,24 @@ export async function setupNativeBridge(): Promise<void> {
   if (!Capacitor.isNativePlatform()) return
   setStatus({ active: true, platform: Capacitor.getPlatform() })
   // BRIDGE_REV：判别「设备跑的是不是最新包」——每轮改动自增，setup 必带
-  clientLog('setup', `rev=6 platform=${Capacitor.getPlatform()} origin=${location.origin}`)
+  clientLog('setup', `rev=7 platform=${Capacitor.getPlatform()} origin=${location.origin}`)
   try {
     // 静态 import（早期版本是动态 import + 独立 chunk：国产 ROM 上 chunk 拉取可能挂起，
     // 整桥死在半路且无声——静态引入消除独立 fetch，代价是浏览器多载一个 10KB 级包）
     LN = LocalNotifications
     clientLog('ln-import', 'static ok')
+
+    // Android：导航桥通道，全程不碰 JSI（vivo OriginOS 实机整段失效）。
+    // native→JS 状态回推经 __anyplaneNativeEvent（evaluateJavascript 独立机制）。
+    if (Capacitor.getPlatform() === 'android') {
+      registerNativeEventHook()
+      setupStage = 'ready'
+      await continueNativeSetup()
+      return
+    }
+
+    // iOS / 其他：LN 初始化（WKWebView 的 JSI 正常）。每个原生调用套 3s 超时
+    // 并逐个上报到达证据（国产 ROM 排查期留下的遥测，成本极低，保留）。
     await withTimeout(LN.registerActionTypes({
       types: [
         {
@@ -255,6 +299,13 @@ export async function setupNativeBridge(): Promise<void> {
 export async function requestNativeNotificationPermission(): Promise<void> {
   if (!LN) return
   clientLog('banner-tap', '用户点击去开启')
+  // Android：直达系统通知设置页（导航桥）。原生 configure 流每次都会顺带直发
+  // 系统权限弹窗（ensureNotificationPermission），设置页是 ROM 吞弹窗时的保底出口。
+  if (Capacitor.getPlatform() === 'android') {
+    navBridge('openNotificationSettings', {})
+    clientLog('settings-nav', '已发导航桥 openNotificationSettings')
+    return
+  }
   const before = (await LN.checkPermissions().catch(() => null))?.display ?? 'unknown'
   if (before === 'granted') {
     setStatus({ permission: 'granted' })
