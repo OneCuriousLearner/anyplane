@@ -59,7 +59,7 @@ jobs:
           ruby ../app/ios/ci/add-ui-tests.rb
           xcodebuild test -project ios/App/App.xcodeproj -scheme App \
             -configuration Debug -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
             CODE_SIGNING_ALLOWED=NO \
             -resultBundlePath /tmp/spike.xcresult
 
