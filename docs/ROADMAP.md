@@ -157,6 +157,96 @@ O(会话数 × 文件大小)"表述；但稀疏文件与未清 OS 缓存会影�
 它混合了 JIT、分配器与缓存留存，不能当作单个 10 / 100 / 200 / 500 会话工作集；
 只能提示长期高 churn 场景需另做可回收性实验，再决定是否给 `metaCache` 加容量上限。
 
+## 方向十三：结构性债务偿还（外部架构评审的行动项）
+
+**立项背景（2026-09-17）**：一次外部视角的全量架构评审，
+完整发现与证据见 [audits/2026-09-17-architecture-review.md](audits/2026-09-17-architecture-review.md)
+（九条结构性发现 + 分支清理清单 + 未覆盖面）。本节只记**做什么、什么顺序、为什么是这个顺序**。
+
+**两句话根因**（决定了下面的排序）：
+1. **用文档和纪律替代了类型与工具**——时序红线、依赖红线、模块环安全性只活在注释里，
+   工具链完全不参与执行。`AGENTS.md` 写得好不是解药，它本身就是症状。
+2. **把 Claude 协议当成了中立契约**——`vendor-neutral` 是定位，实现是 vendor-anchored。
+   代价在第三个后端接入时集中引爆。
+
+### 13.1 抽 `@anyplane/protocol` 共享包（P0）
+
+**问题**：web 与 server 各手写一份类型，7 组逐字重复；且**不对称**——
+web 有完整 `ServerEvent` 20+ kind 联合，server 侧是 `broadcast(payload: unknown)`。
+加新事件只有前端会编译报错。`InboxEvent` **已经漂了**（server 声明 4 种，
+`push/inbox.ts:50` 运行时发第 5 种 `snapshot` 且绕开类型闸门）。
+
+**做法**：新建 workspace，收敛 `ServerEvent` / `ClientCommand` / `SessionState` /
+`HistoryBlock` / `HistoryMessage` / `ApprovalDecision` 等为单一正本，`broadcast` 改判别联合。
+
+**为什么排第一**：纯类型迁移，零运行时风险，且 `tsc --noEmit` 会自动把所有已漂之处一次暴露。
+这也是 `lib/ingest.ts`「唯一实现，消灭行为分叉」原则的同一思路，向类型层推广。
+
+### 13.2 装 linter 并把红线写成规则（P0）
+
+**问题**：20,930 行生产代码无 ESLint / Biome / Prettier。
+而仓库有几十条无法被类型表达的红线——「`ensure` 函数体到 return 前禁止出现 await」
+（`backends/port.ts:130`）、「适配器绝不 import hub 编排层」、「routes 禁止直连具体 port」。
+**唯一能机械守住它们的工具没装。**
+
+**做法**：Biome（devDependency，不违反零第三方运行时依赖约束）+
+`no-restricted-imports` 落地依赖红线；时序红线需自定义 AST 规则或改造 API 形状
+（把 `ensure` 的同步部分拆成显式同步方法，让"禁止 await"变成"这里没有 Promise 可 await"）。
+
+**附带发现**：15 个 e2e 脚本全部不在 CI，而私有 subtype（`side_question` /
+`generate_session_title`）的唯一防线就是 e2e——最脆弱的部位防线是手动的。
+不需要真实模型调用的部分（审批链路、WS 补发、`/clear` 重键）应以 mock CLI 搬进 CI。
+
+### 13.3 `BackendPort` 能力声明化 + 解模块环（P1）
+
+**问题**：30 个方法中 6 项对 Codex 是 no-op 或运行时拒绝
+（`codex/port.ts:37,108,111,112,160,211`）；`SessionHandle` 用可选属性 + TS 结构类型
+「让 ClaudeSession 无需改动即兼容」（`backends/port.ts:66-72` 注释原文），
+抽象是事后套上去的。能力差异只在运行时暴露，前端只能靠散落的 `isCodex` 硬编码。
+
+**做法**：接口加 `capabilities` 声明，前端按能力渲染；`portFor` 改注册表
+（`registerBackend(name, port)`，装配层注入）——与既有 `initBackendPorts` 同一模式，
+顺带解掉 `port.ts ↔ claude/port.ts ↔ codex/port.ts` 的 import 环；
+routes 一律经 `portFor`（现 `routes/sessions.ts:101` 用 `body.backend === 'codex'` 硬编码）。
+
+### 13.4 `Hub` 状态机化与前端 store 化（P2）
+
+- **`Hub`**：17 字段 14 个可选，每个可选字段是一个隐式状态位，类型不阻止非法组合。
+  `hub/socket.ts:54-63`「按客户端成员资格找回 hub」已是补丁上的补丁。
+  改为显式 `phase` + 各 phase 独有数据。
+  **另有持久化缺口**：`pendingApprovals` 全内存，重启即审批永久悬挂且无自愈路径。
+- **前端**：`Chat.tsx` 20 个 `useState` / 7 个 `useRef` / 4 个 `useEffect`；
+  `Composer` 32 props、`ChatHeader` 31 props；`ref + state` 双写贯穿全局。
+  双写的**理由正当**（WS 回调在渲染外触发，state 闭包会取到过期值），
+  但缺统一机制，漏一处即状态撕裂。用 `useSyncExternalStore` 或同形自实现正规化。
+
+### 13.5 中立领域事件模型（P3，战略）
+
+引入 `AgentEvent`，把 Claude stream-json 降级为「其中一个 adapter 的 wire format」，
+Claude 与 Codex 各自 adapter 翻译进来。这是让 vendor-neutral 从 slogan 变成事实的唯一路径，
+也是接第三个后端（Gemini CLI / Cursor CLI 等）的前置条件。
+
+**时机红线**：在确定要接第三家**之前**不要动——两后端时现有决策的收益是真的；
+但必须在接之前动完，**不能等接的时候临时改**。
+
+### 13.6 仓库卫生：打开「合并后自动删分支」（随手做）
+
+2026-09-17 已清完当时的可删远端（清点与判定见审计文档附录 A）。
+远端现只留 `master`、方向二在研的 `feat/capacitor-shell`、以及本方向文档分支。
+
+**还没做、也是唯一剩余项**：打开 GitHub 仓库设置里的
+「Automatically delete head branches」。机器评审流程每次运行仍会新建带时间戳的分支
+（`claude-code-review-*` / `claude-security-review-*` / `claude-simplify-*` /
+`claude-test-coverage-*` / `claude-test-cleanup-*`）；不开这个开关，下一批又会堆回来。
+
+### 明确不在本方向内
+
+- **单实例 / 单租户假设**（`homedir()` 硬编码、单一静态 authToken、Docker 跑 root）
+  **不改**。作为本机个人工具这些取舍成立且已写进文档。
+  记录它只为标注分界线：若将来出现团队共用方向，租户维度必须在那个方向**动工之前**
+  作为参数留出来，不能等 `homedir()` 散布到二十个文件后再抽。
+- **独立安全评审**不并入本方向，仓库有专门流程。
+
 ## 抄本窗口化 / 虚拟列表（方向七的后续可选优化）
 
 尾部窗口化已上线（`useTranscriptScroll` + `transcriptWindow`，验收 fixture
