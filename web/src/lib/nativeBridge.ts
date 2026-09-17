@@ -267,7 +267,7 @@ export async function setupNativeBridge(): Promise<void> {
     // 必须等 granted：iOS 在授权完成前 add() 会被系统静默丢弃（首轮 spike 实测踩坑）。
     if (new URLSearchParams(location.search).get('testNotify') === '1') {
       void (async () => {
-        for (let i = 0; i < 30; i++) {
+        for (let i = 0; i < 45; i++) {
           const p = await LocalNotifications.checkPermissions().catch(() => null)
           if (p?.display === 'granted') break
           await new Promise((r) => setTimeout(r, 1000))

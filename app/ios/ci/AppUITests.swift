@@ -29,14 +29,20 @@ final class AppUITests: XCTestCase {
 
         // 主动交互几次，让 interruption monitor 有机会在 idle 点触发
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        for _ in 0..<5 {
-            app.tap()
+        let allowBtn = springboard.buttons["Allow"]
+        _ = allowBtn.waitForExistence(timeout: 15) // 等弹窗出现（也可能已被系统记住授权）
+        var guardLeft = 15
+        while allowBtn.exists && guardLeft > 0 {
+            app.tap() // 驱动监听器在 idle 点触发
+            sleep(1)
+            guardLeft -= 1
+        }
+        if allowBtn.exists {
+            allowBtn.tap() // 监听器没接住：手动兜底
             sleep(1)
         }
-        // 弹窗应已被监听器处理；若按钮仍在说明监听器没接住——把层级写进失败信息
-        let allow = springboard.buttons["Allow"]
-        if allow.exists {
-            XCTFail("监听器未接住权限弹窗。alerts=\(springboard.alerts.debugDescription.prefix(600)); buttons=\(springboard.buttons.debugDescription.prefix(600))")
+        if allowBtn.exists {
+            XCTFail("权限弹窗无法消除。alerts=\(springboard.alerts.debugDescription.prefix(500)); buttons=\(springboard.buttons.debugDescription.prefix(500))")
             return
         }
 
