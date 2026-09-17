@@ -60,13 +60,16 @@ final class AppUITests: XCTestCase {
         // 找到测试通知并长按展开操作
         let notification = springboard.staticTexts["审批 · CI-Test"]
         XCTAssertTrue(notification.waitForExistence(timeout: 40), "测试通知未出现在通知中心")
-        notification.press(forDuration: 1.5)
+        notification.press(forDuration: 1.8)
         sleep(2)
 
         var approve = springboard.buttons["批准"]
-        if !approve.waitForExistence(timeout: 5) {
-            // 备选路径：左滑出「选项」菜单（部分 iOS 版本长按不展开行内按钮）
-            notification.swipeLeft()
+        if !approve.exists {
+            // 先留展开态证据，再做非破坏性的半程左滑（整滑会把通知直接清除）
+            let dumpExpanded = springboard.buttons.debugDescription.prefix(700)
+            let start = notification.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+            let end = notification.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: end)
             sleep(1)
             let options = springboard.buttons["Options"]
             if options.waitForExistence(timeout: 3) {
@@ -74,13 +77,11 @@ final class AppUITests: XCTestCase {
                 sleep(1)
             }
             approve = springboard.buttons["批准"]
-        }
-        if !approve.waitForExistence(timeout: 5) {
-            let dump = springboard.descendants(matching: .any)
-                .matching(NSPredicate(format: "label CONTAINS '批'"))
-                .debugDescription.prefix(800)
-            XCTFail("通知上未出现「批准」按钮。含批元素: \(dump); buttons=\(springboard.buttons.debugDescription.prefix(500))")
-            return
+            if !approve.waitForExistence(timeout: 5) {
+                let dumpSwiped = springboard.buttons.debugDescription.prefix(700)
+                XCTFail("通知上未出现「批准」按钮。长按后 buttons: \(dumpExpanded); 半滑后 buttons: \(dumpSwiped)")
+                return
+            }
         }
         approve.tap()
 
