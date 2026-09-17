@@ -73,6 +73,12 @@ jobs:
           echo '--- resolve.log ---'; cat /tmp/resolve.log || true
           grep -q 'ci-test-1' /tmp/resolve.log
 
+      - name: Export screenshots
+        if: always()
+        run: |
+          xcrun xcresulttool export attachments --path /tmp/spike.xcresult --outputPath /tmp/attachments || true
+          ls -la /tmp/attachments || true
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -81,5 +87,6 @@ jobs:
           path: |
             /tmp/resolve.log
             /tmp/stub.log
+            /tmp/attachments
             /tmp/spike.xcresult
           if-no-files-found: ignore

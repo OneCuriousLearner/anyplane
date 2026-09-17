@@ -79,6 +79,11 @@ final class AppUITests: XCTestCase {
             sleep(2)
             approve = springboard.buttons["批准"]
         }
+        // 不论成败都留现场照（CI 侧导出为 PNG 工件，眼见为实）
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "shortlook-\(bundleId)"
+        shot.lifetime = .keepAlways
+        add(shot)
         if !approve.exists {
             let shortlook = springboard.descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier CONTAINS 'ShortLook'"))
