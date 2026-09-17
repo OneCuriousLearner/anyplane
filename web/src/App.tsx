@@ -203,7 +203,7 @@ export default function App() {
 
   return (
     <div
-      className="h-dvh bg-bg md:grid md:grid-rows-[minmax(0,1fr)]"
+      className="h-dvh bg-bg pt-[var(--sat)] md:grid md:grid-rows-[minmax(0,1fr)]"
       style={{ gridTemplateColumns: `${sidebarW}px minmax(0, 1fr)` }}
     >
       {import.meta.env.DEV && <ModeBadge />}

@@ -11,8 +11,9 @@
 //     由它转成 ?nativeAction= query 带过来，本模块启动时消费（localStorage 跨源不共享，
 //     不能走 localStorage 暂存）。
 
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { postJson } from './api'
+import { getToken } from './auth'
 import { InboxSocket, type InboxEvent } from './inbox'
 import { sessionHashUrl } from './sessionHash'
 
@@ -20,6 +21,14 @@ const ACTION_TYPE = 'APPROVAL'
 const QUERY_PARAM = 'nativeAction'
 
 export type NativeAction = { key: string; requestId: string; actionId: string }
+
+/** app/android 侧的 AnyPlaneBridge 插件（自研，非 npm 插件） */
+interface AnyPlaneBridgePlugin {
+  configure(opts: { serverUrl: string; token: string }): Promise<{ ok: boolean }>
+  disable(): Promise<void>
+  /** 取走「点通知正文」暂存在原生层的会话 key（点批准/拒绝不经过这里） */
+  consumePendingOpen(): Promise<{ key?: string }>
+}
 
 /** LocalNotifications 的 id 必须是 int32：requestId 做 FNV-1a 折叠 */
 export function notifId(requestId: string): number {
@@ -112,6 +121,26 @@ export async function setupNativeBridge(): Promise<void> {
   })
 
   const perm = await LocalNotifications.requestPermissions()
+
+  // Android 原生常驻服务在场时，通知生产权整体交给原生层（ApprovalService 自持
+  // /ws/inbox + 原生通知按钮）：WebView 挂起后 JS 停摆，页面自持 WS 的本地通知
+  // 在锁屏/切走后不可靠——实机实测已确认。JS 路径保留给 iOS（APNs 接入前的前台兜底）
+  // 与缺插件的旧壳。
+  if (Capacitor.isPluginAvailable('AnyPlaneBridge')) {
+    const bridge = registerPlugin<AnyPlaneBridgePlugin>('AnyPlaneBridge')
+    const sync = async (): Promise<void> => {
+      await bridge.configure({ serverUrl: location.origin, token: getToken() ?? '' })
+      const pending = await bridge.consumePendingOpen()
+      if (pending.key) location.hash = sessionHashUrl(pending.key)
+    }
+    await sync()
+    // 回前台时重同步：捡起登录态变化（重登录换 token）与等待中的深链
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void sync()
+    })
+    return
+  }
+
   if (perm.display !== 'granted') return
 
   new InboxSocket((ev: InboxEvent) => {

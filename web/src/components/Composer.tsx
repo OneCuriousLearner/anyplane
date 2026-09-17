@@ -185,7 +185,7 @@ export function Composer(props: {
   }
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-30 px-3 pb-3 pt-2">
+    <div className="absolute inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,var(--sab))] pt-2">
       <div className="mx-auto max-w-3xl">
         {slashHints.length > 0 && (
           <div className="mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">

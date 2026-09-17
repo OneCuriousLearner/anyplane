@@ -28,6 +28,18 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- 审批监听前台服务：stopWithTask=false 让划卡清任务后服务仍驻留 -->
+        <service
+            android:name=".ApprovalService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+
+        <!-- 通知按钮裁决：仅接受壳内显式 Intent -->
+        <receiver
+            android:name=".ApprovalActionReceiver"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -35,4 +47,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+ 通知运行时权限（LocalNotifications.requestPermissions 触发弹窗） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 </manifest>

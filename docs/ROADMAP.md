@@ -53,8 +53,15 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 - **Android 推送选型已定（偏离「复用方向一登记端点」的暗示）**：不依赖 FCM/厂商通道——
   壳活着期间由页面 WS 直接驱动本地通知，零第三方、国内网络可用。
   代价：WebView 被杀后链路断，后台存活需前台服务（后续项）。iOS 后台送达仍绕不开 APNs。
-- 待实机/模拟器验证：通知按钮渲染与 actionId 回传（Android 真机侧载；
-  iOS simulator + XCUITest 或 simctl 方案待搭）、后台存活边界、APKs 接入。
+- 待实机/模拟器验证：~~通知按钮渲染与 actionId 回传~~（Android 真机前台链路已验过：
+  会话列表/审批卡/裁决正常）；原生常驻服务的锁屏通知与按钮裁决（前台服务
+  ApprovalService 已于 09-17 实装，待复验）、后台存活边界（OEM 白名单/Doze）、
+  iOS simulator action spike、APNs 接入。
+- 实机踩坑记录（已修）：① Capacitor 默认把外源跳转甩系统浏览器（`Bridge.launchIntent`），
+  hosted 壳必须配 `server.allowNavigation`——通配语义经 `HostMask.java` 源码核实；
+  ②「锁屏后无通知」坐实了页面 WS 驱动的天花板，前台服务由此从后续项提前为核心链路；
+  ③ 挖孔重叠：Capacitor 8 模板无边距配置项，走 CSS `var(--sat)/--sab`（设计系统原预留）
+  + `windowLightStatusBar=false`。
 
 **价值**（2026-09-12 重排：第一条从「更可靠」这种软论据换成了硬论据，本方向优先级随之上调）：
 - **iOS 上恢复一步审批的唯一路径**。iOS 原生通知**支持**按钮（`UNNotificationCategory` +
