@@ -59,6 +59,7 @@
   },
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "app"
   ]
 }

@@ -1,0 +1,39 @@
+name: app-ios
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ios.yml'
+      - 'package.json'
+      - 'bun.lock'
+  pull_request:
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ios.yml'
+      - 'package.json'
+      - 'bun.lock'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: iOS build (simulator, unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      # Capacitor 8 默认 SPM（无 CocoaPods 依赖）；simulator 构建不签名。
+      # 本 job 的验收口径：iOS 工程在干净 macOS 上编译通过。
+      # 通知 action 链路 spike（simctl push 注入带 aps.category 的 payload）待推送接入后补。
+      - name: Sync & build iOS app
+        working-directory: app
+        run: |
+          bunx cap sync ios
+          xcodebuild -project ios/App/App.xcodeproj -scheme App \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
