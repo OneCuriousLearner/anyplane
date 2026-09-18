@@ -1,9 +1,17 @@
 import { describe, expect, test } from 'bun:test'
+import { claudePort } from '../backends/claude/port'
+import { codexPort } from '../backends/codex/port'
+import { registerBackend } from '../backends/port'
 import {
   defaultSessionRouteDeps,
   handleSessionRoutes,
   type SessionRouteDeps,
 } from './sessions'
+
+// POST /api/sessions 与 archived 列表经 backendPort 注册表取用（13.3 起）：
+// 注册真实适配器，镜像 index.ts 装配（各测试文件同一单例，幂等）。
+registerBackend('claude', claudePort)
+registerBackend('codex', codexPort)
 
 function request(method: string, body?: unknown): Request {
   return new Request('http://localhost/api/sessions', {

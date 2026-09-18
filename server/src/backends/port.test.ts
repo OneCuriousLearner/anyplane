@@ -1,7 +1,7 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, test } from 'bun:test'
 import { keyFor as claudeKeyFor, keyForBranch, keyForNew as claudeKeyForNew } from './claude/backend'
 import { keyFor as codexKeyFor, keyForNew as codexKeyForNew } from './codex/backend'
-import { describeKey } from './port'
+import { backendPort, describeKey, portFor, registerBackend, resetBackendsForTest, type BackendPort } from './port'
 
 // describeKey 是 key 形状的零 I/O 解析唯一正本（routes/misc、push/fanout 共用）；
 // 本测试把它与两后端 keyFor/keyForNew/keyForBranch 构造器的一一对应锁死——
@@ -55,5 +55,38 @@ describe('describeKey', () => {
     expect(describeKey('xn|a|b')).toBeNull()
     expect(describeKey('n|%E4%B8')).toBeNull() // 截断的 UTF-8 转义，decodeURIComponent 抛错
     expect(describeKey('')).toBeNull()
+  })
+})
+
+// 注册表（13.3）：契约叶子不自带适配器单例，portFor/backendPort 经 registerBackend 取用。
+// 用最小假 port 锁死分发与 fail fast——不测真实适配器（那是各 port 自身测试的事）。
+describe('注册表：backendPort / portFor', () => {
+  // bun test 单进程跨文件共享注册表：本文件用过假 port，结束后复位清场——
+  // 其他文件各自在顶部注册真实适配器，任何执行顺序下都不互相污染（AGENTS.md 复位口纪律）
+  afterAll(() => resetBackendsForTest())
+
+  const fakePort = (name: 'claude' | 'codex') => ({ name }) as BackendPort
+
+  test('未注册即取用 fail fast（编程错误不是静默 undefined）', () => {
+    resetBackendsForTest()
+    expect(() => backendPort('claude')).toThrow('未注册')
+    expect(() => portFor('s|slug|sid')).toThrow('未注册')
+  })
+
+  test('portFor 按 key 前缀分发：x|/xn| → codex，其余 → claude', () => {
+    resetBackendsForTest()
+    const claude = fakePort('claude')
+    const codex = fakePort('codex')
+    registerBackend('claude', claude)
+    registerBackend('codex', codex)
+    expect(portFor('s|slug|sid')).toBe(claude)
+    expect(portFor('n|%2Ftmp')).toBe(claude)
+    expect(portFor('b|%2Ftmp|src')).toBe(claude)
+    expect(portFor('x|th-1')).toBe(codex)
+    expect(portFor('xn|%2Ftmp')).toBe(codex)
+    // 损坏的 xn| 编码历史上也走 codex 兜底（逐字等价 isCodexKey，不预解码）
+    expect(portFor('xn|%E4%B8')).toBe(codex)
+    expect(backendPort('claude')).toBe(claude)
+    expect(backendPort('codex')).toBe(codex)
   })
 })

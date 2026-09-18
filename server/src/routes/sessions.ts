@@ -1,13 +1,11 @@
 // 会话列表与管理路由：/api/sessions（GET/POST）+ archive/restore/archived/rename。
 // git 分支缓存也在这里（仅列表端点使用）。
 
-import type { CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
-import { keyFor, keyForNew } from '../backends/claude/backend'
+import type { ArchivedEntry, CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
+import { keyFor } from '../backends/claude/backend'
 import { type DiscoveredSession, listSessions, sanitizePath } from '../backends/claude/discovery'
-import { keyForNew as codexKeyForNew, listSessions as listCodexSessions } from '../backends/codex/backend'
-import { claudePort } from '../backends/claude/port'
-import { codexPort } from '../backends/codex/port'
-import { portFor, type RouteResult } from '../backends/port'
+import { listSessions as listCodexSessions } from '../backends/codex/backend'
+import { backendPort, portFor, type RouteResult } from '../backends/port'
 import { readGitBranch } from '../fsbrowse'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
@@ -38,8 +36,8 @@ export interface SessionRouteDeps {
   readGitBranch: typeof readGitBranch
   statusOf: typeof statusOf
   portFor: typeof portFor
-  listCodexArchived: typeof codexPort.listArchived
-  listClaudeArchived: typeof claudePort.listArchived
+  listCodexArchived: () => Promise<ArchivedEntry[]>
+  listClaudeArchived: () => Promise<ArchivedEntry[]>
 }
 
 export const defaultSessionRouteDeps: SessionRouteDeps = {
@@ -48,8 +46,10 @@ export const defaultSessionRouteDeps: SessionRouteDeps = {
   readGitBranch,
   statusOf,
   portFor,
-  listCodexArchived: () => codexPort.listArchived(),
-  listClaudeArchived: () => claudePort.listArchived(),
+  // 经注册表取用适配器（routes 不 import 具体 port——依赖红线③）；箭头函数惰性求值，
+  // 注册发生在装配层（index.ts），模块加载期不会触发未注册错误
+  listCodexArchived: () => backendPort('codex').listArchived(),
+  listClaudeArchived: () => backendPort('claude').listArchived(),
 }
 
 export async function handleSessionRoutes(
@@ -99,10 +99,12 @@ export async function handleSessionRoutes(
   if (url.pathname === '/api/sessions' && req.method === 'POST') {
     const body = await readJsonBody<{ cwd?: string; backend?: string }>(req)
     if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
+    // 新会话 key 构造经适配器（keyForNew 是 port 契约），routes 不 import 后端 key 构造函数
+    const port = backendPort(body.backend === 'codex' ? 'codex' : 'claude')
     const res: CreateSessionResponse =
-      body.backend === 'codex'
-        ? { key: codexKeyForNew(body.cwd), slug: 'codex', backend: 'codex' }
-        : { key: keyForNew(body.cwd), slug: sanitizePath(body.cwd), backend: 'claude' }
+      port.name === 'codex'
+        ? { key: port.keyForNew(body.cwd), slug: 'codex', backend: 'codex' }
+        : { key: port.keyForNew(body.cwd), slug: sanitizePath(body.cwd), backend: 'claude' }
     return json(res)
   }
   if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {

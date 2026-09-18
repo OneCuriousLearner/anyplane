@@ -1,26 +1,25 @@
 // BackendPort：Hub 编排层对后端的唯一能力入口。
-// 两后端各一个适配器（claude/port.ts、codex/port.ts），编排层经 portFor(key) 分发，
-// 编排层不再出现 isCodexKey 能力分支（key 工具函数除外——key 本身编码后端，属元数据读取）。
+// 两后端各一个适配器（claude/port.ts、codex/port.ts），编排层经 portFor(key)/backendPort(name)
+// 分发，编排层不再出现 isCodexKey 能力分支（key 工具函数除外——key 本身编码后端，属元数据读取）。
 //
 // 依赖红线：适配器可以 import 具体后端实现（processManager/codexRuntime），
 // 但绝不 import hub 编排层（index.ts）的运行时代码——回调经 HubServices 注入（S1.2 起）。
 // Hub 目前以 import type 引用（type-only，无运行时环；S2 迁入 hub/types.ts）。
 //
-// 模块环说明：port.ts ↔ claude/port.ts、codex/port.ts 之间存在 import 环
-//（portFor 需要适配器实例，适配器需要 baseStatusOf/类型）。两侧都只在方法体内
-//  deferred 使用对方绑定（implements 为 type-only 已擦除），模块求值期无 TDZ 读取。
+// 注册表方向（13.3）：本模块是契约叶子——不 import 任何适配器（反向 import 即 port.ts ↔
+// 适配器的模块环，环安全性此前只靠注释守护）。适配器实例由装配层（index.ts）
+// registerBackend 注入，与 initBackendPorts 同一模式，不依赖 ESM 加载顺序副作用。
 
 import type { Hub } from '../hub/types'
 import type { HandoffDetail } from '../handoff'
 import { errorMessage } from '../util'
-import { isCodexKey } from './codex/backend'
-import { claudePort } from './claude/port'
-import { codexPort } from './codex/port'
 import type {
   ApprovalDecision,
   ArchivedEntry,
+  BackendCapabilities,
   BackendName,
   BackgroundTask,
+  CodexModelInfo,
   ContextUsageInfo,
   ImageAttachment,
   QueryResultPayload,
@@ -108,12 +107,14 @@ export type RouteResult = { ok: true } | { ok: false; error: string; status: num
 
 export interface BackendPort {
   readonly name: BackendName
+  /** 能力声明：能力差异的唯一权威，hub 层按此把关、statusOf 随 SessionState 下发前端 */
+  readonly capabilities: BackendCapabilities
   /** 当前存活（或已退出待回收）的会话句柄；取代编排层散落的 isCodexKey ? codexRuntime.get : processManager.get */
   sessionOf(key: string): SessionHandle | undefined
   /** 存活判定（ws close 的 Hub 回收依据）：claude = 句柄存在；codex = 句柄存在且未退出 */
   hasLiveSession(key: string): boolean
-  /** 外部门禁（control.sock 生态）通知：claude 转发句柄方法；codex 无对应物，no-op */
-  notifyExternalGate(key: string): void
+  /** 外部门禁（control.sock 生态）通知：claude 转发句柄方法（capabilities.externalGate） */
+  notifyExternalGate?(key: string): void
   /** 会话状态派生（两后端函数体分别在各自适配器内；公共字段走 baseStatusOf） */
   statusOf(key: string, cx: StatusContext): SessionState
 
@@ -125,17 +126,17 @@ export interface BackendPort {
   /** 发送路径的就绪检查：未运行则触发懒启动；未就绪返回 undefined（错误已广播）。
    *  时序红线同 ensure（claude 实现零 await）。 */
   ensureForSend(hub: Hub): Promise<SessionHandle | undefined>
-  /** 发送成功后的后端特定跟踪（claude：/goal 出站跟踪 + 标题素材记账）；codex 不实现 */
+  /** 发送成功后的后端特定跟踪（claude：/goal 出站跟踪 + 标题素材记账） */
   afterUserSent?(hub: Hub, text: string): void
-  /** 官方 AI 标题双条件触发（claude）；codex no-op */
-  maybeGenerateTitle(hub: Hub): void
-  /** transcript 实时跟踪（claude 外部会话）；codex 无 tailer 概念，no-op */
-  startTailer(hub: Hub, from?: number): void
-  stopTailer(hub: Hub): void
-  /** 对话回滚：claude=原地截断重 spawn；codex=thread/fork 分叉语义 */
+  /** 官方 AI 标题双条件触发（capabilities.aiTitle；claude-only） */
+  maybeGenerateTitle?(hub: Hub): void
+  /** transcript 实时跟踪（capabilities.tailer；claude-only） */
+  startTailer?(hub: Hub, from?: number): void
+  stopTailer?(hub: Hub): void
+  /** 对话回滚：claude=原地截断重 spawn；codex=thread/revert|fork 双轨 */
   rewindConversation(hub: Hub, userMessageId: string): void
-  /** 组合回滚（文件+对话）：claude 先 rewind_files 再截断；codex 无文件检查点，拒绝 */
-  rewindBoth(hub: Hub, userMessageId: string): void
+  /** 组合回滚（文件+对话，capabilities.fileCheckpoint；claude-only） */
+  rewindBoth?(hub: Hub, userMessageId: string): void
 
   // ---------- 消息域（model/mode 缓存与 rewindPending 守卫留在 hub 层，此处为后端投递） ----------
   /** 通用控制请求：codex 直接翻译（interrupt/set_model/set_permission_mode/compact）；
@@ -144,11 +145,12 @@ export interface BackendPort {
   /** 环境变量（effort 已在上层缓存进 spawnOpts）：claude 未 spawn 时并入 pendingEnv；
    *  codex 映射 reasoning effort */
   updateEnv(hub: Hub, variables: Record<string, string>): void
-  /** 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session）；codex 拒绝（引导走回滚面板） */
-  branch(hub: Hub, name: string): void
+  /** 分叉当前会话（capabilities.branch；claude 懒分叉 b| key；codex 无对应物） */
+  branch?(hub: Hub, name: string): void
   /** 侧问：借用当前会话上下文的一次性问答（btw_pending 已由上层先行广播） */
   btw(hub: Hub, question: string): void
-  /** 带应答的只读查询/MCP 管理动作；codex 仅 mcp_status 有对应物 */
+  /** 带应答的只读查询/MCP 管理动作；hub 层先按 capabilities.queries 白名单把关，
+   *  适配器不再各自做"暂不支持"拒绝 */
   query(
     hub: Hub,
     query: string,
@@ -183,6 +185,10 @@ export interface BackendPort {
   /** 归档/回收站列表：claude=trash（同步文件读），codex=archived thread/list。
    *  单后端失败降级为空数组（适配器内 log），不拖垮另一后端的列表。 */
   listArchived(): Promise<ArchivedEntry[]>
+  /** 新会话 key 构造（n| / xn|；POST /api/sessions 按 backend 名分发，routes 不 import key 构造函数） */
+  keyForNew(cwd: string): string
+  /** 模型目录（capabilities.modelCatalog；codex model/list RPC） */
+  listModels?(): Promise<CodexModelInfo[]>
 }
 
 /** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */
@@ -243,9 +249,35 @@ export function describeKey(key: string): DescribedKey | null {
   }
 }
 
-/** 编排层唯一的后端分支点：全仓库的能力分发都收敛到这一个三元 */
+// ---------- 适配器注册表 ----------
+// 本模块是契约叶子（不 import 适配器——反向 import 即模块环）。装配层（index.ts）
+// 在 initBackendPorts 旁 registerBackend 两后端，注册前取用即 fail fast（编程错误）。
+
+const registry: Partial<Record<BackendName, BackendPort>> = {}
+
+/** 装配层一次性注册后端适配器；与 initBackendPorts 同一模式，不依赖 ESM 加载顺序副作用 */
+export function registerBackend(name: BackendName, port: BackendPort): void {
+  registry[name] = port
+}
+
+/** 测试复位口：bun test 单进程跨文件共享模块实例，碰注册表的全局状态用例开头显式复位 */
+export function resetBackendsForTest(): void {
+  const keys = Object.keys(registry) as BackendName[]
+  for (const k of keys) delete registry[k]
+}
+
+/** 按后端名取适配器；未注册即调用是编程错误，fail fast */
+export function backendPort(name: BackendName): BackendPort {
+  const p = registry[name]
+  if (!p) throw new Error(`[port] 后端 ${name} 未注册（装配层须先 registerBackend）`)
+  return p
+}
+
+/** 编排层唯一的后端分支点：全仓库的能力分发都收敛到这一个三元。
+ *  key 形状判定（x|/xn| 前缀）与 isCodexKey 逐字等价——刻意不做 URI 解码：
+ *  损坏的 xn| 编码历史上也归 codex 适配器兜底，行为不变。 */
 export function portFor(key: string): BackendPort {
-  return isCodexKey(key) ? codexPort : claudePort
+  return backendPort(key.startsWith('x|') || key.startsWith('xn|') ? 'codex' : 'claude')
 }
 
 // ---------- /btw 侧问的共享信封（校验失败文案与 btw_result 广播只有一份，双后端不分叉） ----------

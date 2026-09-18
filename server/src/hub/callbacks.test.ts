@@ -5,11 +5,18 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { CliMessage } from '../backends/claude/protocol'
+import { claudePort } from '../backends/claude/port'
+import { codexPort } from '../backends/codex/port'
+import { registerBackend } from '../backends/port'
 import { resetInboxSinkForTest, setInboxSink } from './broadcast'
 import { sessionCallbacks } from './callbacks'
 import { getHub, hubs } from './registry'
 import type { InboxEvent } from '@anyplane/protocol'
 import type { Hub } from './types'
+
+// portFor 经注册表取用（13.3 起）：注册真实适配器，镜像 index.ts 装配（各测试文件同一单例，幂等）。
+registerBackend('claude', claudePort)
+registerBackend('codex', codexPort)
 
 const KEY = 'n|%2Ftmp%2Fcallbacks-test'
 const inbox: InboxEvent[] = []

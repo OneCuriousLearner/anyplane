@@ -20,7 +20,7 @@ import {
   type StatusContext,
 } from '../port'
 import type { SpawnOptions } from '../types'
-import { hydratedContextOf, keyForBranch, parseKey, splitExistingKey, type ParsedKey } from './backend'
+import { hydratedContextOf, keyForBranch, keyForNew as claudeKeyForNew, parseKey, splitExistingKey, type ParsedKey } from './backend'
 import { liveSessionInfo } from './discovery'
 import { processManager, type ClaudeSession } from './processManager'
 import { sessionModelOf } from './sessionModels'
@@ -34,6 +34,19 @@ function offlineModelOf(key: string): string | undefined {
 
 class ClaudePort implements BackendPort {
   readonly name = 'claude' as const
+  readonly capabilities = {
+    fileCheckpoint: true,
+    branch: true,
+    tailer: true,
+    aiTitle: true,
+    externalGate: true,
+    queries: ['get_context_usage', 'mcp_status', 'get_settings', 'mcp_reconnect', 'mcp_toggle'],
+    modelCatalog: false,
+  } as const
+
+  keyForNew(cwd: string): string {
+    return claudeKeyForNew(cwd)
+  }
 
   sessionOf(key: string): SessionHandle | undefined {
     return processManager.get(key)

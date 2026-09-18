@@ -3,9 +3,16 @@
 // - Hub 已从注册表回收时，旧定时器不得向旧连接补发
 
 import { afterEach, describe, expect, test } from 'bun:test'
+import { claudePort } from '../backends/claude/port'
+import { codexPort } from '../backends/codex/port'
+import { registerBackend } from '../backends/port'
 import { getHub, hubs } from './registry'
 import { throttledPushStatus } from './status'
 import type { Hub } from './types'
+
+// pushStatus → statusOf → portFor 经注册表取用（13.3 起）：注册真实适配器，镜像 index.ts 装配。
+registerBackend('claude', claudePort)
+registerBackend('codex', codexPort)
 
 const KEYS = ['n|%2Ftmp%2Fstatus-throttle', 'n|%2Ftmp%2Fstatus-deleted']
 

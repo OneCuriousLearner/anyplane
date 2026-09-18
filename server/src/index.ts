@@ -10,8 +10,10 @@ import { networkInterfaces } from 'node:os'
 import { join, resolve } from 'node:path'
 import { hostAllowed, isAuthorized, isLoopbackHost, jsonContentTypeRequired, originAllowed } from './auth'
 import { processManager } from './backends/claude/processManager'
+import { claudePort } from './backends/claude/port'
 import { codexRuntime } from './backends/codex/runtime'
-import { initBackendPorts } from './backends/port'
+import { codexPort } from './backends/codex/port'
+import { initBackendPorts, registerBackend } from './backends/port'
 import { config } from './config'
 import { startupVersionProbe } from './driftGuard'
 import { broadcast, broadcastError } from './hub/broadcast'
@@ -45,6 +47,10 @@ initBackendPorts({
   sessionNameOf,
   rewindBusy,
 })
+// 适配器实例注册（与 initBackendPorts 同一模式）：backends/port.ts 是契约叶子不 import
+// 适配器（反向 import 即模块环），portFor/backendPort 经注册表取用——解 port.ts ↔ 适配器的环
+registerBackend('claude', claudePort)
+registerBackend('codex', codexPort)
 initInbox()
 
 function logWindowsPortState(stage: string, port: number): void {

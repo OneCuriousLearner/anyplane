@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test'
+import { claudePort } from '../backends/claude/port'
+import { codexPort } from '../backends/codex/port'
+import { registerBackend } from '../backends/port'
 import { defaultMiscRouteDeps, handleMiscRoutes, type MiscRouteDeps } from './misc'
+
+// approvals/resolve 的裁决链路经 portFor 注册表取用（13.3 起）：
+// 注册真实适配器，镜像 index.ts 装配——不依赖其他测试文件先执行的共享注册。
+registerBackend('claude', claudePort)
+registerBackend('codex', codexPort)
 
 function deps(overrides: Partial<MiscRouteDeps>): MiscRouteDeps {
   return { ...defaultMiscRouteDeps, ...overrides }

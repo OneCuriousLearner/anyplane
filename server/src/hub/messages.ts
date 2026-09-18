@@ -60,8 +60,8 @@ export function handleClientMessage(
     }
     case 'tail_subscribe': {
       // 客户端加载完历史后订阅 transcript 追加（from = 历史读取时的文件字节数，无缝衔接）；
-      // codex 的实时流走 app-server 订阅，无 tailer 概念（适配器内 no-op）
-      resolvePort(hub.key).startTailer(hub, typeof data.from === 'number' ? data.from : undefined)
+      // tailer 是 claude-only 能力（capabilities.tailer），前端对无能力后端不发本帧，?. 兜底
+      resolvePort(hub.key).startTailer?.(hub, typeof data.from === 'number' ? data.from : undefined)
       break
     }
     case 'user': {
@@ -122,9 +122,15 @@ export function handleClientMessage(
       break
     }
     case 'branch': {
-      // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session），
-      // codex 走既有 thread/fork（RewindPicker 的"从此处分叉"，适配器内拒绝并引导）
-      resolvePort(hub.key).branch(hub, String(data.name ?? ''))
+      // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session）；
+      // branch 是能力声明（capabilities.branch），无能力后端在此统一拒绝
+      //（前端按能力隐藏入口，这是不可信客户端的兜底）
+      const port = resolvePort(hub.key)
+      if (!port.branch) {
+        broadcastError(hub, '当前后端不支持会话分叉')
+        break
+      }
+      port.branch(hub, String(data.name ?? ''))
       break
     }
     case 'rewind_conversation': {
@@ -137,8 +143,14 @@ export function handleClientMessage(
     case 'rewind_both': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
-      // 组合回滚：claude 先 rewind_files 再截断；codex 无文件检查点（适配器内拒绝）
-      resolvePort(hub.key).rewindBoth(hub, at)
+      // 组合回滚：claude 先 rewind_files 再截断；fileCheckpoint 是能力声明，
+      // 无能力后端在此统一拒绝（前端按能力隐藏入口，这是不可信客户端的兜底）
+      const port = resolvePort(hub.key)
+      if (!port.rewindBoth) {
+        broadcastError(hub, '当前后端没有文件检查点，不支持文件回滚')
+        break
+      }
+      port.rewindBoth(hub, at)
       break
     }
     case 'btw': {
@@ -152,14 +164,19 @@ export function handleClientMessage(
     }
     case 'query': {
       // 带应答的控制请求通道：只读查询（mcp_status / get_settings / get_context_usage）
-      // 与 MCP 管理动作（mcp_reconnect / mcp_toggle，经 extra 传参）共用；
-      // codex 仅 mcp_status 有对应物 mcpServerStatus/list（动作类一律拒绝，见适配器）
+      // 与 MCP 管理动作（mcp_reconnect / mcp_toggle，经 extra 传参）共用。
+      // 能力白名单在 capabilities.queries 统一把关（唯一闸口，适配器不再各自拒绝）
       const id = String(data.id ?? '')
       const query = String(data.query ?? '')
       const extra = data.extra ?? {}
       const reply = (payload: QueryResultPayload) => broadcast(hub, { kind: 'query_result', id, ...payload })
       if (!id || !query) return
-      resolvePort(hub.key).query(hub, query, extra, reply)
+      const port = resolvePort(hub.key)
+      if (!port.capabilities.queries.includes(query)) {
+        reply({ ok: false, error: `当前后端不支持 ${query} 查询` })
+        break
+      }
+      port.query(hub, query, extra, reply)
       break
     }
     case 'approval': {

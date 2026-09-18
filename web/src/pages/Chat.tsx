@@ -30,6 +30,7 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { buildTranscriptRows, nextId, rewindPreview, usageSummary, type Block } from '../lib/blocks'
 import { statusLineOf } from '../lib/chatText'
+import { capabilitiesOf } from '../lib/capabilities'
 import { interceptSlash, type SlashAction } from '../lib/slashIntercept'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import type { NavigateSession } from '../lib/sessionHash'
@@ -231,6 +232,15 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const currentSessionId =
     state.sessionId ??
     (session.key.startsWith('s|') || session.key.startsWith('x|') ? session.sessionId : undefined)
+
+  /** 会话能力（服务端 capabilities 下发；未连接时按后端身份兜底）：查询按钮/分叉入口按此渲染 */
+  const caps = capabilitiesOf(state, isCodex)
+  /** 打开详情抽屉的默认查询：优先 context 用量，退而求其次 MCP 状态（能力白名单内） */
+  const defaultDetailQuery: [string, string] | undefined = caps.queries.includes('get_context_usage')
+    ? ['get_context_usage', 'context 用量']
+    : caps.queries.includes('mcp_status')
+      ? ['mcp_status', 'MCP 状态']
+      : undefined
 
   // ---------- 服务配置（Composer StatusPill 用；与 socket 生命周期无关——原与建连同 effect 同步先后执行，独立后同 commit 按序执行，行为等价） ----------
   useEffect(() => {
@@ -476,6 +486,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         onToggleTasks={() => setTasksOpen((v) => !v)}
         isExisting={isExisting}
         isCodex={isCodex}
+        canBranch={caps.branch}
         sessionId={state.sessionId}
         currentSessionId={currentSessionId}
         goal={state.goal}
@@ -485,8 +496,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         onSystemMessage={ingestApi.pushSystem}
         onToggleDetail={() => {
           setDetailOpen((v) => !v)
-          // codex 无 get_context_usage 对应物，默认落在 MCP 状态上
-          if (!detailOpen) runQuery(isCodex ? 'mcp_status' : 'get_context_usage', isCodex ? 'MCP 状态' : 'context 用量')
+          // 默认落 context 用量；无该查询能力的后端退到 MCP 状态（能力白名单内）
+          if (!detailOpen && defaultDetailQuery) runQuery(defaultDetailQuery[0], defaultDetailQuery[1])
         }}
         goalOpen={goalOpen}
         onToggleGoal={() => {
@@ -515,6 +526,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             detailTitle={detailTitle}
             detailContent={detailContent}
             isCodex={isCodex}
+            queries={caps.queries}
             mcpServers={mcpServers}
             mcpBusy={mcpBusy}
             onMcpAction={mcpAction}
@@ -588,7 +600,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         context={state.context}
         usage={state.usage}
         onOpenFullDetail={
-          !isCodex && isExisting
+          caps.queries.includes('get_context_usage') && isExisting
             ? () => {
                 setDetailOpen(true)
                 runQuery('get_context_usage', 'context 用量')

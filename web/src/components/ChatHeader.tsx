@@ -27,6 +27,8 @@ export function ChatHeader(props: {
   onToggleTasks: () => void
   isExisting: boolean
   isCodex: boolean
+  /** 会话分叉能力（服务端 capabilities.branch 下发；曾以 !isCodex 硬编码） */
+  canBranch: boolean
   /** state.sessionId（更多菜单与目标按钮的显隐判定） */
   sessionId?: string
   /** 当前会话权威 ID（复制按钮）；spawn 后以 status 广播为准 */
@@ -64,6 +66,7 @@ export function ChatHeader(props: {
     onToggleTasks,
     isExisting,
     isCodex,
+    canBranch,
     sessionId,
     currentSessionId,
     goal,
@@ -221,7 +224,7 @@ export function ChatHeader(props: {
                       : '◎ 目标'}
                   </button>
                 )}
-                {isExisting && !isCodex && (
+                {isExisting && canBranch && (
                   <button
                     type="button"
                     role="menuitem"

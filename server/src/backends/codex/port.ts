@@ -1,7 +1,7 @@
 // codex 后端适配器：把 codexRuntime 的能力包装成 BackendPort。
 // 方法体多为 index.ts 原 codex 分支的逐字搬迁——重构红线是零行为改动。
 
-import type { ArchivedEntry, QueryResultPayload, SessionState } from '@anyplane/protocol'
+import type { ArchivedEntry, CodexModelInfo, QueryResultPayload, SessionState } from '@anyplane/protocol'
 import { defaultPermissionMode } from '../../config'
 import { generateCodexBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
@@ -18,11 +18,28 @@ import {
   type StatusContext,
 } from '../port'
 import type { SpawnOptions } from '../types'
-import { keyFor, listArchivedSessions, parseKey as codexParseKey, splitThreadId } from './backend'
+import { keyFor, keyForNew as codexKeyForNew, listArchivedSessions, parseKey as codexParseKey, splitThreadId } from './backend'
 import { codexRuntime, type CodexSession } from './runtime'
 
 class CodexPort implements BackendPort {
   readonly name = 'codex' as const
+  readonly capabilities = {
+    fileCheckpoint: false,
+    branch: false,
+    tailer: false,
+    aiTitle: false,
+    externalGate: false,
+    queries: ['mcp_status'],
+    modelCatalog: true,
+  } as const
+
+  keyForNew(cwd: string): string {
+    return codexKeyForNew(cwd)
+  }
+
+  listModels(): Promise<CodexModelInfo[]> {
+    return codexRuntime.listModels()
+  }
 
   sessionOf(key: string): SessionHandle | undefined {
     return codexRuntime.get(key)
@@ -32,9 +49,6 @@ class CodexPort implements BackendPort {
     const s = codexRuntime.get(key)
     return !!s && !s.exited
   }
-
-  // 外部门禁（control.sock 生态）是 claude-only 概念；codex 无对应物
-  notifyExternalGate(_key: string): void {}
 
   /** 与 claude 适配器的 statusOf 同形，供列表 managed 字段与 WS status 复用 */
   statusOf(key: string, cx: StatusContext): SessionState {
@@ -104,12 +118,9 @@ class CodexPort implements BackendPort {
     return s
   }
 
-  // 无出站 /goal 跟踪与 AI 标题通道（codex 的 goal 由 thread/goal/* 通知驱动）
-  maybeGenerateTitle(_hub: Hub): void {}
-
-  // codex 的实时流走 app-server 订阅，无 tailer 概念
-  startTailer(_hub: Hub, _from?: number): void {}
-  stopTailer(_hub: Hub): void {}
+  // codex 的实时流走 app-server 订阅，无 tailer 概念；无 AI 标题通道（goal 由 thread/goal/* 通知驱动）——
+  // 这两项与 notifyExternalGate/branch/rewindBoth 一样是 claude-only 能力，经 capabilities 声明缺席，
+  // hub 层按能力把关，适配器不再补 no-op（审计发现二：no-op 会把能力差异藏到运行时）。
 
   /** codex 回滚双轨（0.153.4 实测分流）：
    *  - paginated 线程（0.153 起新线程默认）：thread/revert 原地截断持久历史，thread id /
@@ -156,10 +167,6 @@ class CodexPort implements BackendPort {
       })
   }
 
-  rewindBoth(hub: Hub, _at: string): void {
-    hubServices().broadcastError(hub, 'Codex 没有文件检查点，不支持文件回滚（可用 git 管理代码历史）')
-  }
-
   // ---------- 消息域 ----------
 
   /** interrupt/set_model/set_permission_mode/compact 直接翻译；其余控制请求暂无对应物 */
@@ -180,10 +187,8 @@ class CodexPort implements BackendPort {
     hubServices().pushStatus(hub)
   }
 
-  branch(hub: Hub, _name: string): void {
-    // codex 走既有 thread/fork（RewindPicker 的"从此处分叉"）
-    hubServices().broadcastError(hub, 'Codex 请用回滚面板的「从此处分叉」')
-  }
+  // branch（/branch 懒分叉）与 rewindBoth（文件检查点）是 claude-only 能力：capabilities
+  // 声明缺席，hub 层统一拒绝文案，适配器不再各写一份运行时拒绝（前端也按 capabilities 隐藏入口）
 
   btw(hub: Hub, question: string): void {
     const parsed = codexParseKey(hub.key)
@@ -202,15 +207,11 @@ class CodexPort implements BackendPort {
 
   query(
     _hub: Hub,
-    query: string,
+    _query: string,
     _extra: Record<string, unknown>,
     reply: (payload: QueryResultPayload) => void,
   ): void {
-    // codex 仅 mcp_status 有对应物 mcpServerStatus/list（动作类一律拒绝）
-    if (query !== 'mcp_status') {
-      reply({ ok: false, error: `codex 后端暂不支持 ${query}` })
-      return
-    }
+    // hub 层已按 capabilities.queries 白名单把关（codex 仅 mcp_status），此处只处理对应物
     void codexRuntime
       .rpcRequest('mcpServerStatus/list', {})
       .then((d) => reply({ ok: true, data: d }))
