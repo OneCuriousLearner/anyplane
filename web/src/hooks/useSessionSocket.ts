@@ -374,6 +374,11 @@ export function useSessionSocket(opts: {
       (open) => {
         setConnected(open)
         if (!open) return
+        // 审批卡 replace 对齐（research 2026-09-18-capacitor-shell-pitfalls §6.4）：
+        // approval_resolved 是幂等清理信号而非补发——「裁决时恰好离线」的客户端收不到。
+        // attach 后服务端的 pending 重放是唯一权威：清空本地集，重放集+后续新请求重建。
+        // WS 有序保证 attach 之后到达的 approval_request 恰好覆盖两者，无一遗漏。
+        setApprovals([])
         // 重连必须 attach：Codex x| 靠它 resume；fromSeq 为 0 也要带上，
         // 才能取回「一条可落盘 cli 都没收到就断线」期间的环。首连走下面的 attach。
         if (sock.reconnecting) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
@@ -384,6 +389,7 @@ export function useSessionSocket(opts: {
       },
     )
     sockRef.current = sock
+    setApprovals([]) // 首连同一对齐口径（本地本为空，防御性同拍清空）
     sock.send({ kind: 'attach' })
     return () => sock.close()
   }, [session.key])

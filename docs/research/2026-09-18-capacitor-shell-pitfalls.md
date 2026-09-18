@@ -182,11 +182,16 @@ action 源，必须走 query 接力（详见 PR #42 评审）。
 `onStartCommand` 凭据未变时跳过拆连（回前台不再 churn）；`notifIdFor` 用途命名；
 `staticCacheHeaders` 反转默认；遥测分级（§5）；死模板清理（通知小图标换品牌 mipmap）。
 
-### 6.4 客户端 attach 对齐（已知缺口，未做）
+### 6.4 客户端 attach 对齐（~~已知缺口，未做~~ → 已做 2026-09-19）
 `approval_resolved` 广播是幂等清理信号（在线客户端的 stale 卡自愈），**不是补发机制**——
 裁决时恰好离线的客户端救不回来。服务端 `replayApprovals` 已在 attach 时单播全量 pending，
 但 `useSessionSocket` 目前是 append+dedup 而非 **replace 对齐**。把 attach 后的本地审批集
 替换为重放集即可在真正的丢失点收敛（零额外事件）。做之前先补一个「断线错过 resolved」的用例。
+
+**落地（13.4 批次 A）**：attach 发送时清空本地审批集（`useSessionSocket` 两个 attach 点），
+WS 有序保证随后到达的 approval_request 恰好=重放集+新请求；e2e-mock 第 5 场景锁定
+服务端权威（裁决后重连的重放集不含已裁决项）。浏览器实测：离线期间外部裁决 → 重连后
+stale 卡消失不复活。
 
 ## 7. 已知边界与后续（给继续推进的人）
 

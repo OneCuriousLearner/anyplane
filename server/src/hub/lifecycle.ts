@@ -42,8 +42,8 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
  * 返回 false 表示 requestId 已不在 pending（重复点击/已在别处处理）。
  * 注意：approval_resolved 广播是幂等清理信号——即使 pending 已不存在也照发：
  * 在线客户端的 stale 卡借此自愈（多设备场景）；它不是补发机制——fire-and-forget
- * 的广播救不了「裁决时恰好离线」的客户端，那一类只能靠 attach 时的 pending 重放
- * 对齐（见 broadcast.ts replayApprovals；客户端 replace 对齐是后续项，见 ROADMAP）。
+ * 的广播救不了「裁决时恰好离线」的客户端，那一类由 attach 时的 pending 重放 +
+ * 客户端 replace 对齐收敛（attach 发送时清空本地审批集，useSessionSocket；13.4 批次 A 已做）。
  */
 export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
   const had = hub.pendingApprovals.delete(requestId)

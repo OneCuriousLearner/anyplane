@@ -6,7 +6,9 @@
 //    （顺带断言 capabilities 随 status 下发——13.3 的能力声明面）
 // 2. 审批链路：can_use_tool → approval_request → WS 裁决 → approval_resolved + turn 收尾
 // 3. /clear 三层重键：conversation_reset → moved 事件 → 新 key attach 复用同进程
-// 4. 断线重连补发：fromSeq 游标 → 环内事件单播补放（含 result）
+// 4. 断线重连补发：fromSeq 游标 → 环内事件单播补放（只认 replay:true 副本）
+// 5. 断线错过 resolved（research §6.4）：裁决时离线方的重连重放集不含已裁决审批
+//    （服务端 pending 唯一权威；客户端 replace 对齐见 useSessionSocket 的 attach 清空）
 //
 // mock 注入方式：ANYPLANE_CLAUDE_PATH 指向平台 wrapper（.cmd / .sh，exec bun 跑同目录
 // mock-claude.ts）；CLAUDE_CONFIG_DIR 指向临时目录（服务端读写与透传给 CLI 的 claude 侧
@@ -223,6 +225,35 @@ async function main(): Promise<void> {
   )
   c2.ws.close()
   c3.ws.close()
+
+  // 6. 断线错过 resolved（research §6.4 点名用例）：裁决时离线的客户端，
+  // 重连 attach 的重放集不含已裁决审批——服务端 pending 是唯一权威，
+  // 客户端 replace 对齐（attach 时清空本地集）据此收敛
+  const cOff = client(newKey)
+  await cOff.open()
+  cOff.send({ kind: 'attach' })
+  await cOff.waitFor((ev) => ev.kind === 'status')
+  cOff.send({ kind: 'user', text: 'MOCK_APPROVAL 断线场景' })
+  const ap2 = await cOff.waitFor((ev) => ev.kind === 'approval_request')
+  const req2 = String(ap2.requestId ?? '')
+  note(req2.length > 0, '第二次审批挂起（断线场景准备）', req2)
+  cOff.ws.close() // 裁决时离线的一方
+  await Bun.sleep(300)
+  const cJudge = client(newKey)
+  await cJudge.open()
+  cJudge.send({ kind: 'attach' })
+  const replayToJudge = await cJudge.waitFor((ev) => ev.kind === 'approval_request')
+  note(String(replayToJudge.requestId) === req2, '另一连接 attach：重放仍 pending 的审批')
+  cJudge.send({ kind: 'approval', requestId: req2, decision: { behavior: 'allow', updatedInput: { command: 'ls' } } })
+  await cJudge.waitFor((ev) => ev.kind === 'approval_resolved' && ev.requestId === req2)
+  const cBack = client(newKey)
+  await cBack.open()
+  cBack.send({ kind: 'attach' })
+  await Bun.sleep(400) // 负断言不能 waitFor（会超时）：等重放窗口过后查 log
+  const staleReplay = cBack.log.filter((ev) => ev.kind === 'approval_request' && ev.requestId === req2)
+  note(staleReplay.length === 0, '裁决后重连：重放集不含已裁决审批（replace 对齐的权威源）')
+  cJudge.ws.close()
+  cBack.ws.close()
 }
 
 const watchdog = setTimeout(() => {
