@@ -1,5 +1,5 @@
 // WS 上行消息分发：11 类 kind 全部经 portFor 分发给后端适配器。
-// Hub 级状态（spawnOpts 缓存、rewindPending 守卫、重连补发单播）留在本层——适配器只做后端投递。
+// Hub 级状态（spawnOpts 缓存、transition=rewind 守卫、重连补发单播）留在本层——适配器只做后端投递。
 
 import type { ApprovalDecision, ClientCommand, QueryResultPayload, ServerEvent } from '@anyplane/protocol'
 import type { ServerWebSocket } from 'bun'
@@ -97,7 +97,7 @@ export function handleClientMessage(
       const subtype = String(data.subtype)
       const extra = data.extra ?? {}
       // 组合回滚等待期间，通用控制路径不得再发 rewind_files 与之竞争
-      if (hub.rewindPending && subtype === 'rewind_files') {
+      if (hub.transition?.kind === 'rewind' && subtype === 'rewind_files') {
         broadcastError(hub, '已有回滚操作正在进行')
         return
       }
@@ -136,7 +136,7 @@ export function handleClientMessage(
     case 'rewind_conversation': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
-      // claude=原地截断重 spawn；codex=thread/fork 分叉语义（rewindPending 守卫在适配器内）
+      // claude=原地截断重 spawn；codex=thread/fork 分叉语义（transition=rewind 守卫在适配器内）
       resolvePort(hub.key).rewindConversation(hub, at)
       break
     }

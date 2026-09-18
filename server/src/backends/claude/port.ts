@@ -276,7 +276,7 @@ class ClaudePort implements BackendPort {
     // 官方 TUI 的“恢复代码和对话”也是两个动作。这里必须先收到文件
     // checkpoint 成功响应，才允许销毁旧进程并以 resume-session-at 截断对话。
     // rewind_files 没有 CLI 侧超时，大项目恢复可达分钟级，给足 120s。
-    hub.rewindPending = true
+    hub.transition = { kind: 'rewind' }
     hubServices().pushStatus(hub, { rewindPending: true })
     void s.sendControlAndWait('rewind_files', { user_message_id: at }, 120_000)
       .then(() => {
@@ -299,7 +299,8 @@ class ClaudePort implements BackendPort {
         )
       })
       .finally(() => {
-        hub.rewindPending = false
+        // 只清自己置的位：联合是互斥单值，rewind 复位不得清掉期间被置上的其他过渡
+        if (hub.transition?.kind === 'rewind') hub.transition = undefined
         hubServices().pushStatus(hub, { rewindPending: false })
       })
   }

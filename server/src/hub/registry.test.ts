@@ -8,12 +8,12 @@ afterEach(() => hubs.delete(KEY))
 describe('getHub', () => {
   test('同一 key 幂等返回同一个 Hub，且保留已有状态', () => {
     const first = getHub(KEY)
-    first.rewindPending = true
+    first.transition = { kind: 'rewind' }
 
     const second = getHub(KEY)
 
     expect(second).toBe(first)
-    expect(second.rewindPending).toBe(true)
+    expect(second.transition?.kind).toBe('rewind')
     expect(hubs.get(KEY)).toBe(first)
   })
 })

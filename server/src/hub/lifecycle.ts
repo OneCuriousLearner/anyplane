@@ -10,7 +10,7 @@ import type { Hub } from './types'
 
 /** 回滚进行中拒绝新操作：返回 true 表示已拒绝（错误已广播） */
 export function rewindBusy(hub: Hub, message = '已有回滚操作正在进行'): boolean {
-  if (!hub.rewindPending) return false
+  if (hub.transition?.kind !== 'rewind') return false
   broadcastError(hub, message)
   return true
 }
