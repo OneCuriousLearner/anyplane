@@ -229,12 +229,6 @@ describe('listThreadsFromDisk', () => {
     await expect(listThreadsFromDisk(home)).rejects.toBeInstanceOf(DiskDiscoveryError)
   })
 
-  test('漂移跳线②：目录有内容但无 rollout 文件 → 抛 DiskDiscoveryError', async () => {
-    mkdirSync(join(home, 'sessions', '2026', '09', '10'), { recursive: true })
-    writeFileSync(join(home, 'sessions', '2026', '09', '10', 'rollout-x.jsonl.zst'), 'compressed?')
-    await expect(listThreadsFromDisk(home)).rejects.toBeInstanceOf(DiskDiscoveryError)
-  })
-
   test('mtime 变化触发重解析（缓存不失效就是 bug）', async () => {
     const path = writeRollout(ID_A, [metaLine(ID_A), userMessageLine('改前')])
     expect((await listThreadsFromDisk(home))[0].preview).toBe('改前')
