@@ -28,6 +28,9 @@ jobs:
 
       - run: bun test
 
+      # mock CLI 全链路 e2e（唯一不依赖真实 claude/codex 的 e2e：审批/补发//clear 重键）
+      - run: bun run server/scripts/e2e-mock.ts
+
       - run: bun run build
 
   docker:

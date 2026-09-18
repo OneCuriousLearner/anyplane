@@ -102,9 +102,12 @@ export function extractUsageFromTranscriptTail(text: string): TranscriptCallUsag
 
 /** 解析 claude 可执行文件。返回 [cmd, prefixArgs] —— .cmd/.bat 需要 cmd.exe 包装 */
 export function resolveClaudeCommand(): { cmd: string; prefix: string[] } {
-  const candidates: string[] = []
-  if (config.claudePath) candidates.push(config.claudePath)
+  // 显式配置（anyplane.config.json 的 claudePath / ANYPLANE_CLAUDE_PATH env）是权威：
+  // 不参与下方 PATH 候选的 .exe 偏好竞争——否则显式指定的 .cmd 会被常见安装位的
+  // claude.exe 静默抢走（e2e mock 注入曾因此落空，spawn 出真实 CLI）
+  if (config.claudePath && existsSync(config.claudePath)) return wrapIfBatch(config.claudePath)
 
+  const candidates: string[] = []
   if (process.platform === 'win32') {
     const out = spawnSync(['where.exe', 'claude'])
     for (const line of out.stdout.toString().split(/\r?\n/).filter(Boolean)) {
