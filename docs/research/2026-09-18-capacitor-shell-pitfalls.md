@@ -188,10 +188,11 @@ action 源，必须走 query 接力（详见 PR #42 评审）。
 但 `useSessionSocket` 目前是 append+dedup 而非 **replace 对齐**。把 attach 后的本地审批集
 替换为重放集即可在真正的丢失点收敛（零额外事件）。做之前先补一个「断线错过 resolved」的用例。
 
-**落地（13.4 批次 A）**：attach 发送时清空本地审批集（`useSessionSocket` 两个 attach 点），
-WS 有序保证随后到达的 approval_request 恰好=重放集+新请求；e2e-mock 第 5 场景锁定
-服务端权威（裁决后重连的重放集不含已裁决项）。浏览器实测：离线期间外部裁决 → 重连后
-stale 卡消失不复活。
+**落地（13.4 批次 A）**：`SessionState.pendingApprovalIds` 快照（baseStatusOf 恒带）+
+客户端 status reconcile（`lib/approvals.ts`，只删快照外的卡）——首版「attach 盲清空」
+在 PR #50 review 被发现会 unmount 仍在 pending 的卡（进行中的 AskUserQuestion 选择态
+组件内保存，瞬断重连即丢），改为按 requestId reconcile；e2e-mock 第 5 场景锁定服务端
+权威。浏览器实测两向：瞬断重连卡保留不 remount；离线期间外部裁决 → 重连后卡消失。
 
 ## 7. 已知边界与后续（给继续推进的人）
 

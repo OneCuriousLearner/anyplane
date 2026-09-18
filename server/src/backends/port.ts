@@ -208,6 +208,8 @@ export function baseStatusOf(
     context: s?.contextUsage,
     permissionMode: hub?.spawnOpts?.permissionMode,
     effort: hub?.spawnOpts?.effort,
+    // pending 审批快照：客户端 reconcile 的唯一权威（attach 重放的实时同源版）
+    pendingApprovalIds: [...(hub?.pendingApprovals.keys() ?? [])],
   }
 }
 

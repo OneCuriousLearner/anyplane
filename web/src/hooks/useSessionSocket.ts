@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchHistory, makeSessionInfo } from '../lib/api'
 import type { HistoryResponse, SessionInfo } from '@anyplane/protocol'
 import type { NavigateSession } from '../lib/sessionHash'
+import { reconcileApprovals } from '../lib/approvals'
 import { nextId, type Block } from '../lib/blocks'
 import { appendHistoryMsg, flushStrayResults, type IngestState } from '../lib/ingest'
 import type { ServerEvent, SessionState } from '@anyplane/protocol'
@@ -89,6 +90,12 @@ export function useSessionSocket(opts: {
         switch (ev.kind) {
           case 'status':
             setState(ev.state)
+            // 审批卡 reconcile（replace 对齐的正式形态，research §6.4）：服务端 pending
+            // 快照是唯一权威——删快照外的卡（裁决时离线/重启收敛），保留快照内的卡
+            //（不 remount，进行中的 AskUserQuestion 选择不丢；lib/approvals.ts 注释有完整理由）
+            if (ev.state.pendingApprovalIds) {
+              setApprovals((prev) => reconcileApprovals(prev, ev.state.pendingApprovalIds!))
+            }
             if (typeof ev.state.model === 'string') {
               ingestApi.setInitInfo((prev) => ({ ...prev, model: ev.state.model }))
             }
@@ -374,13 +381,10 @@ export function useSessionSocket(opts: {
       (open) => {
         setConnected(open)
         if (!open) return
-        // 审批卡 replace 对齐（research 2026-09-18-capacitor-shell-pitfalls §6.4）：
-        // approval_resolved 是幂等清理信号而非补发——「裁决时恰好离线」的客户端收不到。
-        // attach 后服务端的 pending 重放是唯一权威：清空本地集，重放集+后续新请求重建。
-        // WS 有序保证 attach 之后到达的 approval_request 恰好覆盖两者，无一遗漏。
-        setApprovals([])
         // 重连必须 attach：Codex x| 靠它 resume；fromSeq 为 0 也要带上，
         // 才能取回「一条可落盘 cli 都没收到就断线」期间的环。首连走下面的 attach。
+        // 审批对齐不在此处清空——status 快照 reconcile（见 status case）只删失效卡，
+        // 盲清空会 unmount 仍在 pending 的卡（进行中的选择态丢失，PR #50 review 发现一）
         if (sock.reconnecting) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
         // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）
         if (ingestApi.historyOffsetRef.current != null) {
@@ -389,7 +393,8 @@ export function useSessionSocket(opts: {
       },
     )
     sockRef.current = sock
-    setApprovals([]) // 首连同一对齐口径（本地本为空，防御性同拍清空）
+    // 会话切换的审批清空由 Chat.tsx E3 拥有（deps [session.key]，先于本 effect 注册，
+    // 顺序纪律见 Chat.tsx:216 注释）；本 hook 不在首连/重连主动清（reconcile 负责）
     sock.send({ kind: 'attach' })
     return () => sock.close()
   }, [session.key])

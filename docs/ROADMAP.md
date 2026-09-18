@@ -63,8 +63,10 @@ iOS 当前替代路径：通知点正文进 app 内审批（两步，永远可�
    载荷红线见下）与 TestFlight 一步审批验收
 2. **Android 15+ 的 `dataSync` FGS 配额**（6h/24h，全天挂监听会被强停且配额内禁重启）：
    评估 specialUse 类型或到点提醒兜底——上架前必须定案
-3. ~~**客户端 attach 对齐**~~ ✅ 已做（2026-09-19，随 13.4 批次 A）：attach 发送时清空本地
-   审批集，重放集+后续事件重建（`useSessionSocket`）；e2e-mock 补「断线错过 resolved」用例
+3. ~~**客户端 attach 对齐**~~ ✅ 已做（2026-09-19，随 13.4 批次 A）：`SessionState`
+   新增 `pendingApprovalIds` 快照（服务端 pending 唯一权威），客户端 status 到达即
+   reconcile——只删快照外的卡、保留快照内的卡不 remount（盲清空会丢进行中选择，
+   PR #50 review 发现一）；e2e-mock 补「断线错过 resolved」用例
 4. SSO cookie 由 configure 时快照改共享 `CookieJar`（轮转不再陈旧）；
    `configure` 拦截补发起源检查（白名单残余风险的纵深加固，research §6.2）
 5. 上架材料（隐私声明：本地直连、无遥测——本身是卖点）；各 OEM 保活白名单引导
@@ -267,8 +269,8 @@ routes 的 sessions/misc 存量清零，Biome 红线③豁免清单移除（仅 
 
 ### 13.4 `Hub` 状态机化与前端 store 化（P2）
 
-> **批次进度**：批次 A（审批链路对齐，2026-09-19）✅——客户端 attach replace 对齐 +
-> 「断线错过 resolved」e2e 用例。**持久化缺口的结论修正**：重启后审批悬挂的正确解法是
+> **批次进度**：批次 A（审批链路对齐，2026-09-19）✅——`pendingApprovalIds` 快照 +
+> 客户端 reconcile（`lib/approvals.ts`）+「断线错过 resolved」e2e 用例。**持久化缺口的结论修正**：重启后审批悬挂的正确解法是
 > replace 对齐（服务端 pending 为唯一权威、attach 重放重建），而非 pendingApprovals 落盘——
 > AnyPlane 的 pending 只来自自 spawn 的 CLI，服务端重启即进程死、上游请求已不存在，
 > 落盘只能做「失效标记」而无裁决价值，replace 对齐后该场景自动收敛（零新状态零格式维护）。

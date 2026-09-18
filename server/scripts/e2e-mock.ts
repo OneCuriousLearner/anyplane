@@ -187,8 +187,23 @@ async function main(): Promise<void> {
   const approval = await c1.waitFor((ev) => ev.kind === 'approval_request')
   const requestId = String(approval.requestId ?? '')
   note(approval.toolName === 'Bash' && requestId.length > 0, 'approval_request 到达（can_use_tool 外化）', `requestId=${requestId}`)
+  // pendingApprovalIds 快照（客户端 reconcile 的权威源）：挂起期间 status 含该 id
+  await c1.waitFor(
+    (ev) =>
+      ev.kind === 'status' &&
+      ((ev.state as { pendingApprovalIds?: string[] })?.pendingApprovalIds ?? []).includes(requestId),
+  )
+  note(true, 'status 携带 pendingApprovalIds 快照（挂起期间含本审批）')
   c1.send({ kind: 'approval', requestId, decision: { behavior: 'allow', updatedInput: { command: 'ls' } } })
   await c1.waitFor((ev) => ev.kind === 'approval_resolved' && ev.requestId === requestId)
+  // 裁决后的 status 快照不再含该 id（reconcile 的删除依据）
+  await c1.waitFor(
+    (ev) =>
+      ev.kind === 'status' &&
+      !((ev.state as { pendingApprovalIds?: string[] })?.pendingApprovalIds ?? []).includes(requestId) &&
+      c1.log.indexOf(ev) > c1.log.indexOf(approval),
+  )
+  note(true, '裁决后 status 快照移除该 id（reconcile 删除依据成立）')
   await c1.waitFor((ev) => ev.kind === 'cli' && (ev.msg as { type?: string })?.type === 'result' && c1.log.indexOf(ev) > c1.log.indexOf(approval))
   note(true, '审批裁决后 approval_resolved + turn 收尾（mock 等到 control_response 才完成）')
 
