@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AnyPlane</string>
+    <string name="title_activity_main">AnyPlane</string>
+    <string name="package_name">run.anyplane</string>
+    <string name="custom_url_scheme">run.anyplane</string>
+</resources>

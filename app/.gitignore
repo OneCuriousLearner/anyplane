@@ -1,0 +1,9 @@
+# Capacitor / 原生工程产物
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+ios/App/Podfile.lock

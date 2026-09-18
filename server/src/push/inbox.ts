@@ -8,6 +8,7 @@ import { setInboxSink } from '../hub/broadcast'
 import { hubs } from '../hub/registry'
 import { statusOf } from '../hub/status'
 import type { WSDataInbox } from '../hub/types'
+import { summarizeInput } from '../util'
 import { fanoutPush } from './fanout'
 
 const inboxClients = new Set<ServerWebSocket<WSDataInbox>>()
@@ -45,7 +46,7 @@ export function inboxSnapshot(): Extract<InboxEvent, { type: 'snapshot' }> {
     const st = statusOf(hub.key)
     if (st.spawned || st.busy || st.waiting) states.push({ key: hub.key, ...st })
     for (const a of hub.pendingApprovals.values()) {
-      approvals.push({ type: 'approval', key: hub.key, ...a })
+      approvals.push({ type: 'approval', key: hub.key, ...a, detail: summarizeInput(a.toolName, a.input) })
     }
   }
   return { type: 'snapshot', states, approvals }

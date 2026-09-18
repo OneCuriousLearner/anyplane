@@ -1,0 +1,24 @@
+{
+  "name": "@anyplane/app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "AnyPlane 原生壳（Capacitor）：hosted WebView + 推送/通知 action。不含业务前端，业务代码全在 web/。",
+  "scripts": {
+    "sync": "cap sync",
+    "add:android": "cap add android",
+    "add:ios": "cap add ios",
+    "build:android": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/local-notifications": "^8.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.2",
+    "sharp": "^0.35.4"
+  }
+}

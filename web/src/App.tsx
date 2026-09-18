@@ -6,6 +6,7 @@ import { ModeBadge } from './components/ModeBadge'
 import { getToken, onAuthRequired, setToken } from './lib/auth'
 import type { SessionInfo } from '@anyplane/protocol'
 import { fetchSessions } from './lib/api'
+import { setupNativeBridge } from './lib/nativeBridge'
 import { sessionFromKey } from './lib/key'
 import { parseDeepLinkHash, sessionHashUrl, shouldWriteHash } from './lib/sessionHash'
 
@@ -55,6 +56,11 @@ export default function App() {
   const [resizing, setResizing] = useState(false)
 
   useEffect(() => onAuthRequired(() => setAuthNeeded(true)), [])
+
+  // 原生壳（Capacitor）内激活通知审批桥；浏览器/PWA 下是 no-op
+  useEffect(() => {
+    void setupNativeBridge()
+  }, [])
 
   // hash 路由：选中态镜像到 #s=<key>，刷新/分享链接直达当前会话。
   // 用户主动选择 pushState（浏览器后退 = 回列表）。
@@ -198,7 +204,7 @@ export default function App() {
 
   return (
     <div
-      className="h-dvh bg-bg md:grid md:grid-rows-[minmax(0,1fr)]"
+      className="h-dvh bg-bg pt-[var(--sat)] md:grid md:grid-rows-[minmax(0,1fr)]"
       style={{ gridTemplateColumns: `${sidebarW}px minmax(0, 1fr)` }}
     >
       {import.meta.env.DEV && <ModeBadge />}

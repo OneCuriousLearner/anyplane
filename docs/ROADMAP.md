@@ -40,14 +40,44 @@ AnyPlane 是这群用户的控制面：本地优先、provider 中立、双供�
 **定论**：不做 RN 重写（代码翻倍、维护翻倍，happy 的路线不是我们的路线）；
 用 **Capacitor 套壳现有 PWA** 打出 iOS/Android 原生包——日常开发仍是写 React，新增的只是构建链。
 
+**状态（2026-09-18）**：Android 半区已全链路交付并在真机验收通过（vivo OriginOS 6 /
+Android 16：锁屏审批通知 + 按钮裁决 + 前台服务常驻）。分支 `feat/capacitor-shell`
+（PR #42，含 code-review / security-review / simplify 三轮质量评审）挂起待合。
+iOS 半区 spike 收官但**被平台回归阻断**（见下）。**完整踩坑实录、IPC 契约、
+验证手法与后续项清单在 [research/2026-09-18-capacitor-shell-pitfalls.md](research/2026-09-18-capacitor-shell-pitfalls.md)
+——改 `app/` 或审批链路之前必读**，本节只留决策与待办。
+
+**形态决策（与本文早期草稿相反，决策依据见 research §1）**：**hosted 而非打包**——
+壳内不打包 `web/dist`，WebView 直连用户自托管服务端；`web/` 零改动、前端版本永远与
+服务端匹配。代价是首启填地址 + 壳内导航白名单（实现见 research §4.3）。
+
+**iOS 阻断（2026-09-18 结论）**：iOS 26 的 ShortLook 展开卡不渲染 action 按钮——
+裸应用判别器（零 Capacitor 纯 `UNUserNotification`）复现同款缺失，定性**平台回归非插件
+问题**。按钮断言已转 `XCTExpectFailure` **自更新监视器**（`app-ios-spike.yml`）：
+回归存在套件绿，**Apple 修复后套件自动变红报警——变红即是推进 APNs 的信号**。
+**APNs 服务端接入与 $99 账号暂缓**（推送落地的是同一层坏掉的 ShortLook）；
+iOS 当前替代路径：通知点正文进 app 内审批（两步，永远可用）。
+
+**待办（按优先级）**：
+1. **等监视器变红** → 启动 iOS APNs 接入（$99 账号 + `push.ts` 的 HTTP/2 + JWT 通道；
+   载荷红线见下）与 TestFlight 一步审批验收
+2. **Android 15+ 的 `dataSync` FGS 配额**（6h/24h，全天挂监听会被强停且配额内禁重启）：
+   评估 specialUse 类型或到点提醒兜底——上架前必须定案
+3. **客户端 attach 对齐**：`approval_resolved` 是幂等清理信号而非补发机制，
+   「裁决时离线」的客户端靠 attach 重放 + 本地 replace 对齐收敛（research §6.4 已备方案）
+4. SSO cookie 由 configure 时快照改共享 `CookieJar`（轮转不再陈旧）；
+   `configure` 拦截补发起源检查（白名单残余风险的纵深加固，research §6.2）
+5. 上架材料（隐私声明：本地直连、无遥测——本身是卖点）；各 OEM 保活白名单引导
+
 **价值**（2026-09-12 重排：第一条从「更可靠」这种软论据换成了硬论据，本方向优先级随之上调）：
-- **iOS 上恢复一步审批的唯一路径**。iOS 原生通知**支持**按钮（`UNNotificationCategory` +
-  `UNNotificationAction`）：Capacitor 侧用 `LocalNotifications.registerActionTypes` 在启动时注册
-  category，推送 payload 的 `aps.category` 带上同一标识符，系统即渲染按钮，点击经
-  `pushNotificationActionPerformed` 回传 `actionId`（`PushNotifications` 插件本身没有 action API，
-  但 category 机制跨插件通用——实施时先验证插件版本的可靠性，必要时补原生 delegate）。
-  方向一的降级只把 iOS 从「做不到」救到「两步」；**回到一步必须走原生壳**。
-  对一个把锁屏审批当核心卖点的项目，这条从「里程碑性质的目标」升级为「核心卖点的补全」。
+- **iOS 上恢复一步审批的唯一路径**。iOS 原生通知支持按钮（`UNNotificationCategory` +
+  `UNNotificationAction`）：Capacitor 侧 `LocalNotifications.registerActionTypes` 注册
+  category，推送 payload 的 `aps.category` 带同一标识符，系统即渲染按钮，点击经
+  `pushNotificationActionPerformed` 回传 `actionId`（`PushNotifications` 插件本身没有
+  action API，但 category 机制跨插件通用——实施时先验证插件版本可靠性，必要时补原生
+  delegate）。方向一的降级只把 iOS 从「做不到」救到「两步」；**回到一步必须走原生壳**。
+  对一个把锁屏审批当核心卖点的项目，这条是**核心卖点的补全**——当前被 iOS 26 平台回归
+  卡在最后一步（Android 侧同款机制已真机验证通过）。
 - App Store / Google Play 上架 = 分发实体
 - 分享面板、生物识别锁（可选）等原生能力解锁
 
@@ -57,18 +87,10 @@ iOS 的 Web Push 本来就走 APNs，换原生壳**不新增**第三方——这
 原生 APNs 推送的载荷 Apple 可读。审批通知的内容只有工具名 + 命令摘要 + 项目名，
 且 ntfy/Bark/Server酱 通道本来就是渠道可读（见 `push.ts` 的 webhook 段注释），
 故该取舍可接受；但**能力 URL 里的 secret 绝不能进 APNs 明文载荷**——
-原生壳应改为推送只带 requestId，客户端持长期凭据回连本机裁决。
+APNs 接入时推送只带 requestId，客户端持长期凭据回连本机裁决。
 
-**步骤草拟**：
-1. `bun add @capacitor/core @capacitor/cli`，`npx cap init`（构建产物指向 `web/dist`）
-2. 壳内服务器地址配置页（首次启动填 `https://xxx.ts.net` + token；现在 PWA 靠 URL 参数）
-3. 推送插件接入（`@capacitor/push-notifications`），复用方向一的登记端点
-4. iOS 需要 $99/年开发者账号；Android 可直接侧载 APK 先行
-5. 上架材料：隐私声明（本地直连、无遥测——这本身是卖点）
-
-**验收**：Android APK 侧载可用（连接/审批/推送全通）；iOS TestFlight 内测。
-
-## 方向八：自托管 Outbound Relay 与端到端加密（E2EE）评估
+**验收（原定标准，实现现状）**：Android APK 侧载可用（连接/审批/推送全通）✅ 已达成；
+iOS TestFlight 内测 ⏸ 被平台回归阻断，监视器在守。
 
 **定论**：坚持「不自营 SaaS 云中继服务」的产品底线，但公网访问中「通知到了、锁屏按钮点不动」（蜂窝网络入站不可达）是当前最大的可用性断点。
 

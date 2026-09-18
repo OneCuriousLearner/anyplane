@@ -68,14 +68,16 @@ describe('rewindBusy：回滚互斥守卫', () => {
 })
 
 describe('resolveApproval：裁决幂等与留痕', () => {
-  test('requestId 不在 pending：返回 false，零广播零 inbox（重复点击/别处已处理）', () => {
+  test('requestId 不在 pending：返回 false 但仍发幂等清理广播（死卡自愈），不重复投递', () => {
     const { hub, ws } = freshHub()
     expect(resolveApproval(hub, 'r-unknown', { behavior: 'allow' })).toBe(false)
-    expect(ws.sent).toEqual([])
-    expect(inboxEvents).toEqual([])
+    // 幂等清理信号：approval_resolved + status（无 error——deliverApproval 跳过）
+    const kinds = sentPayloads(ws).map((p) => p.kind)
+    expect(kinds).toEqual(['approval_resolved', 'status'])
+    expect(inboxEvents).toEqual([{ type: 'approval_resolved', key: KEY, requestId: 'r-unknown' }])
   })
 
-  test('pending 中裁决：出 pending、广播 resolved 与 status、inbox 留痕；重复裁决幂等', () => {
+  test('pending 中裁决：出 pending、广播 resolved 与 status、inbox 留痕；重复裁决只重发清理广播', () => {
     const { hub, ws } = freshHub()
     hub.pendingApprovals.set('r1', { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } })
     expect(resolveApproval(hub, 'r1', { behavior: 'allow' })).toBe(true)
@@ -95,10 +97,16 @@ describe('resolveApproval：裁决幂等与留痕', () => {
       { type: 'approval_resolved', key: KEY, requestId: 'r1' },
     ])
 
-    // 同一 requestId 再次裁决：已出 pending，幂等返回 false，无新增广播
-    const before = ws.sent.length
+    // 同一 requestId 再次裁决：返回 false、不重复投递（无新 error），
+    // 但清理广播幂等重发——页面断线错过事件的死卡靠它自愈
     expect(resolveApproval(hub, 'r1', { behavior: 'deny', message: 'x' })).toBe(false)
-    expect(ws.sent.length).toBe(before)
+    expect(sentPayloads(ws).map((p) => p.kind)).toEqual([
+      'error',
+      'approval_resolved',
+      'status',
+      'approval_resolved',
+      'status',
+    ])
   })
 })
 

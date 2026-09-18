@@ -72,6 +72,13 @@ function logWindowsPortState(stage: string, port: number): void {
 
 const distDir = resolve(import.meta.dir, '../../web/dist')
 
+/** 静态资源缓存策略：默认一律 no-cache（HTML/sw.js/manifest 都是「设备是否最新」的
+ *  判别面，启发式缓存是陈旧包温床）；只有 hash 命名的 /assets/ 产物给 immutable */
+function staticCacheHeaders(pathname: string): Record<string, string> {
+  if (pathname.startsWith('/assets/')) return { 'cache-control': 'public, max-age=31536000, immutable' }
+  return { 'cache-control': 'no-cache' }
+}
+
 if (!hasSupportedBunVersion() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') {
   log.error(`[anyplane] 需要 Bun >= 1.4.0（当前 ${Bun.version}）。1.3.x 在 Windows 有监听 socket 继承 bug，门槛已统一收到全平台。`)
   log.error('[anyplane] Run `bun upgrade` and restart the terminal. Server startup refused.')
@@ -154,11 +161,14 @@ function createServer(): ReturnType<typeof Bun.serve<WSData>> {
 
       // 静态托管 web/dist
       if (existsSync(distDir)) {
+        // 缓存规则见 staticCacheHeaders：默认 no-cache——原生壳 WebView 若缓存住旧
+        // index.html，其引用的旧 hash 块在 dist 重建后 404，动态 import 静默失败
+        // 整桥失效（实机踩坑）；hash 命名的 /assets/ 反向给 immutable 长缓存
         const p = join(distDir, url.pathname === '/' ? 'index.html' : url.pathname)
         const f = Bun.file(p)
-        if (await f.exists()) return new Response(f)
+        if (await f.exists()) return new Response(f, { headers: staticCacheHeaders(url.pathname) })
         const index = Bun.file(join(distDir, 'index.html')) // SPA 回退
-        if (await index.exists()) return new Response(index)
+        if (await index.exists()) return new Response(index, { headers: staticCacheHeaders('/index.html') })
       }
       return new Response('anyplane server (web 未构建，请用 vite dev 或 bun run build)', { status: 200 })
     },

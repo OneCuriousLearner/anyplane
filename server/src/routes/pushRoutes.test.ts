@@ -81,6 +81,6 @@ describe('审批能力边界', () => {
     )
 
     expect(response?.status).toBe(400)
-    expect(await response!.json()).toEqual({ ok: false, error: 'd 只接受 allow/deny' })
+    expect(await response!.json()).toEqual({ ok: false, error: '只接受 allow/deny' })
   })
 })

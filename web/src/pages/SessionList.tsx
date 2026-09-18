@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArchivedEntry, BackendName, InboxApproval, SessionInfo } from '@anyplane/protocol'
 import {
@@ -12,11 +12,17 @@ import {
   renameSession,
   restoreSession,
 } from '../lib/api'
-import { InboxSocket } from '../lib/inbox'
+import { inboxSubscribe } from '../lib/inboxBus'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
 import { BackendStatusCard } from '../components/BackendStatusCard'
+import { NativeNotifyBanner } from '../components/NativeNotifyBanner'
+import {
+  getNativeBridgeStatus,
+  requestBatteryExemptionNav,
+  subscribeNativeBridge,
+} from '../lib/nativeBridge'
 import { getThemeChoice, setThemeChoice, toggleTheme, type ThemeChoice } from '../lib/theme'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -149,6 +155,8 @@ export function SessionList(props: {
   const [pushTestBusy, setPushTestBusy] = useState(false)
   const [pushBusy, setPushBusy] = useState(false)
   const [notifyMenuOpen, setNotifyMenuOpen] = useState(false)
+  const nativeBridge = useSyncExternalStore(subscribeNativeBridge, getNativeBridgeStatus)
+  const nativeAndroid = nativeBridge.active && nativeBridge.platform === 'android'
   // 主题长按菜单：timer 计时 500ms 长按，long 标记吞掉随后那次 click
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const themeTimer = useRef<number | undefined>(undefined)
@@ -199,9 +207,9 @@ export function SessionList(props: {
     toastTimerRef.current = setTimeout(() => setToast(null), 4000)
   }
 
-  // 全局收件箱：审批队列 + 完成/错误通知
+  // 全局收件箱：审批队列 + 完成/错误通知（单例总线，与原生桥共用一条连接）
   useEffect(() => {
-    const sock = new InboxSocket((ev) => {
+    const unsubscribe = inboxSubscribe((ev) => {
       switch (ev.type) {
         case 'snapshot':
           setApprovals(ev.approvals)
@@ -221,7 +229,7 @@ export function SessionList(props: {
           break
       }
     })
-    return () => sock.close()
+    return unsubscribe
   }, [])
 
   // 标题角标：待审批数
@@ -490,6 +498,24 @@ export function SessionList(props: {
                   action={pushSupported() ? (pushEndpoint ? '退订' : '订阅') : undefined}
                 />
               </button>
+              {/* 原生壳（Android）：后台保活入口——国产 ROM 省电会掐前台服务长连 */}
+              {nativeAndroid && (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5 text-left hover:bg-surface"
+                  onClick={() => {
+                    requestBatteryExemptionNav()
+                    setNotifyMenuOpen(false)
+                  }}
+                >
+                  <NotifyRow
+                    on={false}
+                    title="后台保活"
+                    desc="常驻通知频繁「重连中」时：点此关闭电池优化"
+                    action="去设置"
+                  />
+                </button>
+              )}
               {/* webhook 通道：配置文件管理（ntfy/Bark/Server酱），只读展示 */}
               <div className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5">
                 <NotifyRow
@@ -525,6 +551,9 @@ export function SessionList(props: {
           否则分组头 sticky top 相对含 padding 的 scrollport 计算，会把分组头推过首行） */}
       <div className="flex-1 overflow-y-auto px-2 pb-3">
         <div className="h-[58px] shrink-0" aria-hidden />
+        {/* 原生壳权限/桥异常横幅（浏览器渲染 null）。必须在滚动流内、顶栏占位之后：
+            顶栏是 absolute 悬浮层，横幅放它外面会被压住并把列表整体下顶（实机踩坑） */}
+        <NativeNotifyBanner />
         {view === 'archived' ? (
           <div>
             {archived.length === 0 && <p className="p-4 font-mono text-xs text-faint">回收站为空</p>}

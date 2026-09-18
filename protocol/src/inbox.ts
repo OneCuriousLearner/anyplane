@@ -8,6 +8,8 @@ export interface InboxApproval {
   requestId: string
   toolName: string
   input: unknown
+  /** 服务端唯一口径（summarizeInput）算好的审批摘要；老服务端可能缺省，消费方准备回退 */
+  detail?: string
 }
 
 /** 快照里每个活跃会话的状态行：statusOf 全集 + 会话 key */

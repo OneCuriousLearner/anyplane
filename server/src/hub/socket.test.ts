@@ -113,7 +113,8 @@ describe('wsOpen：inbox 频道', () => {
     }
     expect(snap.type).toBe('snapshot')
     expect(snap.approvals).toEqual([
-      { type: 'approval', key, requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } },
+      // detail 是服务端唯一口径（summarizeInput）算好的摘要，Bash → command 本体
+      { type: 'approval', key, requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, detail: 'ls' },
     ])
     const row = snap.states.find((s) => s.key === key)
     expect(row).toBeDefined()

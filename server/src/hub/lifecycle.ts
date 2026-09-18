@@ -4,6 +4,7 @@ import { portFor } from '../backends/port'
 import type { ApprovalDecision } from '@anyplane/protocol'
 import { errorMessage } from '../util'
 import { broadcast, broadcastError, publishInbox } from './broadcast'
+import { hubs } from './registry'
 import { pushStatus } from './status'
 import type { Hub } from './types'
 
@@ -39,12 +40,50 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
 /**
  * 审批解析共享路径：WS approval 消息与推送直接审批（/api/approval-action）共用。
  * 返回 false 表示 requestId 已不在 pending（重复点击/已在别处处理）。
+ * 注意：approval_resolved 广播是幂等清理信号——即使 pending 已不存在也照发：
+ * 在线客户端的 stale 卡借此自愈（多设备场景）；它不是补发机制——fire-and-forget
+ * 的广播救不了「裁决时恰好离线」的客户端，那一类只能靠 attach 时的 pending 重放
+ * 对齐（见 broadcast.ts replayApprovals；客户端 replace 对齐是后续项，见 ROADMAP）。
  */
 export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
-  if (!hub.pendingApprovals.delete(requestId)) return false
-  deliverApproval(hub, requestId, decision)
+  const had = hub.pendingApprovals.delete(requestId)
+  if (had) deliverApproval(hub, requestId, decision)
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   pushStatus(hub)
-  return true
+  return had
+}
+
+/** REST 审批公共核的返回：路由层把 ok:false 映射为对应 HTTP 状态码。 */
+export type RestApprovalResult =
+  | { ok: true; toolName: string }
+  | { ok: false; status: 400 | 409; error: string }
+
+/**
+ * REST 审批公共核：能力 URL（/api/approval-action，secret 鉴权）与
+ * 原生壳令牌端点（/api/approvals/resolve，Bearer 鉴权）共用。
+ * decision 只接受 allow/deny；allow 沿用 pending 里的原始 input；
+ * denyMessage 由调用方给出（留痕文案区分触发通道）。
+ */
+export function resolveApprovalRest(
+  key: string,
+  requestId: string,
+  decision: string,
+  denyMessage: string,
+): RestApprovalResult {
+  if (decision !== 'allow' && decision !== 'deny') {
+    return { ok: false, status: 400, error: '只接受 allow/deny' }
+  }
+  const hub = hubs.get(key)
+  const pending = hub?.pendingApprovals.get(requestId)
+  if (!hub || !pending) return { ok: false, status: 409, error: '该审批已处理或不存在' }
+  // get 与 delete 在同一事件循环刻度内，resolveApproval 在此处必然成功（无 await 窗口）
+  resolveApproval(
+    hub,
+    requestId,
+    decision === 'allow'
+      ? { behavior: 'allow', updatedInput: pending.input }
+      : { behavior: 'deny', message: denyMessage },
+  )
+  return { ok: true, toolName: pending.toolName }
 }

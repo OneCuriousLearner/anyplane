@@ -9,6 +9,8 @@
   },
   "dependencies": {
     "@anyplane/protocol": "workspace:*",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/local-notifications": "^8.3.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

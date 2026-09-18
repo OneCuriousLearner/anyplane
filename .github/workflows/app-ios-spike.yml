@@ -1,0 +1,97 @@
+name: app-ios-spike
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'app/ios/ci/**'
+      - 'web/src/lib/nativeBridge.ts'
+      - '.github/workflows/app-ios-spike.yml'
+
+jobs:
+  spike:
+    name: iOS simulator 通知 action spike
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      # 业务前端（桩服务器静态托管它；server.url 指回桩）
+      - run: bun run build
+
+      # CI 构建注入 server.url：跳过引导页直连桩（仅本工作流的临时改动，不入库）
+      - name: Inject server.url for spike
+        working-directory: app
+        run: |
+          ruby -e '
+            c = File.read("capacitor.config.ts")
+            # 必须插进既有 server 块——另起 server 键会被后面的 allowNavigation 块覆盖
+            c.sub!("allowNavigation: ['"'"'*'"'"'],", "url: '"'"'http://127.0.0.1:7480/?testNotify=1'"'"',\n    allowNavigation: ['"'"'*'"'"'],") or abort("inject failed")
+            File.write("capacitor.config.ts", c)
+          '
+          grep -A2 'url:' capacitor.config.ts
+          bunx cap sync ios
+
+      # 桩服务器：静态托管 dist + 记录裁决 POST
+      - name: Start stub server
+        run: |
+          rm -f /tmp/resolve.log
+          nohup bun app/ios/ci/stub-server.ts web/dist > /tmp/stub.log 2>&1 &
+          sleep 2
+          curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7480/
+
+      # 编译（simulator 无签名）
+      - name: Build app
+        working-directory: app
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+
+      # 注入 UI 测试目标并运行
+      - name: Add UI test target & run spike
+        working-directory: app
+        run: |
+          gem install xcodeproj --no-document
+          ruby ../app/ios/ci/add-ui-tests.rb
+          xcrun simctl shutdown all || true
+          xcrun simctl erase all
+          xcodebuild test -project ios/App/App.xcodeproj -scheme App \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            CODE_SIGNING_ALLOWED=NO \
+            -resultBundlePath /tmp/spike.xcresult
+
+      - name: Assert iOS 链路可达部分
+        run: |
+          echo '--- stub.log ---'; cat /tmp/stub.log || true
+          echo '--- resolve.log ---'; cat /tmp/resolve.log || true
+          # 硬断言：iOS 侧 JS 链（registerActionTypes ok + 钩子调度成功）
+          grep -q 'register-action-types' /tmp/stub.log
+          grep -q 'test-notify' /tmp/stub.log
+          # 裁决 POST：iOS 26 渲染回归期间按钮不可点（XCTExpectFailure 包容），
+          # 有则喜报无则预期（act 链已由浏览器/Android 双侧验证覆盖）
+          grep -q 'ci-test-1' /tmp/resolve.log && echo '裁决 POST 已到达' || echo '按钮不可点（回归中），无 POST 属预期'
+
+      - name: Export screenshots
+        if: always()
+        run: |
+          xcrun xcresulttool export attachments --path /tmp/spike.xcresult --output-path /tmp/attachments || true
+          ls -la /tmp/attachments || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-spike
+          path: |
+            /tmp/resolve.log
+            /tmp/stub.log
+            /tmp/attachments
+            /tmp/spike.xcresult
+          if-no-files-found: ignore

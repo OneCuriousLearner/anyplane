@@ -23,3 +23,16 @@ export function sessionHashUrl(key: string | undefined, path = '', search = ''):
 export function shouldWriteHash(currentKey: string | null, nextKey: string | undefined): boolean {
   return (nextKey ?? null) !== currentKey
 }
+
+/** 读取并清除指定 query 参数（?token= / ?nativeAction= 同款消费模式） */
+export function consumeQueryParam(name: string): string | null {
+  // 非浏览器/测试环境 location.href 可能缺失：退回仅含 search 的基座
+  const base = typeof location === 'undefined' ? 'http://localhost/' : location.href || 'http://localhost/'
+  const url = new URL(base)
+  const value = url.searchParams.get(name)
+  if (value !== null) {
+    url.searchParams.delete(name)
+    history.replaceState(null, '', url.pathname + url.search + url.hash)
+  }
+  return value
+}

@@ -12,6 +12,8 @@ import { config } from '../config'
 import { FsBrowseError, listDirectories } from '../fsbrowse'
 import { lineageFor, type HandoffDetail } from '../handoff'
 import { runHandoff } from '../hub/handoff'
+import { resolveApprovalRest } from '../hub/lifecycle'
+import { log } from '../log'
 import { resolveUpload } from '../uploads'
 import { errorMessage } from '../util'
 import { json, readJsonBody } from './http'
@@ -53,6 +55,26 @@ export async function handleMiscRoutes(
       body.detail === 'brief' || body.detail === 'detailed' ? body.detail : 'standard'
     const error = deps.runHandoff(body.fromKey, body.toBackend, detail)
     if (error) return json({ error }, { status: 400 })
+    return json({ ok: true })
+  }
+  // 原生壳（Capacitor）通知按钮的一键审批：Bearer 令牌鉴权（走通用 auth 中间件），
+  // 与能力 URL 的 /api/approval-action 互为兄弟路径，共用 resolveApprovalRest 核。
+  // 红线不变：审批规则引擎不经过任何 REST 路径，一键审批永远是人触发。
+  if (url.pathname === '/api/approvals/resolve' && req.method === 'POST') {
+    const body = await readJsonBody<{ key?: string; requestId?: string; decision?: string }>(req)
+    if (!body.key || !body.requestId) return json({ error: 'key 与 requestId 必填' }, { status: 400 })
+    const r = resolveApprovalRest(body.key, body.requestId, body.decision ?? '', '用户在原生壳通知上拒绝了该操作')
+    if (!r.ok) return json({ error: r.error }, { status: r.status })
+    log.info(`[app] 原生壳通知审批 ${body.decision}：${body.key} · ${r.toolName}`)
+    return json({ ok: true })
+  }
+  // 客户端遥测：原生壳把关键里程碑（权限状态/插件调用成败/异常）上报到服务端日志——
+  // 设备侧静默死无法本地排查时的唯一事实来源（方向二实机调试产出）
+  if (url.pathname === '/api/client-log' && req.method === 'POST') {
+    const body = await readJsonBody<{ tag?: string; msg?: string }>(req)
+    const tag = String(body.tag ?? '').slice(0, 40)
+    const msg = String(body.msg ?? '').slice(0, 300)
+    if (tag) log.info(`[client:${tag}] ${msg}`)
     return json({ ok: true })
   }
   if (url.pathname === '/api/lineage' && req.method === 'GET') {

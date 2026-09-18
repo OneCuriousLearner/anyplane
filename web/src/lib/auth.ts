@@ -1,15 +1,14 @@
 // 访问令牌管理：URL ?token= 首次注入 → localStorage 持久化 → 从地址栏抹除。
 // 服务端未配置 authToken 时令牌为空即可（不鉴权）。
 
+import { consumeQueryParam } from './sessionHash'
+
 const STORAGE_KEY = 'anyplane-token'
 
 export function getToken(): string | null {
-  const q = new URLSearchParams(location.search).get('token')
+  const q = consumeQueryParam('token')
   if (q) {
     localStorage.setItem(STORAGE_KEY, q)
-    const url = new URL(location.href)
-    url.searchParams.delete('token')
-    history.replaceState(null, '', url.pathname + url.search + url.hash)
     return q
   }
   return localStorage.getItem(STORAGE_KEY)

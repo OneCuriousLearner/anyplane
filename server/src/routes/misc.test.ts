@@ -109,3 +109,99 @@ describe('GET /api/backends/status', () => {
     expect(await boom!.json()).toEqual({ error: 'probe exploded' })
   })
 })
+
+describe('POST /api/approvals/resolve（原生壳一键审批）', () => {
+  const KEY = 's|repo|native-bridge-test'
+
+  function resolveReq(body: unknown): Request {
+    return new Request('http://localhost/api/approvals/resolve', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  }
+
+  test('缺 key/requestId 返回 400', async () => {
+    const r = await handleMiscRoutes(resolveReq({ decision: 'allow' }), new URL('http://localhost/api/approvals/resolve'), deps({}))
+    expect(r?.status).toBe(400)
+  })
+
+  test('decision 非法返回 400', async () => {
+    const r = await handleMiscRoutes(
+      resolveReq({ key: KEY, requestId: 'r1', decision: 'maybe' }),
+      new URL('http://localhost/api/approvals/resolve'),
+      deps({}),
+    )
+    expect(r?.status).toBe(400)
+    expect(await r!.json()).toEqual({ error: '只接受 allow/deny' })
+  })
+
+  test('未知会话或已处理返回 409', async () => {
+    const r = await handleMiscRoutes(
+      resolveReq({ key: KEY, requestId: 'r-gone', decision: 'allow' }),
+      new URL('http://localhost/api/approvals/resolve'),
+      deps({}),
+    )
+    expect(r?.status).toBe(409)
+  })
+
+  test('allow 成功裁决并清空 pending', async () => {
+    const { hubs } = await import('../hub/registry')
+    hubs.set(KEY, {
+      key: KEY,
+      clients: new Set(),
+      pendingApprovals: new Map([['r1', { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } }]]),
+    })
+    try {
+      const r = await handleMiscRoutes(
+        resolveReq({ key: KEY, requestId: 'r1', decision: 'allow' }),
+        new URL('http://localhost/api/approvals/resolve'),
+        deps({}),
+      )
+      expect(r?.status).toBe(200)
+      expect(await r!.json()).toEqual({ ok: true })
+      expect(hubs.get(KEY)?.pendingApprovals.size).toBe(0)
+      // 重复点击：同一 requestId 第二次裁决返回 409
+      const again = await handleMiscRoutes(
+        resolveReq({ key: KEY, requestId: 'r1', decision: 'allow' }),
+        new URL('http://localhost/api/approvals/resolve'),
+        deps({}),
+      )
+      expect(again?.status).toBe(409)
+    } finally {
+      hubs.delete(KEY)
+    }
+  })
+})
+
+describe('POST /api/client-log（设备侧遥测）', () => {
+  test('正常上报返回 ok；空 tag 不落日志', async () => {
+    const logs: string[] = []
+    const { log } = await import('../log')
+    const orig = log.info
+    log.info = (m: unknown) => {
+      logs.push(String(m))
+    }
+    try {
+      const ok = await handleMiscRoutes(
+        new Request('http://localhost/api/client-log', {
+          method: 'POST',
+          body: JSON.stringify({ tag: 'native', msg: 'configure ok' }),
+        }),
+        new URL('http://localhost/api/client-log'),
+        deps({}),
+      )
+      expect(ok?.status).toBe(200)
+      expect(logs).toEqual(['[client:native] configure ok'])
+
+      const empty = await handleMiscRoutes(
+        new Request('http://localhost/api/client-log', { method: 'POST', body: JSON.stringify({ msg: 'x' }) }),
+        new URL('http://localhost/api/client-log'),
+        deps({}),
+      )
+      expect(empty?.status).toBe(200)
+      expect(logs.length).toBe(1)
+    } finally {
+      log.info = orig
+    }
+  })
+})

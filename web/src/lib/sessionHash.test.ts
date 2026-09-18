@@ -7,6 +7,12 @@ describe('parseDeepLinkHash', () => {
     expect(parseDeepLinkHash(`#s=${encodeURIComponent(key)}`)).toBe(key)
   })
 
+  test('含引号/反斜杠的 key 经 encodeURIComponent 往返（引导页冷启动接力）', () => {
+    const key = `s|repo|it's\\a"quote`
+    expect(parseDeepLinkHash(`#s=${encodeURIComponent(key)}`)).toBe(key)
+    expect(sessionHashUrl(key)).toBe(`#s=${encodeURIComponent(key)}`)
+  })
+
   test('无 hash / 空 #s= / 非会话 hash → null', () => {
     expect(parseDeepLinkHash('')).toBeNull()
     expect(parseDeepLinkHash('#')).toBeNull()

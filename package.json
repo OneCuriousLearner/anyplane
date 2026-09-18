@@ -62,6 +62,7 @@
   "workspaces": [
     "server",
     "web",
+    "app",
     "protocol"
   ]
 }
