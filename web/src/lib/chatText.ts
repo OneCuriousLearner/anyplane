@@ -30,7 +30,7 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export const PHASE_LABEL: Record<string, string> = {
+const PHASE_LABEL: Record<string, string> = {
   requesting: '请求中',
   compacting: '压缩上下文',
 }

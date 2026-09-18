@@ -17,9 +17,9 @@ export type Block =
   | { kind: 'image'; src: string }
   | ToolBlock
 
-export type CollapsibleBlock = Extract<Block, { kind: 'thinking' | 'tool' }>
+type CollapsibleBlock = Extract<Block, { kind: 'thinking' | 'tool' }>
 
-export function isCollapsibleBlock(b: Block): b is CollapsibleBlock {
+function isCollapsibleBlock(b: Block): b is CollapsibleBlock {
   return b.kind === 'thinking' || b.kind === 'tool'
 }
 

@@ -1,4 +1,4 @@
-export interface AskUserQuestionOption {
+interface AskUserQuestionOption {
   label: string
   description: string
   preview?: string

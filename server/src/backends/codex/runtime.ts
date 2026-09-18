@@ -16,13 +16,6 @@ import {
 } from './history'
 
 export { CodexSession, type CodexSpawnOpts } from './session'
-export {
-  extractTokenCountFromRolloutTail,
-  mapPermissionMode,
-  reasoningSidecarUuid,
-  sandboxPolicyOf,
-  type RolloutTokenCount,
-} from './mapping'
 
 /** app-server 握手（initialize + initialized）：ensureRpc 与一次性探测（backends/status）
  *  共用同一参数面——clientInfo/capabilities 只有一份，防两条 spawn 路径漂移。 */
@@ -41,7 +34,7 @@ export async function handshakeAppServer(rpc: RpcClient, timeoutMs = 30_000): Pr
 
 /** 会话发现的来源过滤（active 与 archived 统一口径；'appServer' 经上游 filters.rs 映射为 mcp）。
  *  discovery.ts 读盘轨的 INCLUDED_SOURCES 与此一一对应——改动必须三处对账。 */
-export const THREAD_SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer'] as const
+const THREAD_SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer'] as const
 
 /** thread/list 的公共过滤参数。modelProviders: [] = 包含全部 provider（上游语义）——
  *  缺省时上游只回当前 config 的 provider，切换过 provider 的用户会整段丢历史；

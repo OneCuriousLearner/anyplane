@@ -42,7 +42,7 @@ export function setThemeChoice(choice: ThemeChoice): void {
 }
 
 /** 当前生效主题（手动选择优先，缺省跟随系统） */
-export function currentTheme(): 'light' | 'dark' {
+function currentTheme(): 'light' | 'dark' {
   const t = document.documentElement.dataset.theme
   if (t === 'light' || t === 'dark') return t
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'

@@ -6,10 +6,10 @@ import { resolveModel as resolveModelName } from '../lib/api'
 // ---- 视觉编码（E2 液态玻璃 token：唯一彩色面 = 审批红，其余走灰阶） ----
 // mode：色点（危险度语义）  effort：档位 glyph（强度渐强）
 
-export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
-export type Effort = (typeof EFFORT_LEVELS)[number]
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+type Effort = (typeof EFFORT_LEVELS)[number]
 
-export const EFFORT_GLYPH: Record<Effort, string> = {
+const EFFORT_GLYPH: Record<Effort, string> = {
   low: '○',
   medium: '◐',
   high: '⬤',
