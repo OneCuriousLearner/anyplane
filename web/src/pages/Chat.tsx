@@ -31,6 +31,7 @@ import { CodexMark } from '../components/CodexMark'
 import { buildTranscriptRows, nextId, rewindPreview, usageSummary, type Block } from '../lib/blocks'
 import { statusLineOf } from '../lib/chatText'
 import { capabilitiesOf, QUERY_LABELS } from '../lib/capabilities'
+import { createStore, useStore } from '../lib/store'
 import { interceptSlash, type SlashAction } from '../lib/slashIntercept'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import type { NavigateSession } from '../lib/sessionHash'
@@ -95,17 +96,17 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
    *  经 ref 桥接给滚动 hook 的 onReachTop——loadEarlier 需要滚动 hook 的 preparePrepend，
    *  两者互相引用，ref 打破声明顺序环。
    *  两道过期守卫：会话切换（sockRef.key 比对，then/catch 都要有——catch 漏了会把错误卡
-   *  写进新会话抄本）与分页纪元（在途期间 applyHistory/reset 重置过坐标系的响应作废）。 */
-  const [fetchingEarlier, setFetchingEarlier] = useState(false)
-  const fetchingEarlierRef = useRef(false)
+   *  写进新会话抄本）与分页纪元（在途期间 applyHistory/reset 重置过坐标系的响应作废）。
+   *  fetchingEarlier 走 store（渲染外事件路径与渲染内 disabled 读同值，13.4 批次 C1） */
+  const [fetchingEarlierStore] = useState(() => createStore(false))
+  const fetchingEarlier = useStore(fetchingEarlierStore)
   const loadEarlierRef = useRef<() => void>(() => {})
   loadEarlierRef.current = () => {
     const before = historyBeforeRef.current
-    if (before == null || fetchingEarlierRef.current || isCodex) return
+    if (before == null || fetchingEarlierStore.get() || isCodex) return
     const keyAtStart = session.key
     const epochAtStart = ingestApi.historyEpochRef.current
-    fetchingEarlierRef.current = true
-    setFetchingEarlier(true)
+    fetchingEarlierStore.set(true)
     fetchHistory(session.slug, session.sessionId, { before })
       .then((resp) => {
         if (sockRef.current?.key !== keyAtStart) return // 已切走
@@ -117,8 +118,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         if (sockRef.current?.key === keyAtStart) ingestApi.pushSystem('⚠ 加载更早消息失败', 'error')
       })
       .finally(() => {
-        fetchingEarlierRef.current = false
-        setFetchingEarlier(false)
+        fetchingEarlierStore.set(false)
       })
   }
 

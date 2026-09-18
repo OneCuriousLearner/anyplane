@@ -75,6 +75,7 @@ e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干�
 
 - 开发前端时不使用任何 emoji 以保持风格一致，统一使用图标库或自行绘制。
 - 大部分交互逻辑在 `pages/Chat.tsx`；各子系统的入口文件读目录即得，不在此列。
+- **`lib/store.ts` — 渲染外可变状态的统一容器**（`createStore` + `useStore`，useSyncExternalStore 同形自实现，零第三方依赖）：WS 回调在渲染外触发，需要「渲染外读写 + 渲染内订阅」的状态一律走 store，**不再新增 ref+state 手写双写**（13.4 批次 C1 起；messages/draft/fetchingEarlier 已迁，其余存量随触碰随迁）。
 - `lib/ws.ts` — WS 客户端。每条下行 `cli` 事件带服务端分配的单调 `seq`，客户端跨重连维护 `lastSeq` 高水位并在 `attach` 时通过 `fromSeq` 触发单播补发（照搬官方 Bridge 序号游标模型）；断线太久环底被挤掉时服务端推送 `replay_gap` 引导前端重载历史。
 - **`lib/ingest.ts` — 消息 ingest 归并唯一实现**：live 流、tail 实时追加、历史批量加载三路共用，彻底消灭行为分叉。tool_use ↔ tool_result 跨消息配对成卡；先到的结果进 `pending` 乱序缓冲，待工具块落地时补齐修复；真孤儿推迟到批次收尾或权威 idle 时浮现为提示。
 - **抄本滚动与尾部窗口化三条红线**（两次回退的根因，踩坑实录见 `docs/research/2026-09-12-transcript-windowing.md`）：①初始定位必须先于窗口化——首个非空抄本 layout 阶段 `auto` 直达底部，完成前扩窗门控恒关；②扩窗只认向上滚动——本仓库不存在程序化向上滚动（跟随/回底/锚定补偿全向下，新增向上滚动必须套 ignoreScrollUntil 守卫）；③窗口粒度是渲染行不是消息数。Transcript 行 key 必须保持内容派生（msg.id / 首块 key），索引 key 会让扩窗平移 remount 掉已展开的思考/工具卡。翻页 prepend 前必须先 `preparePrepend()` 捕获锚点。

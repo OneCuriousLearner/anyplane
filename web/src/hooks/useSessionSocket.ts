@@ -69,7 +69,7 @@ export function useSessionSocket(opts: {
       ingestApi.pendingResultsRef.current.clear()
       ingestApi.setPhase(undefined)
       const gapKey = session.key
-      const limit = preserveLoaded ? ingestApi.messagesRef.current.length + 500 : undefined
+      const limit = preserveLoaded ? ingestApi.messagesStore.get().length + 500 : undefined
       loadSessionHistory({ limit })
         .then((resp) => {
           if (sockRef.current?.key !== gapKey) return // 异步返回时已切走
@@ -107,7 +107,7 @@ export function useSessionSocket(opts: {
             if (ev.state.exited) {
               ingestApi.commitDraft()
               ingestApi.setPhase(undefined)
-            } else if (ev.state.sessionState === 'idle' && !ev.state.busy && !ev.state.waiting && ingestApi.draftRef.current) {
+            } else if (ev.state.sessionState === 'idle' && !ev.state.busy && !ev.state.waiting && ingestApi.draftStore.get()) {
               // 自愈：权威 idle 到达时清掉陈旧流式草稿。服务端重启/断线期间 turn 终结时
               // 客户端拿不到终结事件，"生成中"会永远挂着（实测：watch 重载后复现）。
               // 等审批（waiting/requires_action）期间草稿是合法的，不在此清理。
@@ -149,12 +149,12 @@ export function useSessionSocket(opts: {
             break
           case 'btw_pending':
             // 创建侧问卡片（发送方与其他客户端都以此为准）
-            if (!ingestApi.messagesRef.current.some((m) => m.btw === ev.question && m.btwPending)) {
+            if (!ingestApi.messagesStore.get().some((m) => m.btw === ev.question && m.btwPending)) {
               ingestApi.pushMsg({ id: nextId(), role: 'assistant', btw: ev.question, btwPending: true, blocks: [] })
             }
             break
           case 'btw_delta': {
-            const target = ingestApi.messagesRef.current.find((m) => m.btw === ev.question && m.btwPending)
+            const target = ingestApi.messagesStore.get().find((m) => m.btw === ev.question && m.btwPending)
             if (!target) break
             ingestApi.setMsgs((prev) =>
               prev.map((m) => {
@@ -180,7 +180,7 @@ export function useSessionSocket(opts: {
           case 'btw_result': {
             // 找不到 pending 卡（如校验失败路径或漏收 btw_pending）时自行建卡落地结果——
             // 配对不变量由数据保证，不依赖服务端的消息时序
-            if (!ingestApi.messagesRef.current.some((m) => m.btw === ev.question && m.btwPending)) {
+            if (!ingestApi.messagesStore.get().some((m) => m.btw === ev.question && m.btwPending)) {
               const blocks: Block[] = ev.ok
                 ? ev.text.trim()
                   ? [{ kind: 'text', text: ev.text }]
@@ -322,7 +322,7 @@ export function useSessionSocket(opts: {
           case 'tail': {
             // 外部会话 transcript 追加：与历史共用同一套归并；uuid 去重兜底（重连续订可能重放）
             const h = ev.msg
-            if (h.uuid && ingestApi.messagesRef.current.some((m) => m.id === h.uuid)) break
+            if (h.uuid && ingestApi.messagesStore.get().some((m) => m.id === h.uuid)) break
             ingestApi.setMsgs((prev) => {
               const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
               appendHistoryMsg(st, h)

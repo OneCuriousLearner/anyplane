@@ -282,7 +282,11 @@ routes 的 sessions/misc 存量清零，Biome 红线③豁免清单移除（仅 
 > `transition?: { kind: 'rewind' } | { kind: 'rekey' }`，非法组合不可表达；
 > 字段按语义分组注释（types.ts）。`SessionState.rewindPending` 协议面不动（镜像点改读
 > transition）。socket.ts「按客户端成员资格找回 hub」是 /clear 三层重键的防御层，保留。
-> 批次 C（前端 store 化）待排期。
+> 批次 C 拆分：C1（store 机制 + 双写迁移，2026-09-19）✅——`lib/store.ts`
+>（`createStore` + `useSyncExternalStore` 同形自实现，零第三方依赖），迁移三对真双写
+>（messages / draft / fetchingEarlier）；taskMap 等纯内部坐标渲染不读、留 ref（不是双写）。
+> chrome-devtools 实测：历史渲染 + 初始定位 / 流式草稿固化 / 会话切换无残留。
+> C2（props 爆炸收敛：Composer 32 / ChatHeader 31 的分组或 Context）待排期。
 
 - **`Hub`**：17 字段 14 个可选，每个可选字段是一个隐式状态位，类型不阻止非法组合。
   `hub/socket.ts:54-63`「按客户端成员资格找回 hub」已是补丁上的补丁。
