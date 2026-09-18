@@ -176,22 +176,28 @@
     max-width: 66rem; margin: 0 auto; padding: 0 1.5rem;
   }
   .frame .card {
-    border-radius: 16px; overflow: hidden; background: #0a0a0b;
+    border-radius: 16px; overflow: hidden; background: #f4f4f5;
     border: 1px solid var(--hair);
     box-shadow:
       0 90px 160px -50px rgba(0,0,0,.95),
       0 30px 60px -30px rgba(0,0,0,.8);
   }
+  /* 仿 macOS 栏与 greeting.png 的浅色 UI 保持一致 */
   .frame .bar {
     display: flex; align-items: center; gap: .45rem;
-    padding: .7rem 1rem; background: #141416; border-bottom: 1px solid rgba(255,255,255,.05);
+    padding: .7rem 1rem; background: #ececef; border-bottom: 1px solid rgba(0,0,0,.07);
   }
-  .frame .bar i { width: .6rem; height: .6rem; border-radius: 50%; background: rgba(255,255,255,.14); }
+  .frame .bar i { width: .6rem; height: .6rem; border-radius: 50%; background: rgba(0,0,0,.16); }
   .frame .bar .url {
-    margin-left: .8rem; font: .68rem var(--mono); color: rgba(255,255,255,.35);
-    background: rgba(255,255,255,.06); border-radius: 6px; padding: .18rem .7rem;
+    margin-left: .8rem; font: .68rem var(--mono); color: rgba(0,0,0,.42);
+    background: rgba(0,0,0,.055); border-radius: 6px; padding: .18rem .7rem;
   }
   .frame img { width: 100%; display: block; }
+  .frame .phone {
+    position: absolute; right: clamp(.2rem, 3vw, 2.4rem); bottom: -3rem; z-index: 3;
+    width: clamp(150px, 21vw, 250px);
+    filter: drop-shadow(0 46px 70px rgba(0,0,0,.7));
+  }
   .proof .line {
     position: relative; z-index: 2;
     max-width: 40rem; margin: 4rem auto 0; text-align: center;
@@ -256,6 +262,12 @@
     .manual .k { min-width: 0; }
     .manual li { flex-direction: column; gap: .25rem; }
     .flapline { gap: .12em; }
+    .frame .phone { width: 27vw; right: .1rem; bottom: -1.2rem; }
+    /* 移动端牌面放大：牌子左对齐，右侧空白列溢出视口（clip 不产生横向滚动） */
+    .boardzone { padding-left: 0; padding-right: 0; align-items: flex-start; overflow-x: clip; }
+    .flapboard { margin-left: 1rem; }
+    .flap { font-size: clamp(1.05rem, 5.2vw, 1.45rem); }
+    .boardcap { align-self: center; padding: 0 1.5rem; }
   }
   @media (max-width: 560px) {
     .wordmark { display: none; }
@@ -322,6 +334,7 @@
         <div class="bar"><i></i><i></i><i></i><span class="url">localhost:7480</span></div>
         <img src="greeting.png" alt="AnyPlane session view: project-grouped session list and a live conversation" loading="lazy">
       </div>
+      <img class="phone" src="greeting_mobile.png" alt="The same AnyPlane session on a phone, tracking live" loading="lazy">
     </div>
     <p class="line" data-i18n="proof.line">Every session, both runtimes, one tab. Approvals clear from the lock screen; <strong>transcripts never leave your disk.</strong></p>
   </section>
@@ -536,7 +549,7 @@ npm i -g anyplane</pre>
 
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // ---------- hero sky: dim horizon glow + slow flight arcs ----------
+  // ---------- hero sky: night airspace —— 星空 + 地平线辉光 + 双向航班 ----------
   const cv = document.getElementById('sky');
   const ctx = cv.getContext('2d');
   let W, H;
@@ -548,49 +561,87 @@ npm i -g anyplane</pre>
   }
   sizeSky(); addEventListener('resize', sizeSky);
 
-  const FLIGHTS = Array.from({ length: 5 }, (_, i) => ({
-    y0: .18 + i * .14,
-    lift: .10 + (i % 3) * .05,
-    speed: .00006 + i * .000012,
+  // 星野一次生成，逐帧只做亮度闪烁
+  const STARS = Array.from({ length: 110 }, () => ({
+    x: Math.random(), y: Math.random() * .62,
+    r: .4 + Math.random() * 1.1,
+    a: .1 + Math.random() * .38,
+    sp: .5 + Math.random() * 1.4,
+    ph: Math.random() * Math.PI * 2,
+  }));
+  const FLIGHTS = Array.from({ length: 6 }, (_, i) => ({
+    y0: .1 + i * .11,
+    lift: .07 + (i % 3) * .05,
+    speed: .00005 + i * .000011,
     t: Math.random(),
+    dir: i % 2 ? -1 : 1, // 一半航班反向，空域才有"往来"感
   }));
   function arcPoint(f, t) {
     const x = -W * .1 + W * 1.2 * t;
-    const y = H * (0.62 - f.y0 * .5);
+    const y = H * (0.6 - f.y0 * .5);
     return [x, y - Math.sin(t * Math.PI) * H * f.lift];
   }
-  function drawSky() {
+  function drawSky(now) {
     ctx.clearRect(0, 0, W, H);
-    const g = ctx.createRadialGradient(W / 2, H * 1.15, 0, W / 2, H * 1.15, H * .95);
-    g.addColorStop(0, 'rgba(140,150,180,.10)');
+    // 夜空底色：头顶近黑，向地平线沉出深蓝
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#04050a');
+    sky.addColorStop(.55, '#070b17');
+    sky.addColorStop(.82, '#0d1628');
+    sky.addColorStop(1, '#0a1120');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    // 地平线辉光（塔台城市的微光）
+    const g = ctx.createRadialGradient(W / 2, H * 1.04, 0, W / 2, H * 1.04, H * .8);
+    g.addColorStop(0, 'rgba(100,124,184,.26)');
+    g.addColorStop(.55, 'rgba(72,92,148,.09)');
     g.addColorStop(1, 'transparent');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(255,255,255,.05)';
+    // 高空一层冷月晕
+    const m = ctx.createRadialGradient(W * .78, H * .18, 0, W * .78, H * .18, H * .34);
+    m.addColorStop(0, 'rgba(196,210,238,.07)');
+    m.addColorStop(1, 'transparent');
+    ctx.fillStyle = m; ctx.fillRect(0, 0, W, H);
+    // 星星
+    for (const s of STARS) {
+      const tw = s.a * (.55 + .45 * Math.sin(now * .001 * s.sp + s.ph));
+      ctx.fillStyle = `rgba(232,240,255,${tw.toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(s.x * W, s.y * H, s.r, 0, 7); ctx.fill();
+    }
+    // 地平线
+    ctx.strokeStyle = 'rgba(140,162,214,.15)';
     ctx.beginPath(); ctx.moveTo(0, H * .78); ctx.lineTo(W, H * .78); ctx.stroke();
-    for (const f of FLIGHTS) {
-      ctx.strokeStyle = 'rgba(255,255,255,.045)';
+    // 航班：淡航迹 + 渐隐尾迹 + 机身亮点 + 红色航行灯闪烁
+    for (let i = 0; i < FLIGHTS.length; i++) {
+      const f = FLIGHTS[i];
+      ctx.strokeStyle = 'rgba(150,172,222,.1)';
       ctx.beginPath();
       for (let t = 0; t <= 1.001; t += .02) {
         const [x, y] = arcPoint(f, t);
         t === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
       ctx.stroke();
-      const [x, y] = arcPoint(f, f.t);
-      const [tx, ty] = arcPoint(f, Math.max(0, f.t - .015));
+      const tt = f.dir === 1 ? f.t : 1 - f.t;
+      const [x, y] = arcPoint(f, tt);
+      const [tx, ty] = arcPoint(f, tt - f.dir * .045);
       const grad = ctx.createLinearGradient(tx, ty, x, y);
       grad.addColorStop(0, 'transparent');
-      grad.addColorStop(1, 'rgba(245,245,244,.5)');
-      ctx.strokeStyle = grad; ctx.lineWidth = 1.2;
+      grad.addColorStop(1, 'rgba(206,220,248,.6)');
+      ctx.strokeStyle = grad; ctx.lineWidth = 1.4;
       ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
-      ctx.fillStyle = 'rgba(245,245,244,.85)';
-      ctx.beginPath(); ctx.arc(x, y, 1.6, 0, 7); ctx.fill();
       ctx.lineWidth = 1;
+      ctx.fillStyle = 'rgba(242,246,255,.92)';
+      ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill();
+      // 航行灯：每架相位错开地闪红
+      if (((now / 480 + i * .63) % 2) < .72) {
+        ctx.fillStyle = 'rgba(229,72,77,.8)';
+        ctx.beginPath(); ctx.arc(x, y + 2.6, 1, 0, 7); ctx.fill();
+      }
       f.t += f.speed;
-      if (f.t > 1.05) { f.t = -0.05; f.y0 = .1 + Math.random() * .6; }
+      if (f.t > 1.05) { f.t = -0.05; f.y0 = .08 + Math.random() * .6; }
     }
     if (!reduced) requestAnimationFrame(drawSky);
   }
-  drawSky();
+  drawSky(performance.now());
 
   // ---------- split-flap departure board（降速版） ----------
   const CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/:*·→|+?';
@@ -699,8 +750,23 @@ npm i -g anyplane</pre>
     }, delay);
   }
   let page = 0;
-  showPage(PAGES[0]);
-  if (!reduced) setInterval(() => { page = (page + 1) % PAGES.length; showPage(PAGES[page]); }, 8500);
+  // 进入视口才播入场动画；离开视口暂停轮播，回来自动续播
+  let boardTimer = null, boardStarted = false;
+  function nextPage() { page = (page + 1) % PAGES.length; showPage(PAGES[page]); }
+  if (reduced) {
+    showPage(PAGES[0]);
+  } else {
+    new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          if (!boardStarted) { boardStarted = true; showPage(PAGES[0]); }
+          if (!boardTimer) boardTimer = setInterval(nextPage, 8500);
+        } else if (boardTimer) {
+          clearInterval(boardTimer); boardTimer = null;
+        }
+      }
+    }, { threshold: .2 }).observe(board);
+  }
 
   // ---------- 复制安装命令 ----------
   const btn = document.getElementById('copy');
