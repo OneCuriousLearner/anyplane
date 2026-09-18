@@ -19,7 +19,7 @@ AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code �
 **本项目仅使用 Bun（>= 1.4.0，全平台同一门槛）。绝不要用 npm / npx / yarn / pnpm。**
 
 ```bash
-bun install          # 安装依赖（Bun workspaces: server + web + protocol）
+bun install          # 安装依赖（Bun workspaces: server + web + protocol + app）
 bun run dev          # 开发模式：并行拉起 server(:7480) + Vite(:5173, 代理 /api 与 /ws)
 bun run dev:server   # 仅服务端
 bun run dev:web      # 仅 Vite
@@ -39,7 +39,11 @@ e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干�
 
 ## 架构
 
-两个 workspace：`server/`（Bun 服务端，无框架，直接用 `Bun.serve`）和 `web/`（React 19 + Vite + Tailwind 4）。共享根 `tsconfig.json`（strict, bundler resolution）。
+四个 workspace：`server/`（Bun 服务端，无框架，直接用 `Bun.serve`）、`web/`（React 19 + Vite + Tailwind 4）、
+`protocol/`（前后端契约类型正本）与 `app/`（Capacitor 原生壳——Android/iOS 包壳与原生通知审批；
+**改它之前先读 `docs/research/2026-09-18-capacitor-shell-pitfalls.md`**：JSI 在国产 ROM 对远端页
+整体失效、IPC 是 `anyplane-bridge://` 导航拦截、审批摘要/凭据装配/收件箱连接各有单一正本）。
+共享根 `tsconfig.json`（strict, bundler resolution）。
 
 ### 服务端（server/src）
 
