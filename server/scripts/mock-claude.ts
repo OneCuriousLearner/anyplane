@@ -128,6 +128,14 @@ function handleLine(line: string): void {
           },
         },
       })
+    } else {
+      // 其余控制请求（get_context_usage 水合等）通用成功应答：不应答会让服务端的
+      // pendingControlRequests 挂到超时——busy getter 把 pending>0 算作忙，
+      // 挂起期间 status 恒 busy=true（turn 收尾的 busy=false 帧永远不来，e2e 抖动根因）
+      out({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: msg.request_id, response: {} },
+      })
     }
     return
   }

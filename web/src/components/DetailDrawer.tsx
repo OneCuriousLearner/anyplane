@@ -66,14 +66,16 @@ export function DetailDrawer(props: {
     <div className="px-3 py-2">
       <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px]">
         <span className="text-muted">{detailTitle}</span>
-        {/* 查询按钮按能力白名单渲染（服务端 capabilities.queries；曾以 isCodex 硬编码三分支） */}
-        {queries.map((q) => (
+        {/* 查询按钮按能力白名单渲染（服务端 capabilities.queries），过滤到 QUERY_LABELS
+         *  覆盖的只读查询——白名单里还含管理动作（mcp_reconnect/mcp_toggle，供 hub 把关
+         *  放行），动作经 MCP 面板的服务器行触发，不是抽屉按钮 */}
+        {queries.filter((q) => QUERY_LABELS[q]).map((q) => (
           <button type="button"
             key={q}
             className="rounded-full bg-surface px-2.5 py-1 text-[10px] text-faint hover:text-ink"
-            onClick={() => onRunQuery(q, QUERY_LABELS[q]?.[0] ?? q)}
+            onClick={() => onRunQuery(q, QUERY_LABELS[q][0])}
           >
-            {QUERY_LABELS[q]?.[1] ?? q}
+            {QUERY_LABELS[q][1]}
           </button>
         ))}
         <button type="button" className="ml-auto text-faint hover:text-muted" onClick={onClose}>

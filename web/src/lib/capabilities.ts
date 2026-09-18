@@ -1,38 +1,19 @@
-// 后端能力的读取入口：权威在服务端适配器（SessionState.capabilities 随 status 下发），
-// 前端按能力渲染（查询按钮/分叉入口），不再以 isCodex 硬编码推断——第三个后端接入时
-// 前端组件零改动。
-// FALLBACK_CAPABILITIES 只是「首包 status 到达前」的瞬时兜底（attach 前 state 里没有
-// capabilities）；新增能力字段时兜底表与服务端适配器同加（各一行，漂移由 typecheck 拦截）。
+// 后端能力的读取入口：唯一权威是服务端适配器的 capabilities 声明（随 status 首帧下发，
+// WS open 即发），前端按能力渲染（查询按钮/分叉入口），不以 isCodex 硬编码推断。
+// **不设前端兜底表**：首包到达前 capabilities 为 undefined（未知），门控 UI 隐藏——
+// 兜底表按后端名键控会随服务端声明漂移（值漂移 typecheck 拦不住），且给第三个后端
+// 留一个前端改动点，正是本机制要消灭的耦合。
 
 import type { BackendCapabilities, SessionState } from '@anyplane/protocol'
 
-export const FALLBACK_CAPABILITIES: Record<'claude' | 'codex', BackendCapabilities> = {
-  claude: {
-    fileCheckpoint: true,
-    branch: true,
-    tailer: true,
-    aiTitle: true,
-    externalGate: true,
-    queries: ['get_context_usage', 'mcp_status', 'get_settings', 'mcp_reconnect', 'mcp_toggle'],
-    modelCatalog: false,
-  },
-  codex: {
-    fileCheckpoint: false,
-    branch: false,
-    tailer: false,
-    aiTitle: false,
-    externalGate: false,
-    queries: ['mcp_status'],
-    modelCatalog: true,
-  },
+/** 会话能力：undefined = 首包未到（未知），调用侧按「未知即隐藏」处理 */
+export function capabilitiesOf(state: SessionState | undefined): BackendCapabilities | undefined {
+  return state?.capabilities
 }
 
-/** 会话能力：已连接时信服务端下发，未连接时按后端身份兜底 */
-export function capabilitiesOf(state: SessionState | undefined, isCodex: boolean): BackendCapabilities {
-  return state?.capabilities ?? FALLBACK_CAPABILITIES[isCodex ? 'codex' : 'claude']
-}
-
-/** 查询按钮的展示名（query 名 → [长标题, 短标签]） */
+/** 查询按钮的展示名（query 名 → [长标题, 短标签]）。
+ *  只有出现在本表里的只读查询才渲染成详情抽屉按钮——capabilities.queries 白名单里
+ *  还可能含管理动作（mcp_reconnect/mcp_toggle，供 hub 层把关放行），动作不是按钮。 */
 export const QUERY_LABELS: Record<string, [string, string]> = {
   get_context_usage: ['context 用量', 'context'],
   mcp_status: ['MCP 状态', 'MCP'],

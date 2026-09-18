@@ -122,15 +122,15 @@ export function handleClientMessage(
       break
     }
     case 'branch': {
-      // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session）；
-      // branch 是能力声明（capabilities.branch），无能力后端在此统一拒绝
-      //（前端按能力隐藏入口，这是不可信客户端的兜底）
+      // 分叉当前会话：claude 懒分叉（b| key，首条消息才 --fork-session）。
+      // 按 capabilities 声明把关（能力差异的唯一权威）：声明 branch=true 即契约承诺
+      // 方法存在（! 断言——声明了没实现是编程错误，fail fast 好过静默落空）
       const port = resolvePort(hub.key)
-      if (!port.branch) {
-        broadcastError(hub, '当前后端不支持会话分叉')
+      if (!port.capabilities.branch) {
+        broadcastError(hub, '当前后端不支持会话分叉（可从「回滚」面板从此处分叉）')
         break
       }
-      port.branch(hub, String(data.name ?? ''))
+      port.branch!(hub, String(data.name ?? ''))
       break
     }
     case 'rewind_conversation': {
@@ -143,14 +143,13 @@ export function handleClientMessage(
     case 'rewind_both': {
       const at = String(data.userMessageId ?? '')
       if (!at) return
-      // 组合回滚：claude 先 rewind_files 再截断；fileCheckpoint 是能力声明，
-      // 无能力后端在此统一拒绝（前端按能力隐藏入口，这是不可信客户端的兜底）
+      // 组合回滚：claude 先 rewind_files 再截断。按 capabilities 声明把关（同 branch 的契约）
       const port = resolvePort(hub.key)
-      if (!port.rewindBoth) {
-        broadcastError(hub, '当前后端没有文件检查点，不支持文件回滚')
+      if (!port.capabilities.fileCheckpoint) {
+        broadcastError(hub, '当前后端没有文件检查点，不支持文件回滚（可用 git 管理代码历史）')
         break
       }
-      port.rewindBoth(hub, at)
+      port.rewindBoth!(hub, at)
       break
     }
     case 'btw': {

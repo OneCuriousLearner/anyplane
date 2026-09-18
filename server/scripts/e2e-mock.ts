@@ -15,12 +15,18 @@
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { exitWithSummary, makeNote } from './e2e-lib'
+import { apiFetch, exitWithSummary, makeNote } from './e2e-lib'
 
 const { note, results } = makeNote()
 
 const PORT = 17500 + Math.floor(Math.random() * 400)
-const tmpRoot = mkdtempSync(join(tmpdir(), 'anyplane-e2e-mock-'))
+// e2e-lib 的 apiFetch/connect 运行时读 ANYPLANE_PORT/ANYPLANE_TOKEN——先对齐端口；
+// ANYPLANE_TOKEN 若已在环境里，apiFetch 会带 Bearer（服务端子进程经 ...process.env 继承，
+// 两侧同 token，鉴权链路一并覆盖）
+process.env.ANYPLANE_PORT = String(PORT)
+// tmpRoot 前缀刻意含空格：Windows 上 .cmd wrapper 经 cmd.exe /d /s /c 包装，
+// 带空格路径是 wrapIfBatch 的回归覆盖（曾裸路径截断 spawn 失败）
+const tmpRoot = mkdtempSync(join(tmpdir(), 'anyplane e2e mock-'))
 const sessionCwd = mkdtempSync(join(tmpdir(), 'anyplane-mock-proj-'))
 const mockScript = resolve(import.meta.dir, 'mock-claude.ts')
 const serverEntry = resolve(import.meta.dir, '..', 'src', 'index.ts')
@@ -78,7 +84,7 @@ async function waitServerUp(timeoutMs = 20_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`http://localhost:${PORT}/api/config`)
+      const r = await apiFetch('/api/config')
       if (r.ok) return true
     } catch {}
     await Bun.sleep(200)
@@ -111,7 +117,17 @@ function client(key: string) {
       new Promise<Record<string, unknown>>((resolveEv, reject) => {
         const hit = log.find(pred)
         if (hit) return resolveEv(hit)
-        const timer = setTimeout(() => reject(new Error('等待事件超时')), timeoutMs)
+        const timer = setTimeout(() => {
+          // 超时诊断：dump 已收事件骨架（kind/subtype/busy/spawned），CI 失败时不用复现就能定位
+          const skeleton = log
+            .map((ev) => {
+              const msg = ev.msg as { type?: string; subtype?: string } | undefined
+              const st = ev.state as { busy?: boolean; spawned?: boolean } | undefined
+              return `${ev.kind}${msg ? `:${msg.type}${msg.subtype ? `/${msg.subtype}` : ''}` : ''}${st ? `(busy=${st.busy},spawned=${st.spawned})` : ''}`
+            })
+            .join(' ')
+          reject(new Error(`等待事件超时；已收 ${log.length} 条: ${skeleton.slice(0, 400)}`))
+        }, timeoutMs)
         waiters.push({
           pred,
           resolve: (ev) => {
@@ -131,7 +147,7 @@ async function main(): Promise<void> {
   }
 
   // 1. REST 建会话（顺带覆盖 POST /api/sessions 注册表分发）
-  const createRes = await fetch(`http://localhost:${PORT}/api/sessions`, {
+  const createRes = await apiFetch('/api/sessions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ cwd: sessionCwd, backend: 'claude' }),
@@ -185,9 +201,11 @@ async function main(): Promise<void> {
   await Bun.sleep(500) // mock turn 同步完成：init/assistant/result 全入环
   c2.send({ kind: 'attach', fromSeq: lastSeq })
   await Bun.sleep(300)
-  const replayed = c2.log.filter((ev) => ev.kind === 'cli' && Number(ev.seq ?? 0) > lastSeq)
+  // 只认 replay:true 的补发副本——c2 在 wsOpen 时已入 hub.clients，live 广播的同款事件
+  // 也会进 c2.log；不带 replay 标记的断言会被 live 副本喂成重言式（补发坏了也绿）
+  const replayed = c2.log.filter((ev) => ev.kind === 'cli' && ev.replay === true && Number(ev.seq ?? 0) > lastSeq)
   const replayedResult = replayed.some((ev) => (ev.msg as { type?: string })?.type === 'result')
-  note(replayed.length > 0 && replayedResult, '重连 fromSeq 补发：断线期间的环内事件单播补放（含 result）', `补发 ${replayed.length} 条`)
+  note(replayed.length > 0 && replayedResult, '重连 fromSeq 补发：断线期间的环内事件单播补放（replay:true 含 result）', `补发 ${replayed.length} 条`)
 
   // 5. /clear 三层重键
   c2.send({ kind: 'user', text: '/clear' })

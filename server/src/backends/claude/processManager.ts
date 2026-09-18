@@ -100,12 +100,12 @@ export function extractUsageFromTranscriptTail(text: string): TranscriptCallUsag
   return undefined
 }
 
-/** 解析 claude 可执行文件。返回 [cmd, prefixArgs] —— .cmd/.bat 需要 cmd.exe 包装 */
+/** 解析 claude 可执行文件。返回 [cmd, prefixArgs] */
 export function resolveClaudeCommand(): { cmd: string; prefix: string[] } {
   // 显式配置（anyplane.config.json 的 claudePath / ANYPLANE_CLAUDE_PATH env）是权威：
   // 不参与下方 PATH 候选的 .exe 偏好竞争——否则显式指定的 .cmd 会被常见安装位的
   // claude.exe 静默抢走（e2e mock 注入曾因此落空，spawn 出真实 CLI）
-  if (config.claudePath && existsSync(config.claudePath)) return wrapIfBatch(config.claudePath)
+  if (config.claudePath && existsSync(config.claudePath)) return { cmd: config.claudePath, prefix: [] }
 
   const candidates: string[] = []
   if (process.platform === 'win32') {
@@ -125,15 +125,10 @@ export function resolveClaudeCommand(): { cmd: string; prefix: string[] } {
   const existing = candidates.filter((p) => p && existsSync(p))
   const exe = existing.find((l) => l.toLowerCase().endsWith('.exe'))
   const picked = exe ?? existing[0]
-  if (picked) return wrapIfBatch(picked)
+  if (picked) return { cmd: picked, prefix: [] }
 
-  // 兜底：交给 PATH 解析（win32 下 Bun.spawn 无法直接跑 .cmd，会抛错，属可接受报错）
+  // 兜底：交给 PATH 解析
   return { cmd: 'claude', prefix: [] }
-}
-
-function wrapIfBatch(p: string): { cmd: string; prefix: string[] } {
-  if (/\.(cmd|bat)$/i.test(p)) return { cmd: 'cmd.exe', prefix: ['/d', '/s', '/c', p] }
-  return { cmd: p, prefix: [] }
 }
 
 export class ClaudeSession {

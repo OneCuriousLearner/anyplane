@@ -94,7 +94,7 @@ e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干�
 
 - 全平台 Bun >= 1.4.0 门槛的由来：Bun <= 1.3.14 在 Windows 存在监听 socket 被子进程继承的 bug（oven-sh/bun#36936）。服务端和 `scripts/dev.ts` 启动时检查版本并拒绝启动（可用 `ANYPLANE_ALLOW_UNSAFE_BUN=1` 跳过）；1.3.x 时代已形成的死 PID 监听需重启 Windows 才能释放。
 - `scripts/dev.ts` 故意不用 `bun --watch` 和 `bun run --cwd`：Windows watcher 会在异步 SIGINT 清理完成前杀掉 server；多层包装进程会吞 Ctrl+C。**不要用任务管理器强杀 server**，会绕过 `server.stop(true)` 与子进程树清理。
-- claude 在 Windows 可能是 `.cmd`/`.bat`（需 `cmd.exe /d /s /c` 包装）或 `.exe`；`resolveClaudeCommand()` 优先选真实存在的 `.exe`。
+- claude 在 Windows 可能是 `.cmd`/`.bat` 或 `.exe`；Bun >= 1.4 可直接执行 `.cmd`（内部正确包装，含空格路径安全），不再需要手工 `cmd.exe /d /s /c` 包装——**旧包装已拆除**（Bun 的 argv 引号渲染会把手工加的引号转义成 `\"`，空格路径必然断裂）。`resolveClaudeCommand()` 的显式配置（`claudePath`/`ANYPLANE_CLAUDE_PATH`）是权威，不参与 PATH 候选的 `.exe` 偏好竞争。
 
 ## 已知限制（改相关功能前先读 README）
 

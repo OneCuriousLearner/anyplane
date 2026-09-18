@@ -101,10 +101,11 @@ export async function handleSessionRoutes(
     if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
     // 新会话 key 构造经适配器（keyForNew 是 port 契约），routes 不 import 后端 key 构造函数
     const port = backendPort(body.backend === 'codex' ? 'codex' : 'claude')
-    const res: CreateSessionResponse =
-      port.name === 'codex'
-        ? { key: port.keyForNew(body.cwd), slug: 'codex', backend: 'codex' }
-        : { key: port.keyForNew(body.cwd), slug: sanitizePath(body.cwd), backend: 'claude' }
+    const res: CreateSessionResponse = {
+      key: port.keyForNew(body.cwd),
+      slug: port.name === 'codex' ? 'codex' : sanitizePath(body.cwd),
+      backend: port.name,
+    }
     return json(res)
   }
   if (url.pathname === '/api/sessions/archive' && req.method === 'POST') {
