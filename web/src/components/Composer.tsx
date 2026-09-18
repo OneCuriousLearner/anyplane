@@ -43,7 +43,9 @@ export function imgPreviewSrc(img: { mediaType: string; dataBase64: string }): s
   return `data:${img.mediaType};base64,${img.dataBase64}`
 }
 
-export function Composer(props: {
+// props 按域打包（13.4 批次 C2：32 个平铺 prop 收敛为 4 个域对象——域与组件内子块
+// 一一对应，加功能往域里加字段而非平铺顶层；审计发现六的 props 爆炸治理）
+export interface ComposerCoreProps {
   input: string
   onInputChange: (v: string) => void
   busy: boolean
@@ -60,7 +62,10 @@ export function Composer(props: {
   /** 斜杠命令清单来源：status 的 slashCommands 优先，init 消息的命令名兜底 */
   slashCommands?: SessionState['slashCommands']
   initSlashCommands?: string[]
-  // --- claude StatusPill ---
+}
+
+/** claude StatusPill 域（isCodex=false 时生效） */
+export interface ComposerClaudePillProps {
   cfg?: ServerConfigInfo
   claudeModel?: string
   permMode?: string
@@ -70,16 +75,29 @@ export function Composer(props: {
   onSetClaudeModel: (m: string) => void
   onSetMode: (m: string) => void
   onSetEffort: (e: string) => void
-  // --- codex StatusPill ---
+}
+
+/** codex StatusPill 域（isCodex=true 时生效） */
+export interface ComposerCodexPillProps {
   codexModels?: CodexModelInfo[]
   stateModel?: string
   statePermissionMode?: string
   stateEffort?: string
   onSetCodexModel: (m: string) => void
-  // --- ContextRing ---
+}
+
+/** ContextRing 域 */
+export interface ComposerRingProps {
   context?: SessionState['context']
   usage?: SessionState['usage']
   onOpenFullDetail?: () => void
+}
+
+export function Composer(props: {
+  core: ComposerCoreProps
+  claudePill: ComposerClaudePillProps
+  codexPill: ComposerCodexPillProps
+  ring: ComposerRingProps
 }) {
   const {
     input,
@@ -97,6 +115,8 @@ export function Composer(props: {
     onScrollToBottom,
     slashCommands,
     initSlashCommands,
+  } = props.core
+  const {
     cfg,
     claudeModel,
     permMode,
@@ -106,15 +126,9 @@ export function Composer(props: {
     onSetClaudeModel,
     onSetMode,
     onSetEffort,
-    codexModels,
-    stateModel,
-    statePermissionMode,
-    stateEffort,
-    onSetCodexModel,
-    context,
-    usage,
-    onOpenFullDetail,
-  } = props
+  } = props.claudePill
+  const { codexModels, stateModel, statePermissionMode, stateEffort, onSetCodexModel } = props.codexPill
+  const { context, usage, onOpenFullDetail } = props.ring
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)

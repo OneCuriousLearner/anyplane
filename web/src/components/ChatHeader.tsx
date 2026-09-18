@@ -15,16 +15,25 @@ import type { TaskFeed } from './TasksPanel'
 const MORE_ITEM =
   'flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-left font-mono text-[12px] text-muted transition-colors hover:bg-surface hover:text-ink'
 
-export function ChatHeader(props: {
+// props 按域打包（13.4 批次 C2：31 个平铺 prop 收敛为 6 个域对象——域与顶栏子块
+// 一一对应；审计发现六的 props 爆炸治理）
+export interface ChatHeaderSessionProps {
   session: SessionInfo
   connected: boolean
   statusLine: string
   busy: boolean
   phase?: string
   onBack: () => void
+  usageLine?: string
+}
+
+export interface ChatHeaderTasksProps {
   tasks: TaskFeed[]
   tasksOpen: boolean
   onToggleTasks: () => void
+}
+
+export interface ChatHeaderIdentityProps {
   isExisting: boolean
   isCodex: boolean
   /** 会话分叉能力（服务端 capabilities.branch 下发；曾以 !isCodex 硬编码） */
@@ -33,61 +42,57 @@ export function ChatHeader(props: {
   sessionId?: string
   /** 当前会话权威 ID（复制按钮）；spawn 后以 status 广播为准 */
   currentSessionId?: string
+}
+
+export interface ChatHeaderGoalProps {
   goal?: SessionState['goal']
-  usageLine?: string
-  moreOpen: boolean
-  setMoreOpen: (v: boolean | ((prev: boolean) => boolean)) => void
-  onSystemMessage: (text: string, kind?: 'info' | 'error') => void
-  /** 详情抽屉开关：含「打开时顺带发查询」的语义，实现在 Chat 组合层 */
-  onToggleDetail: () => void
   goalOpen: boolean
   onToggleGoal: () => void
   onCloseGoal: () => void
   goalDraft: string
   onGoalDraftChange: (v: string) => void
   onSendGoal: (condition?: string) => void
+}
+
+/** 更多菜单与全局动作（详情/分叉/接力/接力链导航/系统提示） */
+export interface ChatHeaderActionsProps {
+  moreOpen: boolean
+  setMoreOpen: (v: boolean | ((prev: boolean) => boolean)) => void
+  onSystemMessage: (text: string, kind?: 'info' | 'error') => void
+  /** 详情抽屉开关：含「打开时顺带发查询」的语义，实现在 Chat 组合层 */
+  onToggleDetail: () => void
   onBranch: () => void
   handoffBusy: boolean
   onHandoff: () => void
   lineage?: LineageResponse
   onNavigate?: NavigateSession
+}
+
+export function ChatHeader(props: {
+  sessionInfo: ChatHeaderSessionProps
+  tasksInfo: ChatHeaderTasksProps
+  identity: ChatHeaderIdentityProps
+  goalInfo: ChatHeaderGoalProps
+  actions: ChatHeaderActionsProps
   /** 玻璃横带内的尾部插槽（详情抽屉在 DOM 上与顶栏/接力链同属 glass-bar，由组合层传入） */
   children?: React.ReactNode
 }) {
+  const { session, connected, statusLine, busy, phase, onBack, usageLine } = props.sessionInfo
+  const { tasks, tasksOpen, onToggleTasks } = props.tasksInfo
+  const { isExisting, isCodex, canBranch, sessionId, currentSessionId } = props.identity
+  const { goal, goalOpen, onToggleGoal, onCloseGoal, goalDraft, onGoalDraftChange, onSendGoal } = props.goalInfo
   const {
-    session,
-    connected,
-    statusLine,
-    busy,
-    phase,
-    onBack,
-    tasks,
-    tasksOpen,
-    onToggleTasks,
-    isExisting,
-    isCodex,
-    canBranch,
-    sessionId,
-    currentSessionId,
-    goal,
-    usageLine,
     moreOpen,
     setMoreOpen,
     onSystemMessage,
     onToggleDetail,
-    goalOpen,
-    onToggleGoal,
-    onCloseGoal,
-    goalDraft,
-    onGoalDraftChange,
-    onSendGoal,
     onBranch,
     handoffBusy,
     onHandoff,
     lineage,
     onNavigate,
-    children,
-  } = props
+  } = props.actions
+  const { children } = props
   const moreBtnRef = useRef<HTMLButtonElement>(null)
   const [idCopied, setIdCopied] = useState(false)
 

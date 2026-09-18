@@ -186,8 +186,9 @@ O(会话数 × 文件大小)"表述；但稀疏文件与未清 OS 缓存会影�
 
 > **进度（2026-09-19）**：13.1 / 13.2 已交付（`@anyplane/protocol` 单一类型正本 +
 > Biome 红线规则进 CI）；13.3 已交付（capabilities 声明化 + portFor 注册表化解环 + routes 收口，
-> 见小节末尾）；13.2 遗留的 e2e mock CLI 已随 13.3 同分支进 CI；13.4 待排期；
-> 13.5 时机红线不动；13.6 完成（「合并后自动删分支」已启用）。
+> 见小节末尾）；13.2 遗留的 e2e mock CLI 已随 13.3 同分支进 CI；13.4 已交付（批次 A/B/C1/C2，
+> 见小节开头的批次进度——含两处对审计建议的有意偏离：pendingApprovals 不落盘、Hub 不做全量
+> phase 机）；13.5 时机红线不动；13.6 完成（「合并后自动删分支」已启用）。
 
 **立项背景（2026-09-17）**：一次外部视角的全量架构评审，
 完整发现与证据见 [audits/2026-09-17-architecture-review.md](audits/2026-09-17-architecture-review.md)
@@ -288,7 +289,11 @@ routes 的 sessions/misc 存量清零，Biome 红线③豁免清单移除（仅 
 > 顺带合并了 nativeBridge 里 18 行手写同形状副本。taskMap 等纯内部坐标渲染不读、
 > 留 ref（不是双写）。
 > chrome-devtools 实测：历史渲染 + 初始定位 / 流式草稿固化 / 会话切换无残留。
-> C2（props 爆炸收敛：Composer 32 / ChatHeader 31 的分组或 Context）待排期。
+> C2（props 爆炸收敛，2026-09-19）✅——Composer 32 → 4 个域对象（core/claudePill/codexPill/ring），
+> ChatHeader 31 → 6 个域对象（sessionInfo/tasksInfo/identity/goalInfo/actions/children）；
+> 域与组件内子块一一对应，加功能往域里加字段而非平铺顶层；纯形状重构零语义变化，
+> chrome-devtools 实测渲染面/更多菜单/StatusPill 面板。**13.4 全部批次收官（A/B/C1/C2）**，
+> 方向十三仅剩 13.5（中立事件模型，等第三家后端时机）。
 
 - **`Hub`**：17 字段 14 个可选，每个可选字段是一个隐式状态位，类型不阻止非法组合。
   `hub/socket.ts:54-63`「按客户端成员资格找回 hub」已是补丁上的补丁。
