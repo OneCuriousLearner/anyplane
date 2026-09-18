@@ -14,7 +14,7 @@ export interface PendingApproval {
   input: unknown
 }
 
-export interface WSDataSession {
+interface WSDataSession {
   key: string
   inbox?: never
   /** 下行保活定时器（见 hub/socket.ts 注释） */

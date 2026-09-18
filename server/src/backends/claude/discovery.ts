@@ -524,7 +524,7 @@ const SUBAGENT_HISTORY_LIMIT = 150
  * 新版 CLI 把子代理侧链从主 transcript 拆到这个目录；主文件只剩 Agent tool_use/tool_result。
  * meta.json 形状（2.1.x 实测）：{ agentType, description, toolUseId, spawnDepth }。
  */
-export function readSubagentTranscripts(slug: string, sessionId: string): SubagentHistory[] {
+function readSubagentTranscripts(slug: string, sessionId: string): SubagentHistory[] {
   const dir = join(config.claudeConfigDir, 'projects', slug, sessionId, 'subagents')
   if (!existsSync(dir)) return []
   let files: string[]
