@@ -228,7 +228,7 @@ describe('wsClose：Hub 存活不变量', () => {
     const realClear = globalThis.clearInterval
     globalThis.clearInterval = ((t: unknown) => {
       calls.push(t)
-      return realClear(t)
+      return realClear(t as never)
     }) as typeof clearInterval
     try {
       const key = track('n|%2Ftmp%2Fsocket-close-keepalive')
@@ -328,7 +328,7 @@ describe('wsClose：inbox 频道', () => {
     const realClear = globalThis.clearInterval
     globalThis.clearInterval = ((t: unknown) => {
       calls.push(t)
-      return realClear(t)
+      return realClear(t as never)
     }) as typeof clearInterval
     try {
       wsClose(ws as never)
