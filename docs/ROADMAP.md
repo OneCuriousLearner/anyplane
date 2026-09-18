@@ -182,9 +182,10 @@ O(会话数 × 文件大小)"表述；但稀疏文件与未清 OS 缓存会影�
 
 ## 方向十三：结构性债务偿还（外部架构评审的行动项）
 
-> **进度（2026-09-17）**：13.1 / 13.2 已交付（`@anyplane/protocol` 单一类型正本 +
-> Biome 红线规则进 CI，见两小节末尾）；13.3 / 13.4 待排期；13.5 时机红线不动；
-> 13.6 仅剩 GitHub 设置开关（仓库 owner 手工）。
+> **进度（2026-09-19）**：13.1 / 13.2 已交付（`@anyplane/protocol` 单一类型正本 +
+> Biome 红线规则进 CI）；13.3 已交付（capabilities 声明化 + portFor 注册表化解环 + routes 收口，
+> 见小节末尾）；13.2 遗留的 e2e mock CLI 已随 13.3 同分支进 CI；13.4 待排期；
+> 13.5 时机红线不动；13.6 完成（「合并后自动删分支」已启用）。
 
 **立项背景（2026-09-17）**：一次外部视角的全量架构评审，
 完整发现与证据见 [audits/2026-09-17-architecture-review.md](audits/2026-09-17-architecture-review.md)
@@ -236,7 +237,10 @@ managed`）、`rewindPending` 确认为前端未消费的死字段（入类型�
 `noRestrictedImports` 并探针实测命中（适配器↛hub、hub↛push、routes↛具体 port、
 protocol 不出包；两处存量违列入豁免清单，13.3 后移除）。**未覆盖**：时序红线
 （ensure 零 await）——GritQL 插件实测匹配不到 class 方法定义（Biome 2.5 限制），
-维持注释守护，根治留待 API 形状改造；e2e mock CLI 进 CI 仍未做，单列排期。
+维持注释守护，根治留待 API 形状改造。**e2e mock CLI 进 CI 已交付（2026-09-19，随 13.3 同分支）**：
+`server/scripts/mock-claude.ts`（claude headless stream-json 最小模拟）+ `e2e-mock.ts`
+（自启临时服务端，`ANYPLANE_CLAUDE_PATH` 注入 + `CLAUDE_CONFIG_DIR` 隔离），覆盖 WS 全链路 /
+审批裁决 / fromSeq 补发 / `/clear` 三层重键，进 CI 双平台矩阵。
 首跑顺手清掉存量卫生问题（死变量/死 import、39 处缺 `type` 的 button、async
 Promise executor、隐式 any let 等）。
 
@@ -251,6 +255,15 @@ Promise executor、隐式 any let 等）。
 （`registerBackend(name, port)`，装配层注入）——与既有 `initBackendPorts` 同一模式，
 顺带解掉 `port.ts ↔ claude/port.ts ↔ codex/port.ts` 的 import 环；
 routes 一律经 `portFor`（现 `routes/sessions.ts:101` 用 `body.backend === 'codex'` 硬编码）。
+
+**交付（2026-09-19）**：`BackendPort.capabilities` 落地（fileCheckpoint/branch/tailer/aiTitle/
+externalGate/queries/modelCatalog），随 `SessionState` 经 statusOf 统一下发；前端按能力渲染
+（查询按钮白名单/分叉入口/详情默认查询，替换散落的 isCodex 硬编码推断），codex 侧 6 个
+no-op/运行时拒绝方法删除，hub 层按能力把关（`?.` 守护 + 统一拒绝文案）。`port.ts` 改契约叶子：
+`registerBackend`/`backendPort` 注册表由装配层注入，`port.ts ↔ 适配器` import 环解除；
+routes 的 sessions/misc 存量清零，Biome 红线③豁免清单移除（仅 routes 测试因注册真实适配器
+豁免 `*.test.ts`）。顺手修掉一个存量 bug：显式 `claudePath` 配置此前参与 PATH 候选的
+`.exe` 偏好竞争，`.cmd` 会被常见安装位静默抢走。
 
 ### 13.4 `Hub` 状态机化与前端 store 化（P2）
 
@@ -275,12 +288,8 @@ Claude 与 Codex 各自 adapter 翻译进来。这是让 vendor-neutral 从 slog
 ### 13.6 仓库卫生：打开「合并后自动删分支」（随手做）
 
 2026-09-17 已清完当时的可删远端（清点与判定见审计文档附录 A）。
-远端现只留 `master`、方向二在研的 `feat/capacitor-shell`、以及本方向文档分支。
-
-**还没做、也是唯一剩余项**：打开 GitHub 仓库设置里的
-「Automatically delete head branches」。机器评审流程每次运行仍会新建带时间戳的分支
-（`claude-code-review-*` / `claude-security-review-*` / `claude-simplify-*` /
-`claude-test-coverage-*` / `claude-test-cleanup-*`）；不开这个开关，下一批又会堆回来。
+2026-09-19 「Automatically delete head branches」已启用——机器评审流程新建的
+带时间戳分支（`claude-code-review-*` 等）合并后自动删除，不再堆积。
 
 ### 明确不在本方向内
 
