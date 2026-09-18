@@ -35,7 +35,7 @@ bun run gateway      # 80/443 网关：按 ?mode=dev|prod 反代到 :5173 / :748
 
 e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干预 CLI 选择（新会话与 resume 均不带 `--model`）。要让 e2e 走自定义/第三方模型，直接配 CLI 自己的默认值即可（均在 home 目录，不进本仓库）：claude 用 `~/.claude/settings.json` 的 `model`（或服务端进程环境变量 `ANTHROPIC_MODEL`，`childEnv` 会透传）；codex 用 `~/.codex/config.toml` 的 `model`。唯一例外是 `e2e-ws.ts` 的 `set_model`——那是被测链路本身，不是默认值配置。
 
-单元测试使用 Bun Test（`bun test`，可按目录过滤）：测试文件统一命名 `*.test.ts` 就近放在被测模块旁；`bun run build` 只打包生产依赖图，测试文件不进 `web/dist`。仓库仍有大量逻辑依赖 e2e 脚本验证；新增纯函数/工具优先补 `*.test.ts`，涉及真实 CLI 行为的链路改 e2e 脚本。
+单元测试使用 Bun Test（`bun test`，可按目录过滤）：测试文件统一命名 `*.test.ts` 就近放在被测模块旁；`bun run build` 只打包生产依赖图，测试文件不进 `web/dist`。仓库仍有大量逻辑依赖 e2e 脚本验证；新增纯函数/工具优先补 `*.test.ts`，涉及真实 CLI 行为的链路改 e2e 脚本。**测试不得依赖文件间执行顺序**——`bun test` 单进程跨文件共享模块实例且枚举顺序各平台不同，碰全局单态（sink/计数器/持久化存储）的用例开头必须显式调被测模块的复位口（先例：`resetInboxSinkForTest` / `setStoreFileForTest`），缺复位口时为模块补一个属于允许的最小源码改动。
 
 ## 架构
 
