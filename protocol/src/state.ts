@@ -91,6 +91,10 @@ export interface SessionState {
   goal?: { condition: string; since: number; tokensUsed?: number; timeUsedSeconds?: number } | null
   /** codex 线程的历史契约（legacy | paginated）：回滚面板据此切换分叉/原地回滚文案 */
   historyMode?: string
+  /** 服务端 pending 审批的 requestId 快照（唯一权威）：客户端按它 reconcile 本地审批卡——
+   *  删除快照外的卡（裁决时离线/服务端重启的收敛），保留快照内的卡不 remount
+   * （进行中的 AskUserQuestion 选择态在组件内，remount 即丢失）。baseStatusOf 恒带。 */
+  pendingApprovalIds?: string[]
   /** 组合回滚/原地回滚进行中（服务端 hub.rewindPending 镜像；当前前端未消费，
    *  预留给"回滚进行中禁用操作"的 UI） */
   rewindPending?: boolean
