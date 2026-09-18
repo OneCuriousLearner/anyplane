@@ -30,11 +30,11 @@ export function sessionCallbacks(hub: Hub) {
       // claude-only 语义，守卫防漂移：codex 若未来发出同形事件，落入普通透传而不是
       // 误触 claude 专属的重键（parseKey/processManager.rekey 作用在 x| key 上即消息黑洞）。
       if (msg.type === 'conversation_reset' && !isCodexKey(hub.key)) {
-        hub.pendingRekey = true
+        hub.transition = { kind: 'rekey' }
         return // 原始事件不进主抄本，迁移以 moved 事件表达
       }
-      if (hub.pendingRekey && msg.type === 'system' && msg.subtype === 'init') {
-        hub.pendingRekey = false
+      if (hub.transition?.kind === 'rekey' && msg.type === 'system' && msg.subtype === 'init') {
+        hub.transition = undefined
         const newSid = String(msg.session_id ?? '')
         const cwd = hub.spawnOpts?.cwd ?? parseKey(hub.key)?.cwd
         if (newSid && cwd) {

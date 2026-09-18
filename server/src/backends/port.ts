@@ -138,7 +138,7 @@ export interface BackendPort {
   /** 组合回滚（文件+对话，capabilities.fileCheckpoint；claude-only） */
   rewindBoth?(hub: Hub, userMessageId: string): void
 
-  // ---------- 消息域（model/mode 缓存与 rewindPending 守卫留在 hub 层，此处为后端投递） ----------
+  // ---------- 消息域（model/mode 缓存与 transition=rewind 守卫留在 hub 层，此处为后端投递） ----------
   /** 通用控制请求：codex 直接翻译（interrupt/set_model/set_permission_mode/compact）；
    *  claude 未 spawn 时除 set_model/set_permission_mode（有启动参数等价物）外触发懒启动 */
   deliverControl(hub: Hub, subtype: string, extra: Record<string, unknown>): void

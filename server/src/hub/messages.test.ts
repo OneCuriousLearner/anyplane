@@ -1,7 +1,7 @@
 // WS 上行消息编排的高风险边界：
 // - 非 JSON 帧只丢弃，不把异常抛回 socket 处理器
 // - attach 的审批与 CLI 断线补发严格单播，缺口显式通知发起方
-// - rewindPending 时 user 消息同步拒绝，不解析/启动任何真实后端
+// - transition=rewind 时 user 消息同步拒绝，不解析/启动任何真实后端
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { BackendPort } from '../backends/port'
@@ -97,11 +97,11 @@ describe('handleClientMessage', () => {
     expect(hub.cliRing).toHaveLength(2)
   })
 
-  test('rewindPending 拒绝 user，且不会触发 ensureForSend 或真实 CLI', () => {
+  test('transition=rewind 拒绝 user，且不会触发 ensureForSend 或真实 CLI', () => {
     const hub = freshHub()
     const ws = fakeWs()
     hub.clients.add(ws as never)
-    hub.rewindPending = true
+    hub.transition = { kind: 'rewind' }
 
     let ensures = 0
     const fakePort = {

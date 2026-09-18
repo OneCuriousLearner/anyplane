@@ -61,9 +61,9 @@ describe('rewindBusy：回滚互斥守卫', () => {
     expect(ws.sent).toEqual([])
   })
 
-  test('rewindPending 时拒绝（true）并广播指定错误', () => {
+  test('transition=rewind 时拒绝（true）并广播指定错误', () => {
     const { hub, ws } = freshHub()
-    hub.rewindPending = true
+    hub.transition = { kind: 'rewind' }
     expect(rewindBusy(hub, '正在恢复文件，请等待回滚完成后再发送消息')).toBe(true)
     expect(sentPayloads(ws)).toEqual([
       { kind: 'error', message: '正在恢复文件，请等待回滚完成后再发送消息' },

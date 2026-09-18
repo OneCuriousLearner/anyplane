@@ -134,9 +134,9 @@ class CodexPort implements BackendPort {
       hubServices().broadcastError(hub, 'codex 会话未就绪，无法回滚')
       return
     }
-    // revert/fork 是异步 RPC（最长 60s）窗口：置 rewindPending 门控用户消息
+    // revert/fork 是异步 RPC（最长 60s）窗口：置 transition=rewind 门控用户消息
     //（hub/messages.ts user 分支），否则新 turn 与 thread/revert 并发会截掉刚开始的对话
-    hub.rewindPending = true
+    hub.transition = { kind: 'rewind' }
     hubServices().pushStatus(hub, { rewindPending: true })
     void codexRuntime
       .historyModeOf(tid)
@@ -162,7 +162,7 @@ class CodexPort implements BackendPort {
       })
       .catch((e) => hubServices().broadcastError(hub, `回滚失败: ${errorMessage(e)}`))
       .finally(() => {
-        hub.rewindPending = false
+        hub.transition = undefined
         hubServices().pushStatus(hub, { rewindPending: false })
       })
   }

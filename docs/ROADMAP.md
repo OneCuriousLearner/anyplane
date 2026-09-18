@@ -274,7 +274,15 @@ routes 的 sessions/misc 存量清零，Biome 红线③豁免清单移除（仅 
 > replace 对齐（服务端 pending 为唯一权威、attach 重放重建），而非 pendingApprovals 落盘——
 > AnyPlane 的 pending 只来自自 spawn 的 CLI，服务端重启即进程死、上游请求已不存在，
 > 落盘只能做「失效标记」而无裁决价值，replace 对齐后该场景自动收敛（零新状态零格式维护）。
-> 批次 B（Hub 显式状态机化）与批次 C（前端 store 化）待排期。
+> 批次 B（Hub 显式状态机化，2026-09-19）✅——**设计裁定（与审计建议的有意偏离）**：
+> 审计建议 `phase + 各 phase 独有数据`；落地时逐字段盘点发现 Hub 的 14 个可选字段里
+> 真正互斥的隐式状态位只有 `rewindPending` 与 `pendingRekey` 两个（其余是懒初始化
+> 基础设施/启动偏好/会话身份/显示缓存，不是相位），且两个守卫都没有「phase 独有数据」。
+> 全量 phase 机是过度设计——实际形态是**过渡守卫判别联合化**：
+> `transition?: { kind: 'rewind' } | { kind: 'rekey' }`，非法组合不可表达；
+> 字段按语义分组注释（types.ts）。`SessionState.rewindPending` 协议面不动（镜像点改读
+> transition）。socket.ts「按客户端成员资格找回 hub」是 /clear 三层重键的防御层，保留。
+> 批次 C（前端 store 化）待排期。
 
 - **`Hub`**：17 字段 14 个可选，每个可选字段是一个隐式状态位，类型不阻止非法组合。
   `hub/socket.ts:54-63`「按客户端成员资格找回 hub」已是补丁上的补丁。
