@@ -12,7 +12,7 @@ import {
   renameSession,
   restoreSession,
 } from '../lib/api'
-import { InboxSocket } from '../lib/inbox'
+import { inboxSubscribe } from '../lib/inboxBus'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
@@ -207,9 +207,9 @@ export function SessionList(props: {
     toastTimerRef.current = setTimeout(() => setToast(null), 4000)
   }
 
-  // 全局收件箱：审批队列 + 完成/错误通知
+  // 全局收件箱：审批队列 + 完成/错误通知（单例总线，与原生桥共用一条连接）
   useEffect(() => {
-    const sock = new InboxSocket((ev) => {
+    const unsubscribe = inboxSubscribe((ev) => {
       switch (ev.type) {
         case 'snapshot':
           setApprovals(ev.approvals)
@@ -229,7 +229,7 @@ export function SessionList(props: {
           break
       }
     })
-    return () => sock.close()
+    return unsubscribe
   }, [])
 
   // 标题角标：待审批数

@@ -44,10 +44,9 @@ public class AnyPlaneBridgePlugin extends Plugin {
             String method = String.valueOf(url.getHost());
             Log.d(TAG, "导航桥调用: " + method);
             if ("configure".equals(method)) {
-                configureNative(
-                    safe(url.getQueryParameter("serverUrl")),
-                    safe(url.getQueryParameter("token"))
-                );
+                String serverUrl = url.getQueryParameter("serverUrl");
+                String token = url.getQueryParameter("token");
+                configureNative(serverUrl == null ? "" : serverUrl, token == null ? "" : token);
             } else if ("openNotificationSettings".equals(method)) {
                 openSettings();
             } else if ("requestBatteryExemption".equals(method)) {
@@ -90,10 +89,6 @@ public class AnyPlaneBridgePlugin extends Plugin {
         return "https".equals(u.getScheme()) ? 443 : 80;
     }
 
-    private static String safe(String s) {
-        return s == null ? "" : s;
-    }
-
     private void configureNative(String serverUrl, String token) {
         serverUrl = serverUrl.trim();
         while (serverUrl.endsWith("/")) {
@@ -111,17 +106,28 @@ public class AnyPlaneBridgePlugin extends Plugin {
             // WebView 尚未就绪等场景：留空，按无 cookie 连
         }
         SharedPreferences sp = prefs(ctx);
-        String oldUrl = sp.getString(PREF_SERVER_URL, "");
-        boolean serverChanged = !serverUrl.equals(oldUrl);
-        sp.edit().putString(PREF_SERVER_URL, serverUrl).apply();
+        ApiClient.Creds old = ApiClient.creds(ctx);
+        boolean serverChanged = !serverUrl.equals(old.serverUrl);
+        // 变化检测：什么都没变就跳过写盘/加密/服务重启（回前台 sync 是高频路径——
+        // 每次 resume 都重新加密切片+写 prefs+拆建 WS 是纯 churn，simplify 评审发现）
+        boolean credsChanged = serverChanged
+            || (!token.isEmpty() && !token.equals(old.token))
+            || (!cookies.isEmpty() && !cookies.equals(old.cookies));
         // token/cookie 走 Keystore 包装。只在拿到非空新值或换了服务器时才覆盖：
         // WebView 未就绪（getCookie 空）/登录前（token 空）的瞬态不得冲掉有效凭据
         // （评审发现：一次瞬态空写就把 SSO 会话与 token 全清，重连中循环）
+        if (serverChanged) {
+            sp.edit().putString(PREF_SERVER_URL, serverUrl).apply();
+        }
         if (serverChanged || !token.isEmpty()) SecureStore.putSecret(sp, PREF_TOKEN, token);
         if (serverChanged || !cookies.isEmpty()) SecureStore.putSecret(sp, PREF_COOKIES, cookies);
+        ApiClient.invalidate();
         Log.d(TAG, "configure: " + serverUrl + "（token " + (token.isEmpty() ? "无" : "有")
-            + "，cookie " + (cookies.isEmpty() ? "无" : "有") + "），启动审批服务");
-        ContextCompat.startForegroundService(ctx, new Intent(ctx, ApprovalService.class));
+            + "，cookie " + (cookies.isEmpty() ? "无" : "有") + "，credsChanged=" + credsChanged + "）");
+        ContextCompat.startForegroundService(
+            ctx,
+            new Intent(ctx, ApprovalService.class).putExtra("credsChanged", credsChanged)
+        );
         ensureNotificationPermission();
     }
 
@@ -132,7 +138,7 @@ public class AnyPlaneBridgePlugin extends Plugin {
             // 通知会被误报 granted，重演静默死）
             boolean enabled = androidx.core.app.NotificationManagerCompat
                 .from(getContext()).areNotificationsEnabled();
-            pushPermState(enabled ? "granted" : "denied");
+            pushPermState(getActivity(), enabled ? "granted" : "denied");
             return;
         }
         boolean granted = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS)
@@ -141,12 +147,12 @@ public class AnyPlaneBridgePlugin extends Plugin {
         boolean enabled = androidx.core.app.NotificationManagerCompat
             .from(getContext()).areNotificationsEnabled();
         if (granted && enabled) {
-            pushPermState("granted");
+            pushPermState(getActivity(), "granted");
             return;
         }
         if (granted) {
             // 有运行时权限但总开关/渠道被关：弹窗无意义，直送设置页
-            pushPermState("denied");
+            pushPermState(getActivity(), "denied");
             openSettings();
             return;
         }
@@ -183,9 +189,5 @@ public class AnyPlaneBridgePlugin extends Plugin {
         if (activity instanceof MainActivity) {
             ((MainActivity) activity).evalOnWebView(js);
         }
-    }
-
-    private void pushPermState(String display) {
-        pushPermState(getActivity(), display);
     }
 }

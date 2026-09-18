@@ -3,13 +3,7 @@ package run.anyplane;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import androidx.core.app.NotificationManagerCompat;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
 import org.json.JSONObject;
 
 /**
@@ -32,34 +26,21 @@ public class ApprovalActionReceiver extends BroadcastReceiver {
 
         final PendingResult pending = goAsync();
         new Thread(() -> {
-            boolean delivered = false;
+            // ApiClient.postJson：409 = 已在别处裁决，静默；2xx 成功；其余（含网络异常 -2）失败
+            int code = -1;
             try {
-                SharedPreferences p = AnyPlaneBridgePlugin.prefs(context);
-                String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
-                String token = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_TOKEN);
-                String cookies = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_COOKIES);
-                if (serverUrl != null && !serverUrl.isEmpty()) {
-                    JSONObject body = new JSONObject()
-                        .put("key", key)
-                        .put("requestId", requestId)
-                        .put("decision", decision);
-                    Request.Builder rb = new Request.Builder()
-                        .url(serverUrl + "/api/approvals/resolve")
-                        .post(RequestBody.create(body.toString(), MediaType.get("application/json")));
-                    if (token != null && !token.isEmpty()) {
-                        rb.header("authorization", "Bearer " + token);
-                    }
-                    if (cookies != null && !cookies.isEmpty()) {
-                        rb.header("Cookie", cookies);
-                    }
-                    try (Response r = new OkHttpClient().newCall(rb.build()).execute()) {
-                        delivered = r.isSuccessful() || r.code() == 409;
-                        android.util.Log.d("AnyPlaneAction", "裁决 POST 结果 http=" + r.code());
-                    }
+                JSONObject body = new JSONObject()
+                    .put("key", key)
+                    .put("requestId", requestId)
+                    .put("decision", decision);
+                code = ApiClient.postJson(context, "/api/approvals/resolve", body);
+                if (code > 0) {
+                    android.util.Log.d("AnyPlaneAction", "裁决 POST 结果 http=" + code);
                 }
             } catch (Exception ignored) {
-                // 网络不可达等：落入「未送达」通知
+                // 落入「未送达」通知
             } finally {
+                boolean delivered = (code >= 200 && code < 300) || code == 409;
                 if (!delivered) {
                     notifyUndelivered(context, requestId);
                 }
@@ -70,7 +51,8 @@ public class ApprovalActionReceiver extends BroadcastReceiver {
 
     private static void notifyUndelivered(Context context, String requestId) {
         android.app.Notification n = new androidx.core.app.NotificationCompat.Builder(context, "approvals")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            // 品牌标（mipmap PNG；默认模板机器人在 simplify 轮已清）
+            .setSmallIcon(R.mipmap.ic_launcher_foreground)
             .setContentTitle("审批未送达")
             .setContentText("请打开应用确认会话状态")
             .setAutoCancel(true)

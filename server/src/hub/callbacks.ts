@@ -106,7 +106,15 @@ export function sessionCallbacks(hub: Hub) {
         toolName: req.toolName,
         input: req.input,
       })
-      publishInbox({ type: 'approval', key: hub.key, requestId: req.requestId, toolName: req.toolName, input: req.input })
+      publishInbox({
+        type: 'approval',
+        key: hub.key,
+        requestId: req.requestId,
+        toolName: req.toolName,
+        input: req.input,
+        // 摘要由服务端唯一口径算好下发——原生通知（app 壳）与 JS 兜底共用此字段，不再各自 JSON.stringify
+        detail: summarizeInput(req.toolName, req.input),
+      })
       pushStatus(hub)
       portFor(hub.key).notifyExternalGate(hub.key)
     },

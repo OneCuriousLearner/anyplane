@@ -3,7 +3,6 @@ package run.anyplane;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.util.Log;
 import androidx.core.content.ContextCompat;
 
@@ -17,9 +16,7 @@ public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
-        SharedPreferences p = AnyPlaneBridgePlugin.prefs(context);
-        String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
-        if (serverUrl == null || serverUrl.isEmpty()) {
+        if (!ApiClient.creds(context).hasServer()) {
             Log.d("AnyPlaneBoot", "未配置服务器地址，开机不自启");
             return;
         }

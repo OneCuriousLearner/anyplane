@@ -6,7 +6,6 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Handler;
 import android.os.IBinder;
@@ -19,7 +18,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.WebSocket;
@@ -45,13 +43,13 @@ public class ApprovalService extends Service {
     private static final String CHANNEL_APPROVAL = "approvals";
     private static final int ONGOING_ID = 1;
 
-    private final OkHttpClient http = new OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build();
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** requestId → 事件原文（前台期间挂账的 pending 审批）。
      *  synchronizedMap 包裹：OkHttp 读线程改、主线程（onForegroundChanged）遍历，
      *  遍历段必须再套 synchronized(pendings)（评审发现的并发修改竞态） */
     private final Map<String, JSONObject> pendings = java.util.Collections.synchronizedMap(new LinkedHashMap<>());
     private WebSocket ws;
+    private volatile boolean wsOpen = false;
     private int retryDelaySec = 1;
     private volatile boolean stopped = false;
 
@@ -80,6 +78,13 @@ public class ApprovalService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         stopped = false;
+        boolean credsChanged = intent == null || intent.getBooleanExtra("credsChanged", true);
+        // 凭据未变且连接健康时跳过重连——此前每次回前台都拆一条健康 WS 再重建
+        //（握手 churn + snapshot 重拉，simplify 评审 Efficiency 发现）
+        if (wsOpen && !credsChanged) {
+            updateOngoing("已连接");
+            return START_STICKY;
+        }
         updateOngoing("连接中…");
         connect();
         return START_STICKY;
@@ -88,64 +93,44 @@ public class ApprovalService extends Service {
     @Override
     public void onDestroy() {
         stopped = true;
+        wsOpen = false;
         BridgeState.foregroundListener = null;
         handler.removeCallbacksAndMessages(null);
         if (ws != null) {
             ws.close(1000, "service stop");
             ws = null;
         }
-        http.dispatcher().executorService().shutdown();
+        // 注意：OkHttpClient 是 ApiClient 的共享单例，不归本服务关闭
         super.onDestroy();
     }
 
     private void connect() {
-        SharedPreferences p = AnyPlaneBridgePlugin.prefs(this);
-        String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
-        String token = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_TOKEN);
-        if (serverUrl == null || serverUrl.isEmpty()) {
+        ApiClient.Creds creds = ApiClient.creds(this);
+        if (!creds.hasServer()) {
             Log.w(TAG, "未配置服务器地址，服务退出");
             stopSelf();
             return;
         }
-        String wsUrl = serverUrl.replaceFirst("^http", "ws") + "/ws/inbox"
-            + (token == null || token.isEmpty() ? "" : "?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8));
-        Log.d(TAG, "连接 " + serverUrl + "（token " + (token == null || token.isEmpty() ? "无" : "有") + "）");
+        String wsUrl = creds.serverUrl.replaceFirst("^http", "ws") + "/ws/inbox"
+            + (creds.token.isEmpty() ? "" : "?token=" + URLEncoder.encode(creds.token, StandardCharsets.UTF_8));
+        Log.d(TAG, "连接 " + creds.serverUrl + "（token " + (creds.token.isEmpty() ? "无" : "有") + "）");
         Request.Builder rb = new Request.Builder().url(wsUrl);
-        String cookies = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_COOKIES);
-        if (cookies != null && !cookies.isEmpty()) {
+        if (!creds.cookies.isEmpty()) {
             // SSO 网关路径：WebView 摘来的会话 cookie（configure 时写入）
-            rb.header("Cookie", cookies);
+            rb.header("Cookie", creds.cookies);
         }
         // 防御双连：onStartCommand 可被重复投递（STICKY 重投/多次 start），旧连接先收掉
         if (ws != null) {
             ws.close(1000, "reconnect");
         }
-        ws = http.newWebSocket(rb.build(), new Listener());
+        ws = ApiClient.http().newWebSocket(rb.build(), new Listener());
     }
 
     /** 原生侧遥测：WS 生命周期/失败原因上报 /api/client-log（尽力而为，不阻塞主链） */
     private void report(String tag, String msg) {
-        SharedPreferences p = AnyPlaneBridgePlugin.prefs(this);
-        String serverUrl = p.getString(AnyPlaneBridgePlugin.PREF_SERVER_URL, "");
-        String token = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_TOKEN);
-        String cookies = SecureStore.getSecret(p, AnyPlaneBridgePlugin.PREF_COOKIES);
-        if (serverUrl == null || serverUrl.isEmpty()) return;
         new Thread(() -> {
             try {
-                okhttp3.Request.Builder rb = new okhttp3.Request.Builder()
-                    .url(serverUrl + "/api/client-log")
-                    .post(okhttp3.RequestBody.create(
-                        new JSONObject().put("tag", tag).put("msg", msg).toString(),
-                        okhttp3.MediaType.get("application/json")));
-                if (token != null && !token.isEmpty()) rb.header("authorization", "Bearer " + token);
-                if (cookies != null && !cookies.isEmpty()) rb.header("Cookie", cookies);
-                new OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .build()
-                    .newCall(rb.build())
-                    .execute()
-                    .close();
+                ApiClient.postJson(this, "/api/client-log", new JSONObject().put("tag", tag).put("msg", msg));
             } catch (Exception ignored) {
                 // 上报通道本身不可达时静默（主链日志仍在 logcat）
             }
@@ -153,6 +138,7 @@ public class ApprovalService extends Service {
     }
 
     private void scheduleReconnect() {
+        wsOpen = false;
         if (stopped) return;
         updateOngoing("连接断开，重连中…");
         int delay = retryDelaySec;
@@ -189,6 +175,7 @@ public class ApprovalService extends Service {
                 return;
             }
             retryDelaySec = 1;
+            wsOpen = true;
             Log.d(TAG, "inbox 已连接");
             updateOngoing("已连接");
         }
@@ -281,7 +268,8 @@ public class ApprovalService extends Service {
         );
 
         Notification n = new NotificationCompat.Builder(this, CHANNEL_APPROVAL)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            // 品牌标（mipmap PNG；默认模板机器人在 simplify 轮已清）
+            .setSmallIcon(R.mipmap.ic_launcher_foreground)
             .setContentTitle("审批 · " + toolName)
             .setContentText(summarize(ev.opt("input")))
             .setContentIntent(openPi)
@@ -314,7 +302,8 @@ public class ApprovalService extends Service {
             this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         Notification n = new NotificationCompat.Builder(this, CHANNEL_CONN)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            // 品牌标（mipmap PNG；默认模板机器人在 simplify 轮已清）
+            .setSmallIcon(R.mipmap.ic_launcher_foreground)
             .setContentTitle("AnyPlane")
             .setContentText(state)
             .setContentIntent(openPi)

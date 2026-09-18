@@ -41,8 +41,9 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
  * 审批解析共享路径：WS approval 消息与推送直接审批（/api/approval-action）共用。
  * 返回 false 表示 requestId 已不在 pending（重复点击/已在别处处理）。
  * 注意：approval_resolved 广播是幂等清理信号——即使 pending 已不存在也照发：
- * 页面断线错过 resolved 事件会留下点不动的死卡（实机反馈），广播让它自愈；
- * 无卡可清的客户端只是过滤掉一条未知 id，无代价。
+ * 在线客户端的 stale 卡借此自愈（多设备场景）；它不是补发机制——fire-and-forget
+ * 的广播救不了「裁决时恰好离线」的客户端，那一类只能靠 attach 时的 pending 重放
+ * 对齐（见 broadcast.ts replayApprovals；客户端 replace 对齐是后续项，见 ROADMAP）。
  */
 export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
   const had = hub.pendingApprovals.delete(requestId)
@@ -76,13 +77,13 @@ export function resolveApprovalRest(
   const hub = hubs.get(key)
   const pending = hub?.pendingApprovals.get(requestId)
   if (!hub || !pending) return { ok: false, status: 409, error: '该审批已处理或不存在' }
-  const ok = resolveApproval(
+  // get 与 delete 在同一事件循环刻度内，resolveApproval 在此处必然成功（无 await 窗口）
+  resolveApproval(
     hub,
     requestId,
     decision === 'allow'
       ? { behavior: 'allow', updatedInput: pending.input }
       : { behavior: 'deny', message: denyMessage },
   )
-  if (!ok) return { ok: false, status: 409, error: '该审批已处理或不存在' }
   return { ok: true, toolName: pending.toolName }
 }

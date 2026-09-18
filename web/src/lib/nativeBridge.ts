@@ -19,8 +19,8 @@ import { LocalNotifications, type LocalNotificationsPlugin } from '@capacitor/lo
 import type { InboxEvent } from '@anyplane/protocol'
 import { postJson } from './api'
 import { getToken } from './auth'
-import { InboxSocket } from './inbox'
-import { sessionHashUrl } from './sessionHash'
+import { inboxSubscribe } from './inboxBus'
+import { consumeQueryParam, sessionHashUrl } from './sessionHash'
 
 const ACTION_TYPE = 'APPROVAL'
 const QUERY_PARAM = 'nativeAction'
@@ -28,10 +28,18 @@ const QUERY_PARAM = 'nativeAction'
 export type NativeAction = { key: string; requestId: string; actionId: string }
 
 // ---------------------------------------------------------------------------
-// 设备侧遥测：静默死无法本地排查时，把里程碑直接写进服务端日志（/api/client-log）
+// 设备侧遥测：静默死无法本地排查时，把里程碑直接写进服务端日志（/api/client-log）。
+// 分级：ack/失败/超时类常量保留（native-perm/svc-ws-*/configure-fail/*-fail/TIMEOUT），
+// 例行进站确认（setup/import/register/tap 等每次启动都刷的行）只在 ?nativeDebug=1 时上报
+// （simplify 评审 Altitude：稳态降噪，服务器日志不该每次开 app 多五行）。
 
 function clientLog(tag: string, msg: string): void {
   void postJson('/api/client-log', { tag, msg }).catch(() => {})
+}
+
+function clientDebug(tag: string, msg: string): void {
+  if (!new URLSearchParams(location.search).has('nativeDebug')) return
+  clientLog(tag, msg)
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
@@ -85,6 +93,12 @@ export function notifId(requestId: string): number {
   return h & 0x7fffffff
 }
 
+/** 通知 id 按用途命名（simplify 评审 Altitude：裸 +1 是隐式规则——集中成命名方案，
+ *  且成功路径两个用途都清，否则重试成功后旧「未送达」通知挂着没人收） */
+function notifIdFor(requestId: string, purpose: 'approval' | 'failure'): number {
+  return purpose === 'failure' ? notifId(requestId) + 1 : notifId(requestId)
+}
+
 function summarizeInput(input: unknown): string {
   const s = typeof input === 'string' ? input : JSON.stringify(input) ?? ''
   return s.length > 120 ? s.slice(0, 120) + '…' : s
@@ -104,20 +118,15 @@ export function parseNativeAction(raw: string | null): NativeAction | null {
 
 /** 读取并清除引导页经 query 带过云的冷启动 action */
 export function consumeNativeActionParam(): NativeAction | null {
-  const url = new URL(location.href)
-  const parsed = parseNativeAction(url.searchParams.get(QUERY_PARAM))
-  if (parsed) {
-    url.searchParams.delete(QUERY_PARAM)
-    history.replaceState(null, '', url.pathname + url.search + url.hash)
-  }
-  return parsed
+  return parseNativeAction(consumeQueryParam(QUERY_PARAM))
 }
 
 // ---------------------------------------------------------------------------
 // 初始化（分两段：setupNativeBridge 一次性装载；continueNativeSetup 可在权限补授后续跑）
 
 let LN: LocalNotificationsPlugin | null = null
-let setupStage: 'none' | 'ready' | 'done' = 'none'
+// continueNativeSetup 的一次性完成标记（替代原 setupStage 三态机——'ready' 写了从不读）
+let continueDone = false
 
 async function act(a: NativeAction): Promise<void> {
   if (a.actionId === 'approve' || a.actionId === 'deny') {
@@ -130,7 +139,7 @@ async function act(a: NativeAction): Promise<void> {
     if (r && !r.ok && r.status !== 409) {
       // 失败通知用独立 id 且立即返回——否则被函数末尾的统一 cancel 当场删掉（评审发现）
       await LN?.schedule({
-        notifications: [{ id: notifId(a.requestId) + 1, title: '审批未送达', body: '请打开应用确认会话状态' }],
+        notifications: [{ id: notifIdFor(a.requestId, 'failure'), title: '审批未送达', body: '请打开应用确认会话状态' }],
       }).catch(() => {})
       return
     }
@@ -138,7 +147,10 @@ async function act(a: NativeAction): Promise<void> {
     // 点通知正文：深链进对应会话（hash 路由接管，见 App.tsx）
     location.hash = sessionHashUrl(a.key)
   }
-  await LN?.cancel({ notifications: [{ id: notifId(a.requestId) }] }).catch(() => {})
+  // 成功/409：两个用途的通知都清（重试成功时旧的「未送达」也要收）
+  await LN?.cancel({
+    notifications: [{ id: notifIdFor(a.requestId, 'approval') }, { id: notifIdFor(a.requestId, 'failure') }],
+  }).catch(() => {})
 }
 
 /** 导航桥：anyplane-bridge://<method>?<query> 经 shouldOverrideLoad 拦截执行——
@@ -165,15 +177,16 @@ function registerNativeEventHook(): void {
     if (e?.type === 'perm' && e.display) {
       clientLog('native-perm', `display=${e.display}`)
       // 首个原生回推即导航桥生效的实证（configure 是发即忘导航，收不到回推说明
-      // 壳太老/服务没起来——service 状态只许由 ack 驱动，不许乐观假设：评审发现）
-      setStatus({ permission: e.display, service: 'plugin' })
+      // 壳太老/服务没起来——service 状态只许由 ack 驱动，不许乐观假设：评审发现）。
+      // 顺带清掉此前的 error——横幅不该比修复它的成功路径活得久（simplify 评审发现）
+      setStatus({ permission: e.display, service: 'plugin', error: null })
     }
   }
 }
 
 /** 权限补授后的续跑（横幅按钮路径） */
 async function continueNativeSetup(): Promise<void> {
-  if (!LN || setupStage === 'done') return
+  if (!LN || continueDone) return
 
   // Android：导航桥通道（JSI 在 vivo OriginOS 的 WebView 上对远端页整段失效——实机）。
   // configure 由原生执行：启动前台服务 + 原生直发系统权限弹窗（ensureNotificationPermission）；
@@ -187,14 +200,14 @@ async function continueNativeSetup(): Promise<void> {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') sync()
     })
-    setupStage = 'done'
+    continueDone = true
     // service 只由原生回推（evaluateJavascript ack）置为 plugin；6s 无 ack 说明
     // 壳太老/服务没起来，落 js-fallback 触发横幅警示（评审发现：乐观假设会让
     // 死桥在 UI 里完全隐形）
     window.setTimeout(() => {
       if (getNativeBridgeStatus().service === 'off') setStatus({ service: 'js-fallback' })
     }, 6000)
-    clientLog('configure-nav', '已发导航桥 configure')
+    clientDebug('configure-nav', '已发导航桥 configure')
     return
   }
 
@@ -203,7 +216,7 @@ async function continueNativeSetup(): Promise<void> {
   // 权限弹窗与后续解耦：requestPermissions 挂起（部分 ROM 回调丢失）不会拖死主链。
   const current = await withTimeout(LN.checkPermissions(), 3000)
   if (current) setStatus({ permission: current.display })
-  clientLog('perm-check', current ? `display=${current.display}` : 'TIMEOUT（checkPermissions 未返回）')
+  clientDebug('perm-check', current ? `display=${current.display}` : 'TIMEOUT（checkPermissions 未返回）')
   void LN.requestPermissions()
     .then((p) => {
       setStatus({ permission: p.display })
@@ -214,40 +227,32 @@ async function continueNativeSetup(): Promise<void> {
     .catch(() => {})
 
   if (current?.display !== 'granted') return
-  setupStage = 'done'
+  continueDone = true
   setStatus({ service: 'js-fallback' })
-  new InboxSocket((ev: InboxEvent) => {
+  const scheduleApproval = (a: { key: string; requestId: string; toolName: string; input: unknown; detail?: string }): void => {
+    void LN?.schedule({
+      notifications: [
+        {
+          id: notifId(a.requestId),
+          title: `审批 · ${a.toolName}`,
+          // 服务端唯一口径（summarizeInput）摘要；老服务端缺省时回退本地截断
+          body: a.detail ?? summarizeInput(a.input),
+          actionTypeId: ACTION_TYPE,
+          extra: { key: a.key, requestId: a.requestId },
+        },
+      ],
+    }).catch(() => {})
+  }
+  inboxSubscribe((ev: InboxEvent) => {
     if (ev.type === 'approval') {
-      void LN?.schedule({
-        notifications: [
-          {
-            id: notifId(ev.requestId),
-            title: `审批 · ${ev.toolName}`,
-            body: summarizeInput(ev.input),
-            actionTypeId: ACTION_TYPE,
-            extra: { key: ev.key, requestId: ev.requestId },
-          },
-        ],
-      }).catch(() => {})
+      scheduleApproval(ev)
     } else if (ev.type === 'approval_resolved') {
       // 在别处（其他设备/规则引擎/会话内）已裁决：清掉本机通知
       void LN?.cancel({ notifications: [{ id: notifId(ev.requestId) }] }).catch(() => {})
     } else if (ev.type === 'snapshot') {
       // 连接即下发的 pending 全集（评审发现：JS 兜底路径漏了它，页面加载前
       // 已存在的审批永远不通知；notify 同 id 覆盖，天然去重）
-      for (const a of ev.approvals) {
-        void LN?.schedule({
-          notifications: [
-            {
-              id: notifId(a.requestId),
-              title: `审批 · ${a.toolName}`,
-              body: summarizeInput(a.input),
-              actionTypeId: ACTION_TYPE,
-              extra: { key: a.key, requestId: a.requestId },
-            },
-          ],
-        }).catch(() => {})
-      }
+      for (const a of ev.approvals) scheduleApproval(a)
     }
   })
 }
@@ -261,18 +266,17 @@ export async function setupNativeBridge(): Promise<void> {
   if (!Capacitor.isNativePlatform()) return
   setStatus({ active: true, platform: Capacitor.getPlatform() })
   // BRIDGE_REV：判别「设备跑的是不是最新包」——每轮改动自增，setup 必带
-  clientLog('setup', `rev=7 platform=${Capacitor.getPlatform()} origin=${location.origin}`)
+  clientLog('setup', `platform=${Capacitor.getPlatform()} origin=${location.origin}`)
   try {
     // 静态 import（早期版本是动态 import + 独立 chunk：国产 ROM 上 chunk 拉取可能挂起，
     // 整桥死在半路且无声——静态引入消除独立 fetch，代价是浏览器多载一个 10KB 级包）
     LN = LocalNotifications
-    clientLog('ln-import', 'static ok')
+    clientDebug('ln-import', 'static ok')
 
     // Android：导航桥通道，全程不碰 JSI（vivo OriginOS 实机整段失效）。
     // native→JS 状态回推经 __anyplaneNativeEvent（evaluateJavascript 独立机制）。
     if (Capacitor.getPlatform() === 'android') {
       registerNativeEventHook()
-      setupStage = 'ready'
       await continueNativeSetup()
       return
     }
@@ -290,13 +294,13 @@ export async function setupNativeBridge(): Promise<void> {
           ],
         },
       ],
-    }), 3000).then((r) => clientLog('register-action-types', r === null ? 'TIMEOUT' : 'ok'))
+    }), 3000).then((r) => clientDebug('register-action-types', r === null ? 'TIMEOUT' : 'ok'))
 
     await withTimeout(LN.addListener('localNotificationActionPerformed', (ev) => {
       const extra = ev.notification.extra as { key?: unknown; requestId?: unknown } | undefined
       if (typeof extra?.key !== 'string' || typeof extra.requestId !== 'string') return
       void act({ key: extra.key, requestId: extra.requestId, actionId: ev.actionId })
-    }), 3000).then((r) => clientLog('add-listener', r === null ? 'TIMEOUT' : 'ok'))
+    }), 3000).then((r) => clientDebug('add-listener', r === null ? 'TIMEOUT' : 'ok'))
 
     // CI/模拟器 spike 钩子（?testNotify=1）：等授权完成后调度一条带审批按钮的测试通知，
     // 验证「权限弹窗 → 注册 actionType → 调度 → 系统渲染按钮 → action 回传 → POST」。
@@ -323,12 +327,11 @@ export async function setupNativeBridge(): Promise<void> {
             },
           ],
         })
-          .then(() => clientLog('test-notify', 'scheduled'))
+          .then(() => clientDebug('test-notify', 'scheduled'))
           .catch((e) => clientLog('test-notify-fail', String(e)))
       })()
     }
 
-    setupStage = 'ready'
     await continueNativeSetup()
   } catch (e) {
     setStatus({ error: `原生桥初始化失败：${e instanceof Error ? e.message : String(e)}` })
@@ -338,12 +341,12 @@ export async function setupNativeBridge(): Promise<void> {
 /** 横幅「去开启」按钮：重问一次权限；被永久拒绝（返回 denied 且不再弹窗）时跳系统设置页 */
 export async function requestNativeNotificationPermission(): Promise<void> {
   if (!LN) return
-  clientLog('banner-tap', '用户点击去开启')
+  clientDebug('banner-tap', '用户点击去开启')
   // Android：直达系统通知设置页（导航桥）。原生 configure 流每次都会顺带直发
   // 系统权限弹窗（ensureNotificationPermission），设置页是 ROM 吞弹窗时的保底出口。
   if (Capacitor.getPlatform() === 'android') {
     navBridge('openNotificationSettings', {})
-    clientLog('settings-nav', '已发导航桥 openNotificationSettings')
+    clientDebug('settings-nav', '已发导航桥 openNotificationSettings')
     return
   }
   const before = (await LN.checkPermissions().catch(() => null))?.display ?? 'unknown'
@@ -356,7 +359,7 @@ export async function requestNativeNotificationPermission(): Promise<void> {
   // 3s 超时视为被拒，绝不串行等待。iOS 暂无自研插件，被拒后靠横幅文案引导手动进设置。
   const perm = await withTimeout(LN.requestPermissions(), 3000)
   if (perm) setStatus({ permission: perm.display })
-  clientLog('perm-request', perm ? `result=${perm.display}` : 'timeout（ROM 未返回）')
+  clientDebug('perm-request', perm ? `result=${perm.display}` : 'timeout（ROM 未返回）')
   if (perm?.display === 'granted') {
     await continueNativeSetup()
   }
