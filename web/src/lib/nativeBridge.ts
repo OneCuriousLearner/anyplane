@@ -306,6 +306,7 @@ export async function setupNativeBridge(): Promise<void> {
     // 验证「权限弹窗 → 注册 actionType → 调度 → 系统渲染按钮 → action 回传 → POST」。
     // 裁决对象是虚构的（服务端 409 属预期），断言点是 POST 本身到达。
     // 必须等 granted：iOS 在授权完成前 add() 会被系统静默丢弃（首轮 spike 实测踩坑）。
+    // 成功/失败都走 clientLog：本钩子已被 testNotify 门禁，不是每次开 app 的例行噪音。
     if (new URLSearchParams(location.search).get('testNotify') === '1') {
       void (async () => {
         for (let i = 0; i < 45; i++) {
@@ -327,7 +328,7 @@ export async function setupNativeBridge(): Promise<void> {
             },
           ],
         })
-          .then(() => clientDebug('test-notify', 'scheduled'))
+          .then(() => clientLog('test-notify', 'scheduled'))
           .catch((e) => clientLog('test-notify-fail', String(e)))
       })()
     }

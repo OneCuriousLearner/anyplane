@@ -100,7 +100,9 @@ adb logcat | grep -E 'AnyPlaneSvc|AnyPlaneAction|AnyPlaneBridge'   # 全部关�
 服务日志要等 1–2 分钟。
 
 ### 3.2 iOS spike（CI，免账号免 Mac）
-`app-ios-spike.yml`：桩服务器托管 `web/dist` + 构建期注入 `server.url`（跳过引导页）+
+`app-ios-spike.yml`：桩服务器托管 `web/dist` + 构建期注入
+`server.url=?testNotify=1&nativeDebug=1`（跳过引导页；`nativeDebug` 打开例行进站确认，
+硬断言 `register-action-types`/`test-notify` 依赖它）+
 XCUITest 驱动（权限弹窗 → 通知中心 → action）。截图经
 `xcrun xcresulttool export attachments --path ... --output-path ...` 导出为工件。
 XCUITest 坑位：`TEST_HOST` 与 XCTRunner 互斥（用 TargetApplication 关联）；
