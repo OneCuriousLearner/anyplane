@@ -12,6 +12,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import type { BackendName } from '@anyplane/protocol'
 import { config } from './config'
 import { pushWebhooksToAll } from './push'
 import { log } from './log'
@@ -43,7 +44,7 @@ function saveState(s: DriftState): void {
 
 /** 读 CLI 版本；CLI 不存在返回 null。claude 可能是 .cmd/.exe（resolveClaudeCommand 逻辑在
  *  processManager，这里独立解析避免循环依赖——只要版本号字符串，不需要完整命令解析）。 */
-export function cliVersionOf(cli: 'claude' | 'codex'): string | null {
+export function cliVersionOf(cli: BackendName): string | null {
   const candidates =
     cli === 'claude'
       ? process.platform === 'win32'
@@ -84,7 +85,7 @@ export function startupVersionProbe(): void {
 }
 
 /** 检查脚本成功/基线更新后调用：记录该版本已检查，消除启动提醒。 */
-export function markChecked(cli: 'claude' | 'codex'): void {
+export function markChecked(cli: BackendName): void {
   const v = cliVersionOf(cli)
   if (!v) return
   const state = loadState()
@@ -93,7 +94,7 @@ export function markChecked(cli: 'claude' | 'codex'): void {
 }
 
 /** 漂移检出时调用：控制台 +（配置 webhook 时）手机告警。同一版本只告警一次。 */
-export async function alertDrift(cli: 'claude' | 'codex', summary: string): Promise<void> {
+export async function alertDrift(cli: BackendName, summary: string): Promise<void> {
   log.error(`[drift] ⚠ ${cli} 协议漂移：${summary}`)
   if (config.driftAlert === false) return
   if (!config.pushWebhooks?.length) return

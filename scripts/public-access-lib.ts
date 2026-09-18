@@ -138,7 +138,7 @@ export async function run(argv: string[], deps: RunDeps): Promise<number> {
     return argv.length === 0 ? 1 : 0
   }
 
-  let args
+  let args: PublicAccessArgs
   try {
     args = parseArgs(argv)
   } catch (e) {

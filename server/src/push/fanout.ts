@@ -1,13 +1,14 @@
 // Web Push / webhook 的通知载荷组装与扇出；会话显示名、审批摘要、审批确认页 HTML 的唯一正本。
 // 依赖方向：push → hub（registry）允许，反向禁止（hub 经 hub/broadcast 的 InboxSink 出口）。
 
+import type { InboxEvent } from '@anyplane/protocol'
 import { parseKey } from '../backends/claude/backend'
 import { describeKey, portFor } from '../backends/port'
 import { log } from '../log'
 import { pushToAll, pushWebhooksToAll, subscriptionCount, webhookCount, type PushPayload } from '../push'
 import { escapeHtml, summarizeInput } from '../util'
 import { hubs } from '../hub/registry'
-import type { InboxEvent, PendingApproval } from '../hub/types'
+import type { PendingApproval } from '../hub/types'
 
 /** 会话显示名：项目目录 basename（approval 只在 spawn 后发生，spawnOpts.cwd 必有）。
  *  s| 未 spawn 时经 parseKey 反查真实 cwd——每 Hub 至多一次（缓存在 hub.nameCwd，
@@ -101,7 +102,9 @@ async function act(d){
 
 export function fanoutPush(ev: InboxEvent): void {
   if (subscriptionCount() === 0 && webhookCount() === 0) return
-  if (ev.type === 'approval_resolved') return // 审批已处理，无需推送（通知 tag 替换语义下保留现状即可）
+  // snapshot 只给新接入的 inbox 连接（socket.ts 直发，不经 publish），不是推送素材；
+  // approval_resolved 无需推送（通知 tag 替换语义下保留现状即可）
+  if (ev.type === 'snapshot' || ev.type === 'approval_resolved') return
   const session = sessionNameOf(ev.key)
   let payload: PushPayload
   if (ev.type === 'approval') {

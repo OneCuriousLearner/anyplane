@@ -8,7 +8,8 @@ import type { CliMessage } from '../backends/claude/protocol'
 import { resetInboxSinkForTest, setInboxSink } from './broadcast'
 import { sessionCallbacks } from './callbacks'
 import { getHub, hubs } from './registry'
-import type { Hub, InboxEvent } from './types'
+import type { InboxEvent } from '@anyplane/protocol'
+import type { Hub } from './types'
 
 const KEY = 'n|%2Ftmp%2Fcallbacks-test'
 const inbox: InboxEvent[] = []

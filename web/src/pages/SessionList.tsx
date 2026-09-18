@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { ArchivedEntry, BackendName, InboxApproval, SessionInfo } from '@anyplane/protocol'
 import {
   apiFetch,
   archiveSession,
@@ -10,10 +11,8 @@ import {
   postJson,
   renameSession,
   restoreSession,
-  type ArchivedEntry,
-  type SessionInfo,
 } from '../lib/api'
-import { InboxSocket, type InboxApproval } from '../lib/inbox'
+import { InboxSocket } from '../lib/inbox'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
@@ -354,7 +353,7 @@ export function SessionList(props: {
     return m
   }, [sessions])
 
-  const startNew = async (cwd: string, backend: 'claude' | 'codex') => {
+  const startNew = async (cwd: string, backend: BackendName) => {
     const { key, slug } = await createSession(cwd, backend)
     setPickerOpen(false)
     props.onSelect(makeSessionInfo({ key, slug, sessionId: 'new', cwd, backend, status: 'offline' }))
@@ -430,7 +429,7 @@ export function SessionList(props: {
               ).map(([value, label]) => {
                 const active = getThemeChoice() === value
                 return (
-                  <button
+                  <button type="button"
                     key={value}
                     className="flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left text-xs hover:bg-surface"
                     onClick={() => {
@@ -461,7 +460,7 @@ export function SessionList(props: {
                 通知
               </div>
               {/* 页内通知：页面隐藏时用 Notification API */}
-              <button
+              <button type="button"
                 className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5 text-left hover:bg-surface"
                 onClick={toggleNotify}
               >
@@ -473,7 +472,7 @@ export function SessionList(props: {
                 />
               </button>
               {/* Web Push：SW 离线可达，支持锁屏直接审批 */}
-              <button
+              <button type="button"
                 className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5 text-left hover:bg-surface disabled:opacity-50"
                 onClick={togglePush}
                 disabled={pushBusy || !pushSupported()}
@@ -505,7 +504,7 @@ export function SessionList(props: {
                 />
               </div>
               {/* 通道自检：一键向全部通道发测试通知 */}
-              <button
+              <button type="button"
                 className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5 text-left hover:bg-surface disabled:opacity-50"
                 onClick={sendTestPush}
                 disabled={pushTestBusy}
@@ -542,7 +541,7 @@ export function SessionList(props: {
                 </div>
                 <div className="mt-1.5 flex items-center gap-2 pl-6">
                   <span className="truncate font-mono text-[10px] text-faint">{e.cwd ?? e.slug}</span>
-                  <button
+                  <button type="button"
                     className="ml-auto shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-muted hover:text-ink"
                     onClick={() => doRestore(e.key)}
                   >

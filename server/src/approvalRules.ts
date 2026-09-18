@@ -6,7 +6,7 @@
 //   WebFetch → input.url 的域名（后缀匹配）。
 // 未知字段 / 坏正则在配置加载时即报错（fail fast），不静默吞掉。
 
-import type { ApprovalDecision } from './backends/types'
+import type { ApprovalDecision } from '@anyplane/protocol'
 
 // ---------- 配置形状（anyplane.config.json 的 approvalRules 数组元素） ----------
 
@@ -64,8 +64,8 @@ export function parseApprovalRules(raw: unknown): ApprovalRule[] {
 
 // ---------- 匹配 ----------
 
-/** 工具输入字段提取（与 util.ts summarizeInput 的按工具分发对齐，不另起一套） */
-function extractField(toolName: string, input: unknown, field: 'command' | 'domain'): string | null {
+/** 工具输入字段提取（字段集合与 util.ts summarizeInput 的按工具分发对齐，不另起一套） */
+function extractField(_toolName: string, input: unknown, field: 'command' | 'domain'): string | null {
   if (!input || typeof input !== 'object') return null
   const obj = input as Record<string, unknown>
   switch (field) {

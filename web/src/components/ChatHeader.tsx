@@ -3,10 +3,10 @@
 // （moreBtnRef 与 idCopied 是本组件私有的展示态，随 JSX 一并下沉。）
 
 import { useRef, useState } from 'react'
-import type { LineageResponse, SessionInfo } from '../lib/api'
+import type { BackendName, LineageResponse, SessionInfo, SessionState } from '@anyplane/protocol'
 import type { NavigateSession } from '../lib/sessionHash'
+import { makeSessionInfo } from '../lib/api'
 import { copyText } from '../lib/chatText'
-import type { SessionState } from '../lib/ws'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
 import { PopupPanel } from './PopupPanel'
@@ -92,7 +92,7 @@ export function ChatHeader(props: {
     <div className="glass-bar absolute inset-x-0 top-0 z-30">
       <div className="px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <button
+          <button type="button"
             className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface2 text-muted transition-colors hover:text-ink md:hidden"
             onClick={onBack}
             title="返回列表"
@@ -263,7 +263,7 @@ export function ChatHeader(props: {
               <span className="font-mono text-[10px] tracking-wide text-faint">
                 ◎ 会话目标{goal ? '（进行中）' : ''}——agent 会持续工作直到条件达成
               </span>
-              <button className="font-mono text-[10px] text-faint hover:text-muted" onClick={onCloseGoal}>
+              <button type="button" className="font-mono text-[10px] text-faint hover:text-muted" onClick={onCloseGoal}>
                 ✕
               </button>
             </div>
@@ -288,7 +288,7 @@ export function ChatHeader(props: {
                   }
                 }}
               />
-              <button
+              <button type="button"
                 className="shrink-0 rounded-full bg-ink px-3 py-1.5 font-mono text-[11px] text-bg disabled:opacity-40"
                 disabled={!goalDraft.trim()}
                 onClick={() => {
@@ -300,7 +300,7 @@ export function ChatHeader(props: {
                 设定
               </button>
               {goal && (
-                <button
+                <button type="button"
                   className="shrink-0 rounded-full px-3 py-1.5 font-mono text-[11px] text-accent hover:bg-accent/10"
                   onClick={() => {
                     onSendGoal()
@@ -323,14 +323,16 @@ export function ChatHeader(props: {
             .map((r) => {
               const fromKey = r.fromResolvedKey ?? r.fromKey
               const toKey = r.toResolvedKey ?? r.toKey
-              const node = (k: string, backend: 'claude' | 'codex') => {
+              const node = (k: string, backend: BackendName) => {
                 const info = lineage.nodes[k]
                 const current = k === session.key
                 return (
-                  <button
+                  <button type="button"
                     key={k}
                     disabled={!info}
-                    onClick={() => info && onNavigate?.(info)}
+                    // LineageNode 只是导航身份（key/slug/sessionId/cwd），占位字段由
+                    // makeSessionInfo 补齐，权威状态随后由 WS status 覆盖
+                    onClick={() => info && onNavigate?.(makeSessionInfo(info))}
                     className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 ${
                       current
                         ? 'bg-surface2 text-ink'

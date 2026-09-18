@@ -5,7 +5,7 @@ import type { SessionCallbacks } from '../types'
 import { RpcClient } from './rpc'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { HistoryMessage } from './translate'
+import type { CodexModelInfo, HistoryMessage } from '@anyplane/protocol'
 import { log } from '../../log'
 import { CodexSession, type CodexSpawnOpts } from './session'
 import {
@@ -361,16 +361,7 @@ export class CodexRuntime {
   }
 
   /** 模型目录：model/list 分页拉全（含每个模型支持的 effort 列表与默认 effort） */
-  async listModels(): Promise<
-    Array<{
-      id: string
-      label: string
-      description: string
-      efforts: Array<{ value: string; description: string }>
-      defaultEffort?: string
-      isDefault: boolean
-    }>
-  > {
+  async listModels(): Promise<CodexModelInfo[]> {
     const out = await this.paginate('model/list', {})
     return out
       .filter((m) => m.hidden !== true)

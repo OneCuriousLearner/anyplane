@@ -11,11 +11,16 @@
 //（claude-code src/bridge/replBridge.ts 的 lastTransportSequenceNum、
 //  bridgeMessaging.ts 的 recentInboundUUIDs）。这里序号是权威、uuid 去重仍留在前端兜底。
 
+import type { ServerEvent } from '@anyplane/protocol'
+
 export const CLI_RING_CAP = 500
+
+/** 环里存的就是 cli 事件本体（补发时加 replay:true 原样下发） */
+export type CliEventPayload = Extract<ServerEvent, { kind: 'cli' }>
 
 export interface CliRingSlot {
   seq: number
-  payload: Record<string, unknown>
+  payload: CliEventPayload
 }
 
 export interface CliRingState {
@@ -24,9 +29,8 @@ export interface CliRingState {
 }
 
 /** 可落盘的 cli 才入环、才占序号。stream_event 现场广播但不占环。 */
-export function shouldRingCli(payload: Record<string, unknown>): boolean {
-  if (payload.kind !== 'cli') return false
-  const msg = payload.msg as { type?: string; partial?: boolean } | undefined
+export function shouldRingCli(payload: CliEventPayload): boolean {
+  const msg = payload.msg
   if (msg?.type === 'stream_event') return false
   // codex 工具输出的部分结果（partial tool_result）：高频增量，与 stream_event 同理不占环——
   // 重连由终态 tool_result（aggregatedOutput 权威全文）兜底，环位留给可落盘事件
@@ -34,7 +38,7 @@ export function shouldRingCli(payload: Record<string, unknown>): boolean {
   return true
 }
 
-export function pushCliRing(state: CliRingState, payload: Record<string, unknown>): number | undefined {
+export function pushCliRing(state: CliRingState, payload: CliEventPayload): number | undefined {
   if (!shouldRingCli(payload)) return undefined
   state.cliSeq = (state.cliSeq ?? 0) + 1
   const seq = state.cliSeq
@@ -47,8 +51,8 @@ export function pushCliRing(state: CliRingState, payload: Record<string, unknown
 
 /** 把环里 seq > fromSeq 的 cli 事件交给 send。
  *  返回是否发生了「缺口」——请求的起点已被环挤掉、或服务端序号纪元低于客户端高水位
- *  （服务端重启后 Hub/cliSeq 归零，旧高水位再也无法衔接），客户端需要重载历史才能补全。 */
-export function replayCliSince(state: CliRingState, fromSeq: number, send: (payload: unknown) => void): boolean {
+ * （服务端重启后 Hub/cliSeq 归零，旧高水位再也无法衔接），客户端需要重载历史才能补全。 */
+export function replayCliSince(state: CliRingState, fromSeq: number, send: (payload: ServerEvent) => void): boolean {
   const ring = state.cliRing ?? []
   // 纪元失配：客户端声称收过 fromSeq 条，而我们发过的总数（含已被挤掉的）比这还少——
   // 只有服务端重启（新 Hub 从 1 重计）会产生这种倒挂，此时环里的一切都不能补发旧账。

@@ -1,7 +1,7 @@
 // 审批裁决共享路径与回滚互斥守卫。
 
 import { portFor } from '../backends/port'
-import type { ApprovalDecision } from '../backends/types'
+import type { ApprovalDecision } from '@anyplane/protocol'
 import { errorMessage } from '../util'
 import { broadcast, broadcastError, publishInbox } from './broadcast'
 import { pushStatus } from './status'

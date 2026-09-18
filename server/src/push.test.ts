@@ -85,7 +85,9 @@ function captureFetch(captured: CapturedReq[]): void {
   globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : (input as Request).url
     const headers: Record<string, string> = {}
-    new Headers(init?.headers).forEach((v, k) => (headers[k] = v))
+    new Headers(init?.headers).forEach((v, k) => {
+      headers[k] = v
+    })
     captured.push({ url, method: init?.method ?? 'GET', headers, body: typeof init?.body === 'string' ? init.body : '' })
     return new Response('ok', { status: 200 })
   }) as unknown as typeof fetch

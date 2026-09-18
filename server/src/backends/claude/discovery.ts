@@ -1,7 +1,7 @@
 // 会话发现：扫描 ~/.claude/projects/<slug>/<sessionId>.jsonl
 // 合并 ~/.claude/sessions/<pid>.json 的活跃状态
 
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync, type Stats } from 'node:fs'
 import { basename, join } from 'node:path'
 import { saveUpload } from '../../uploads'
 import { config } from '../../config'
@@ -13,7 +13,8 @@ import { isInternalUserMessage, type CliMessage } from './protocol'
  *  正本已移至 server/src/util.ts（叶子层，供 processManager 水合复用而不成环），此处 re-export 兼容既有引用。 */
 export { sanitizePath } from '../../util'
 
-export type SessionStatus = 'busy' | 'idle' | 'waiting' | 'offline'
+/** 状态词表正本在 @anyplane/protocol（SessionInfo.status 共用同一闭集） */
+import type { HistoryBlock, HistoryMessage, SessionStatus, SubagentHistory } from '@anyplane/protocol'
 
 const KNOWN_STATUS: readonly SessionStatus[] = ['busy', 'idle', 'waiting', 'offline']
 
@@ -26,7 +27,7 @@ function normalizeStatus(raw: string | undefined): SessionStatus {
   return raw && (KNOWN_STATUS as readonly string[]).includes(raw) ? (raw as SessionStatus) : 'idle'
 }
 
-export interface SessionInfo {
+export interface DiscoveredSession {
   sessionId: string
   /** 项目原始路径（从 jsonl 首行 cwd 字段还原；读不到则为 undefined） */
   cwd?: string
@@ -187,14 +188,14 @@ export function sessionMetaOf(slug: string, sessionId: string): ReturnType<typeo
   }
 }
 
-export function listSessions(): SessionInfo[] {
+export function listSessions(): DiscoveredSession[] {
   const projectsDir = join(config.claudeConfigDir, 'projects')
   const live = readPidFiles()
   // daemon 视图（agents --json --all，SWR 缓存）：pid 文件优先，daemon 兜底；
   // background agent 无 pid 文件，其"活着"状态只有这里能拿到
   const agents = daemonAgents()
   /** pid 文件未覆盖时，用 daemon 信息合成 live（background 活着=busy，interactive 按其 status） */
-  const daemonLiveOf = (sessionId: string): SessionInfo['live'] & { status?: SessionStatus } | undefined => {
+  const daemonLiveOf = (sessionId: string): DiscoveredSession['live'] & { status?: SessionStatus } | undefined => {
     if (live.has(sessionId)) return undefined
     const a = agents.get(sessionId)
     if (!a) return undefined
@@ -207,12 +208,12 @@ export function listSessions(): SessionInfo[] {
     }
     return undefined
   }
-  const out: SessionInfo[] = []
+  const out: DiscoveredSession[] = []
   if (!existsSync(projectsDir)) return out
 
   for (const slug of readdirSync(projectsDir)) {
     const dir = join(projectsDir, slug)
-    let st
+    let st: Stats | undefined
     try {
       st = statSync(dir)
     } catch {
@@ -282,8 +283,6 @@ export function listSessions(): SessionInfo[] {
 // ---------- 历史消息（供 UI 首次加载） ----------
 
 // 共享类型正本在 ../types（后端无关抽象层）；此处 import 自用 + re-export 兼容既有 import 路径
-import type { HistoryBlock, HistoryMessage, SubagentHistory } from '../types'
-export type { HistoryMessage } from '../types'
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
 function toolResultText(rc: unknown): string {

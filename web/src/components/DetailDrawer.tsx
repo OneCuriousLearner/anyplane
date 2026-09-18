@@ -2,7 +2,8 @@
 // F2 从 pages/Chat.tsx 逐字切出——纯展示组件；查询由 onRunQuery 回调发回组合层
 //（query_result 应答在 Chat 的 WS 分发里落到 detailContent/mcpServers/contextData/settingsData）。
 
-import { resolveModel, type TierModelName } from '../lib/api'
+import type { TierModelName } from '@anyplane/protocol'
+import { resolveModel } from '../lib/api'
 import { fmtTokens } from '../lib/blocks'
 
 /** claude mcp_status 应答里的单个服务器（buildMcpServerStatuses 形状） */
@@ -63,7 +64,7 @@ export function DetailDrawer(props: {
         <span className="text-muted">{detailTitle}</span>
         {/* codex 只有 mcp_status 有对应物（mcpServerStatus/list）；context/设置是 claude 控制请求 */}
         {(isCodex ? (['mcp_status'] as const) : (['get_context_usage', 'mcp_status', 'get_settings'] as const)).map((q) => (
-          <button
+          <button type="button"
             key={q}
             className="rounded-full bg-surface px-2.5 py-1 text-[10px] text-faint hover:text-ink"
             onClick={() =>
@@ -73,7 +74,7 @@ export function DetailDrawer(props: {
             {q === 'get_context_usage' ? 'context' : q === 'mcp_status' ? 'MCP' : '设置'}
           </button>
         ))}
-        <button className="ml-auto text-faint hover:text-muted" onClick={onClose}>
+        <button type="button" className="ml-auto text-faint hover:text-muted" onClick={onClose}>
           ✕
         </button>
       </div>
@@ -115,7 +116,7 @@ export function DetailDrawer(props: {
                   {configLine && <div className="truncate font-mono text-[10px] text-faint">{configLine}</div>}
                   {srv.error && <div className="truncate font-mono text-[10px] text-danger">{srv.error}</div>}
                 </div>
-                <button
+                <button type="button"
                   className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
                   disabled={!!mcpBusy || srv.status === 'disabled'}
                   title="重新连接（mcp_reconnect）"
@@ -123,7 +124,7 @@ export function DetailDrawer(props: {
                 >
                   {reconnecting ? '…' : '重连'}
                 </button>
-                <button
+                <button type="button"
                   className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
                   disabled={!!mcpBusy}
                   title={srv.status === 'disabled' ? '启用并连接（写入 settings）' : '禁用并断开（写入 settings）'}

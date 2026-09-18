@@ -1,13 +1,13 @@
 // WS 上行消息分发：11 类 kind 全部经 portFor 分发给后端适配器。
 // Hub 级状态（spawnOpts 缓存、rewindPending 守卫、重连补发单播）留在本层——适配器只做后端投递。
 
+import type { ApprovalDecision, ClientCommand, QueryResultPayload, ServerEvent } from '@anyplane/protocol'
 import type { ServerWebSocket } from 'bun'
 import { portFor } from '../backends/port'
-import type { ApprovalDecision } from '../backends/types'
 import { replayCliSince } from '../cliReplay'
 import { errFields, log } from '../log'
 import { errorMessage } from '../util'
-import { broadcast, broadcastError, replayApprovals } from './broadcast'
+import { broadcast, broadcastError, replayApprovals, sendTo } from './broadcast'
 import { resolveApproval, rewindBusy } from './lifecycle'
 import { pushStatus } from './status'
 import type { Hub, WSData } from './types'
@@ -20,9 +20,11 @@ export function handleClientMessage(
   /** 编排测试注入；生产调用保持默认 portFor。 */
   resolvePort: typeof portFor = portFor,
 ): void {
-  let data: Record<string, unknown>
+  // 上行帧的静态形状是 ClientCommand（判别联合），但字节来自不可信客户端——
+  // 各分支内的 String()/typeof 收窄是运行时防御，不许因"类型上已声明"而删掉。
+  let data: ClientCommand
   try {
-    data = JSON.parse(raw)
+    data = JSON.parse(raw) as ClientCommand
   } catch (e) {
     // 曾是静默 return：协议漂移/帧截断时表现为"消息就是没了"，零线索。
     // 客户端不可能合法发出非 JSON，这一定是 bug 或攻击面探测，按 error 留痕。
@@ -37,13 +39,7 @@ export function handleClientMessage(
       // 待审批补发只给本次 attach 的连接：走 broadcast 会让已在线的其他客户端
       // 重复收到同一张审批卡（requestId 相同，纯噪声）
       if (ws) {
-        replayApprovals(hub, (p) => {
-          try {
-            ws.send(JSON.stringify(p))
-          } catch (e) {
-            log.debug(`[ws ${hub.key}] 审批补发单播失败`, errFields(e))
-          }
-        })
+        replayApprovals(hub, (p) => sendTo(ws, p))
       } else {
         replayApprovals(hub, (p) => broadcast(hub, p))
       }
@@ -52,13 +48,7 @@ export function handleClientMessage(
       // 且已在线的其他客户端会收到重复投递。
       const fromSeq = typeof data.fromSeq === 'number' ? data.fromSeq : undefined
       if (fromSeq !== undefined && ws) {
-        const unicast = (p: unknown) => {
-          try {
-            ws.send(JSON.stringify(p))
-          } catch (e) {
-            log.debug(`[ws ${hub.key}] 补发单播失败`, errFields(e))
-          }
-        }
+        const unicast = (p: ServerEvent) => sendTo(ws, p)
         // 环里已挤掉起点时告知缺口，由前端重载历史补全（transcript 是权威事实源）
         const gap = replayCliSince(hub, fromSeq, unicast)
         if (gap) {
@@ -78,9 +68,7 @@ export function handleClientMessage(
       if (rewindBusy(hub, '正在恢复文件，请等待回滚完成后再发送消息')) return
       const sendMode = data.sendMode === 'steer' || data.sendMode === 'queue' ? data.sendMode : undefined
       // 图片附件：服务端统一校验（类型/大小），claude 并 content blocks，codex 落盘走 localImage
-      const attachments = (
-        Array.isArray(data.attachments) ? (data.attachments as Array<Record<string, unknown>>) : []
-      ).map((a) => ({
+      const attachments = (Array.isArray(data.attachments) ? data.attachments : []).map((a) => ({
         name: String(a.name ?? 'image'),
         mediaType: String(a.mediaType ?? 'image/png'),
         dataBase64: String(a.dataBase64 ?? ''),
@@ -107,7 +95,7 @@ export function handleClientMessage(
     }
     case 'control': {
       const subtype = String(data.subtype)
-      const extra = (data.extra as Record<string, unknown>) ?? {}
+      const extra = data.extra ?? {}
       // 组合回滚等待期间，通用控制路径不得再发 rewind_files 与之竞争
       if (hub.rewindPending && subtype === 'rewind_files') {
         broadcastError(hub, '已有回滚操作正在进行')
@@ -127,7 +115,7 @@ export function handleClientMessage(
     case 'update_env': {
       // effort 有 --effort 启动参数。未 spawn 时只缓存，首条消息时应用；
       // 已 spawn 时通过 update_environment_variables 影响后续 turn。
-      const variables = (data.variables as Record<string, string>) ?? {}
+      const variables = data.variables ?? {}
       const effort = variables.CLAUDE_CODE_EFFORT_LEVEL
       if (effort) hub.spawnOpts = { ...hub.spawnOpts, effort }
       resolvePort(hub.key).updateEnv(hub, variables)
@@ -168,8 +156,8 @@ export function handleClientMessage(
       // codex 仅 mcp_status 有对应物 mcpServerStatus/list（动作类一律拒绝，见适配器）
       const id = String(data.id ?? '')
       const query = String(data.query ?? '')
-      const extra = (data.extra as Record<string, unknown> | undefined) ?? {}
-      const reply = (payload: Record<string, unknown>) => broadcast(hub, { kind: 'query_result', id, ...payload })
+      const extra = data.extra ?? {}
+      const reply = (payload: QueryResultPayload) => broadcast(hub, { kind: 'query_result', id, ...payload })
       if (!id || !query) return
       resolvePort(hub.key).query(hub, query, extra, reply)
       break

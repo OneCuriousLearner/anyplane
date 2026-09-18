@@ -1,4 +1,4 @@
-import type { SessionInfo } from './api'
+import type { SessionInfo } from '@anyplane/protocol'
 
 /** 会话导航：默认 push（旧会话还活着）；replace 仅用于旧 key 已作废（如 /clear 重键） */
 export type NavigateSession = (s: SessionInfo, opts?: { replace?: boolean }) => void

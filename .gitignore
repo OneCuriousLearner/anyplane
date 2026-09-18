@@ -11,6 +11,9 @@ anyplane.config.json
 ## Logs
 *.log
 
+## 崩溃转储（Bun/CLI 子进程偶发 segfault 的遗物）
+core.*
+
 ## Temporary files
 .tmp/
 

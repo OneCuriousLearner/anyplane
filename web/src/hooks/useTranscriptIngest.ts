@@ -7,7 +7,7 @@
 // E3（session.key 历史加载 effect）留 Chat 组合层：reset 先于建连的顺序纪律在那。
 
 import { useRef, useState } from 'react'
-import type { HistoryResponse, SubagentHistory } from '../lib/api'
+import type { HistoryResponse, SubagentHistory } from '@anyplane/protocol'
 import { nextId, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 import {
   appendHistoryMsg,
@@ -23,7 +23,8 @@ import {
   transcriptKeys,
   type IngestState,
 } from '../lib/ingest'
-import type { CliMsg, SessionSocket } from '../lib/ws'
+import type { CliMsg } from '@anyplane/protocol'
+import type { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
 
 /** 流式草稿：一轮 assistant 输出的增量块（按 message.id + block index 归并） */
@@ -324,7 +325,7 @@ export function useTranscriptIngest(opts: {
 
     if (msg.type === 'assistant') {
       if (taskApi.appendSidechain(rec)) return
-      const content = msg.message?.content
+      const content = (rec.message as { content?: unknown } | undefined)?.content
       const blocks = Array.isArray(content) ? content : []
       const msgId = (rec.message as { id?: string } | undefined)?.id
       const d = draftRef.current
@@ -372,7 +373,7 @@ export function useTranscriptIngest(opts: {
       // codex 工具输出的流式部分结果：更新运行中工具卡的文本，但不做任何终态动作
       //（不 settle 桶、不进乱序缓冲、不标 seen——终态 tool_result 随后走正常路径收尾）
       if (rec.partial === true) {
-        const content = msg.message?.content
+        const content = (rec.message as { content?: unknown } | undefined)?.content
         const blocks = Array.isArray(content) ? content : []
         const append = rec.append === true
         for (const c of blocks) {
@@ -386,7 +387,7 @@ export function useTranscriptIngest(opts: {
         return
       }
       if (taskApi.appendSidechain(rec)) return
-      const content = msg.message?.content
+      const content = (rec.message as { content?: unknown } | undefined)?.content
       const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
       const textBlocks: Block[] = []
       for (const c of blocks) {

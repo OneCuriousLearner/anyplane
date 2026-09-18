@@ -3,36 +3,13 @@
 // Codex 走 app-server `account/read` RPC（协议正本，覆盖自定义 provider 场景）。
 // 探测有成本（spawn 子命令/子进程），模块级 TTL 缓存 + single-flight；
 // **懒 spawn 红线**：探测绝不留下常驻进程（见 probeCodex）。
+// 契约类型（BackendLoginState/BackendStatus/BackendsStatus）正本在 @anyplane/protocol。
 
+import type { BackendStatus, BackendsStatus } from '@anyplane/protocol'
 import { childEnv } from '../util'
 import { resolveClaudeCommand } from './claude/processManager'
 import { RpcClient } from './codex/rpc'
 import { codexRuntime, handshakeAppServer } from './codex/runtime'
-
-/** 宏观登录态：列表页按此渲染徽标与指引 */
-export type BackendLoginState =
-  | 'subscription' // claude.ai 订阅 / codex ChatGPT
-  | 'api-key' // 显式 API key
-  | 'token' // OAuth token（env / setup-token，auth status 不再细分来源）
-  | 'third-party' // Bedrock / Vertex / Foundry
-  | 'custom-provider' // codex 自定义 model_provider（API-key 组织用户的典型形态）
-  | 'not-logged-in'
-  | 'not-installed'
-  | 'unknown' // 探测失败（超时/输出不可解析），不等于未登录
-
-export interface BackendStatus {
-  state: BackendLoginState
-  /** 补充信息：codex ChatGPT 的 email/planType、third-party 的 provider 名 */
-  detail?: string
-  /** 探测失败时的错误摘要（state=unknown） */
-  error?: string
-}
-
-export interface BackendsStatus {
-  checkedAt: number
-  claude: BackendStatus
-  codex: BackendStatus
-}
 
 // ---------- 分类（纯函数，单测锚点） ----------
 

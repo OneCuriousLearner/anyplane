@@ -7,7 +7,7 @@
 // 统一口径：配对失败一律进 pending 缓冲；工具块落地时反查缓冲补齐；只有在批次收尾
 // （flushStrayResults）时仍未配对的，才作为孤立结果降级展示——那才是真正的孤儿。
 
-import type { HistoryMessage } from './api'
+import type { HistoryMessage } from '@anyplane/protocol'
 import { type Block, type ChatMsg, nextId } from './blocks'
 
 /** toolUseId → 消息/块下标。rewind 截断等会使其失效，配对时须校验 */
