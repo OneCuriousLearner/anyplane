@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.WebViewListener;
+import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
 
@@ -44,9 +45,30 @@ public class MainActivity extends BridgeActivity {
 
     private void flushPendingOpen() {
         final String key = BridgeState.pendingOpenKey;
-        if (key == null || getBridge() == null) return;
+        if (key == null || getBridge() == null || getBridge().getWebView() == null) return;
+        String url = getBridge().getWebView().getUrl();
+        if (isLocalShell(url)) {
+            // 引导页跨源 replace 会丢掉 hash：挂到全局，由 www/index.html 接到远端 URL。
+            // 不清 pendingOpenKey——远端 onPageLoaded 再推 hash 作双保险。
+            evalOnWebView("window.__anyplanePendingOpen=" + jsString(key));
+            return;
+        }
         BridgeState.pendingOpenKey = null;
-        evalOnWebView("location.hash='#s=" + Uri.encode(key) + "'");
+        // JSONObject.quote 才是 JS 字符串上下文；Uri.encode 放行单引号，exported Activity extras 可注入
+        evalOnWebView("location.hash='#s='+encodeURIComponent(" + jsString(key) + ")");
+    }
+
+    /** Capacitor 本地源（引导页）。null/空/无 host 也当本地，避免在未知页上清掉 pending。 */
+    static boolean isLocalShell(String url) {
+        if (url == null || url.isEmpty()) return true;
+        String host = Uri.parse(url).getHost();
+        if (host == null) return true;
+        return "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host);
+    }
+
+    /** JS 字符串字面量（含引号）。不要用 Uri.encode：它放行 '()* ，会破出单引号拼接。 */
+    static String jsString(String value) {
+        return JSONObject.quote(value == null ? "" : value);
     }
 
     /** native→JS 的统一出口（插件的状态回推也走这里） */

@@ -130,8 +130,11 @@ Android `Uri.getQueryParameter` 不还原，token 会被改坏）。未知 metho
 `allowNavigation: ['*']` 在 config 里只是兜底，真正判定在插件。
 
 ### 4.4 冷启动接力（两条，按通知来源分）
-- 原生通知点正文 → `MainActivity` extras（`anyplane.openKey`）→ 页面加载后
-  `evaluateJavascript` 推 `location.hash`；
+- 原生通知点正文 → `MainActivity` extras（`anyplane.openKey`）：
+  本地引导页只挂 `window.__anyplanePendingOpen`，由 `www/index.html` 接到远端
+  `#s=`（本地 hash 会随 `location.replace` 丢掉）；已在远端源时直接推
+  `location.hash`。`evaluateJavascript` 的字符串必须用 `JSONObject.quote`，
+  **不能用 `Uri.encode`**（AOSP 放行 `'()`* ，exported Activity extras 可注入）。
 - LocalNotifications 插件通知（iOS 路径）→ 引导页捕获 → `?nativeAction=` query
   （localStorage 跨源不共享，不能走 localStorage 暂存）。
 **约束**：原生侧只能表达「打开」，不能表达「裁决」——若 Android 将来出现 WebView 侧
@@ -158,11 +161,12 @@ action 源，必须走 query 接力（详见 PR #42 评审）。
 （旧版只比 host，同主机异端口可借桥重指服务）、`SecureStore` v1: 前缀格式
 （孤儿密文返回空逼重配，不再把垃圾加密成「合法 token」）。全部修复有模拟器复验。
 
-### 6.2 security-review（3 候选全部过滤，留存理由）
-- **`MainActivity` 的 `Uri.encode` 拼接 JS 不可注入**（复核纠正）：AOSP
-  `Uri.encode(String)` 默认只放行 `[A-Za-z0-9_.~-]`，引号/反斜杠/换行全部编码。
-  **加固注意**：语义上该用 `org.json.JSONObject.quote()`（JS 字符串上下文），
-  且**切忌误改成 JS `encodeURIComponent`——它才是放行单引号的那个**。
+### 6.2 security-review（2 条过滤 + 1 条已纠正）
+- **`MainActivity` 的 `Uri.encode` 拼接 JS 曾被误判为不可注入**：AOSP
+  `Uri.encode(String)` 实际放行 `A-Za-z0-9` **加上** `_-!.~'()*`，单引号不编码。
+  `MainActivity` 又是 `exported=true`，同机 extras 可破出
+  `location.hash='#s=…'`。已改 `JSONObject.quote` + 远端页用
+  `encodeURIComponent(quotedLiteral)`。不要改回 `Uri.encode`。
 - **`localhost` 白名单 + 桥拦截不查发起源的残余风险**：不构成凭据失窃
   （token 是被销毁/覆写而非外发；cookie 按攻击者源读取），残余影响为通知 DoS +
   假冒审批通知钓鱼。**纵深加固方向（未做）**：`configure` 拦截增加「发起源 ==

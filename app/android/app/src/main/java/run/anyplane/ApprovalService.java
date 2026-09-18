@@ -257,8 +257,9 @@ public class ApprovalService extends Service {
         Log.d(TAG, "发审批通知 " + toolName + " requestId=" + requestId);
 
         int id = notifId(requestId);
-        PendingIntent approvePi = actionIntent("approve", key, requestId, id * 2);
-        PendingIntent denyPi = actionIntent("deny", key, requestId, id * 2 + 1);
+        // requestCode 加盐再哈希：notifId*2 在 id>=0x40000000 时整型溢出，不同审批会撞车
+        PendingIntent approvePi = actionIntent("approve", key, requestId, requestCode(requestId, "approve"));
+        PendingIntent denyPi = actionIntent("deny", key, requestId, requestCode(requestId, "deny"));
 
         Intent open = new Intent(this, MainActivity.class)
             .putExtra("anyplane.openKey", key)
@@ -271,7 +272,7 @@ public class ApprovalService extends Service {
             // 品牌标（mipmap PNG；默认模板机器人在 simplify 轮已清）
             .setSmallIcon(R.mipmap.ic_launcher_foreground)
             .setContentTitle("审批 · " + toolName)
-            .setContentText(summarize(ev.opt("input")))
+            .setContentText(approvalBody(ev))
             .setContentIntent(openPi)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -315,6 +316,13 @@ public class ApprovalService extends Service {
         );
     }
 
+    /** 服务端 detail 正本；老服务端缺省时回退本地截断（与 nativeBridge 同口径） */
+    static String approvalBody(JSONObject ev) {
+        String detail = ev.optString("detail", "").trim();
+        if (!detail.isEmpty()) return detail;
+        return summarize(ev.opt("input"));
+    }
+
     private static String summarize(Object input) {
         String s = input == null ? "" : (input instanceof String ? (String) input : input.toString());
         return s.length() > 120 ? s.substring(0, 120) + "…" : s;
@@ -328,5 +336,10 @@ public class ApprovalService extends Service {
             h *= 0x01000193;
         }
         return h & 0x7fffffff;
+    }
+
+    /** PendingIntent requestCode：加盐再折 31 位，避免 notifId*2 溢出撞车 */
+    static int requestCode(String requestId, String purpose) {
+        return notifId(requestId + '\0' + purpose);
     }
 }

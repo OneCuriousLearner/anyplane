@@ -108,8 +108,17 @@
   }
 
   function targetUrl(origin) {
-    if (!pendingAction) return origin;
-    return origin + '/?nativeAction=' + encodeURIComponent(JSON.stringify(pendingAction));
+    var url = origin;
+    if (pendingAction) {
+      url = origin + '/?nativeAction=' + encodeURIComponent(JSON.stringify(pendingAction));
+    }
+    // 原生通知点正文：MainActivity 在引导页只挂 __anyplanePendingOpen（本地 hash
+    // 随 location.replace 丢掉）。接到远端 #s=，由 App.tsx 启动时消费。
+    var openKey = window.__anyplanePendingOpen;
+    if (typeof openKey === 'string' && openKey) {
+      url += '#s=' + encodeURIComponent(openKey);
+    }
+    return url;
   }
 
   function showForm(err) {
