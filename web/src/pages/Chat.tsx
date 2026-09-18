@@ -477,50 +477,56 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
       {/* 顶栏：悬浮磨砂横带 */}
       <ChatHeader
-        session={session}
-        connected={connected}
-        statusLine={statusLine}
-        busy={busy}
-        phase={phase}
-        onBack={props.onBack}
-        tasks={tasks}
-        tasksOpen={tasksOpen}
-        onToggleTasks={() => setTasksOpen((v) => !v)}
-        isExisting={isExisting}
-        isCodex={isCodex}
-        canBranch={caps?.branch ?? false}
-        sessionId={state.sessionId}
-        currentSessionId={currentSessionId}
-        goal={state.goal}
-        usageLine={usageLine}
-        moreOpen={moreOpen}
-        setMoreOpen={setMoreOpen}
-        onSystemMessage={ingestApi.pushSystem}
-        onToggleDetail={() => {
-          setDetailOpen((v) => !v)
-          // 默认落 context 用量；无该查询能力的后端退到 MCP 状态（能力白名单内）
-          if (!detailOpen && defaultDetailQuery) runQuery(defaultDetailQuery[0], defaultDetailQuery[1])
+        sessionInfo={{
+          session,
+          connected,
+          statusLine,
+          busy,
+          phase,
+          onBack: props.onBack,
+          usageLine,
         }}
-        goalOpen={goalOpen}
-        onToggleGoal={() => {
-          setGoalDraft(state.goal?.condition ?? '')
-          setGoalOpen((v) => !v)
+        tasksInfo={{ tasks, tasksOpen, onToggleTasks: () => setTasksOpen((v) => !v) }}
+        identity={{
+          isExisting,
+          isCodex,
+          canBranch: caps?.branch ?? false,
+          sessionId: state.sessionId,
+          currentSessionId,
         }}
-        onCloseGoal={() => setGoalOpen(false)}
-        goalDraft={goalDraft}
-        onGoalDraftChange={setGoalDraft}
-        onSendGoal={sendGoal}
-        onBranch={() => sockRef.current?.send({ kind: 'branch' })}
-        handoffBusy={handoffBusy}
-        onHandoff={() => {
-          const toBackend = isCodex ? 'claude' : 'codex'
-          setHandoffBusy(true)
-          startHandoff(session.key, toBackend)
-            .catch((e) => ingestApi.pushSystem(`⚠ 接力失败: ${errorMessage(e)}`, 'error'))
-            .finally(() => setHandoffBusy(false))
+        goalInfo={{
+          goal: state.goal,
+          goalOpen,
+          onToggleGoal: () => {
+            setGoalDraft(state.goal?.condition ?? '')
+            setGoalOpen((v) => !v)
+          },
+          onCloseGoal: () => setGoalOpen(false),
+          goalDraft,
+          onGoalDraftChange: setGoalDraft,
+          onSendGoal: sendGoal,
         }}
-        lineage={lineage}
-        onNavigate={props.onNavigate}
+        actions={{
+          moreOpen,
+          setMoreOpen,
+          onSystemMessage: ingestApi.pushSystem,
+          onToggleDetail: () => {
+            setDetailOpen((v) => !v)
+            // 默认落 context 用量；无该查询能力的后端退到 MCP 状态（能力白名单内）
+            if (!detailOpen && defaultDetailQuery) runQuery(defaultDetailQuery[0], defaultDetailQuery[1])
+          },
+          onBranch: () => sockRef.current?.send({ kind: 'branch' }),
+          handoffBusy,
+          onHandoff: () => {
+            const toBackend = isCodex ? 'claude' : 'codex'
+            setHandoffBusy(true)
+            startHandoff(session.key, toBackend)
+              .catch((e) => ingestApi.pushSystem(`⚠ 接力失败: ${errorMessage(e)}`, 'error'))
+              .finally(() => setHandoffBusy(false))
+          },
+          lineage,
+          onNavigate: props.onNavigate,
+        }}
       >
         {/* 会话详情抽屉 */}
         {detailOpen && (
@@ -565,50 +571,57 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
 
       {/* 输入区：悬浮磨砂圆角块；模型胶囊 / 图片 / 发送全收进块内 */}
       <Composer
-        input={input}
-        onInputChange={setInput}
-        busy={busy}
-        connected={connected}
-        sendMode={sendMode}
-        onSendModeChange={setSendMode}
-        isCodex={isCodex}
-        pendingImages={pendingImages}
-        onPendingImagesChange={setPendingImages}
-        onSend={send}
-        onInterrupt={() => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' })}
-        atBottom={atBottom}
-        onScrollToBottom={jumpToBottom}
-        slashCommands={state.slashCommands}
-        initSlashCommands={initInfo.slashCommands}
-        cfg={cfg}
-        claudeModel={initInfo.model}
-        permMode={permMode}
-        effort={effort}
-        modelNames={modelNames}
-        onPanelOpen={loadModelNames}
-        onSetClaudeModel={(m) => {
-          ingestApi.setInitInfo((prev) => ({ ...prev, model: m }))
-          sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+        core={{
+          input,
+          onInputChange: setInput,
+          busy,
+          connected,
+          sendMode,
+          onSendModeChange: setSendMode,
+          isCodex,
+          pendingImages,
+          onPendingImagesChange: setPendingImages,
+          onSend: send,
+          onInterrupt: () => sockRef.current?.send({ kind: 'control', subtype: 'interrupt' }),
+          atBottom,
+          onScrollToBottom: jumpToBottom,
+          slashCommands: state.slashCommands,
+          initSlashCommands: initInfo.slashCommands,
         }}
-        onSetMode={handleSetMode}
-        onSetEffort={handleSetEffort}
-        codexModels={codexModels}
-        stateModel={state.model}
-        statePermissionMode={state.permissionMode}
-        stateEffort={state.effort}
-        onSetCodexModel={(m) => {
-          sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+        claudePill={{
+          cfg,
+          claudeModel: initInfo.model,
+          permMode,
+          effort,
+          modelNames,
+          onPanelOpen: loadModelNames,
+          onSetClaudeModel: (m) => {
+            ingestApi.setInitInfo((prev) => ({ ...prev, model: m }))
+            sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+          },
+          onSetMode: handleSetMode,
+          onSetEffort: handleSetEffort,
         }}
-        context={state.context}
-        usage={state.usage}
-        onOpenFullDetail={
-          caps?.queries.includes('get_context_usage') === true && isExisting
-            ? () => {
-                setDetailOpen(true)
-                runQuery('get_context_usage', 'context 用量')
-              }
-            : undefined
-        }
+        codexPill={{
+          codexModels,
+          stateModel: state.model,
+          statePermissionMode: state.permissionMode,
+          stateEffort: state.effort,
+          onSetCodexModel: (m) => {
+            sockRef.current?.send({ kind: 'control', subtype: 'set_model', extra: { model: m } })
+          },
+        }}
+        ring={{
+          context: state.context,
+          usage: state.usage,
+          onOpenFullDetail:
+            caps?.queries.includes('get_context_usage') === true && isExisting
+              ? () => {
+                  setDetailOpen(true)
+                  runQuery('get_context_usage', 'context 用量')
+                }
+              : undefined,
+        }}
       />
       </div>
       <TasksPanel
