@@ -55,6 +55,7 @@
     "docs:claude": "bun scripts/fetch-claude-docs.ts",
     "docs:codex": "bun scripts/fetch-codex-docs.ts",
     "test": "bun test",
+    "verify": "bun scripts/verify.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome ci .",
     "prepublishOnly": "bun run build"
