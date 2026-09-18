@@ -19,6 +19,7 @@ import { LocalNotifications, type LocalNotificationsPlugin } from '@capacitor/lo
 import type { InboxEvent } from '@anyplane/protocol'
 import { postJson } from './api'
 import { getToken } from './auth'
+import { createStore } from './store'
 import { inboxSubscribe } from './inboxBus'
 import { consumeQueryParam, sessionHashUrl } from './sessionHash'
 
@@ -47,7 +48,8 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
 }
 
 // ---------------------------------------------------------------------------
-// 状态外置：横幅 UI 的唯一事实源
+// 状态外置：横幅 UI 的唯一事实源（store 容器——13.4 批次 C1 统一外部 store 机制，
+// 此前是本文件内 18 行手写同形状副本，PR#53 review 合并）
 
 export type NativeBridgeStatus = {
   /** 是否在原生壳内 */
@@ -62,23 +64,24 @@ export type NativeBridgeStatus = {
   error: string | null
 }
 
-let status: NativeBridgeStatus = { active: false, platform: 'web', permission: 'unknown', service: 'off', error: null }
-const listeners = new Set<() => void>()
+const statusStore = createStore<NativeBridgeStatus>({
+  active: false,
+  platform: 'web',
+  permission: 'unknown',
+  service: 'off',
+  error: null,
+})
 
 function setStatus(patch: Partial<NativeBridgeStatus>): void {
-  status = { ...status, ...patch }
-  listeners.forEach((l) => {
-    l()
-  })
+  statusStore.set({ ...statusStore.get(), ...patch })
 }
 
 export function getNativeBridgeStatus(): NativeBridgeStatus {
-  return status
+  return statusStore.get()
 }
 
 export function subscribeNativeBridge(l: () => void): () => void {
-  listeners.add(l)
-  return () => listeners.delete(l)
+  return statusStore.subscribe(l)
 }
 
 // ---------------------------------------------------------------------------

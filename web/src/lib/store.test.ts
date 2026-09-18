@@ -44,4 +44,23 @@ describe('createStore（渲染外可变状态的统一容器）', () => {
     expect(seen).toEqual([1, 2, 3])
     expect(s.get()).toEqual(['a', 'b', 'c'])
   })
+
+  test('订阅者抛错被隔离：其余订阅者照常收到本次变更通知', () => {
+    const s = createStore(0)
+    const seen: number[] = []
+    s.subscribe(() => {
+      throw new Error('bad listener')
+    })
+    s.subscribe(() => seen.push(s.get()))
+    const errSpy = console.error
+    let logged = 0
+    console.error = () => logged++
+    try {
+      s.set(42)
+    } finally {
+      console.error = errSpy
+    }
+    expect(seen).toEqual([42])
+    expect(logged).toBe(1)
+  })
 })

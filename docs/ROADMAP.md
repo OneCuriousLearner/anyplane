@@ -283,8 +283,10 @@ routes 的 sessions/misc 存量清零，Biome 红线③豁免清单移除（仅 
 > 字段按语义分组注释（types.ts）。`SessionState.rewindPending` 协议面不动（镜像点改读
 > transition）。socket.ts「按客户端成员资格找回 hub」是 /clear 三层重键的防御层，保留。
 > 批次 C 拆分：C1（store 机制 + 双写迁移，2026-09-19）✅——`lib/store.ts`
->（`createStore` + `useSyncExternalStore` 同形自实现，零第三方依赖），迁移三对真双写
->（messages / draft / fetchingEarlier）；taskMap 等纯内部坐标渲染不读、留 ref（不是双写）。
+>（`createStore` + `useSyncExternalStore` 同形自实现，零第三方依赖），迁移四对真双写
+>（messages / draft / fetchingEarlier / atBottom，PR #53 review 补点名了 atBottom）；
+> 顺带合并了 nativeBridge 里 18 行手写同形状副本。taskMap 等纯内部坐标渲染不读、
+> 留 ref（不是双写）。
 > chrome-devtools 实测：历史渲染 + 初始定位 / 流式草稿固化 / 会话切换无残留。
 > C2（props 爆炸收敛：Composer 32 / ChatHeader 31 的分组或 Context）待排期。
 
@@ -321,6 +323,12 @@ Claude 与 Codex 各自 adapter 翻译进来。这是让 vendor-neutral 从 slog
 - **独立安全评审**不并入本方向，仓库有专门流程。
 
 ## 抄本窗口化 / 虚拟列表（方向七的后续可选优化）
+
+**已知（2026-09-19 记录）**：验收 fixture 的 S3 翻页断言**存量失败**（`startTurn=30` 翻页不触发，
+master 上可复现，非 13.4 批次引入——三份代码同数值复现）。翻页触发对时序敏感：
+`ignoreScrollUntil` 豁免窗恰好盖住「从正数到 0 的翻页关键步」时永久错过；
+且 **fixture 不在 CI**（回归无人盯，方向七后某次提交悄悄打破了它）。修复单列排期
+（修断言前需先定位是哪次提交改变了时序；fixture 进 CI 需要浏览器驱动，属另一笔预算）。
 
 尾部窗口化已上线（`useTranscriptScroll` + `transcriptWindow`，验收 fixture
 `web/transcript-fixture.html` 四段场景全绿）。**三条设计红线、两次回退的根因与交付明细

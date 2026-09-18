@@ -13,7 +13,7 @@ import type { HistoryResponse, SessionInfo } from '@anyplane/protocol'
 import type { NavigateSession } from '../lib/sessionHash'
 import { reconcileApprovals } from '../lib/approvals'
 import { nextId, type Block } from '../lib/blocks'
-import { appendHistoryMsg, flushStrayResults, type IngestState } from '../lib/ingest'
+import { appendHistoryMsg, flushStrayResults, hitsSeen, type IngestState } from '../lib/ingest'
 import type { ServerEvent, SessionState } from '@anyplane/protocol'
 import { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
@@ -320,9 +320,10 @@ export function useSessionSocket(opts: {
             ingestApi.handleCli(ev.msg, ev.replay === true)
             break
           case 'tail': {
-            // 外部会话 transcript 追加：与历史共用同一套归并；uuid 去重兜底（重连续订可能重放）
+            // 外部会话 transcript 追加：与历史共用同一套归并；uuid 去重走 seenIds
+            //（与 live 路径同一机制；曾是每事件全表 some 的 O(n) 扫描，PR#53 review）
             const h = ev.msg
-            if (h.uuid && ingestApi.messagesStore.get().some((m) => m.id === h.uuid)) break
+            if (h.uuid && hitsSeen(ingestApi.seenIdsRef.current, [h.uuid])) break
             ingestApi.setMsgs((prev) => {
               const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
               appendHistoryMsg(st, h)

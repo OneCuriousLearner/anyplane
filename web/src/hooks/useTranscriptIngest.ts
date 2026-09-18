@@ -277,16 +277,20 @@ export function useTranscriptIngest(opts: {
           const d: Draft = draftStore.get() ?? { blocks: [] }
           const idx = ev.index ?? d.blocks.length
           if (!d.blocks.some((b) => b.idx === idx)) {
-            d.blocks.push({
-              idx,
-              kind: t === 'thinking' ? 'thinking' : t === 'tool_use' ? 'tool' : 'text',
-              text: '',
-              toolId: ev.content_block?.id,
-              name: ev.content_block?.name,
-              jsonBuf: t === 'tool_use' ? '' : undefined,
-            })
-            d.blocks.sort((a, b) => a.idx - b.idx)
-            setDraftBoth({ ...d })
+            // store 纪律：blocks 也必须新引用——旧实现 push+sort 就地改后 {...d} 浅拷，
+            // 新旧快照共享同一 blocks 数组（memo 到 draft.blocks 的消费方会拿到推送前的块表）
+            const blocks = [
+              ...d.blocks,
+              {
+                idx,
+                kind: (t === 'thinking' ? 'thinking' : t === 'tool_use' ? 'tool' : 'text') as Draft['blocks'][number]['kind'],
+                text: '',
+                toolId: ev.content_block?.id,
+                name: ev.content_block?.name,
+                jsonBuf: t === 'tool_use' ? '' : undefined,
+              },
+            ].sort((a, b) => a.idx - b.idx)
+            setDraftBoth({ ...d, blocks })
           }
           break
         }
