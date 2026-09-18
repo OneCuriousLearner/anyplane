@@ -30,7 +30,9 @@ jobs:
           ruby -e '
             c = File.read("capacitor.config.ts")
             # 必须插进既有 server 块——另起 server 键会被后面的 allowNavigation 块覆盖
-            c.sub!("allowNavigation: ['"'"'*'"'"'],", "url: '"'"'http://127.0.0.1:7480/?testNotify=1'"'"',\n    allowNavigation: ['"'"'*'"'"'],") or abort("inject failed")
+            # nativeDebug=1 必带：register-action-types 等例行进站确认走 clientDebug，
+            # 下面的硬断言依赖这些行出现在 stub.log（缺开关会只剩 setup，整步红）。
+            c.sub!("allowNavigation: ['"'"'*'"'"'],", "url: '"'"'http://127.0.0.1:7480/?testNotify=1&nativeDebug=1'"'"',\n    allowNavigation: ['"'"'*'"'"'],") or abort("inject failed")
             File.write("capacitor.config.ts", c)
           '
           grep -A2 'url:' capacitor.config.ts
@@ -71,9 +73,9 @@ jobs:
         run: |
           echo '--- stub.log ---'; cat /tmp/stub.log || true
           echo '--- resolve.log ---'; cat /tmp/resolve.log || true
-          # 硬断言：iOS 侧 JS 链（registerActionTypes ok + 钩子调度成功）
-          grep -q 'register-action-types' /tmp/stub.log
-          grep -q 'test-notify' /tmp/stub.log
+          # 硬断言：iOS 侧 JS 链成功（TIMEOUT / test-notify-fail 不得算过；依赖 ?nativeDebug=1）
+          grep -q '"tag":"register-action-types","msg":"ok"' /tmp/stub.log
+          grep -q '"tag":"test-notify","msg":"scheduled"' /tmp/stub.log
           # 裁决 POST：iOS 26 渲染回归期间按钮不可点（XCTExpectFailure 包容），
           # 有则喜报无则预期（act 链已由浏览器/Android 双侧验证覆盖）
           grep -q 'ci-test-1' /tmp/resolve.log && echo '裁决 POST 已到达' || echo '按钮不可点（回归中），无 POST 属预期'
