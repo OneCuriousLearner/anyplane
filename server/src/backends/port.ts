@@ -205,10 +205,6 @@ export function baseStatusOf(
   }
 }
 
-export function backendOf(key: string): BackendName {
-  return isCodexKey(key) ? 'codex' : 'claude'
-}
-
 /** key 的零 I/O 纯形状解析（与两后端 keyFor/keyForNew/keyForBranch 构造器一一对应）。
  *  只读 key 本身：不做 listSessions 反查也不做 RPC，故 existing 的 cwd 缺席（要 cwd 走 parseKey）。
  *  未知前缀或编码段损坏（非法 % 转义）返回 null，消费方各自兜底。 */

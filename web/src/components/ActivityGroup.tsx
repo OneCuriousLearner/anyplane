@@ -3,7 +3,7 @@ import type { ActivityItem } from '../lib/blocks'
 import { ToolCard } from './ToolCard'
 
 /** 思考行：默认折叠；流式时强制展开。embedded 时交给外层 ActivityGroup 画底。 */
-export function Thinking(props: {
+function Thinking(props: {
   text: string
   streaming?: boolean
   embedded?: boolean

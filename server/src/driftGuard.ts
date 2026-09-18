@@ -44,7 +44,7 @@ function saveState(s: DriftState): void {
 
 /** 读 CLI 版本；CLI 不存在返回 null。claude 可能是 .cmd/.exe（resolveClaudeCommand 逻辑在
  *  processManager，这里独立解析避免循环依赖——只要版本号字符串，不需要完整命令解析）。 */
-export function cliVersionOf(cli: BackendName): string | null {
+function cliVersionOf(cli: BackendName): string | null {
   const candidates =
     cli === 'claude'
       ? process.platform === 'win32'

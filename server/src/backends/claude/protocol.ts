@@ -71,7 +71,7 @@ export interface ControlResponseInput {
     | { subtype: 'error'; request_id: string; error: string }
 }
 
-export interface UpdateEnvInput {
+interface UpdateEnvInput {
   type: 'update_environment_variables'
   variables: Record<string, string>
 }
@@ -101,7 +101,7 @@ export interface CliMessage {
 // ---------- 便捷构造函数 ----------
 
 let reqCounter = 0
-export function nextRequestId(): string {
+function nextRequestId(): string {
   return `ccr-${Date.now().toString(36)}-${++reqCounter}`
 }
 

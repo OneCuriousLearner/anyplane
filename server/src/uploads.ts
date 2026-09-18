@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ensurePrivateDir } from './util'
 
-export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 /** claude API 硬限制：base64 后 5MB（constants/apiLimits.ts） */
 export const MAX_IMAGE_BASE64 = 5 * 1024 * 1024
 
@@ -17,7 +17,7 @@ export interface ImageAttachment {
   dataBase64: string
 }
 
-export function uploadsDir(): string {
+function uploadsDir(): string {
   return ensurePrivateDir(join(homedir(), '.anyplane', 'uploads'))
 }
 

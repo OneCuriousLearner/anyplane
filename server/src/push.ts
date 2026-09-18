@@ -28,7 +28,7 @@ import { config, type PushWebhookConfig } from './config'
 import { ccDataDir, readJsonFile, writeJsonFile } from './util'
 import { log } from './log'
 
-export interface PushSubscriptionRow {
+interface PushSubscriptionRow {
   endpoint: string
   keys: { p256dh: string; auth: string }
   /** 能力密钥：直接审批 URL 的鉴权凭据 */

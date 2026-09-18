@@ -10,7 +10,7 @@ export type RpcRequestFn = (method: string, params?: unknown, timeoutMs?: number
 
 /** readHistory 双轨共享的 turn 归一形状：legacy 来自 thread/read includeTurns，
  *  paginated 来自 turns/list 元数据 + items/list 按 turnId 归组 */
-export interface HistoryTurn {
+interface HistoryTurn {
   id?: string
   startedAt?: number | null
   completedAt?: number | null
@@ -18,7 +18,7 @@ export interface HistoryTurn {
 }
 
 /** threadMeta 在线会话查找用的最小面 */
-export interface ThreadMetaSession {
+interface ThreadMetaSession {
   threadId?: string
   historyMode?: string
   cwd?: string
@@ -29,8 +29,8 @@ export interface ThreadMetaContext {
   cache: Map<string, { historyMode?: string; cwd?: string }>
 }
 
-/** 线程元数据（historyMode/cwd 都是创建即固定的量）单缓存：readHistory/historyModeOf/
- *  threadCwd 三处共用，避免同形 thread/read 复制与重复惰性往返（审查发现）。
+/** 线程元数据（historyMode/cwd 都是创建即固定的量）单缓存：readHistory 与 runtime 的
+ *  historyModeOf/threadCwd 门面共用，避免同形 thread/read 复制与重复惰性往返（审查发现）。
  *  优先级：在线会话字段（0.153 起 start/resume 响应已带 historyMode）→ 进程内缓存 →
  *  一次 thread/read includeTurns:false。 */
 export async function threadMeta(
@@ -49,22 +49,6 @@ export async function threadMeta(
   const meta = { historyMode: res.thread?.historyMode, cwd: res.thread?.cwd }
   ctx.cache.set(threadId, meta)
   return meta
-}
-
-export async function historyModeOf(
-  rpcRequest: RpcRequestFn,
-  threadId: string,
-  ctx: ThreadMetaContext,
-): Promise<string | undefined> {
-  return (await threadMeta(rpcRequest, threadId, ctx)).historyMode
-}
-
-export async function threadCwd(
-  rpcRequest: RpcRequestFn,
-  threadId: string,
-  ctx: ThreadMetaContext,
-): Promise<string | undefined> {
-  return (await threadMeta(rpcRequest, threadId, ctx)).cwd
 }
 
 async function readLegacyTurns(rpcRequest: RpcRequestFn, threadId: string): Promise<HistoryTurn[]> {

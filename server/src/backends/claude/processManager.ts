@@ -53,7 +53,7 @@ export interface TranscriptCallUsage {
 
 /** CLI usage JSON → TranscriptCallUsage（字段名以 stream-json transcript 为准，缺失/非数归 0）。
  *  实时流（noteContextUsage）与离线回扫（extractUsageFromTranscriptTail）共用同一映射。 */
-export function coerceCallUsage(u: unknown): TranscriptCallUsage | undefined {
+function coerceCallUsage(u: unknown): TranscriptCallUsage | undefined {
   if (!u || typeof u !== 'object') return undefined
   const r = u as Record<string, unknown>
   return {
@@ -801,7 +801,7 @@ export class ClaudeSession {
 
 // ---------- 管理器 ----------
 
-export class ProcessManager {
+class ProcessManager {
   private sessions = new Map<string, ClaudeSession>()
 
   get(key: string): ClaudeSession | undefined {
