@@ -18,6 +18,7 @@ import { createRoot } from 'react-dom/client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import '../index.css'
 import { buildTranscriptRows, type ChatMsg, type Block } from '../lib/blocks'
+import { createStore, useStore } from '../lib/store'
 import { WINDOW_TAIL_ROWS } from '../lib/transcriptWindow'
 import { useTranscriptScroll } from '../hooks/useTranscriptScroll'
 import { Transcript } from '../components/Transcript'
@@ -95,8 +96,8 @@ function Fixture() {
   const [appended, setAppended] = useState<ChatMsg[]>([])
   const [draftText, setDraftText] = useState<string | null>(null)
   const [results, setResults] = useState<string[] | null>(null)
-  const [fetchingEarlier, setFetchingEarlier] = useState(false)
-  const fetchingRef = useRef(false)
+  const [fetchingEarlierStore] = useState(() => createStore(false))
+  const fetchingEarlier = useStore(fetchingEarlierStore)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const hasMore = startTurn > 0
@@ -110,14 +111,12 @@ function Fixture() {
   /** 翻页（模拟 Chat 的 loadEarlier）：异步延迟后锚定 prepend 更早一轮页 */
   const loadEarlierRef = useRef<() => void>(() => {})
   loadEarlierRef.current = () => {
-    if (fetchingRef.current || startTurn === 0) return
-    fetchingRef.current = true
-    setFetchingEarlier(true)
+    if (fetchingEarlierStore.get() || startTurn === 0) return
+    fetchingEarlierStore.set(true)
     void sleep(120).then(() => {
       scrollApiRef.current?.preparePrepend()
       setStartTurn((s) => Math.max(0, s - PAGE_TURNS))
-      fetchingRef.current = false
-      setFetchingEarlier(false)
+      fetchingEarlierStore.set(false)
     })
   }
 

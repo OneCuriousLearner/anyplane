@@ -1,14 +1,16 @@
-// 主抄本 ingest hook：消息列表 + 流式草稿 + 7 个配对/去重 ref + handleCli/applyHistory。
+// 主抄本 ingest hook：消息列表 + 流式草稿 + 配对/去重 ref + handleCli/applyHistory。
 // F4 从 pages/Chat.tsx 切出；F5 把 cli 流驱动的会话元数据（phase/initInfo/permMode/effort）
 // 一并内化——主要写入方本来就是本 hook 的 init/status/result 分支，setter 经 api 暴露给
 // WS status 事件（useSessionSocket）与 E3 清空段（组合层）共用。
-// 纪律：事件处理器在 React 渲染外触发（WS 回调），内部一律走 ref + setState——
-// api 对象每渲染重建但永不过期。
+// 纪律：事件处理器在 React 渲染外触发（WS 回调）——messages/draft 走 store
+//（lib/store.ts，13.4 批次 C1：ref+state 双写的正规化），其余纯内部坐标（配对索引/
+// 去重集/分页游标）渲染不读，留 ref。api 对象每渲染重建但永不过期。
 // E3（session.key 历史加载 effect）留 Chat 组合层：reset 先于建连的顺序纪律在那。
 
 import { useRef, useState } from 'react'
 import type { HistoryResponse, SubagentHistory } from '@anyplane/protocol'
 import { nextId, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import { createStore, useStore, type Store } from '../lib/store'
 import {
   appendHistoryMsg,
   createIngestState,
@@ -61,9 +63,9 @@ export interface TranscriptIngestApi {
   prependHistory(resp: HistoryResponse): void
   /** 会话切换重置（E3 组合层调用；顺序即原 E3 清空段前 7 步） */
   reset(): void
-  // ref 出口：WS 事件分发（F5 前留 Chat）需要直接读写
-  messagesRef: React.RefObject<ChatMsg[]>
-  draftRef: React.RefObject<Draft | null>
+  // ref 出口：WS 事件分发需要直接读最新值（store 形态，.get()/.set()）
+  messagesStore: Store<ChatMsg[]>
+  draftStore: Store<Draft | null>
   pendingResultsRef: React.RefObject<Map<string, { text: string; isError: boolean }>>
   toolPosRef: React.RefObject<Map<string, { mi: number; bi: number }>>
   historyOffsetRef: React.RefObject<number | undefined>
@@ -93,17 +95,18 @@ export function useTranscriptIngest(opts: {
   api: TranscriptIngestApi
 } {
   const { isCodex, sockRef, taskApi } = opts
-  const [messages, setMessages] = useState<ChatMsg[]>([])
-  const [draft, setDraft] = useState<Draft | null>(null)
+  // messages/draft：store 容器（渲染外读写同点；实例用惰性 useState 保持跨渲染稳定）
+  const [messagesStore] = useState(() => createStore<ChatMsg[]>([]))
+  const [draftStore] = useState(() => createStore<Draft | null>(null))
+  const messages = useStore(messagesStore)
+  const draft = useStore(draftStore)
   // cli 流驱动的会话元数据（init/status 分支写入；WS status 事件与 E3 清空经 api setter 共用）
   const [phase, setPhase] = useState<string>()
   const [initInfo, setInitInfo] = useState<{ model?: string; slashCommands?: string[] }>({})
   const [permMode, setPermMode] = useState<string>()
   const [effort, setEffort] = useState<string>()
 
-  // ref 镜像：事件处理器在 React 渲染外触发，直接基于 ref 计算，避免过期闭包/updater 双重调用
-  const messagesRef = useRef<ChatMsg[]>([])
-  const draftRef = useRef<Draft | null>(null)
+  // 纯内部坐标（渲染不读，留 ref）：配对索引 / 乱序缓冲 / 去重集 / 分页游标与纪元
   const pendingResultsRef = useRef(new Map<string, { text: string; isError: boolean }>())
   /** toolUseId → 落地位置索引：tool_result 配对的 O(1) 快路径（失效时回退线性扫描） */
   const toolPosRef = useRef(new Map<string, { mi: number; bi: number }>())
@@ -123,12 +126,10 @@ export function useTranscriptIngest(opts: {
   const subagentsRef = useRef<SubagentHistory[]>([])
 
   const setMsgs = (up: (prev: ChatMsg[]) => ChatMsg[]) => {
-    messagesRef.current = up(messagesRef.current)
-    setMessages(messagesRef.current)
+    messagesStore.set(up)
   }
   const setDraftBoth = (d: Draft | null) => {
-    draftRef.current = d
-    setDraft(d)
+    draftStore.set(d)
   }
   const pushMsg = (m: ChatMsg) => {
     setMsgs((prev) => {
@@ -211,7 +212,7 @@ export function useTranscriptIngest(opts: {
 
   /** message_stop / result 时把草稿固化为一条 assistant 消息 */
   const commitDraft = () => {
-    const d = draftRef.current
+    const d = draftStore.get()
     if (!d) return
     setDraftBoth(null)
     if (d.blocks.length === 0) return
@@ -273,26 +274,30 @@ export function useTranscriptIngest(opts: {
           break
         case 'content_block_start': {
           const t = ev.content_block?.type
-          const d: Draft = draftRef.current ?? { blocks: [] }
+          const d: Draft = draftStore.get() ?? { blocks: [] }
           const idx = ev.index ?? d.blocks.length
           if (!d.blocks.some((b) => b.idx === idx)) {
-            d.blocks.push({
-              idx,
-              kind: t === 'thinking' ? 'thinking' : t === 'tool_use' ? 'tool' : 'text',
-              text: '',
-              toolId: ev.content_block?.id,
-              name: ev.content_block?.name,
-              jsonBuf: t === 'tool_use' ? '' : undefined,
-            })
-            d.blocks.sort((a, b) => a.idx - b.idx)
-            setDraftBoth({ ...d })
+            // store 纪律：blocks 也必须新引用——旧实现 push+sort 就地改后 {...d} 浅拷，
+            // 新旧快照共享同一 blocks 数组（memo 到 draft.blocks 的消费方会拿到推送前的块表）
+            const blocks = [
+              ...d.blocks,
+              {
+                idx,
+                kind: (t === 'thinking' ? 'thinking' : t === 'tool_use' ? 'tool' : 'text') as Draft['blocks'][number]['kind'],
+                text: '',
+                toolId: ev.content_block?.id,
+                name: ev.content_block?.name,
+                jsonBuf: t === 'tool_use' ? '' : undefined,
+              },
+            ].sort((a, b) => a.idx - b.idx)
+            setDraftBoth({ ...d, blocks })
           }
           break
         }
         case 'content_block_delta': {
           const delta = ev.delta
           if (!delta) break
-          const d: Draft = draftRef.current ?? { blocks: [] }
+          const d: Draft = draftStore.get() ?? { blocks: [] }
           const idx = ev.index ?? d.blocks.length - 1
           let b = d.blocks.find((x) => x.idx === idx)
           if (!b) {
@@ -328,7 +333,7 @@ export function useTranscriptIngest(opts: {
       const content = (rec.message as { content?: unknown } | undefined)?.content
       const blocks = Array.isArray(content) ? content : []
       const msgId = (rec.message as { id?: string } | undefined)?.id
-      const d = draftRef.current
+      const d = draftStore.get()
       // 兜底草稿（中途接入没见过 message_start，msgId 为 undefined）与本轮快照同源，
       // 必须落入合并分支——否则快照直推一份、message_stop 的 commitDraft 再推一份，
       // 同一轮回复在抄本里渲染两次（且同 id 工具块互相污染配对）
@@ -504,8 +509,8 @@ export function useTranscriptIngest(opts: {
       applyHistory,
       prependHistory,
       reset,
-      messagesRef,
-      draftRef,
+      messagesStore,
+      draftStore,
       pendingResultsRef,
       toolPosRef,
       historyOffsetRef,

@@ -14,6 +14,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
+import { createStore, useStore } from '../lib/store'
 import {
   EXPAND_TOP_PX,
   clampWindowStart,
@@ -55,8 +56,9 @@ export function useTranscriptScroll(opts: {
   preparePrepend: () => void
 } {
   const { scrollRef, rowCount, resetKey, followDeps, streaming, onReachTop } = opts
-  const [atBottom, setAtBottom] = useState(true)
-  const atBottomRef = useRef(true)
+  // atBottom 走 store（13.4 批次 C1：rAF/事件回调渲染外读、渲染内订阅的同值同点）
+  const [atBottomStore] = useState(() => createStore(true))
+  const atBottom = useStore(atBottomStore)
   /** 用户显式扩窗/冻结后的窗口起点；null = 未交互，跟随初始策略（尾部窗口，随行数漂移） */
   const [rawStart, setRawStart] = useState<number | null>(null)
   /** 初始定位已完成（首个非空抄本已在 layout 阶段 auto 直达底部） */
@@ -89,8 +91,7 @@ export function useTranscriptScroll(opts: {
     el.scrollTop = el.scrollHeight
     lastScrollTopRef.current = el.scrollTop
     initialAnchorDoneRef.current = true
-    atBottomRef.current = true
-    setAtBottom(true)
+    atBottomStore.set(true)
   }, [rowCount, scrollRef])
 
   // ---- 扩窗锚定补偿：prepend 增加 scrollHeight，按增量把视口钉回原有内容 ----
@@ -112,7 +113,7 @@ export function useTranscriptScroll(opts: {
     if (followRaf.current) return
     followRaf.current = requestAnimationFrame(() => {
       followRaf.current = 0
-      if (atBottomRef.current) scrollToBottom(smooth)
+      if (atBottomStore.get()) scrollToBottom(smooth)
     })
   }
   useEffect(() => () => cancelAnimationFrame(followRaf.current), [])
@@ -120,7 +121,7 @@ export function useTranscriptScroll(opts: {
   // 贴底时才自动跟随滚动；用户上翻时保持位置（用 ↓ 按钮回到底部）。
   // followDeps 由调用方按现状语义给出（[messages, approvals, draft]），逐位比较。
   useEffect(() => {
-    if (!atBottomRef.current) return
+    if (!atBottomStore.get()) return
     scheduleFollow(!streaming)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, followDeps)
@@ -135,8 +136,7 @@ export function useTranscriptScroll(opts: {
     initialAnchorDoneRef.current = false
     pendingAnchorRef.current = null
     lastScrollTopRef.current = 0
-    atBottomRef.current = true
-    setAtBottom(true)
+    atBottomStore.set(true)
     setRawStart(null)
   }, [resetKey])
 
@@ -163,8 +163,7 @@ export function useTranscriptScroll(opts: {
     if (!el) return
     const top = el.scrollTop
     const at = el.scrollHeight - top - el.clientHeight < AT_BOTTOM_PX
-    atBottomRef.current = at
-    setAtBottom(at)
+    atBottomStore.set(at)
     const last = lastScrollTopRef.current
     lastScrollTopRef.current = top
 
@@ -189,8 +188,7 @@ export function useTranscriptScroll(opts: {
   const jumpToBottom = () => {
     ignoreScrollUntilRef.current = performance.now() + IGNORE_SCROLL_MS
     setRawStart(null)
-    atBottomRef.current = true
-    setAtBottom(true)
+    atBottomStore.set(true)
     // 先按当前（可能全量）高度滚到底；窗口重置后顶部卸载，scrollTop 钳位落底
     scrollToBottom(false)
   }
