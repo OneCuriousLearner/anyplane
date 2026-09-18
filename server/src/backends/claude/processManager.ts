@@ -12,7 +12,8 @@ import { join } from 'node:path'
 import { spawn, spawnSync, type Subprocess } from 'bun'
 import { config } from '../../config'
 import { childEnv, errorMessage, pumpLines, sanitizePath } from '../../util'
-import type { ApprovalDecision, BackgroundTask, SessionCallbacks, SpawnOptions } from '../types'
+import type { ApprovalDecision, BackgroundTask } from '@anyplane/protocol'
+import type { SessionCallbacks, SpawnOptions } from '../types'
 import {
   approvalResponse,
   controlRequest,
@@ -26,9 +27,6 @@ import {
 import { learnedContextWindow, rememberContextWindow } from './contextWindows'
 import { rememberSessionModel } from './sessionModels'
 import { log } from '../../log'
-
-// 共享类型正本在 ../types（后端无关抽象层）；此处 re-export 兼容既有 import 路径
-export type { ApprovalDecision, SpawnOptions } from '../types'
 
 /** Claude Code session_state_changed 三态 */
 export type SessionRunState = 'idle' | 'running' | 'requires_action'

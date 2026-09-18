@@ -1,5 +1,6 @@
 // 会话状态派生与推送：statusOf 编排（portFor 分发）+ pushStatus + onStatusChange 节流。
 
+import type { SessionState } from '@anyplane/protocol'
 import { portFor } from '../backends/port'
 import { broadcast } from './broadcast'
 import { hubs } from './registry'
@@ -14,11 +15,11 @@ export function statusOf(
   key: string,
   liveHint?: { status: string; pid: number } | null,
   hydrateContext = false,
-): Record<string, unknown> {
+): SessionState {
   return portFor(key).statusOf(key, { hub: hubs.get(key), liveHint, hydrateContext })
 }
 
-export function pushStatus(hub: Hub, extra?: Record<string, unknown>): void {
+export function pushStatus(hub: Hub, extra?: Partial<SessionState>): void {
   broadcast(hub, { kind: 'status', state: { ...statusOf(hub.key, undefined, true), ...extra } })
 }
 

@@ -1,9 +1,9 @@
 // Chat 页的纯文本/纯数据工具：状态文案、剪贴板、sidechain 消息形状转换。
 // 从 pages/Chat.tsx 下沉（F1）——无组件状态、无 React 依赖，bun:test 直接钉住。
 
-import type { HistoryMessage } from './api'
+import type { HistoryMessage } from '@anyplane/protocol'
 import { toolResultText } from './blocks'
-import type { SessionState } from './ws'
+import type { SessionState } from '@anyplane/protocol'
 
 /** 复制到剪贴板：clipboard API 仅在安全上下文可用，http 局域网访问走 textarea 回退 */
 export async function copyText(text: string): Promise<boolean> {

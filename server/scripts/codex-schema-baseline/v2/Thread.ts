@@ -5,6 +5,7 @@ import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { ReasoningEffort } from "../ReasoningEffort";
 import type { GitInfo } from "./GitInfo";
 import type { SessionSource } from "./SessionSource";
+import type { ThreadEnvironment } from "./ThreadEnvironment";
 import type { ThreadExtra } from "./ThreadExtra";
 import type { ThreadHistoryMode } from "./ThreadHistoryMode";
 import type { ThreadSection } from "./ThreadSection";
@@ -17,6 +18,12 @@ export type Thread = {
  * Identifier for this thread. Codex-generated thread IDs are UUIDv7.
  */
 id: string,
+/**
+ * Current environments for a loaded thread, in priority order, primary first.
+ * `null` means the thread is not loaded or the server does not expose its selection.
+ * An empty list means no environments are selected. This does not report connection status.
+ */
+environments: Array<ThreadEnvironment> | null,
 /**
  * Optional implementation-specific thread data.
  */
@@ -100,6 +107,11 @@ cwd: AbsolutePathBuf,
  */
 cliVersion: string,
 /**
+ * Originator recorded when the thread was created, independent of its current client or executor.
+ * Null when the recorded originator is unavailable.
+ */
+originator: string | null,
+/**
  * Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
  */
 source: SessionSource,
@@ -128,6 +140,10 @@ gitInfo: GitInfo | null,
  * Optional user-facing thread title.
  */
 name: string | null,
+/**
+ * Saved Daybreak choice, independent of turn execution. Null if unset.
+ */
+daybreakEnabled: boolean | null,
 /**
  * Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read`
  * (when `includeTurns` is true) responses.

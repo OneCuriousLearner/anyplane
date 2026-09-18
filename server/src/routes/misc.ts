@@ -1,6 +1,7 @@
 // 其余 REST 路由：fs/list、handoff、lineage、uploads、history（claude/codex）、
 // codex/models、config、claude/model-names、backends/status。
 
+import type { LineageNode, LineageResponse, ServerConfigInfo } from '@anyplane/protocol'
 import { readHistory, sanitizePath } from '../backends/claude/discovery'
 import { resolveTierModelNames } from '../backends/claude/modelNames'
 import { readHistory as readCodexHistory } from '../backends/codex/backend'
@@ -80,13 +81,13 @@ export async function handleMiscRoutes(
     const key = url.searchParams.get('key') ?? ''
     const records = lineageFor(key)
     // 为链上每个 key 附带导航所需的节点元数据（前端接力链渲染用）
-    const nodes: Record<string, Record<string, unknown>> = {}
+    const nodes: Record<string, LineageNode> = {}
     for (const r of records) {
       for (const k of [r.fromKey, r.toKey, r.fromResolvedKey, r.toResolvedKey]) {
         if (!k || nodes[k]) continue
         const d = describeKey(k)
         if (d?.kind === 'existing') {
-          nodes[k] = { key: k, backend: d.backend, slug: d.slug ?? 'codex', sessionId: d.sessionId, cwd: r.cwd }
+          nodes[k] = { key: k, backend: d.backend, slug: d.slug ?? 'codex', sessionId: d.sessionId ?? '', cwd: r.cwd }
         } else if (d?.kind === 'new') {
           nodes[k] = {
             key: k,
@@ -102,13 +103,14 @@ export async function handleMiscRoutes(
             key: k,
             backend: 'claude',
             slug: sanitizePath(d.cwd ?? ''),
-            sessionId: d.sessionId,
+            sessionId: d.sessionId ?? '',
             cwd: r.cwd,
           }
         }
       }
     }
-    return json({ records, nodes })
+    const res: LineageResponse = { records, nodes }
+    return json(res)
   }
   // 上传图片：仅 ~/.anyplane/uploads/ 内的 hash 命名文件（resolveUpload 边界校验）
   const uploadMatch = url.pathname.match(/^\/api\/uploads\/([^/]+)$/)
@@ -166,13 +168,14 @@ export async function handleMiscRoutes(
     }
   }
   if (url.pathname === '/api/config' && req.method === 'GET') {
-    return json({
+    const res: ServerConfigInfo = {
       permissionPolicy: config.permissionPolicy,
       permissionModes: ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions'],
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       models: ['haiku', 'sonnet', 'opus', 'fable'],
       authRequired: !!config.authToken,
-    })
+    }
+    return json(res)
   }
   // 各档实际配置的模型名（StatusPill 透传显示；每次调用实时读盘，配置改动即见）
   if (url.pathname === '/api/claude/model-names' && req.method === 'GET') {

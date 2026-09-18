@@ -2,6 +2,8 @@
 // src/entrypoints/sdk/coreSchemas.ts 与 controlSchemas.ts 重写）。
 // 原则：宽松解析，未知字段/未知 type 一律透传，保证官方 CLI 升级后不崩。
 
+import type { ApprovalDecision } from '@anyplane/protocol'
+
 // ---------- stdin（我们 → CLI） ----------
 
 export interface UserMessageInput {
@@ -136,7 +138,7 @@ export function controlRequest(
 
 export function approvalResponse(
   requestId: string,
-  decision: { behavior: 'allow'; updatedInput?: unknown } | { behavior: 'deny'; message?: string },
+  decision: ApprovalDecision,
 ): ControlResponseInput {
   return {
     type: 'control_response',

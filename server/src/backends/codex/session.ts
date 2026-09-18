@@ -1,6 +1,7 @@
 // CodexSession：单线程会话句柄，与 ClaudeSession 同形（契约见 backends/types.ts 末尾注释）。
 
-import type { ApprovalDecision, SessionCallbacks } from '../types'
+import type { ApprovalDecision } from '@anyplane/protocol'
+import type { SessionCallbacks } from '../types'
 import type { CliMessage } from '../claude/protocol'
 import { saveUpload } from '../../uploads'
 import { errorMessage } from '../../util'

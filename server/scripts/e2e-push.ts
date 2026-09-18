@@ -40,7 +40,9 @@ const mock = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url)
     const headers: Record<string, string> = {}
-    req.headers.forEach((v, k) => (headers[k] = v))
+    req.headers.forEach((v, k) => {
+      headers[k] = v
+    })
     // 先捕获再按需 410：死订阅也得留下投递痕迹，测试才能断言"投过但被拒"
     captured.set(url.pathname, { path: url.pathname, headers, body: Buffer.from(await req.arrayBuffer()) })
     if (gonePaths.has(url.pathname)) return new Response('gone', { status: 410 })
@@ -120,7 +122,6 @@ try {
   const testCwd = process.argv[2] ?? '/tmp'
   const key = `n|${encodeURIComponent(testCwd)}`
   const ws = new WebSocket(`${WS_BASE}/ws/sessions/${encodeURIComponent(key)}${TOKEN_Q}`)
-  let resolved = false
   let sawResolvedEvent = false
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data)
@@ -193,7 +194,6 @@ try {
   note(allowResp.ok && allowJson.ok, '能力 URL 直接审批生效', `HTTP ${allowResp.status}`)
   for (let i = 0; i < 10 && !sawResolvedEvent; i++) await new Promise((r) => setTimeout(r, 500))
   note(sawResolvedEvent, 'WS 侧收到 approval_resolved（审批卡同步消失）')
-  resolved = true
 
   // 7. 错 secret 必须 403
   const badResp = await fetch(`${BASE}/api/approval-action?k=x&r=y&d=allow&s=wrong`, { method: 'POST' })

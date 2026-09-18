@@ -47,7 +47,7 @@ describe('GET /api/sessions', () => {
           },
         ],
         readGitBranch: (cwd) => (cwd.endsWith('codex') ? 'codex-branch' : 'claude-branch'),
-        statusOf: (key) => ({ routedKey: key }),
+        statusOf: (key) => ({ spawned: false, busy: false, sessionId: key }),
       }),
     )
 
@@ -61,14 +61,14 @@ describe('GET /api/sessions', () => {
       key: 'x|thread-1',
       slug: 'codex',
       gitBranch: 'codex-branch',
-      managed: { routedKey: 'x|thread-1' },
+      managed: { sessionId: 'x|thread-1' },
     })
     expect(rows[1]).toMatchObject({
       sessionId: 'session-1',
       backend: 'claude',
       key: 's|-repo-claude|session-1',
       gitBranch: 'claude-branch',
-      managed: { routedKey: 's|-repo-claude|session-1' },
+      managed: { sessionId: 's|-repo-claude|session-1' },
     })
   })
 
@@ -90,7 +90,7 @@ describe('GET /api/sessions', () => {
           },
         ],
         readGitBranch: () => undefined,
-        statusOf: () => ({ status: 'offline' }),
+        statusOf: () => ({ spawned: false, busy: false, sessionState: 'idle' }),
       }),
     )
 
@@ -103,7 +103,7 @@ describe('GET /api/sessions', () => {
         status: 'offline',
         backend: 'claude',
         key: 's|repo|session-fallback',
-        managed: { status: 'offline' },
+        managed: { spawned: false, busy: false, sessionState: 'idle' },
       },
     ])
   })

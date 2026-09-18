@@ -7,6 +7,7 @@
     "start": "bun src/index.ts"
   },
   "dependencies": {
+    "@anyplane/protocol": "workspace:*",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

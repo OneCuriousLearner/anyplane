@@ -1,8 +1,10 @@
 // 新会话目录选择器的本地目录列举：仅目录、单层、懒加载友好
+// DirEntry/DirListResult 正本在 @anyplane/protocol（前端 DirPicker 共用）
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import type { DirEntry, DirListResult } from '@anyplane/protocol'
 import { errorMessage } from './util'
 
 /** 读 git 分支名（普通仓库 .git/HEAD；worktree 的 .git 是 gitdir 指向文件）。非仓库返回 undefined */
@@ -23,21 +25,6 @@ export function readGitBranch(cwd: string): string | undefined {
   } catch {
     return undefined
   }
-}
-
-export interface DirEntry {
-  name: string
-  path: string
-}
-
-export interface DirListResult {
-  /** 当前目录；根集合视图为 '' */
-  path: string
-  /** 父目录；根集合/盘符根/POSIX `/` 时为 null */
-  parent: string | null
-  entries: DirEntry[]
-  /** 用户主目录，作为快捷入口始终返回 */
-  home: string
 }
 
 /** 带 HTTP 状态码的错误，由路由层映射为响应 */
@@ -90,7 +77,7 @@ export function listDirectories(target: string): DirListResult {
   }
   if (!isDir) throw new FsBrowseError(400, `不是目录: ${target}`)
 
-  let dirents
+  let dirents: Dirent[] | undefined
   try {
     dirents = readdirSync(target, { withFileTypes: true })
   } catch (e) {

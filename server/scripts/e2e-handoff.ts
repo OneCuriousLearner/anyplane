@@ -20,7 +20,7 @@ interface HandoffOutcome {
 
 /** 连源会话 WS（触发 hub 存在），发 POST /api/handoff，等待 handoff_done/error */
 function handoff(fromKey: string, toBackend: 'claude' | 'codex', label: string): Promise<HandoffOutcome> {
-  return new Promise(async (resolve) => {
+  return new Promise((resolve) => {
     const { ws, on, send, open } = connect(fromKey)
     const timeout = setTimeout(() => resolve({ error: 'TIMEOUT 等待 handoff_done' }), 420_000)
     on((ev) => {
@@ -37,20 +37,27 @@ function handoff(fromKey: string, toBackend: 'claude' | 'codex', label: string):
         resolve({ error: ev.message as string })
       }
     })
-    await open()
-    send({ kind: 'attach' })
-    const r = await apiFetch('/api/handoff', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ fromKey, toBackend, detail: 'standard' }),
-    })
-    const body = (await r.json().catch(() => ({}))) as { error?: string }
-    if (!r.ok) {
-      clearTimeout(timeout)
-      resolve({ error: `POST /api/handoff ${r.status}: ${body.error ?? ''}` })
-    } else {
-      console.log(`[${label}] 接力已发起，等待简报与播种…`)
+    const run = async () => {
+      await open()
+      send({ kind: 'attach' })
+      const r = await apiFetch('/api/handoff', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ fromKey, toBackend, detail: 'standard' }),
+      })
+      const body = (await r.json().catch(() => ({}))) as { error?: string }
+      if (!r.ok) {
+        clearTimeout(timeout)
+        resolve({ error: `POST /api/handoff ${r.status}: ${body.error ?? ''}` })
+      } else {
+        console.log(`[${label}] 接力已发起，等待简报与播种…`)
+      }
     }
+    // executor 不 async：内部异常必须有显式归宿，否则会逃成 unhandled rejection 挂死脚本
+    void run().catch((e: unknown) => {
+      clearTimeout(timeout)
+      resolve({ error: `handoff 异常: ${e instanceof Error ? e.message : String(e)}` })
+    })
   })
 }
 

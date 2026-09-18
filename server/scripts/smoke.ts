@@ -1,7 +1,7 @@
 // 冒烟测试：spawn 真实 claude CLI，走 stream-json 协议收发一轮
 // 用法：bun run server/scripts/smoke.ts [cwd]
 import { resolveClaudeCommand } from '../src/backends/claude/processManager'
-import { controlRequest, userMessage } from '../src/backends/claude/protocol'
+import { userMessage } from '../src/backends/claude/protocol'
 
 const cwd = process.argv[2] ?? process.cwd()
 const { cmd, prefix } = resolveClaudeCommand()
@@ -20,7 +20,6 @@ const proc = Bun.spawn(
   { cwd, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
 )
 
-let gotResult = false
 let buf = ''
 const decoder = new TextDecoder()
 const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
@@ -51,7 +50,6 @@ async function pump() {
               : `${msg.type}${msg.subtype ? '/' + msg.subtype : ''}`
         console.log('<<', brief)
         if (msg.type === 'result') {
-          gotResult = true
           clearTimeout(timeout)
           proc.kill()
           process.exit(0)

@@ -57,6 +57,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY server/package.json server/
 COPY web/package.json web/
+COPY protocol/package.json protocol/
 RUN bun install --frozen-lockfile
 
 # 源码层 + 前端构建（产物 web/dist 由服务端静态托管）

@@ -11,7 +11,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { setInboxSink } from './broadcast'
 import { deliverApproval, resolveApproval, rewindBusy } from './lifecycle'
 import { getHub, hubs } from './registry'
-import type { Hub, InboxEvent } from './types'
+import type { InboxEvent } from '@anyplane/protocol'
+import type { Hub } from './types'
 
 const KEY = 'n|%2Ftmp%2Fanyplane-lifecycle-test'
 

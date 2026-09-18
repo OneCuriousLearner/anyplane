@@ -191,7 +191,7 @@ export const nextId = () => `m${++seq}`
 
 /** 剥离 ANSI 转义码（local-command 输出常带颜色码） */
 export function stripAnsi(s: string): string {
-  // eslint-disable-next-line no-control-regex
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI 转义序列的匹配就是有意的控制字符
   return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
 }
 

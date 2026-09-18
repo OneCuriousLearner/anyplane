@@ -1,5 +1,21 @@
-// API 类型与 fetch 封装
+// API fetch 封装与下游辅助函数。
+// 契约类型（SessionInfo/HistoryResponse/BackendsStatus/LineageResponse 等）的
+// 单一正本在 @anyplane/protocol——本文件只放运行时函数，不再声明契约形状。
 
+import type {
+  ArchivedEntry,
+  BackendName,
+  BackendsStatus,
+  CodexModelInfo,
+  CreateSessionResponse,
+  DirListResult,
+  HistoryResponse,
+  LineageRecord,
+  LineageResponse,
+  ServerConfigInfo,
+  SessionInfo,
+  TierModelName,
+} from '@anyplane/protocol'
 import { authHeaders, notifyAuthRequired } from './auth'
 
 /** 401 时抛出；App 层会显示令牌输入页，调用方静默忽略即可 */
@@ -38,34 +54,6 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-export interface SessionInfo {
-  sessionId: string
-  cwd?: string
-  slug: string
-  title?: string
-  lastPrompt?: string
-  mtime: number
-  sizeBytes: number
-  status: 'busy' | 'idle' | 'waiting' | 'offline'
-  live?: { pid: number; startedAt?: string | number; kind?: string }
-  /** 会话后端：claude（stream-json 子进程）| codex（app-server） */
-  backend?: 'claude' | 'codex'
-  /** 项目目录的 git 分支（非仓库为空） */
-  gitBranch?: string
-  key: string
-  managed: {
-    spawned: boolean
-    busy: boolean
-    waiting?: boolean
-    sessionState?: 'idle' | 'running' | 'requires_action'
-    sessionId?: string
-    clients: number
-    model?: string
-    permissionMode?: string
-    effort?: string
-  }
-}
-
 /**
  * 构造本地导航用的会话条目（fork / handoff / moved / 新建共用缺省值）。
  * 刚导航过去的会话尚无权威状态，占位字段随后由 WS status 覆盖。
@@ -82,62 +70,9 @@ export function makeSessionInfo(
   }
 }
 
-export interface HistoryBlock {
-  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image'
-  text?: string
-  name?: string
-  id?: string
-  input?: unknown
-  isError?: boolean
-  /** image 块：/api/uploads/<hash>.<ext> */
-  src?: string
-}
-
-export interface HistoryMessage {
-  uuid?: string
-  role: 'user' | 'assistant' | 'system'
-  subtype?: string
-  blocks: HistoryBlock[]
-  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number }
-  timestamp?: string
-  isMeta?: boolean
-  rewindable?: boolean
-}
-
-export interface ServerConfigInfo {
-  permissionPolicy: 'ask' | 'bypass'
-  permissionModes: string[]
-  effortLevels: string[]
-  models: string[]
-}
-
 export async function fetchSessions(): Promise<SessionInfo[]> {
   const r = await apiFetch('/api/sessions')
   return r.json()
-}
-
-/** 一条子代理（Task/Agent 工具）的侧链转录（claude 侧；codex 无此概念） */
-export interface SubagentHistory {
-  /** 主抄本中发起该子代理的 Agent/Task tool_use id */
-  toolUseId?: string
-  agentId?: string
-  agentType?: string
-  description?: string
-  spawnDepth?: number
-  messages: HistoryMessage[]
-}
-
-export interface HistoryResponse {
-  messages: HistoryMessage[]
-  /** 服务端本次实际读取的 transcript 字节数，作为 tail_subscribe 的起始偏移 */
-  fileBytes: number
-  /** 子代理侧链转录（历史回放用；实时更新走 WS 的 parent_tool_use_id 消息）。
-   *  仅首页下发——翻页请求不含此字段 */
-  subagents?: SubagentHistory[]
-  /** claude 历史分页：窗口之前还有更早消息（codex 历史恒全量，无此字段语义） */
-  hasMore?: boolean
-  /** 下一页的 before 游标（transcript 行号），hasMore 时必带 */
-  nextBefore?: number
 }
 
 export async function fetchHistory(
@@ -159,45 +94,18 @@ export async function fetchCodexHistory(threadId: string): Promise<HistoryRespon
   return r.json()
 }
 
-export async function createSession(cwd: string, backend?: 'claude' | 'codex'): Promise<{ key: string; slug: string }> {
+export async function createSession(
+  cwd: string,
+  backend?: BackendName,
+): Promise<CreateSessionResponse> {
   const r = await postJson('/api/sessions', { cwd, backend })
   return r.json()
-}
-
-export interface CodexModelInfo {
-  id: string
-  label: string
-  description: string
-  efforts: Array<{ value: string; description: string }>
-  defaultEffort?: string
-  isDefault: boolean
 }
 
 /** codex model/list 目录 */
 export async function fetchCodexModels(): Promise<{ models: CodexModelInfo[] }> {
   const r = await apiFetch('/api/codex/models')
   return r.json()
-}
-
-/** 接力血缘记录 */
-export interface LineageRecord {
-  id: string
-  at: string
-  fromKey: string
-  toKey: string
-  fromResolvedKey?: string
-  toResolvedKey?: string
-  fromBackend: 'claude' | 'codex'
-  toBackend: 'claude' | 'codex'
-  cwd: string
-  detail: 'brief' | 'standard' | 'detailed'
-  brief: string
-  briefUsage?: Record<string, number>
-}
-
-export interface LineageResponse {
-  records: LineageRecord[]
-  nodes: Record<string, SessionInfo>
 }
 
 export async function fetchLineage(key: string): Promise<LineageResponse> {
@@ -222,19 +130,6 @@ export async function restoreSession(key: string): Promise<void> {
   if (!r.ok) throw await apiError(r)
 }
 
-export interface ArchivedEntry {
-  key: string
-  sessionId: string
-  slug: string
-  backend: 'claude' | 'codex'
-  title?: string
-  lastPrompt?: string
-  cwd?: string
-  mtime?: number
-  trashedAt?: string
-  sizeBytes?: number
-}
-
 export async function fetchArchived(): Promise<{ entries: ArchivedEntry[] }> {
   const r = await apiFetch('/api/sessions/archived')
   return r.json()
@@ -245,40 +140,11 @@ export async function fetchConfig(): Promise<ServerConfigInfo> {
   return r.json()
 }
 
-/** 后端宏观登录态（与服务端 backends/status.ts 的 BackendLoginState 一一对应） */
-export type BackendLoginState =
-  | 'subscription'
-  | 'api-key'
-  | 'token'
-  | 'third-party'
-  | 'custom-provider'
-  | 'not-logged-in'
-  | 'not-installed'
-  | 'unknown'
-
-export interface BackendStatus {
-  state: BackendLoginState
-  detail?: string
-  error?: string
-}
-
-export interface BackendsStatus {
-  checkedAt: number
-  claude: BackendStatus
-  codex: BackendStatus
-}
-
 /** 双后端登录状态（30s 服务端缓存；探测失败整体 500，单侧失败落在该侧 state=unknown） */
 export async function fetchBackendsStatus(): Promise<BackendsStatus> {
   const r = await apiFetch('/api/backends/status')
   if (!r.ok) throw await apiError(r)
   return r.json()
-}
-
-export interface TierModelName {
-  /** 显示名（_MODEL_NAME 优先，缺省回退模型 ID） */
-  name: string
-  id?: string
 }
 
 /** 模型值 → {显示名, tooltip}：tier 直查（haiku/sonnet/…）→ 按模型 ID 反查（init 报的是解析后 ID，
@@ -302,27 +168,14 @@ export async function fetchClaudeModelNames(cwd?: string): Promise<Record<string
   return ((await r.json()) as { models?: Record<string, TierModelName> }).models ?? {}
 }
 
-/** 发起接力：进度经源会话 WS 推送（handoff_pending/done/error） */
+/** 发起接力：进度经源会话 WS 推送（handoff_pending/done/error）；detail 词表即 LineageRecord.detail */
 export async function startHandoff(
   fromKey: string,
-  toBackend: 'claude' | 'codex',
-  detail: 'brief' | 'standard' | 'detailed' = 'standard',
+  toBackend: BackendName,
+  detail: LineageRecord['detail'] = 'standard',
 ): Promise<void> {
   const r = await postJson('/api/handoff', { fromKey, toBackend, detail })
   if (!r.ok) throw await apiError(r)
-}
-
-export interface DirEntry {
-  name: string
-  path: string
-}
-
-export interface DirListResult {
-  /** 当前目录；根集合视图为 '' */
-  path: string
-  parent: string | null
-  entries: DirEntry[]
-  home: string
 }
 
 export async function fetchDirList(path: string): Promise<DirListResult> {

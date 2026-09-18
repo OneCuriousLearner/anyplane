@@ -3,6 +3,7 @@
 
 import { keyFor, keyForNew } from '../backends/claude/backend'
 import { sanitizePath } from '../backends/claude/discovery'
+import type { BackendName } from '@anyplane/protocol'
 import { keyFor as codexKeyFor, keyForNew as codexKeyForNew } from '../backends/codex/backend'
 import { portFor } from '../backends/port'
 import { appendLineage, seedMessage, type HandoffDetail } from '../handoff'
@@ -15,7 +16,7 @@ import { getHub, hubs } from './registry'
  * handoff_pending → handoff_done { targetKey, brief } / handoff_error { message }。
  * 目标会话由服务端直接创建并播种首条消息（无需浏览器在场）。
  */
-export function runHandoff(fromKey: string, toBackend: 'claude' | 'codex', detail: HandoffDetail): string | undefined {
+export function runHandoff(fromKey: string, toBackend: BackendName, detail: HandoffDetail): string | undefined {
   const sourceHub = hubs.get(fromKey)
   const fromPort = portFor(fromKey)
   const fromBackend = fromPort.name

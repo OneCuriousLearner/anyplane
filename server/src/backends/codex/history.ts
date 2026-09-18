@@ -1,9 +1,10 @@
 // Codex 历史双轨拉取与 turn 归并（paginated vs legacy）。
 
 import { log } from '../../log'
+import type { HistoryMessage } from '@anyplane/protocol'
 import { readReasoning } from './reasoningStore'
 import { reasoningSidecarUuid } from './mapping'
-import { itemsToHistory, type HistoryMessage, type ThreadItem } from './translate'
+import { itemsToHistory, type ThreadItem } from './translate'
 
 export type RpcRequestFn = (method: string, params?: unknown, timeoutMs?: number) => Promise<unknown>
 
@@ -185,7 +186,9 @@ function turnsToHistory(threadId: string, turns: HistoryTurn[]): HistoryMessage[
         // 插到该 turn 第一个 assistant 之前（userMessage 之后），保持叙事顺序
         const insertAt = msgs.findIndex((m) => m.role === 'assistant')
         msgs.splice(insertAt >= 0 ? insertAt : msgs.length, 0, ...thinkingMsgs)
-        hit.forEach((i) => used.add(i))
+        hit.forEach((i) => {
+          used.add(i)
+        })
       }
     }
     out.push(...msgs)

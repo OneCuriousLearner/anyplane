@@ -5,7 +5,7 @@ import { portFor } from '../backends/port'
 import { log } from '../log'
 import { addInboxClient, inboxSnapshot, removeInboxClient } from '../push/inbox'
 import { errorMessage } from '../util'
-import { replayApprovals } from './broadcast'
+import { replayApprovals, sendTo } from './broadcast'
 import { handleClientMessage } from './messages'
 import { getHub, hubs } from './registry'
 import { statusOf } from './status'
@@ -22,14 +22,15 @@ export function wsOpen(ws: ServerWebSocket<WSData>): void {
   }, 30_000)
   if (ws.data.inbox) {
     addInboxClient(ws as ServerWebSocket<WSDataInbox>)
+    // inbox 频道发的是 InboxEvent（非会话 ServerEvent），sendTo 不适用，直发
     ws.send(JSON.stringify(inboxSnapshot()))
     return
   }
   const hub = getHub(ws.data.key)
   hub.clients.add(ws)
   portFor(ws.data.key).sessionOf(ws.data.key)?.attachClient()
-  ws.send(JSON.stringify({ kind: 'status', state: statusOf(ws.data.key, undefined, true) }))
-  replayApprovals(hub, (p) => ws.send(JSON.stringify(p)))
+  sendTo(ws, { kind: 'status', state: statusOf(ws.data.key, undefined, true) })
+  replayApprovals(hub, (p) => sendTo(ws, p))
 }
 
 export function wsMessage(ws: ServerWebSocket<WSData>, raw: string | Buffer): void {
@@ -39,9 +40,7 @@ export function wsMessage(ws: ServerWebSocket<WSData>, raw: string | Buffer): vo
     handleClientMessage(hub, typeof raw === 'string' ? raw : raw.toString(), ws)
   } catch (e) {
     log.error(`[ws ${hub.key}] 处理消息异常:`, e) // 原对象打日志保留堆栈
-    try {
-      ws.send(JSON.stringify({ kind: 'error', message: errorMessage(e) }))
-    } catch {}
+    sendTo(ws, { kind: 'error', message: errorMessage(e) })
   }
 }
 

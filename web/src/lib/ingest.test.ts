@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { HistoryMessage } from './api'
+import type { HistoryMessage } from '@anyplane/protocol'
 import type { ToolBlock } from './blocks'
 import {
   appendHistoryMsg,
@@ -265,7 +265,7 @@ describe('live/补发去重键', () => {
     expect(hitsSeen(seen, keys)).toBe(true)
   })
 
-  test('Codex：历史 uuid=item.id，live 用 tool-${id} 作 message.id——靠工具块 id 去重', () => {
+  test('Codex：历史 uuid=item.id，live 用 tool-<id> 作 message.id——靠工具块 id 去重', () => {
     const seen = transcriptKeys([{ id: 'item-1', role: 'assistant', blocks: [{ kind: 'tool', id: 'item-1', name: 'Edit' }] }])
     const keys = liveMessageKeys({ messageId: 'tool-item-1', toolIds: ['item-1'] })
     expect(hitsSeen(seen, keys)).toBe(true)

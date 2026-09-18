@@ -10,6 +10,7 @@
 | [gateway.md](gateway.md) | 域名访问（80/443 网关）与远程容器部署 |
 | [public-access.md](public-access.md) | 公网接入三套免 VPS 配方（Tailscale funnel / CF Tunnel / IPv6+DDNS）与安全红线 |
 | [releasing.md](releasing.md) | 发版流程与 npm 发布权限模型 |
+| [drift.md](drift.md) | 协议漂移周报（issue）的评估结论与代办归档，长期维护 |
 | [ROADMAP.md](ROADMAP.md) | **只留未来时**：待排期方向、决策依据、明确不做的记录 |
 
 ## 交付档案（[delivered.md](delivered.md)）

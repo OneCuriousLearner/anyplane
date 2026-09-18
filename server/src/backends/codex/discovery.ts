@@ -16,7 +16,7 @@
 // 且版本号内嵌文件名是明确的内部格式；名字以 session_index.jsonl 为准
 // （update_thread_metadata 双写 index+sqlite，index 缺失只影响 sqlite 写入失败时的改名）。
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, type Dirent, type Stats } from 'node:fs'
 import { join } from 'node:path'
 
 /** 与 RPC thread/list 行同形（backend.ts ThreadRow 的子集；updatedAt/createdAt 为秒） */
@@ -189,7 +189,7 @@ function collectRolloutFiles(root: string): CollectResult {
   let unrecognizedRolloutFiles = 0
   const walk = (dir: string, depth: number): void => {
     if (depth > 4) return
-    let entries
+    let entries: Dirent[] | undefined
     try {
       entries = readdirSync(dir, { withFileTypes: true })
     } catch (e) {
@@ -229,7 +229,7 @@ type RowResult =
 
 async function rowFromFile(path: string, names: Map<string, string>): Promise<RowResult> {
   const hit = fileCache.get(path)
-  let st
+  let st: Stats | undefined
   try {
     st = statSync(path)
   } catch {

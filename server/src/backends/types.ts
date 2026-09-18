@@ -7,57 +7,14 @@
 // 依赖方向：本模块不 import 任何具体后端的实现模块。
 // 唯一的例外是 './claude/protocol' 的 CliMessage——统一边界格式
 // 本身就是 claude stream-json 形状（见上），协议类型以 claude/protocol 为正本。
+//
+// 前后端共享的契约类型（HistoryBlock/HistoryMessage/SubagentHistory/ApprovalDecision/
+// ContextUsageInfo/BackgroundTask/BackendName）已全部收敛进 @anyplane/protocol（方向十三 13.1），
+// 本模块只剩服务端内部类型（SpawnOptions / SessionCallbacks / SessionSummary）——
+// 新增前后端共享类型一律去 protocol 包，不要写在这里。
 
+import type { BackendName, SessionStatus } from '@anyplane/protocol'
 import type { CliMessage } from './claude/protocol'
-
-export type BackendName = 'claude' | 'codex'
-
-// ---------- 历史消息（供 UI 首次加载；claude 从 transcript 解析，codex 从 turns 翻译） ----------
-
-/** 结构化内容块：前端按块渲染（markdown 文本 / 思考 / 工具调用 / 工具结果 / 图片） */
-export interface HistoryBlock {
-  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image'
-  text?: string
-  /** tool_use：工具名；tool_result：无 */
-  name?: string
-  /** tool_use 的 id / tool_result 的 tool_use_id（用于配对） */
-  id?: string
-  /** tool_use 的参数 */
-  input?: unknown
-  /** tool_result 是否失败 */
-  isError?: boolean
-  /** image 块的展示地址（/api/uploads/<hash>.<ext>，hash 命名去重落盘） */
-  src?: string
-}
-
-export interface HistoryMessage {
-  uuid?: string
-  role: 'user' | 'assistant' | 'system'
-  /** system 消息的子类型（如 compact_boundary） */
-  subtype?: string
-  blocks: HistoryBlock[]
-  /** compact_boundary 的元数据 */
-  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number }
-  timestamp?: string
-  isMeta?: boolean
-  /** 是否可作为 rewind 目标（compact 边界之前的消息在逻辑上已不存在，无法回滚到） */
-  rewindable?: boolean
-}
-
-/**
- * 一条子代理（Task/Agent 工具）的侧链转录。
- * 新版 CLI 落盘在 <sessionId>/subagents/agent-*.jsonl（元数据在同名 .meta.json），
- * 旧版内联在主 transcript（isSidechain:true + parentToolUseId）——两种来源统一成此形状。
- */
-export interface SubagentHistory {
-  /** 主抄本中发起该子代理的 Agent/Task tool_use id（与主线工具卡配对、状态判定的键） */
-  toolUseId?: string
-  agentId?: string
-  agentType?: string
-  description?: string
-  spawnDepth?: number
-  messages: HistoryMessage[]
-}
 
 /** 会话列表项（聚合 Claude discovery 与 Codex thread/list） */
 export interface SessionSummary {
@@ -71,23 +28,11 @@ export interface SessionSummary {
   lastPrompt?: string
   mtime: number
   sizeBytes?: number
-  status: 'busy' | 'idle' | 'waiting' | 'offline'
+  status: SessionStatus
   live?: { pid: number; startedAt?: string | number; kind?: string }
 }
 
 // ---------- 会话句柄相关 ----------
-
-/** 当前上下文窗口占用（两后端同形；口径与边界见文件末尾契约注释） */
-export interface ContextUsageInfo {
-  usedTokens: number
-  windowSize: number
-  outputTokens: number
-  inputTokens?: number
-  cacheReadTokens?: number
-  cacheWriteTokens?: number
-  /** 仅 codex 有源 */
-  reasoningTokens?: number
-}
 
 /** claude headless spawn 参数（codex 用 CodexSpawnOpts，形状近似） */
 export interface SpawnOptions {
@@ -103,25 +48,6 @@ export interface SpawnOptions {
   model?: string
   effort?: string
   permissionMode?: string
-}
-
-export type ApprovalDecision =
-  | { behavior: 'allow'; updatedInput?: unknown }
-  | { behavior: 'deny'; message?: string }
-
-/** Claude Code SDK system/task_started 暴露的后台任务最小状态。 */
-export interface BackgroundTask {
-  id: string
-  description: string
-  taskType?: string
-  toolUseId?: string
-  startedAt: number
-  lastToolName?: string
-  summary?: string
-  /** task_started 的 spawn_depth（1 = 主线扇出）；嵌套 agent >1 */
-  depth?: number
-  /** 父任务的 toolUseId（嵌套 agent 时）；血缘推导见 processManager 的 toolUseParents */
-  parentToolUseId?: string
 }
 
 export interface SessionCallbacks {
@@ -148,9 +74,7 @@ export interface SessionCallbacks {
 // - sendUserText 的 sendMode/images 为可选增强；codex 的 images 元素需要 name 字段。
 // - write 接受任意 StdinMessage，但 codex 只响应 update_environment_variables
 //   （CLAUDE_CODE_EFFORT_LEVEL → reasoning effort），其余形状按设计忽略。
-// - contextUsage（当前上下文窗口占用）两后端同形：
-//   { usedTokens, windowSize, outputTokens, inputTokens, cacheReadTokens, cacheWriteTokens,
-//     reasoningTokens? }（reasoningTokens 仅 codex 有源）。
+// - contextUsage（当前上下文窗口占用）两后端同形（@anyplane/protocol 的 ContextUsageInfo）：
 //   usedTokens 口径各自对齐官方 statusline：claude = 最近一次调用的 input+cache（不含 output）；
 //   codex = tokenUsage.last.totalTokens（最新活跃上下文大小）。windowSize：claude 按模型
 //   启发式（[1m]→1M，否则 200k）；codex 用通知里的 modelContextWindow。

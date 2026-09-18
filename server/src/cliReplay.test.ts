@@ -20,7 +20,7 @@ function replaySince(h: CliRingState, fromSeq: number): { sent: Record<string, u
 }
 
 describe('shouldRingCli', () => {
-  test('只入环 cli，且排除 stream_event 与 partial 部分结果', () => {
+  test('排除 stream_event 与 partial 部分结果（kind 卡口已由类型系统接管）', () => {
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'assistant' } })).toBe(true)
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'user' } })).toBe(true)
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'result' } })).toBe(true)
@@ -28,8 +28,7 @@ describe('shouldRingCli', () => {
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'stream_event' } })).toBe(false)
     // codex 工具输出的流式部分结果：高频增量不占环，终态 tool_result 兜底
     expect(shouldRingCli({ kind: 'cli', msg: { type: 'user', partial: true } })).toBe(false)
-    expect(shouldRingCli({ kind: 'status' })).toBe(false)
-    expect(shouldRingCli({ kind: 'replay_gap' })).toBe(false)
+    // 非 cli 事件在类型层已不可传入（ServerEvent 判别联合），不再有运行时分支可测
   })
 })
 
@@ -43,7 +42,7 @@ describe('cli 事件环形缓冲与补发', () => {
 
   test('stream_event 不入环、不占序号、不写 seq', () => {
     const h = mk()
-    const stream = { kind: 'cli', msg: { type: 'stream_event' } }
+    const stream = { kind: 'cli' as const, msg: { type: 'stream_event' } }
     expect(pushCliRing(h, stream)).toBeUndefined()
     expect(stream).not.toHaveProperty('seq')
     expect(h.cliRing).toBeUndefined()

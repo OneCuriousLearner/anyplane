@@ -5,7 +5,7 @@
 //   b|<encodeURIComponent(cwd)>|<sourceSessionId>  懒分叉（首条消息才 --fork-session）
 //   x|<threadId>  已存在 codex 线程；xn|<encodeURIComponent(cwd)>  新线程
 
-import type { SessionInfo } from './api'
+import type { SessionInfo } from '@anyplane/protocol'
 
 export function isCodexKey(key: string): boolean {
   return key.startsWith('x|') || key.startsWith('xn|')
