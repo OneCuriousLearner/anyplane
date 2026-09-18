@@ -27,6 +27,7 @@ bun run dev:web      # 仅 Vite
 bun run build        # 构建前端到 web/dist
 bun run start        # 生产模式：服务端托管 API + WS + 静态前端
 bun run lint         # Biome lint（CI 同口径；无 formatter——纯风格规则刻意全关）
+bun run verify       # 提交前一键验证：typecheck + lint + test 与 CI 同口径（纯 Bun 脚本，跨平台同一行为）；test 步强制可见完整 pass/fail 汇总行，半截输出按失败处理
 bun run gateway      # 80/443 网关：按 ?mode=dev|prod 反代到 :5173 / :7480（无 token 需 --insecure）
 ```
 
@@ -36,7 +37,7 @@ bun run gateway      # 80/443 网关：按 ?mode=dev|prod 反代到 :5173 / :748
 
 e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干预 CLI 选择（新会话与 resume 均不带 `--model`）。要让 e2e 走自定义/第三方模型，直接配 CLI 自己的默认值即可（均在 home 目录，不进本仓库）：claude 用 `~/.claude/settings.json` 的 `model`（或服务端进程环境变量 `ANTHROPIC_MODEL`，`childEnv` 会透传）；codex 用 `~/.codex/config.toml` 的 `model`。唯一例外是 `e2e-ws.ts` 的 `set_model`——那是被测链路本身，不是默认值配置。
 
-单元测试使用 Bun Test（`bun test`，可按目录过滤）：测试文件统一命名 `*.test.ts` 就近放在被测模块旁；`bun run build` 只打包生产依赖图，测试文件不进 `web/dist`。仓库仍有大量逻辑依赖 e2e 脚本验证；新增纯函数/工具优先补 `*.test.ts`，涉及真实 CLI 行为的链路改 e2e 脚本。**测试不得依赖文件间执行顺序**——`bun test` 单进程跨文件共享模块实例且枚举顺序各平台不同，碰全局单态（sink/计数器/持久化存储）的用例开头必须显式调被测模块的复位口（先例：`resetInboxSinkForTest` / `setStoreFileForTest`），缺复位口时为模块补一个属于允许的最小源码改动。
+单元测试使用 Bun Test（`bun test`，可按目录过滤）：测试文件统一命名 `*.test.ts` 就近放在被测模块旁；`bun run build` 只打包生产依赖图，测试文件不进 `web/dist`。仓库仍有大量逻辑依赖 e2e 脚本验证；新增纯函数/工具优先补 `*.test.ts`，涉及真实 CLI 行为的链路改 e2e 脚本。**测试不得依赖文件间执行顺序**——`bun test` 单进程跨文件共享模块实例且枚举顺序各平台不同，碰全局单态（sink/计数器/持久化存储）的用例开头必须显式调被测模块的复位口（先例：`resetInboxSinkForTest` / `setStoreFileForTest`），缺复位口时为模块补一个属于允许的最小源码改动。**收尾必须看到完整的 pass/fail 汇总行**——教训：行为变更没同步断言时，`bun test` 输出被管道截断曾把失败计数卷出视野、只剩"绿"的错觉（`bun run verify` 的 test 步会强制校验汇总行存在且 fail 为 0，可兜底）。
 
 ## 架构
 
