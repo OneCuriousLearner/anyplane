@@ -51,7 +51,10 @@ export interface Hub {
    * （ rewinding 期间 user 消息被 rewindBusy 拒，/clear 无从触发；本类型让非法组合
    *  不可表达，取代此前 rewindPending/pendingRekey 两个独立布尔）。
    *  rewind：回滚进行中（拒新 user 消息与 rewind_files 竞争；SessionState.rewindPending 镜像它）；
-   *  rekey：/clear 的 conversation_reset 已到，等紧随的 init 完成 Hub 三层重键。 */
+   *  rekey：/clear 的 conversation_reset 已到，等紧随的 init 完成 Hub 三层重键。
+   *  覆盖语义纪律（PR #51 review）：置位时若已有进行中的过渡须 log.warn 留痕再覆盖；
+   *  复位只清自己置的 kind（`if (transition?.kind === 'rewind') transition = undefined`），
+   *  不得无条件清空——否则 rewind 的 finally 会抹掉期间置上的 rekey。 */
   transition?: { kind: 'rewind' } | { kind: 'rekey' }
 
   // ---------- tail 外部会话（与 spawn 互斥由 startTailer 守卫） ----------

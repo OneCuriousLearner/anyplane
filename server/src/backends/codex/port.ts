@@ -162,7 +162,8 @@ class CodexPort implements BackendPort {
       })
       .catch((e) => hubServices().broadcastError(hub, `回滚失败: ${errorMessage(e)}`))
       .finally(() => {
-        hub.transition = undefined
+        // 只清自己置的位（同 claude 适配器的覆盖语义纪律）
+        if (hub.transition?.kind === 'rewind') hub.transition = undefined
         hubServices().pushStatus(hub, { rewindPending: false })
       })
   }

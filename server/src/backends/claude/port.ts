@@ -299,7 +299,8 @@ class ClaudePort implements BackendPort {
         )
       })
       .finally(() => {
-        hub.transition = undefined
+        // 只清自己置的位：联合是互斥单值，rewind 复位不得清掉期间被置上的其他过渡
+        if (hub.transition?.kind === 'rewind') hub.transition = undefined
         hubServices().pushStatus(hub, { rewindPending: false })
       })
   }

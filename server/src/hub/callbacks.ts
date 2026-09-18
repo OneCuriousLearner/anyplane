@@ -30,6 +30,12 @@ export function sessionCallbacks(hub: Hub) {
       // claude-only 语义，守卫防漂移：codex 若未来发出同形事件，落入普通透传而不是
       // 误触 claude 专属的重键（parseKey/processManager.rekey 作用在 x| key 上即消息黑洞）。
       if (msg.type === 'conversation_reset' && !isCodexKey(hub.key)) {
+        // 判别联合覆盖语义纪律：rewind 期间 /clear 的 user 消息被 rewindBusy 拒，
+        // 同真理论上不可达；若仍撞上（上游行为漂移），rekey 必须生效（否则后续消息全乱），
+        // 但覆盖 rewind 守卫要留痕——静默覆盖会让「回滚中放行新消息」无迹可查
+        if (hub.transition) {
+          log.warn(`[ws ${hub.key}] conversation_reset 覆盖了进行中的 transition=${hub.transition.kind}（预期外）`)
+        }
         hub.transition = { kind: 'rekey' }
         return // 原始事件不进主抄本，迁移以 moved 事件表达
       }
