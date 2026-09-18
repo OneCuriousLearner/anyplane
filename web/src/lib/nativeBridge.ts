@@ -16,9 +16,10 @@
 
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications, type LocalNotificationsPlugin } from '@capacitor/local-notifications'
+import type { InboxEvent } from '@anyplane/protocol'
 import { postJson } from './api'
 import { getToken } from './auth'
-import { InboxSocket, type InboxEvent } from './inbox'
+import { InboxSocket } from './inbox'
 import { sessionHashUrl } from './sessionHash'
 
 const ACTION_TYPE = 'APPROVAL'
@@ -58,7 +59,9 @@ const listeners = new Set<() => void>()
 
 function setStatus(patch: Partial<NativeBridgeStatus>): void {
   status = { ...status, ...patch }
-  listeners.forEach((l) => l())
+  listeners.forEach((l) => {
+    l()
+  })
 }
 
 export function getNativeBridgeStatus(): NativeBridgeStatus {

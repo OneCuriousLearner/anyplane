@@ -501,6 +501,7 @@ export function SessionList(props: {
               {/* 原生壳（Android）：后台保活入口——国产 ROM 省电会掐前台服务长连 */}
               {nativeAndroid && (
                 <button
+                  type="button"
                   className="flex w-full items-center gap-2 rounded-[10px] px-1.5 py-1.5 text-left hover:bg-surface"
                   onClick={() => {
                     requestBatteryExemptionNav()
