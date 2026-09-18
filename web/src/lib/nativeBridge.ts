@@ -128,9 +128,11 @@ async function act(a: NativeAction): Promise<void> {
     }).catch(() => null)
     // 409 = 已在别处裁决（或上游已超时），静默；401 已由 api 层触发令牌页
     if (r && !r.ok && r.status !== 409) {
+      // 失败通知用独立 id 且立即返回——否则被函数末尾的统一 cancel 当场删掉（评审发现）
       await LN?.schedule({
-        notifications: [{ id: notifId(a.requestId), title: '审批未送达', body: '请打开应用确认会话状态' }],
+        notifications: [{ id: notifId(a.requestId) + 1, title: '审批未送达', body: '请打开应用确认会话状态' }],
       }).catch(() => {})
+      return
     }
   } else {
     // 点通知正文：深链进对应会话（hash 路由接管，见 App.tsx）
@@ -141,9 +143,13 @@ async function act(a: NativeAction): Promise<void> {
 
 /** 导航桥：anyplane-bridge://<method>?<query> 经 shouldOverrideLoad 拦截执行——
  *  纯页面导航，不依赖 addJavascriptInterface（vivo OriginOS 的 WebView 对远端页
- *  整段废除 JSI 通道，实机确诊）。仅 Android 使用；被拦截的导航不进历史。 */
+ *  整段废除 JSI 通道，实机确诊）。仅 Android 使用；被拦截的导航不进历史。
+ *  注意必须用 encodeURIComponent（空格 %20）——URLSearchParams 把空格编成 '+'，
+ *  而 Android Uri.getQueryParameter 不把 '+' 还原成空格，token 会被改坏（评审发现） */
 function navBridge(method: string, params: Record<string, string>): void {
-  const q = new URLSearchParams(params).toString()
+  const q = Object.entries(params)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .join('&')
   location.href = `anyplane-bridge://${method}${q ? `?${q}` : ''}`
 }
 
@@ -158,7 +164,9 @@ function registerNativeEventHook(): void {
     const e = ev as { type?: string; display?: NativeBridgeStatus['permission'] }
     if (e?.type === 'perm' && e.display) {
       clientLog('native-perm', `display=${e.display}`)
-      setStatus({ permission: e.display })
+      // 首个原生回推即导航桥生效的实证（configure 是发即忘导航，收不到回推说明
+      // 壳太老/服务没起来——service 状态只许由 ack 驱动，不许乐观假设：评审发现）
+      setStatus({ permission: e.display, service: 'plugin' })
     }
   }
 }
@@ -180,7 +188,12 @@ async function continueNativeSetup(): Promise<void> {
       if (document.visibilityState === 'visible') sync()
     })
     setupStage = 'done'
-    setStatus({ service: 'plugin' })
+    // service 只由原生回推（evaluateJavascript ack）置为 plugin；6s 无 ack 说明
+    // 壳太老/服务没起来，落 js-fallback 触发横幅警示（评审发现：乐观假设会让
+    // 死桥在 UI 里完全隐形）
+    window.setTimeout(() => {
+      if (getNativeBridgeStatus().service === 'off') setStatus({ service: 'js-fallback' })
+    }, 6000)
     clientLog('configure-nav', '已发导航桥 configure')
     return
   }
@@ -192,7 +205,12 @@ async function continueNativeSetup(): Promise<void> {
   if (current) setStatus({ permission: current.display })
   clientLog('perm-check', current ? `display=${current.display}` : 'TIMEOUT（checkPermissions 未返回）')
   void LN.requestPermissions()
-    .then((p) => setStatus({ permission: p.display }))
+    .then((p) => {
+      setStatus({ permission: p.display })
+      // 系统弹窗授权后必须续跑建连——此前只在横幅路径续跑，首次进 app 直接授权的
+      // 场景下 socket 永远不建（评审发现：iOS 新装首授权后通知全灭直到重启）
+      if (p.display === 'granted') void continueNativeSetup()
+    })
     .catch(() => {})
 
   if (current?.display !== 'granted') return
@@ -214,6 +232,22 @@ async function continueNativeSetup(): Promise<void> {
     } else if (ev.type === 'approval_resolved') {
       // 在别处（其他设备/规则引擎/会话内）已裁决：清掉本机通知
       void LN?.cancel({ notifications: [{ id: notifId(ev.requestId) }] }).catch(() => {})
+    } else if (ev.type === 'snapshot') {
+      // 连接即下发的 pending 全集（评审发现：JS 兜底路径漏了它，页面加载前
+      // 已存在的审批永远不通知；notify 同 id 覆盖，天然去重）
+      for (const a of ev.approvals) {
+        void LN?.schedule({
+          notifications: [
+            {
+              id: notifId(a.requestId),
+              title: `审批 · ${a.toolName}`,
+              body: summarizeInput(a.input),
+              actionTypeId: ACTION_TYPE,
+              extra: { key: a.key, requestId: a.requestId },
+            },
+          ],
+        }).catch(() => {})
+      }
     }
   })
 }

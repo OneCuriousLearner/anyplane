@@ -47,8 +47,10 @@ public class ApprovalService extends Service {
 
     private final OkHttpClient http = new OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build();
     private final Handler handler = new Handler(Looper.getMainLooper());
-    /** requestId → 事件原文（前台期间挂账的 pending 审批） */
-    private final Map<String, JSONObject> pendings = new LinkedHashMap<>();
+    /** requestId → 事件原文（前台期间挂账的 pending 审批）。
+     *  synchronizedMap 包裹：OkHttp 读线程改、主线程（onForegroundChanged）遍历，
+     *  遍历段必须再套 synchronized(pendings)（评审发现的并发修改竞态） */
+    private final Map<String, JSONObject> pendings = java.util.Collections.synchronizedMap(new LinkedHashMap<>());
     private WebSocket ws;
     private int retryDelaySec = 1;
     private volatile boolean stopped = false;
@@ -61,13 +63,17 @@ public class ApprovalService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        nm.createNotificationChannel(
-            new NotificationChannel(CHANNEL_APPROVAL, "审批请求", NotificationManager.IMPORTANCE_HIGH)
-        );
-        nm.createNotificationChannel(
-            new NotificationChannel(CHANNEL_CONN, "连接状态", NotificationManager.IMPORTANCE_MIN)
-        );
+        // NotificationChannel 是 API 26+ 的类（minSdk 24：24/25 设备上引用即
+        // NoClassDefFoundError，服务永远起不来——评审发现）；26 以下无渠道概念直接发
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            nm.createNotificationChannel(
+                new NotificationChannel(CHANNEL_APPROVAL, "审批请求", NotificationManager.IMPORTANCE_HIGH)
+            );
+            nm.createNotificationChannel(
+                new NotificationChannel(CHANNEL_CONN, "连接状态", NotificationManager.IMPORTANCE_MIN)
+            );
+        }
         BridgeState.foregroundListener = this::onForegroundChanged;
     }
 
@@ -156,23 +162,32 @@ public class ApprovalService extends Service {
     }
 
     private void onForegroundChanged() {
-        if (BridgeState.appInForeground) {
-            // 回前台：页面审批卡接管，清掉本服务发出的审批通知
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            for (String requestId : pendings.keySet()) {
-                nm.cancel(notifId(requestId));
-            }
-        } else {
-            // 切后台/锁屏：补发前台期间挂账的审批
-            for (JSONObject ev : pendings.values()) {
-                postApproval(ev);
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        // 遍历段加锁：与 OkHttp 读线程的 put/remove/快照替换互斥（评审发现）
+        synchronized (pendings) {
+            if (BridgeState.appInForeground) {
+                // 回前台：页面审批卡接管，清掉本服务发出的审批通知
+                for (String requestId : pendings.keySet()) {
+                    nm.cancel(notifId(requestId));
+                }
+            } else {
+                // 切后台/锁屏：补发前台期间挂账的审批
+                for (JSONObject ev : pendings.values()) {
+                    postApproval(ev);
+                }
             }
         }
     }
 
     private final class Listener extends WebSocketListener {
+        // 迟到事件防护：双连防御/重连会主动关掉旧 socket——旧 socket 的回调不得再
+        // 武装重连或更新状态（否则两个 socket 每秒互相顶掉，自激循环：评审发现）
         @Override
         public void onOpen(WebSocket webSocket, Response response) {
+            if (webSocket != ws) {
+                webSocket.close(1000, "stale");
+                return;
+            }
             retryDelaySec = 1;
             Log.d(TAG, "inbox 已连接");
             updateOngoing("已连接");
@@ -180,6 +195,7 @@ public class ApprovalService extends Service {
 
         @Override
         public void onMessage(WebSocket webSocket, String text) {
+            if (webSocket != ws) return;
             handleEvent(text);
         }
 
@@ -190,6 +206,7 @@ public class ApprovalService extends Service {
 
         @Override
         public void onClosed(WebSocket webSocket, int code, String reason) {
+            if (webSocket != ws) return;
             Log.d(TAG, "连接关闭 code=" + code);
             report("svc-ws-closed", "code=" + code + " reason=" + reason);
             scheduleReconnect();
@@ -197,6 +214,7 @@ public class ApprovalService extends Service {
 
         @Override
         public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+            if (webSocket != ws) return;
             Log.w(TAG, "连接失败: " + t + (response != null ? " http=" + response.code() : ""));
             report("svc-ws-fail", String.valueOf(t) + (response != null ? " http=" + response.code() : ""));
             scheduleReconnect();
@@ -217,13 +235,19 @@ public class ApprovalService extends Service {
                 pendings.remove(requestId);
                 cancelApproval(requestId);
             } else if ("snapshot".equals(type)) {
-                // 服务重启/重连后补发 pending 审批（notify 同 id 即覆盖，天然去重）
+                // snapshot 是当前 pending 的权威全集：整体替换——断连期间在别处被裁决的
+                // 陈账必须清掉，否则切后台时被当成还活着的审批复活（评审发现）
                 JSONArray arr = ev.optJSONArray("approvals");
-                if (arr != null) {
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject a = arr.getJSONObject(i);
-                        String requestId = a.optString("requestId", "");
-                        if (!requestId.isEmpty()) pendings.put(requestId, a);
+                synchronized (pendings) {
+                    pendings.clear();
+                    if (arr != null) {
+                        for (int i = 0; i < arr.length(); i++) {
+                            JSONObject a = arr.getJSONObject(i);
+                            String requestId = a.optString("requestId", "");
+                            if (!requestId.isEmpty()) pendings.put(requestId, a);
+                        }
+                    }
+                    for (JSONObject a : pendings.values()) {
                         postApproval(a);
                     }
                 }

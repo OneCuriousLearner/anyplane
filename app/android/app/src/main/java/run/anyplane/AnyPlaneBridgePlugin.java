@@ -56,18 +56,17 @@ public class AnyPlaneBridgePlugin extends Plugin {
             return true;
         }
         // 导航白名单（spike 期 allowNavigation ['*'] 的收紧；插件判定优先于 mask）：
-        // 本地源与已配置的服务器源可在壳内加载，其余一律甩外部浏览器——聊天内容里的
-        // 外链不得把带插件桥的 WebView 导航到任意外源。已知限制：SSO 前置的部署若需
-        // 交互式登录，登录跳转也会被甩到外部浏览器（该场景暂无通用解，见 README）。
+        // 本地源与「和已配置服务器同源（scheme+host+port 全等）」的地址可在壳内加载，
+        // 其余一律甩外部浏览器——只比 host 会把同主机任意端口/明文服务放进带桥的壳
+        // （评审发现：同 host 异端口页面可借 anyplane-bridge:// 重指审批服务）。
+        // 已知限制：SSO 前置部署的交互式登录跳转也会被甩到外部浏览器。
         String scheme = url.getScheme();
         if (!"http".equals(scheme) && !"https".equals(scheme)) return null; // data/blob 等交默认处理
-        String host = url.getHost();
-        if ("localhost".equals(host)) return false;
+        if ("localhost".equals(url.getHost())) return false;
         SharedPreferences p = prefs(getContext());
         String serverUrl = p.getString(PREF_SERVER_URL, "");
         if (serverUrl == null || serverUrl.isEmpty()) return false; // 引导期全放行
-        Uri server = Uri.parse(serverUrl);
-        if (host != null && host.equals(server.getHost())) return false;
+        if (sameOrigin(Uri.parse(serverUrl), url)) return false;
         try {
             getContext().startActivity(
                 new Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -76,6 +75,19 @@ public class AnyPlaneBridgePlugin extends Plugin {
             // 无浏览器可接时静默吞掉
         }
         return true;
+    }
+
+    /** scheme+host+port 全等才算同源（端口做 80/443 默认归一） */
+    private static boolean sameOrigin(Uri server, Uri url) {
+        return server.getScheme().equals(url.getScheme())
+            && server.getHost().equals(url.getHost())
+            && effectivePort(server) == effectivePort(url);
+    }
+
+    private static int effectivePort(Uri u) {
+        int p = u.getPort();
+        if (p != -1) return p;
+        return "https".equals(u.getScheme()) ? 443 : 80;
     }
 
     private static String safe(String s) {
@@ -99,10 +111,14 @@ public class AnyPlaneBridgePlugin extends Plugin {
             // WebView 尚未就绪等场景：留空，按无 cookie 连
         }
         SharedPreferences sp = prefs(ctx);
+        String oldUrl = sp.getString(PREF_SERVER_URL, "");
+        boolean serverChanged = !serverUrl.equals(oldUrl);
         sp.edit().putString(PREF_SERVER_URL, serverUrl).apply();
-        // token/cookie 走 Keystore 包装（设备本地敏感信息不再明文落盘）
-        SecureStore.putSecret(sp, PREF_TOKEN, token);
-        SecureStore.putSecret(sp, PREF_COOKIES, cookies);
+        // token/cookie 走 Keystore 包装。只在拿到非空新值或换了服务器时才覆盖：
+        // WebView 未就绪（getCookie 空）/登录前（token 空）的瞬态不得冲掉有效凭据
+        // （评审发现：一次瞬态空写就把 SSO 会话与 token 全清，重连中循环）
+        if (serverChanged || !token.isEmpty()) SecureStore.putSecret(sp, PREF_TOKEN, token);
+        if (serverChanged || !cookies.isEmpty()) SecureStore.putSecret(sp, PREF_COOKIES, cookies);
         Log.d(TAG, "configure: " + serverUrl + "（token " + (token.isEmpty() ? "无" : "有")
             + "，cookie " + (cookies.isEmpty() ? "无" : "有") + "），启动审批服务");
         ContextCompat.startForegroundService(ctx, new Intent(ctx, ApprovalService.class));
@@ -112,12 +128,26 @@ public class AnyPlaneBridgePlugin extends Plugin {
     /** 权限请求原生直发：JSI 已废的设备上，这是系统弹窗唯一能出现的路径 */
     private void ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            // API<33 无运行时权限：真实开关在系统设置里（评审发现——用户在设置里关掉
+            // 通知会被误报 granted，重演静默死）
+            boolean enabled = androidx.core.app.NotificationManagerCompat
+                .from(getContext()).areNotificationsEnabled();
+            pushPermState(enabled ? "granted" : "denied");
+            return;
+        }
+        boolean granted = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
+        // 33+ 运行时权限与总开关联动，但以 areNotificationsEnabled 为准（渠道级关闭也算没开）
+        boolean enabled = androidx.core.app.NotificationManagerCompat
+            .from(getContext()).areNotificationsEnabled();
+        if (granted && enabled) {
             pushPermState("granted");
             return;
         }
-        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED) {
-            pushPermState("granted");
+        if (granted) {
+            // 有运行时权限但总开关/渠道被关：弹窗无意义，直送设置页
+            pushPermState("denied");
+            openSettings();
             return;
         }
         ActivityCompat.requestPermissions(

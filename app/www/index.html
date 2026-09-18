@@ -138,6 +138,11 @@
   }
 
   function go(origin) {
+    // 先清掉 #reconfigure——否则 900ms 后的跳转守卫永远拦截，且「重新配置」链接
+    // 因 hash 不再变化而失效（评审发现的死锁：重配后提交卡在「正在连接」）
+    if (location.hash === '#reconfigure') {
+      history.replaceState(null, '', location.pathname + location.search);
+    }
     app.innerHTML =
       '<h1>正在连接</h1>' +
       '<p class="sub"><code>' + origin + '</code></p>' +

@@ -33,4 +33,5 @@ cd android && ./gradlew assembleDebug   # 出 app-debug.apk
 ## 已知待办
 
 - Android 后台驻留边界：`START_STICKY` + `stopWithTask="false"` + 开机自启已覆盖常规路径；Doze 深睡与各 OEM 保活设置页差异仍需用户侧一次性加白（豁免入口在通知菜单「后台保活」，vivo 实测需手动一次）。
+- **Android 15+ 的 `dataSync` FGS 配额**：6 小时/24 小时上限（targetSdk 36 生效），全天挂着的审批监听会被系统强停且配额窗口内禁止重启（评审轮登记）。这是平台级硬约束，锁屏审批在该窗口内静默失效，重开 app 即恢复；更稳的方案（specialUse 类型/到点提醒）待评估。
 - iOS 后台送达必须走 APNs（需开发者账号；模拟器 spike 与 `simctl push` 验证在推进中）。

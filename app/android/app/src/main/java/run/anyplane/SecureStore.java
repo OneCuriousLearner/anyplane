@@ -27,16 +27,27 @@ final class SecureStore {
     private SecureStore() {}
 
     static void putSecret(SharedPreferences p, String key, String value) {
-        String stored = value == null || value.isEmpty() ? "" : encrypt(value);
-        p.edit().putString(key, stored == null ? "" : stored).apply();
+        if (value == null || value.isEmpty()) {
+            p.edit().putString(key, "").apply();
+            return;
+        }
+        String stored = encrypt(value);
+        // 加密失败（Keystore 瞬态故障）宁可不动旧值，也绝不把 "" 盖到有效凭据上（评审发现）
+        if (stored == null) return;
+        p.edit().putString(key, stored).apply();
     }
 
     static String getSecret(SharedPreferences p, String key) {
         String stored = p.getString(key, "");
         if (stored == null || stored.isEmpty()) return "";
-        String plain = decrypt(stored);
-        if (plain != null) return plain;
-        // 明文迁移期（含 adb 预置/老版本直写）：按明文返回并就地重加密
+        // 版本前缀定界（评审发现：靠形态猜密文不可靠——hex 明文 token 会被误判成密文清掉）：
+        // "v1:" = 本代加密格式；无前缀 = 历史明文（老版本/adb 预置），就地重加密。
+        if (stored.startsWith("v1:")) {
+            String plain = decrypt(stored.substring(3));
+            // 密钥丢失（备份迁移不带 AndroidKeyStore 密钥）：返回空逼重配——
+            // 再加密只是把垃圾封存成「合法 token」，所有 Bearer 调用 401 且无迹可循
+            return plain == null ? "" : plain;
+        }
         putSecret(p, key, stored);
         return stored;
     }
@@ -69,7 +80,7 @@ final class SecureStore {
             byte[] out = new byte[iv.length + ct.length];
             System.arraycopy(iv, 0, out, 0, iv.length);
             System.arraycopy(ct, 0, out, iv.length, ct.length);
-            return Base64.encodeToString(out, Base64.NO_WRAP);
+            return "v1:" + Base64.encodeToString(out, Base64.NO_WRAP);
         } catch (Exception e) {
             return null;
         }
