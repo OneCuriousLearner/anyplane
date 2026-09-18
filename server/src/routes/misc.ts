@@ -5,8 +5,7 @@ import type { LineageNode, LineageResponse, ServerConfigInfo } from '@anyplane/p
 import { readHistory, sanitizePath } from '../backends/claude/discovery'
 import { resolveTierModelNames } from '../backends/claude/modelNames'
 import { readHistory as readCodexHistory } from '../backends/codex/backend'
-import { codexRuntime } from '../backends/codex/runtime'
-import { describeKey } from '../backends/port'
+import { backendPort, describeKey } from '../backends/port'
 import { getBackendsStatus } from '../backends/status'
 import { config } from '../config'
 import { FsBrowseError, listDirectories } from '../fsbrowse'
@@ -158,11 +157,11 @@ export async function handleMiscRoutes(
       return json({ error: errorMessage(e) }, { status: 500 })
     }
   }
-  // codex 模型目录（model/list）：模型 id/显示名/effort 列表/默认 effort
+  // codex 模型目录（model/list）：经注册表取适配器（routes 不 import codexRuntime——依赖红线③）
   if (url.pathname === '/api/codex/models' && req.method === 'GET') {
     try {
-      const models = await codexRuntime.listModels()
-      return json({ models })
+      const models = await backendPort('codex').listModels?.()
+      return json({ models: models ?? [] })
     } catch (e) {
       return json({ error: errorMessage(e) }, { status: 500 })
     }

@@ -29,7 +29,7 @@ bun run lint         # Biome lint（CI 同口径；无 formatter——纯风格�
 bun run gateway      # 80/443 网关：按 ?mode=dev|prod 反代到 :5173 / :7480（无 token 需 --insecure）
 ```
 
-端到端验证（需服务端已启动，会真实调用 claude/codex CLI）：`server/scripts/smoke.ts` 与 `server/scripts/e2e-*.ts`，每个脚本头部注释写明用法与覆盖点（WS 全链路 / 审批 / 斜杠命令 / 回滚 / push / 接力 / codex 各协议探针等）。
+端到端验证（需服务端已启动，会真实调用 claude/codex CLI）：`server/scripts/smoke.ts` 与 `server/scripts/e2e-*.ts`，每个脚本头部注释写明用法与覆盖点（WS 全链路 / 审批 / 斜杠命令 / 回滚 / push / 接力 / codex 各协议探针等）。**例外：`e2e-mock.ts` 自启临时服务端 + mock CLI（`mock-claude.ts`），覆盖 WS 全链路/审批/补发/`/clear` 重键，是 CI 双平台矩阵里唯一不依赖真实 CLI 的 e2e**（13.2 遗留落地）。
 
 服务端配置了 `authToken` 时，e2e 脚本需要 `ANYPLANE_TOKEN` 环境变量才能连上 WS 与 REST（两侧统一由 `e2e-lib` 的 `connect()`/`apiFetch()` 读取）。
 
@@ -56,9 +56,9 @@ e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干�
 - **sessionKey 编码**：`s|`=Claude 会话、`n|`=新会话、`b|`=懒分叉（首条消息 spawn 时才 `--fork-session --resume`）、`x|`=Codex 线程、`xn|`=新线程（构造/解析正本在两后端 `keyFor` 与 `backends/port.ts` 的 `describeKey`，`port.test.ts` 锁死一一对应）。Claude 的 `parseKey` 靠 `listSessions()` 反查 cwd——slug 目录被删时 key 无法解析（已知限制）。
 - **Hub 生命周期不变量（重要）**：任何后端的会话句柄存活期间，其 Hub 不得删除——否则重连复用旧会话时事件会广播进已删 Hub（消息黑洞）。WS close 处理器按后端判定存活（`processManager.get` / `codexRuntime.get`）。
 - **懒 spawn**：`attach` 只握手不启动 CLI；首条 user 消息 / 无启动参数等价物的控制请求才触发 `ensureSpawned`。未 spawn 时 model/mode/effort 选择缓存在 `hub.spawnOpts`，自定义 env 缓存在 `hub.pendingEnv`（必须排在首条 user 消息之前写入 stdin）。Codex 相反：`x|` 会话 attach 即 `thread/resume`（订阅实时事件），`xn|` 新线程保持懒启动。
-- **后端抽象（backends/）**：**统一消息边界是 Claude stream-json 形状**——Codex 事件翻译为该形状，前端与 WS 协议不分叉。`ClaudeSession` 与 `CodexSession` 保持结构化同形（契约见 `backends/types.ts` 末尾注释）；Hub 层以 `isCodexKey` 分发，没有注册表中间层。
+- **后端抽象（backends/）**：**统一消息边界是 Claude stream-json 形状**——Codex 事件翻译为该形状，前端与 WS 协议不分叉。`ClaudeSession` 与 `CodexSession` 保持结构化同形（契约见 `backends/types.ts` 末尾注释）；分发经 `backends/port.ts` 的**注册表**（`registerBackend` 由装配层注入，`portFor(key)` 按 key 前缀取用）——`port.ts` 是契约叶子不 import 适配器，13.3 前的 `port.ts ↔ 适配器` import 环已由此解掉。**能力差异的唯一权威是适配器的 `capabilities` 声明**（fileCheckpoint/branch/tailer/aiTitle/externalGate/queries/modelCatalog）：hub 层按能力把关（`?.` 守护 + 统一拒绝文案），`statusOf` 随 `SessionState.capabilities` 下发，前端按能力渲染——新增 claude-only/codex-only 能力时走声明而非 no-op 方法。
 - **前后端契约类型正本在 `@anyplane/protocol`**（protocol/ workspace，纯类型零运行时，`import type` 编译期擦除）：ServerEvent/ClientCommand/SessionState/HistoryMessage/审批与 REST 形状。新增 WS 事件先改这里——`broadcast()` 是判别联合卡口，不改协议包服务端编译不过。不要在本包 import 任何 server/web 模块（vendor 协议类型留在各后端内部）。
-- **依赖红线已由 Biome 机械执行**（biome.jsonc 的 noRestrictedImports，报错文案即规则意图）：适配器↛hub 运行时（hub/types 纯类型豁免）、hub↛push、routes↛具体 port（sessions/misc 两处存量豁免除外）、protocol 不出包。例外要进豁免清单并写明原因，不许静默绕过。时序红线（ensure 零 await）仍只有注释守护——GritQL 插件够不到 class 方法（Biome 2.5 限制）。
+- **依赖红线已由 Biome 机械执行**（biome.jsonc 的 noRestrictedImports，报错文案即规则意图）：适配器↛hub 运行时（hub/types 纯类型豁免）、hub↛push、routes↛具体 port（13.3 起零存量豁免；routes 测试因注册真实适配器豁免 `*.test.ts`）、protocol 不出包。例外要进豁免清单并写明原因，不许静默绕过。时序红线（ensure 零 await）仍只有注释守护——GritQL 插件够不到 class 方法（Biome 2.5 限制）。
   - `backends/claude/`：**宽松解析原则（protocol.ts）：未知字段/未知 type 一律透传**。`agents.ts` 的 daemon 视图独有价值是 background agent 存活态；control.sock 逆向协议版本锁死，刻意不用。
   - `backends/codex/`：**单 app-server 进程托管全部线程**（runtime.ts），按 threadId 解复用。
     **ThreadItem 覆盖以官方 union 为准**（`server/scripts/codex-schema-baseline/v2/ThreadItem.ts`）：live（`itemStarted`/`itemCompleted`）与历史（`itemsToHistory`）**必须同形**，否则刷新页面卡片凭空消失。`collabAgentToolCall`/`subAgentActivity` 有意只走侧栏桶不进主线；其余未知 type 一律 `log.warn` 留痕后透传/跳过，**不再静默丢弃**（曾丢 hookPrompt/dynamicToolCall/imageView/sleep/imageGeneration 五种，用了 hooks 或生图的会话抄本会凭空缺块）。
@@ -94,7 +94,7 @@ e2e 脚本默认不指定模型——anyplane 不显式传模型时完全不干�
 
 - 全平台 Bun >= 1.4.0 门槛的由来：Bun <= 1.3.14 在 Windows 存在监听 socket 被子进程继承的 bug（oven-sh/bun#36936）。服务端和 `scripts/dev.ts` 启动时检查版本并拒绝启动（可用 `ANYPLANE_ALLOW_UNSAFE_BUN=1` 跳过）；1.3.x 时代已形成的死 PID 监听需重启 Windows 才能释放。
 - `scripts/dev.ts` 故意不用 `bun --watch` 和 `bun run --cwd`：Windows watcher 会在异步 SIGINT 清理完成前杀掉 server；多层包装进程会吞 Ctrl+C。**不要用任务管理器强杀 server**，会绕过 `server.stop(true)` 与子进程树清理。
-- claude 在 Windows 可能是 `.cmd`/`.bat`（需 `cmd.exe /d /s /c` 包装）或 `.exe`；`resolveClaudeCommand()` 优先选真实存在的 `.exe`。
+- claude 在 Windows 可能是 `.cmd`/`.bat` 或 `.exe`；Bun >= 1.4 可直接执行 `.cmd`（内部正确包装，含空格路径安全），不再需要手工 `cmd.exe /d /s /c` 包装——**旧包装已拆除**（Bun 的 argv 引号渲染会把手工加的引号转义成 `\"`，空格路径必然断裂）。`resolveClaudeCommand()` 的显式配置（`claudePath`/`ANYPLANE_CLAUDE_PATH`）是权威，不参与 PATH 候选的 `.exe` 偏好竞争。
 
 ## 已知限制（改相关功能前先读 README）
 

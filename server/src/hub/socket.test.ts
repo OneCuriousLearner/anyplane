@@ -7,7 +7,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { processManager } from '../backends/claude/processManager'
-import { initBackendPorts } from '../backends/port'
+import { claudePort } from '../backends/claude/port'
+import { codexPort } from '../backends/codex/port'
+import { initBackendPorts, registerBackend } from '../backends/port'
 import { broadcast, broadcastError, resetInboxSinkForTest, setInboxSink } from './broadcast'
 import { rewindBusy } from './lifecycle'
 import { getHub, hubs } from './registry'
@@ -28,6 +30,10 @@ initBackendPorts({
   sessionNameOf: () => 'socket-test',
   rewindBusy,
 })
+// portFor 经注册表取用（13.3 起契约叶子不再自带适配器单例）：注册真实适配器，镜像 index.ts 装配。
+// 各测试文件注册同一单例，幂等且无顺序依赖。
+registerBackend('claude', claudePort)
+registerBackend('codex', codexPort)
 
 interface FakeWs {
   data: { key?: string; inbox?: true; keepalive?: ReturnType<typeof setInterval> }

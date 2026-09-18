@@ -150,9 +150,10 @@
       }
     },
     {
-      // 依赖红线③：routes 一律经 portFor 分发，禁止直连具体后端 port/runtime
-      //（审计发现七；现两处存量由下方豁免清单覆盖，13.3 注册表化后移除豁免）
-      "includes": ["server/src/routes/**"],
+      // 依赖红线③：routes 一律经 backends/port 的注册表（portFor/backendPort）分发，
+      // 禁止直连具体后端 port/runtime（13.3 注册表化后存量已清零，无豁免清单）。
+      // *.test.ts 排除：测试注册真实适配器必须 import 具体 port（装配替身，镜像 index.ts）
+      "includes": ["server/src/routes/**", "!server/src/routes/**/*.test.ts"],
       "linter": {
         "rules": {
           "style": {
@@ -162,22 +163,11 @@
                 "patterns": [
                   {
                     "group": ["**/backends/claude/port", "**/backends/codex/port", "**/backends/codex/runtime"],
-                    "message": "依赖红线：routes 禁止直连具体 port/runtime，一律经 backends/port 的 portFor 分发"
+                    "message": "依赖红线：routes 禁止直连具体 port/runtime，一律经 backends/port 的 portFor/backendPort 分发"
                   }
                 ]
               }
             }
-          }
-        }
-      }
-    },
-    {
-      // 13.3 治理前存量豁免（审计发现七点名：sessions.ts 直连两 port，misc.ts 直连 codexRuntime）
-      "includes": ["server/src/routes/sessions.ts", "server/src/routes/misc.ts"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noRestrictedImports": "off"
           }
         }
       }

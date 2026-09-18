@@ -1,11 +1,11 @@
 // 接力（handoff）跨后端编排：源会话自摘要 → 目标会话播种 → 血缘落盘。
 // 领域函数（简报生成/播种文案/血缘 IO）在 ../handoff.ts；这里只做编排与进度事件推源 Hub。
 
-import { keyFor, keyForNew } from '../backends/claude/backend'
+import { keyFor } from '../backends/claude/backend'
 import { sanitizePath } from '../backends/claude/discovery'
 import type { BackendName } from '@anyplane/protocol'
-import { keyFor as codexKeyFor, keyForNew as codexKeyForNew } from '../backends/codex/backend'
-import { portFor } from '../backends/port'
+import { keyFor as codexKeyFor } from '../backends/codex/backend'
+import { backendPort, portFor } from '../backends/port'
 import { appendLineage, seedMessage, type HandoffDetail } from '../handoff'
 import { errorMessage } from '../util'
 import { broadcast } from './broadcast'
@@ -41,7 +41,7 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_brief', brief })
 
       // 2. 目标会话播种（服务端直接发送首条消息；启动失败抛错）
-      const targetKey = toBackend === 'codex' ? codexKeyForNew(sourceCwd) : keyForNew(sourceCwd)
+      const targetKey = backendPort(toBackend).keyForNew(sourceCwd)
       const targetHub = getHub(targetKey)
       const seed = seedMessage(sourceCwd, fromBackend, brief)
       const targetSessionId = await portFor(targetKey).seedHandoffTarget(targetHub, seed)

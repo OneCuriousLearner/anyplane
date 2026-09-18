@@ -62,7 +62,7 @@ export function sessionCallbacks(hub: Hub) {
       // 每个 init 都更新会话身份（首次 spawn 与 /clear 重键共用；rekey 分支不落 return，会走到这里）
       if (msg.type === 'system' && msg.subtype === 'init') {
         hub.sessionId = String(msg.session_id ?? '') || undefined
-        portFor(hub.key).maybeGenerateTitle(hub) // 首条消息可能已记账在等 sessionId（codex no-op）
+        portFor(hub.key).maybeGenerateTitle?.(hub) // 首条消息可能已记账在等 sessionId（claude-only 能力，?. 守护）
       }
       broadcast(hub, { kind: 'cli', msg })
       // turn 收尾是收件箱的核心提醒信号（agent 跑完了）
@@ -116,7 +116,7 @@ export function sessionCallbacks(hub: Hub) {
         detail: summarizeInput(req.toolName, req.input),
       })
       pushStatus(hub)
-      portFor(hub.key).notifyExternalGate(hub.key)
+      portFor(hub.key).notifyExternalGate?.(hub.key) // claude-only 能力（外部门禁），?. 守护
     },
     onStatusChange: () => throttledPushStatus(hub),
     /** 审批被上游终结（app-server 超时/中断/其他客户端应答，codex serverRequest/resolved）：

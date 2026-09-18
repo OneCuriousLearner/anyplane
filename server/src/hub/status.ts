@@ -16,7 +16,10 @@ export function statusOf(
   liveHint?: { status: string; pid: number } | null,
   hydrateContext = false,
 ): SessionState {
-  return portFor(key).statusOf(key, { hub: hubs.get(key), liveHint, hydrateContext })
+  const port = portFor(key)
+  // capabilities 由编排层统一注入（而非各适配器自行带上）：能力声明是适配器常量，
+  // 注入点收敛一处，第三个后端接入时不会漏挂
+  return { ...port.statusOf(key, { hub: hubs.get(key), liveHint, hydrateContext }), capabilities: port.capabilities }
 }
 
 export function pushStatus(hub: Hub, extra?: Partial<SessionState>): void {

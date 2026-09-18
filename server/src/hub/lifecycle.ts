@@ -34,7 +34,7 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
     // 会话已退出/未就绪：决定无处投递（上游请求将自行超时），本地照常解析并告知用户
     broadcastError(hub, '会话未在运行，审批未能送达（该请求会在上游自行超时）')
   }
-  port.notifyExternalGate(hub.key)
+  port.notifyExternalGate?.(hub.key) // claude-only 能力（外部门禁），?. 守护
 }
 
 /**

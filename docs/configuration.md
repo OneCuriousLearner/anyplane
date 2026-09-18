@@ -30,7 +30,7 @@ README 只保留最常用的几项，这里是完整配置说明。
 - `claudeConfigDir`：Claude 配置目录，默认 `~/.claude`。
 - `driftAlert`：协议漂移告警（默认开）。`bun run server/scripts/check-claude-protocol.ts` / `check-codex-schema.ts` 检出漂移时经 `pushWebhooks` 推送提醒（同一 CLI 版本只告一次）；未配 `pushWebhooks` 时无效。显式 `false` 关闭。
 
-环境变量覆盖：`ANYPLANE_PORT`、`ANYPLANE_HOST`、`ANYPLANE_TOKEN`、`CLAUDE_CONFIG_DIR`。
+环境变量覆盖：`ANYPLANE_PORT`、`ANYPLANE_HOST`、`ANYPLANE_TOKEN`、`CLAUDE_CONFIG_DIR`、`ANYPLANE_CLAUDE_PATH`（`claudePath` 的环境变量直通；显式路径不参与 PATH 候选的 `.exe` 偏好竞争）。
 
 ## 日志
 

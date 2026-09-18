@@ -124,6 +124,8 @@ export const config: ServerConfig = {
   ...(process.env.ANYPLANE_HOST ? { host: process.env.ANYPLANE_HOST } : {}),
   ...(process.env.ANYPLANE_TOKEN ? { authToken: process.env.ANYPLANE_TOKEN } : {}),
   ...(process.env.CLAUDE_CONFIG_DIR ? { claudeConfigDir: process.env.CLAUDE_CONFIG_DIR } : {}),
+  // claude CLI 路径的环境变量直通（e2e mock 注入用；配置文件 claudePath 的同值覆盖）
+  ...(process.env.ANYPLANE_CLAUDE_PATH ? { claudePath: process.env.ANYPLANE_CLAUDE_PATH } : {}),
 }
 
 /** 默认权限模式：bypass 策略 → claude bypassPermissions（codex 侧经 mapPermissionMode 映射同档）。

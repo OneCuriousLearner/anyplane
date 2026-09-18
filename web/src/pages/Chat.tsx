@@ -30,6 +30,7 @@ import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
 import { buildTranscriptRows, nextId, rewindPreview, usageSummary, type Block } from '../lib/blocks'
 import { statusLineOf } from '../lib/chatText'
+import { capabilitiesOf, QUERY_LABELS } from '../lib/capabilities'
 import { interceptSlash, type SlashAction } from '../lib/slashIntercept'
 import { isCodexKey, isExistingKey } from '../lib/key'
 import type { NavigateSession } from '../lib/sessionHash'
@@ -232,6 +233,16 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     state.sessionId ??
     (session.key.startsWith('s|') || session.key.startsWith('x|') ? session.sessionId : undefined)
 
+  /** 会话能力（服务端 capabilities 随 status 首帧下发）：undefined = 未知，门控 UI 隐藏。
+   *  查询按钮/分叉入口按此渲染，不再以 isCodex 硬编码推断 */
+  const caps = capabilitiesOf(state)
+  /** 打开详情抽屉的默认查询：优先 context 用量，退而求其次 MCP 状态（能力白名单 ∩ 按钮表内） */
+  const defaultDetailQuery: [string, string] | undefined = caps?.queries.includes('get_context_usage')
+    ? ['get_context_usage', QUERY_LABELS.get_context_usage[0]]
+    : caps?.queries.includes('mcp_status')
+      ? ['mcp_status', QUERY_LABELS.mcp_status[0]]
+      : undefined
+
   // ---------- 服务配置（Composer StatusPill 用；与 socket 生命周期无关——原与建连同 effect 同步先后执行，独立后同 commit 按序执行，行为等价） ----------
   useEffect(() => {
     fetchConfig().then(setCfg).catch(() => {})
@@ -300,8 +311,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         else ingestApi.pushSystem('用法：/btw <问题>')
         return
       case 'branch':
-        if (isCodex) ingestApi.pushSystem('Codex 请用「回滚」面板的从此处分叉')
-        else sock?.send({ kind: 'branch', ...(a.name ? { name: a.name } : {}) })
+        // 按能力声明把关（与 ChatHeader 的分叉入口同源）：无能力的后端不发帧，留引导文案
+        if (caps?.branch) sock?.send({ kind: 'branch', ...(a.name ? { name: a.name } : {}) })
+        else ingestApi.pushSystem('当前后端不支持 /branch 分叉（可从「回滚」面板从此处分叉）')
         return
       case 'exitHint':
         ingestApi.pushSystem('此命令会终止 CLI 进程。要结束会话请回列表页归档（⌄ 按钮），进程回收由服务端空闲策略处理')
@@ -476,6 +488,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         onToggleTasks={() => setTasksOpen((v) => !v)}
         isExisting={isExisting}
         isCodex={isCodex}
+        canBranch={caps?.branch ?? false}
         sessionId={state.sessionId}
         currentSessionId={currentSessionId}
         goal={state.goal}
@@ -485,8 +498,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         onSystemMessage={ingestApi.pushSystem}
         onToggleDetail={() => {
           setDetailOpen((v) => !v)
-          // codex 无 get_context_usage 对应物，默认落在 MCP 状态上
-          if (!detailOpen) runQuery(isCodex ? 'mcp_status' : 'get_context_usage', isCodex ? 'MCP 状态' : 'context 用量')
+          // 默认落 context 用量；无该查询能力的后端退到 MCP 状态（能力白名单内）
+          if (!detailOpen && defaultDetailQuery) runQuery(defaultDetailQuery[0], defaultDetailQuery[1])
         }}
         goalOpen={goalOpen}
         onToggleGoal={() => {
@@ -515,6 +528,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
             detailTitle={detailTitle}
             detailContent={detailContent}
             isCodex={isCodex}
+            queries={caps?.queries ?? []}
             mcpServers={mcpServers}
             mcpBusy={mcpBusy}
             onMcpAction={mcpAction}
@@ -588,7 +602,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         context={state.context}
         usage={state.usage}
         onOpenFullDetail={
-          !isCodex && isExisting
+          caps?.queries.includes('get_context_usage') === true && isExisting
             ? () => {
                 setDetailOpen(true)
                 runQuery('get_context_usage', 'context 用量')

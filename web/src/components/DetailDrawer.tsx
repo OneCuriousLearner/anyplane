@@ -4,6 +4,7 @@
 
 import type { TierModelName } from '@anyplane/protocol'
 import { resolveModel } from '../lib/api'
+import { QUERY_LABELS } from '../lib/capabilities'
 import { fmtTokens } from '../lib/blocks'
 
 /** claude mcp_status 应答里的单个服务器（buildMcpServerStatuses 形状） */
@@ -36,6 +37,8 @@ export function DetailDrawer(props: {
   detailTitle: string
   detailContent: string
   isCodex: boolean
+  /** query 通道能力白名单（服务端 capabilities.queries 下发）：按钮按能力渲染 */
+  queries: readonly string[]
   mcpServers: McpServerInfo[] | null
   mcpBusy: string | null
   onMcpAction: (serverName: string, action: 'mcp_reconnect' | 'mcp_toggle', enabled?: boolean) => void
@@ -49,6 +52,7 @@ export function DetailDrawer(props: {
     detailTitle,
     detailContent,
     isCodex,
+    queries,
     mcpServers,
     mcpBusy,
     onMcpAction,
@@ -62,16 +66,16 @@ export function DetailDrawer(props: {
     <div className="px-3 py-2">
       <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px]">
         <span className="text-muted">{detailTitle}</span>
-        {/* codex 只有 mcp_status 有对应物（mcpServerStatus/list）；context/设置是 claude 控制请求 */}
-        {(isCodex ? (['mcp_status'] as const) : (['get_context_usage', 'mcp_status', 'get_settings'] as const)).map((q) => (
+        {/* 查询按钮按能力白名单渲染（服务端 capabilities.queries），过滤到 QUERY_LABELS
+         *  覆盖的只读查询——白名单里还含管理动作（mcp_reconnect/mcp_toggle，供 hub 把关
+         *  放行），动作经 MCP 面板的服务器行触发，不是抽屉按钮 */}
+        {queries.filter((q) => QUERY_LABELS[q]).map((q) => (
           <button type="button"
             key={q}
             className="rounded-full bg-surface px-2.5 py-1 text-[10px] text-faint hover:text-ink"
-            onClick={() =>
-              onRunQuery(q, q === 'get_context_usage' ? 'context 用量' : q === 'mcp_status' ? 'MCP 状态' : '设置')
-            }
+            onClick={() => onRunQuery(q, QUERY_LABELS[q][0])}
           >
-            {q === 'get_context_usage' ? 'context' : q === 'mcp_status' ? 'MCP' : '设置'}
+            {QUERY_LABELS[q][1]}
           </button>
         ))}
         <button type="button" className="ml-auto text-faint hover:text-muted" onClick={onClose}>

@@ -1,6 +1,26 @@
 // 会话状态契约：WS status 事件负载、/api/sessions 的 managed 字段、inbox snapshot 的 states 共用。
 // 服务端唯一出口是 statusOf()（hub/status.ts 经 portFor 分发，公共字段 baseStatusOf）。
 
+/** 后端能力声明（BackendPort.capabilities 的下发镜像）。
+ *  能力差异的唯一权威在服务端适配器；前端按本字段渲染（禁用按钮/隐藏面板），
+ *  不再以 isCodex 硬编码推断——第三个后端接入时前端零改动。 */
+export interface BackendCapabilities {
+  /** 文件检查点：rewind_files / rewind_both（组合回滚） */
+  fileCheckpoint: boolean
+  /** 懒分叉当前会话（/branch，b| key） */
+  branch: boolean
+  /** transcript tailer：外部会话实时跟踪（tail_subscribe） */
+  tailer: boolean
+  /** 官方 AI 标题（generate_session_title 控制通道） */
+  aiTitle: boolean
+  /** 外部门禁通知（control.sock 生态） */
+  externalGate: boolean
+  /** query 通道支持的查询/动作名白名单（hub 层据此把关，适配器不再各自拒绝） */
+  queries: readonly string[]
+  /** 模型目录端点（codex model/list RPC；claude 无对应物） */
+  modelCatalog: boolean
+}
+
 /** 累计 token 用量（只计 token；claude 为本进程累计，codex 为线程累计） */
 export interface TokenUsage {
   inputTokens: number
@@ -42,6 +62,8 @@ export interface BackgroundTask {
 export interface SessionState {
   spawned: boolean
   busy: boolean
+  /** 本后端的能力声明（statusOf 统一注入；首包前的客户端缺省时按后端身份兜底） */
+  capabilities?: BackendCapabilities
   /** 等待用户审批（can_use_tool / requires_action） */
   waiting?: boolean
   /** Claude Code 权威状态：idle | running | requires_action */

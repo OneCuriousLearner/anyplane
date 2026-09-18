@@ -69,7 +69,7 @@ export function wsClose(ws: ServerWebSocket<WSData>): void {
   port.sessionOf(hub.key)?.detachClient()
   const alive = port.hasLiveSession(hub.key)
   if (hub.clients.size === 0) {
-    port.stopTailer(hub)
+    port.stopTailer?.(hub)
     if (!alive) hubs.delete(hub.key)
   }
 }

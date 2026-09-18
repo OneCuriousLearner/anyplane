@@ -54,6 +54,10 @@ export function useSessionSocket(opts: {
 
   // ---------- WS 连接 ----------
   useEffect(() => {
+    // 会话切换（effect 随 session.key 重跑）时重置 state：上一会话的 busy/goal/capabilities
+    // 等字段不能带进新会话的首包窗口（Chat 不按 key 重挂载，state 是跨会话存续的）；
+    // 首包 status 在 WS open 即由服务端下发，重置窗口只有一帧
+    setState({ spawned: false, busy: false })
     /** 重载权威历史（replay_gap 与 codex thread_reverted 共用）：
      *  先挡住 cli 再清草稿——环里残留的 stream/assistant 不能在重载完成前改抄本。
      *  preserveLoaded（仅 replay_gap）：transcript 只增不改，按已加载条数+余量拉取，

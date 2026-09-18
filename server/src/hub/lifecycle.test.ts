@@ -8,11 +8,18 @@
 // 注意：resolveApproval 内部走真实 pushStatus → claudePort.statusOf；用 n| key（新会话）时
 // 无 pid 扫描、无 transcript 读（splitExistingKey/hydratedContextOf 对 n| 快路径返回）。
 import { afterEach, describe, expect, test } from 'bun:test'
+import { claudePort } from '../backends/claude/port'
+import { codexPort } from '../backends/codex/port'
+import { registerBackend } from '../backends/port'
 import { setInboxSink } from './broadcast'
 import { deliverApproval, resolveApproval, rewindBusy } from './lifecycle'
 import { getHub, hubs } from './registry'
 import type { InboxEvent } from '@anyplane/protocol'
 import type { Hub } from './types'
+
+// portFor 经注册表取用（13.3 起）：注册真实适配器，镜像 index.ts 装配（各测试文件同一单例，幂等）。
+registerBackend('claude', claudePort)
+registerBackend('codex', codexPort)
 
 const KEY = 'n|%2Ftmp%2Fanyplane-lifecycle-test'
 
