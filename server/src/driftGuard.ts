@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import type { BackendName } from '@anyplane/protocol'
 import { config } from './config'
-import { pushWebhooksToAll } from './push'
+import { pushWebhooksToAll } from './push/vapid'
 import { log } from './log'
 import { ccDataDir, childEnv, readJsonFile, writeJsonFile } from './util'
 

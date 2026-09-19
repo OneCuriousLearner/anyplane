@@ -1,8 +1,8 @@
 // endpointAllowed 是订阅注册的 SSRF/窃听防线：inbox 事件（含审批摘要与能力 URL）
 // 会扇出给全部订阅，任意 endpoint 可注册 = 窃听全部会话通知 + 向内网盲 POST。
 import { afterEach, describe, expect, test } from 'bun:test'
-import { config } from './config'
-import { endpointAllowed, pushWebhooksToAll, validSecret, webhookCount, type PushPayload } from './push'
+import { config } from '../config'
+import { endpointAllowed, pushWebhooksToAll, validSecret, webhookCount, type PushPayload } from './vapid'
 
 const originalAllow = config.pushAllowHosts
 

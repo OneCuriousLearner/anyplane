@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
-import { config } from './config'
+import { config } from '../../config'
 
 const SLUG = `-test-trash-${Date.now().toString(36)}`
 const SID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff'

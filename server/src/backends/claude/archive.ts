@@ -5,9 +5,9 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { keyFor } from './backends/claude/backend'
-import { config } from './config'
-import { ccDataDir, ensurePrivateDir, transcriptPathOf } from './util'
+import { keyFor } from './backend'
+import { config } from '../../config'
+import { ccDataDir, ensurePrivateDir, transcriptPathOf } from '../../util'
 
 function trashRoot(): string {
   return ensurePrivateDir(join(ccDataDir(), 'trash', 'claude'))

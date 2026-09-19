@@ -1,7 +1,7 @@
 // anyplane 服务端入口（装配层）：启动守卫 + createServer + bindServer + 启动日志 + shutdown。
 // S2 拆分后的职责边界：
 //   hub/    Hub 编排层（registry/broadcast/status/callbacks/lifecycle/messages/handoff/socket）
-//   push/   推送扇出（fanout：显示名/摘要/确认页；inbox：/ws/inbox 频道与 InboxSink 实现）
+//   push/   推送（vapid：VAPID/aes128gcm 与 webhook；fanout：显示名/摘要/确认页；inbox：/ws/inbox 与 InboxSink）
 //   routes/ REST 路由（api.ts 聚合 pushRoutes/sessions/misc）
 //   backends/port.ts  后端能力契约（portFor 唯一分支点；适配器回调经下方 initBackendPorts 注入）
 
