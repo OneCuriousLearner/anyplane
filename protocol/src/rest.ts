@@ -21,6 +21,8 @@ export interface SessionInfo {
   backend: BackendName
   /** 项目目录的 git 分支（非仓库为空） */
   gitBranch?: string
+  /** cwd 本身是 git worktree 时：主仓库根目录路径（列表标注用；非 worktree 缺席） */
+  worktreeOf?: string
   key: string
   /** 会话实时状态（statusOf 全集；离线会话为派生缺省值） */
   managed: SessionState
