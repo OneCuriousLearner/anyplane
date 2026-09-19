@@ -8,7 +8,7 @@ import { config } from '../../config'
 import { sanitizePath, transcriptPathOf } from '../../util'
 import { cliContentToHistoryBlocks } from './contentBlocks'
 import { backgroundAlive, daemonAgents } from './agents'
-import { isInternalUserMessage, type CliMessage } from './protocol'
+import { isInternalUserMessage, type CliMessage } from './streamJson'
 
 /** 状态词表正本在 @anyplane/protocol（SessionInfo.status 共用同一闭集） */
 import type { HistoryBlock, HistoryMessage, SessionStatus, SubagentHistory } from '@anyplane/protocol'

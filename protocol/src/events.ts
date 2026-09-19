@@ -9,7 +9,7 @@ import type { SessionState } from './state'
 /** cli 事件的负载：Claude stream-json 形状的 wire 消息（Codex 事件已翻译为该形状）。
  *  宽松解析原则：只声明消费方关心的字段，其余经索引签名原样透传。
  *  注意这是「中立边界上的 wire 形状」，vendor 侧更丰富的解析类型在各后端内部
- * （claude/protocol.ts 的 CliMessage），本类型不反向依赖 vendor 模块。 */
+ * （claude/streamJson.ts 的 CliMessage），本类型不反向依赖 vendor 模块。 */
 export interface CliMsg {
   type: string
   subtype?: string

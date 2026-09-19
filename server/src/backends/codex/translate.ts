@@ -2,7 +2,7 @@
 // 策略：把 ThreadItem 生命周期翻译成前端 blocks.ts 已理解的 assistant/stream_event/
 // tool_use/tool_result 序列，前端零改动渲染 Codex 会话。
 
-import type { CliMessage } from '../claude/protocol'
+import type { CliMessage } from '../claude/streamJson'
 import type { HistoryBlock, HistoryMessage } from '@anyplane/protocol'
 import { resolveUpload } from '../../uploads'
 import { log } from '../../log'

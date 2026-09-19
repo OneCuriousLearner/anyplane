@@ -10,6 +10,16 @@
 
 ---
 
+## claude/protocol.ts → streamJson.ts——2026-09-19
+
+定性：与 `@anyplane/protocol` 撞名。Claude 线格式类型改按 wire 命名，零逻辑。
+
+**做了什么**：`backends/claude/protocol.ts` 与两份就近测试改名为 `streamJson.ts` / `streamJson.test.ts` / `streamJson.conformance.test.ts`；引用与活文档指针跟上。
+
+**刻意不做**：不改解析、不把 `CliMessage` 并进 protocol 包、不动 `check-claude-protocol.ts`（漂移脚本，不是类型正本）。
+
+---
+
 ## 搬家改名（archive / vapid / lineage）——2026-09-19
 
 定性：同名文件对目录、家放错的检索债。互补拆分保留（加密 vs 扇出、领域 vs 编排），只改家。

@@ -24,7 +24,7 @@
 
 | 位置 | 耦合内容 |
 |---|---|
-| `server/src/backends/types.ts:4-9` | 「统一边界 = Claude stream-json 形状」的决策原文；`CliMessage` 正本在 `claude/protocol.ts` |
+| `server/src/backends/types.ts:4-9` | 「统一边界 = Claude stream-json 形状」的决策原文；`CliMessage` 正本在 `claude/streamJson.ts` |
 | `codex/translate.ts` | **58 处** stream-json 词汇构造点（`type: 'assistant'/'stream_event'/'user'/...` 分布实测）——翻译器输出目标是 claude 词汇表 |
 | `web/src/hooks/useTranscriptIngest.ts` `handleCli` | 前端按 stream-json 的 `type`/`subtype` 枚举分发。入口闭集在 `web/src/lib/cliIngest.ts`（`CLI_INGEST_TYPES`），hook 内按 type 拆 `handleStreamEvent` / `handleAssistant` / `handleUser` / `handleSystem` / `handleResult`；`system` 的 subtype 仍是 init/status/task_*/compact_boundary |
 | `SessionState` 语义口径 | busy/usage/context 的字段语义对齐各家官方 statusline（13.1 已注释口径差异），属「语义近似映射」而非词汇问题 |

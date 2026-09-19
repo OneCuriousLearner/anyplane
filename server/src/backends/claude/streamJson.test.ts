@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { isInternalUserMessage } from './protocol'
+import { isInternalUserMessage } from './streamJson'
 
 describe('isInternalUserMessage', () => {
   test('filters task notifications even when an older transcript lacks metadata', () => {

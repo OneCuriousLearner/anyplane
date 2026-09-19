@@ -19,7 +19,7 @@ export interface UserMessageInput {
  * **官方 SDK 类型里没有、只存在于 CLI headless（print.ts）实现里的 subtype。**
  *
  * 两条都实测可用且是核心功能的依赖（接力简报 / AI 会话标题），但它们不在
- * `@anthropic-ai/claude-agent-sdk` 的 `sdk.d.ts` 中——由 protocol.conformance.test.ts
+ * `@anthropic-ai/claude-agent-sdk` 的 `sdk.d.ts` 中——由 streamJson.conformance.test.ts
  * 对账时发现并在此固化。
  *
  * 风险口径：**协议漂移检测覆盖不到这两项**。官方清单里既然没有它们，上游改名或
@@ -37,7 +37,7 @@ export const PRINT_ONLY_SUBTYPES = [
 ] as const
 
 /** 我们会发出的 control_request subtype 全集。
- *  **写成运行时数组而非纯类型**：protocol.conformance.test.ts 要拿它与官方清单
+ *  **写成运行时数组而非纯类型**：streamJson.conformance.test.ts 要拿它与官方清单
  *  （@anthropic-ai/claude-agent-sdk 提取的 protocol-baseline.claude.json）对账——
  *  纯 type 在运行时被擦除，测不了。手抄清单最大的风险就是抄了个上游没有的名字，
  *  或上游改名后这里还留着旧的，静默失效。 */

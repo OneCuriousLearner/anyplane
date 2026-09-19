@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { processManager } from '../backends/claude/processManager'
-import type { CliMessage } from '../backends/claude/protocol'
+import type { CliMessage } from '../backends/claude/streamJson'
 import { claudePort } from '../backends/claude/port'
 import { codexPort } from '../backends/codex/port'
 import { registerBackend } from '../backends/port'

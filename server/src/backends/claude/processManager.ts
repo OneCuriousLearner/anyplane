@@ -24,7 +24,7 @@ import {
   userMessage,
   type CliMessage,
   type StdinMessage,
-} from './protocol'
+} from './streamJson'
 import { learnedContextWindow, rememberContextWindow } from './contextWindows'
 import { rememberSessionModel } from './sessionModels'
 import { log } from '../../log'
