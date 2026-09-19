@@ -1,12 +1,12 @@
 // Hub 级广播与 inbox 事件出口。
-// 依赖红线：hub/* 绝不 import push/*（循环）——inbox 事件经 InboxSink 注册器流出，
-// 真实实现（/ws/inbox 扇出 + Web Push 分发）在 push/inbox.ts，由装配层 initInbox() 一次性接线。
+// 依赖红线：hub/* 绝不 import push/*（循环）——inbox 事件经 InboxSink、
+// /ws/inbox 客户端经 InboxChannel 注入；实现都在 push/inbox.ts，装配层 initInbox() 一次接线。
 
 import type { InboxEvent, ServerEvent } from '@anyplane/protocol'
 import type { ServerWebSocket } from 'bun'
 import { pushCliRing } from '../cliReplay'
 import { errFields, log } from '../log'
-import type { Hub, WSData } from './types'
+import type { Hub, WSData, WSDataInbox } from './types'
 
 /** inbox 事件的真实出口（push/inbox.ts 注册）：/ws/inbox 扇出 + Web Push 分发 */
 export interface InboxSink {
@@ -19,6 +19,30 @@ let sinkWarned = false
 /** 装配层（index.ts 经 push/inbox.initInbox）一次性注册；不依赖 ESM import 顺序副作用 */
 export function setInboxSink(s: InboxSink): void {
   inboxSink = s
+}
+
+/** /ws/inbox 客户端登记与快照：实现在 push/inbox.ts，装配层 initInbox 注入。
+ *  hub/socket 只走本口，禁止 import push（红线②，不再豁免）。 */
+export interface InboxChannel {
+  add(ws: ServerWebSocket<WSDataInbox>): void
+  remove(ws: ServerWebSocket<WSDataInbox>): void
+  snapshot(): Extract<InboxEvent, { type: 'snapshot' }>
+}
+
+let inboxChannelImpl: InboxChannel | undefined
+
+export function setInboxChannel(c: InboxChannel): void {
+  inboxChannelImpl = c
+}
+
+export function resetInboxChannelForTest(): void {
+  inboxChannelImpl = undefined
+}
+
+/** socket 取 inbox 通道；未装配即调用是编程错误，fail fast */
+export function inboxChannel(): InboxChannel {
+  if (!inboxChannelImpl) throw new Error('[inbox] initInbox 未在装配层调用（InboxChannel 未注入）')
+  return inboxChannelImpl
 }
 
 /** 测试专用复位：bun test 单进程跨文件共享模块实例，sink/warn-once 状态无法靠重 import

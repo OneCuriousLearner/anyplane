@@ -10,7 +10,8 @@ import { processManager } from '../backends/claude/processManager'
 import { claudePort } from '../backends/claude/port'
 import { codexPort } from '../backends/codex/port'
 import { initBackendPorts, registerBackend } from '../backends/port'
-import { broadcast, broadcastError, resetInboxSinkForTest, setInboxSink } from './broadcast'
+import { addInboxClient, inboxSnapshot, removeInboxClient } from '../push/inbox'
+import { broadcast, broadcastError, resetInboxChannelForTest, resetInboxSinkForTest, setInboxChannel, setInboxSink } from './broadcast'
 import { rewindBusy } from './lifecycle'
 import { getHub, hubs } from './registry'
 import { wsClose, wsMessage, wsOpen } from './socket'
@@ -84,10 +85,13 @@ const inboxEvents: InboxEvent[] = []
 beforeEach(() => {
   inboxEvents.length = 0
   setInboxSink({ publish: (ev) => inboxEvents.push(ev) })
+  // 镜像 index.ts 的 InboxChannel 注入：实现仍是 push/inbox，socket 不再直连
+  setInboxChannel({ add: addInboxClient, remove: removeInboxClient, snapshot: inboxSnapshot })
 })
 
 afterEach(() => {
   resetInboxSinkForTest()
+  resetInboxChannelForTest()
   for (const ws of liveSockets.splice(0)) {
     if (ws.data.keepalive) clearInterval(ws.data.keepalive)
   }
@@ -126,6 +130,13 @@ describe('wsOpen：inbox 频道', () => {
     expect(row).toBeDefined()
     expect(row?.waiting).toBe(true) // 待审批计入 waiting
     expect(row?.spawned).toBe(false)
+  })
+
+  test('InboxChannel 未注入时 inbox 开连接 fail fast', () => {
+    resetInboxChannelForTest()
+    const ws = inboxWs()
+    liveSockets.push(ws)
+    expect(() => wsOpen(ws as never)).toThrow('InboxChannel')
   })
 })
 

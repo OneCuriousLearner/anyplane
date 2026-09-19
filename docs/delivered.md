@@ -10,6 +10,15 @@
 
 ---
 
+## inbox 装配注入（InboxChannel）——2026-09-19
+
+定性：hub↛push 红线此前靠 `socket.ts` 豁免（`addInboxClient` / `inboxSnapshot` /
+`removeInboxClient`）。与 `InboxSink` 同模式：实现留在 `push/inbox.ts`，装配层
+`initInbox()` 一并注入 `InboxChannel`。hub 生产代码零 push import，biome 撤掉
+`socket.ts` 整段 override。
+
+**刻意不做**：搬家改名（批次 C）、不改 inbox 扇出/快照语义。
+
 ## hub 编排收口 BackendPort（/clear 与接力）——2026-09-19
 
 定性：合入机械两档后的全仓勘察里，唯一高层越层是 hub 为 `/clear` 与接力直连

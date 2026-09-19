@@ -197,7 +197,8 @@ O(会话数 × 文件大小)"表述；但稀疏文件与未清 OS 缓存会影�
 > 见小节开头的批次进度——含两处对审计建议的有意偏离：pendingApprovals 不落盘、Hub 不做全量
 > phase 机）；13.5 时机红线不动；13.6 完成（「合并后自动删分支」已启用）。
 > **同日另交**：AI 维护残留机械清理两档（PR #58 / #59），交付记录见 [delivered.md](delivered.md)；
-> hub 编排收口 BackendPort（/clear 与接力的 key 构造/rekey 不再直连适配器）见 [delivered.md](delivered.md)。
+> hub 编排收口 BackendPort（/clear 与接力的 key 构造/rekey 不再直连适配器）、
+> inbox 装配注入（InboxChannel，撤 socket.ts 豁免）见 [delivered.md](delivered.md)。
 > 下一层（非机械抽出）见本节「待排期」。
 
 **立项背景（2026-09-17）**：一次外部视角的全量架构评审，
@@ -355,7 +356,6 @@ Claude 与 Codex 各自 adapter 翻译进来。这是让 vendor-neutral 从 slog
 | **会话类统一** | `ClaudeSession` / `CodexSession` 结构化同形、实现两份 | 等 13.5 或明确第三家后端 | 不要在 vendor-anchored 词汇表上硬揉成一个类 |
 | **ensure 零 await** | 13.2 已记：Biome/GritQL 够不到 class 方法，仍靠注释 | 根治 = 把同步部分拆成无 Promise 的方法，属 API 形状改造 | 不要加一条永远不响的 lint 规则充数 |
 | **真 CLI e2e** | 仅 `e2e-mock` 进 CI；其余脚本仍手跑（需真实 CLI + 凭据） | 再有一条不需要模型调用的链路（审批以外）再搬 | 不要把依赖真实模型的探针塞进 CI |
-| **inbox 装配注入** | `hub/socket.ts` 豁免 `push/inbox`（包级环） | hub→port 收口合入后，独立 PR | 不要让其他 hub 文件 import push |
 | **搬家改名** | `push.ts` vs `push/`、根 `handoff.ts` vs `hub/handoff.ts`、`archive.ts` 属 Claude 却在根上、`claude/protocol.ts` 与 `@anyplane/protocol` 撞名 | inbox 注入之后；`protocol.ts` 单独 PR | 不要合并互补拆分（加密 vs 扇出、领域 vs 编排） |
 
 已写在别处、不要在本表重复开工的：

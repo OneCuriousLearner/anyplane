@@ -37,7 +37,7 @@ import { errorMessage, hasSupportedBunVersion } from './util'
 
 // ---------- 装配：适配器回调注入 + inbox sink 接线 ----------
 // BackendPort 适配器禁止 import hub/push 编排模块，回调经 HubServices 一次性注入；
-// inbox 事件经 hub/broadcast 的 InboxSink 出口流向 push/inbox 的真实实现（解 hub↔push 循环）。
+// inbox 事件经 InboxSink、/ws/inbox 客户端经 InboxChannel，实现都在 push/inbox（解 hub↔push 循环）。
 initBackendPorts({
   broadcast,
   broadcastError,
