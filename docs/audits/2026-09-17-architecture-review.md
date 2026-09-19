@@ -1,7 +1,7 @@
 # 2026-09-17 架构评审：结构性债务全景
 
-> **已落地（2026-09-19）**：13.1 `@anyplane/protocol`、13.2 Biome + noRestrictedImports、13.3 capabilities/注册表、13.4 Hub/store、13.6 自动删分支。正文行号与「无 lint / Chat 595」是成文快照。
-> **仍有效**：13.5 AgentEvent 未上；ensure 时序红线仍靠注释；单租户/`homedir()` 假设未变。
+> **已落地（2026-09-19）**：13.1 `@anyplane/protocol`、13.2 Biome + noRestrictedImports、13.3 capabilities/注册表、13.4 Hub/store、13.6 自动删分支；AI 维护残留机械两档（PR #58 / #59）。正文行号与「无 lint / Chat 595」是成文快照。
+> **仍有效**：13.5 AgentEvent 未上；ensure 时序红线仍靠注释；单租户/`homedir()` 假设未变。下一层非机械项见 ROADMAP 方向十三「待排期」。
 
 > 一次成文的外部视角评审，基线 `master` @ `b5780c0`（方向十一 / 方向十二交付后）。
 > 本文只记**结构性问题与其决策依据**，不记代码现状速查。行动项与排期见 ROADMAP 方向十三。
