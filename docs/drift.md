@@ -43,11 +43,14 @@ CI 周报（`.github/workflows/protocol-drift.yml`，每周一）发现漂移会
 2. ~~spawn_agent 子代理 turn 挂起~~——**复评后非 0.155.1 回归**：与
    `docs/research/2026-09-11-codex-upstream-behavior-notes.md`「模型侧 flake」节已记载的
    spawn→wait 死循环同族（0.148.0/0.153.4 同现），本次只是换了模型复现，按既有结论处理。
-3. **服务端 spawn 的 app-server 里 shell for-loop 一律 cygwin fork 崩溃**
-   （`fatal error - CreateFileMapping … Win32 error 5`）——裸 app-server 两种 spawn 方式均复现、
-   直跑 Git Bash 正常，根因为 e2e 硬杀进程泄漏的 msys 共享内存 section 被长命父进程持有
-   （Bun Windows 句柄继承问题家族），重启 Windows 自愈；非协议问题，详见
-   `docs/research/2026-09-11-codex-upstream-behavior-notes.md`「模型侧 flake」节。
+3. **沙箱内 msys2 一律 CreateFileMapping 崩溃**（`fatal error - CreateFileMapping …
+   Win32 error 5`）——**根因已定位**（2026-09-19 重启后复测 + `command/exec` 确定性矩阵）：
+   0.155.1 起 Windows 沙箱用 restricted token 跑命令（`windows-sandbox-rs/token.rs` 的
+   `CreateRestrictedToken`），除 `dangerFullAccess` 外所有沙箱档（默认/readOnly/
+   workspaceWrite）下 Git for Windows 的 msys2 二进制全体无法创建/打开 SID 命名的共享内存
+   section 而自杀；**重启 Windows 不能治愈**，与进程泄漏无关。上游同类报告 openai/codex#12000。
+   偶发成功 = 受限 token 进程在无同名 section 时新建可行、打开既有 section 被拒（flaky 根源）。
+   详见 `docs/research/2026-09-11-codex-upstream-behavior-notes.md`「模型侧 flake」节。
 
 ## 2026-09-17（issue #31 / #32）
 
