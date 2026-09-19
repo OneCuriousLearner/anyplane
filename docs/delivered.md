@@ -18,6 +18,8 @@
 
 **刻意不做**：`claude/protocol.ts` → `streamJson.ts`（引用面最宽，单独 PR）；不合并 fanout 与 vapid、不合并 hub/handoff 与 lineage。
 
+review 收口：`driftGuard.ts` 头注释的告警投递指向 `push/vapid.ts`。
+
 ---
 
 ## inbox 装配注入（InboxChannel）——2026-09-19
