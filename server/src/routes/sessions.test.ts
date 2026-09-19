@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { claudePort } from '../backends/claude/port'
 import { codexPort } from '../backends/codex/port'
 import { registerBackend } from '../backends/port'
+import type { SessionSummary } from '../backends/types'
 import {
   defaultSessionRouteDeps,
   handleSessionRoutes,
@@ -44,7 +45,9 @@ describe('GET /api/sessions', () => {
         ],
         listSessions: () => [
           {
-            sessionId: 'session-1',
+            backend: 'claude',
+            key: 's|-repo-claude|session-1',
+            id: 'session-1',
             cwd: '/repo/claude',
             slug: '-repo-claude',
             title: 'Claude session',
@@ -82,8 +85,43 @@ describe('GET /api/sessions', () => {
       key: 's|-repo-claude|session-1',
       gitBranch: 'claude-branch',
       worktreeOf: '/repo/main',
+      live: { pid: 123 },
       managed: { sessionId: 's|-repo-claude|session-1' },
     })
+  })
+
+  test('Codex 先失败、Claude 仍在跑时仍返回 Claude 列表', async () => {
+    let releaseClaude: (rows: SessionSummary[]) => void
+    const claudePending = new Promise<SessionSummary[]>((resolve) => {
+      releaseClaude = resolve
+    })
+    const responseP = handleSessionRoutes(
+      request('GET'),
+      new URL('http://localhost/api/sessions'),
+      deps({
+        listCodexSessions: async () => {
+          throw new Error('codex unavailable')
+        },
+        listSessions: () => claudePending,
+        readGitInfo: () => undefined,
+        statusOf: () => ({ spawned: false, busy: false, sessionState: 'idle' }),
+      }),
+    )
+    await Promise.resolve()
+    releaseClaude!([
+      {
+        backend: 'claude',
+        key: 's|repo|s1',
+        id: 's1',
+        slug: 'repo',
+        mtime: 1,
+        sizeBytes: 0,
+        status: 'offline',
+      },
+    ])
+    const rows = (await (await responseP)!.json()) as Record<string, unknown>[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ sessionId: 's1', backend: 'claude', key: 's|repo|s1' })
   })
 
   test('Codex 列表失败时仅返回 Claude 会话', async () => {
@@ -96,7 +134,9 @@ describe('GET /api/sessions', () => {
         },
         listSessions: () => [
           {
-            sessionId: 'session-fallback',
+            backend: 'claude',
+            key: 's|repo|session-fallback',
+            id: 'session-fallback',
             slug: 'repo',
             mtime: 1,
             sizeBytes: 2,

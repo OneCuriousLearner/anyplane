@@ -1,4 +1,5 @@
 // sessionKey 形状判断与最小 SessionInfo 构造。
+// isCodexKey 与服务端 backends/port.ts 正本逐字同形（前缀判定、不预解码）；
 // 编码规则与服务端 backends/claude/backend.ts、backends/codex/backend.ts 一一对应：
 //   s|<slug>|<sessionId>  已存在 claude 会话
 //   n|<encodeURIComponent(cwd)>  新 claude 会话
@@ -16,7 +17,7 @@ export function isExistingKey(key: string): boolean {
   return key.startsWith('s|') || key.startsWith('x|') || key.startsWith('b|')
 }
 
-/** 与服务端 discovery.sanitizePath 一致：非字母数字 → '-' */
+/** 与服务端 util.sanitizePath 一致：非字母数字 → '-' */
 export function slugOf(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-')
 }

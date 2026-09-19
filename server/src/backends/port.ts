@@ -21,13 +21,15 @@ import type {
   BackgroundTask,
   CodexModelInfo,
   ContextUsageInfo,
+  HistoryResponse,
   ImageAttachment,
+  TierModelName,
   QueryResultPayload,
   ServerEvent,
   SessionState,
   TokenUsage,
 } from '@anyplane/protocol'
-import type { SessionCallbacks, SpawnOptions } from './types'
+import type { SessionCallbacks, SessionSummary, SpawnOptions } from './types'
 
 /** 适配器回调编排层的服务面（装配层 initBackendPorts 注入一次；适配器禁止 import index.ts） */
 export interface HubServices {
@@ -185,10 +187,19 @@ export interface BackendPort {
   /** 归档/回收站列表：claude=trash（同步文件读），codex=archived thread/list。
    *  单后端失败降级为空数组（适配器内 log），不拖垮另一后端的列表。 */
   listArchived(): Promise<ArchivedEntry[]>
+  /** 活跃会话发现（GET /api/sessions 原料）。claude 扫盘，codex RPC/读盘。 */
+  listSessions(): Promise<SessionSummary[]>
+  /** 历史抄本：claude 的 target=sessionId 且 extra.slug 必填；codex 的 target=threadId。 */
+  readHistory(
+    target: string,
+    extra?: { slug?: string; before?: number; limit?: number },
+  ): Promise<HistoryResponse>
   /** 新会话 key 构造（n| / xn|；POST /api/sessions 按 backend 名分发，routes 不 import key 构造函数） */
   keyForNew(cwd: string): string
   /** 模型目录（capabilities.modelCatalog；codex model/list RPC） */
   listModels?(): Promise<CodexModelInfo[]>
+  /** 各档实际配置的模型名（claude StatusPill 透传；缺席 = 该后端无此能力） */
+  listTierModelNames?(cwd?: string): Record<string, TierModelName>
 }
 
 /** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */
@@ -275,11 +286,16 @@ export function backendPort(name: BackendName): BackendPort {
   return p
 }
 
+/** key 形状是否编码为 codex。前缀判定、不做 URI 解码——损坏的 xn| 历史上也归
+ *  codex 适配器兜底。服务端正本；前端 web/src/lib/key.ts 保持逐字同形。 */
+export function isCodexKey(key: string): boolean {
+  return key.startsWith('x|') || key.startsWith('xn|')
+}
+
 /** 编排层唯一的后端分支点：全仓库的能力分发都收敛到这一个三元。
- *  key 形状判定（x|/xn| 前缀）与 isCodexKey 逐字等价——刻意不做 URI 解码：
- *  损坏的 xn| 编码历史上也归 codex 适配器兜底，行为不变。 */
+ *  key 形状判定走 isCodexKey——刻意不做 URI 解码。 */
 export function portFor(key: string): BackendPort {
-  return backendPort(key.startsWith('x|') || key.startsWith('xn|') ? 'codex' : 'claude')
+  return backendPort(isCodexKey(key) ? 'codex' : 'claude')
 }
 
 // ---------- /btw 侧问的共享信封（校验失败文案与 btw_result 广播只有一份，双后端不分叉） ----------

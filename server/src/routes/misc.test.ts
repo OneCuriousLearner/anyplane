@@ -59,6 +59,34 @@ describe('POST /api/handoff 参数校验', () => {
 })
 
 describe('GET /api/history/:slug/:sessionId 查询参数', () => {
+  test('async readHistory 被 await，不会把 Promise 序列化成 {}', async () => {
+    const page = {
+      messages: [{ role: 'user' as const, blocks: [{ kind: 'text' as const, text: 'hi' }] }],
+      fileBytes: 12,
+      hasMore: false,
+    }
+    const response = await handleMiscRoutes(
+      new Request('http://localhost/api/history/repo/session-1'),
+      new URL('http://localhost/api/history/repo/session-1'),
+      deps({
+        readHistory: async () => page,
+      }),
+    )
+    expect(response?.status).toBe(200)
+    expect(await response!.json()).toEqual(page)
+  })
+
+  test('默认依赖走 port：缺文件返回空页，不是 {}', async () => {
+    const response = await handleMiscRoutes(
+      new Request('http://localhost/api/history/no-such-slug/no-such-sid'),
+      new URL('http://localhost/api/history/no-such-slug/no-such-sid'),
+    )
+    expect(response?.status).toBe(200)
+    const body = (await response!.json()) as Record<string, unknown>
+    expect(body).not.toEqual({})
+    expect(body).toMatchObject({ messages: [], fileBytes: 0 })
+  })
+
   test('before=0 被保留，limit 被限制到 10000', async () => {
     let captured:
       | { slug: string; sessionId: string; opts?: { limit?: number; before?: number } }

@@ -33,9 +33,7 @@ export function parseKey(key: string): { cwd?: string; resumeThreadId?: string }
   }
 }
 
-export function isCodexKey(key: string): boolean {
-  return key.startsWith('x|') || key.startsWith('xn|')
-}
+export { isCodexKey } from '../port'
 
 /** x|threadId 的纯形状解析（xn| 新线程无 threadId，返回 undefined） */
 export function splitThreadId(key: string): string | undefined {

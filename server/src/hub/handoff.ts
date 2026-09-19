@@ -2,12 +2,11 @@
 // 领域函数（简报生成/播种文案/血缘 IO）在 ../handoff.ts；这里只做编排与进度事件推源 Hub。
 
 import { keyFor } from '../backends/claude/backend'
-import { sanitizePath } from '../backends/claude/discovery'
 import type { BackendName } from '@anyplane/protocol'
 import { keyFor as codexKeyFor } from '../backends/codex/backend'
 import { backendPort, portFor } from '../backends/port'
 import { appendLineage, seedMessage, type HandoffDetail } from '../handoff'
-import { errorMessage } from '../util'
+import { errorMessage, sanitizePath } from '../util'
 import { broadcast } from './broadcast'
 import { getHub, hubs } from './registry'
 

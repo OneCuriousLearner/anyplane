@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { FALLBACK_COMMANDS } from './slashCommands'
 import { interceptSlash } from './slashIntercept'
 
 const claude = { isCodex: false }
@@ -62,6 +63,34 @@ describe('interceptSlash codex 专属（claude 透传）', () => {
     expect(interceptSlash('/clear', codex)).toEqual({ type: 'newThread' })
     expect(interceptSlash('/new', claude)).toBeNull()
     expect(interceptSlash('/clear', claude)).toBeNull() // claude /clear 透传（CLI 换 sessionId 续跑正是想要的语义）
+  })
+})
+
+describe('FALLBACK_COMMANDS ↔ 拦截表不变式', () => {
+  // 分区必须盖住 FALLBACK 全集：新增面板命令必须选边，不许静默透传。
+  const ALWAYS = ['rewind', 'btw', 'branch'] as const
+  const CODEX_ONLY = ['compact', 'context', 'goal', 'review', 'rename', 'new'] as const
+  const PASSTHROUGH = [] as const
+
+  test('分类表与 FALLBACK 全集一一对应', () => {
+    const classified: string[] = [...ALWAYS, ...CODEX_ONLY, ...PASSTHROUGH].sort()
+    const fallback: string[] = [...FALLBACK_COMMANDS].sort()
+    expect(classified).toEqual(fallback)
+  })
+
+  test('两侧拦截 / 仅 codex 拦 / 两侧透传 与分类表一致', () => {
+    for (const name of ALWAYS) {
+      expect(interceptSlash(`/${name}`, claude)).not.toBeNull()
+      expect(interceptSlash(`/${name}`, codex)).not.toBeNull()
+    }
+    for (const name of CODEX_ONLY) {
+      expect(interceptSlash(`/${name}`, claude)).toBeNull()
+      expect(interceptSlash(`/${name}`, codex)).not.toBeNull()
+    }
+    for (const name of PASSTHROUGH) {
+      expect(interceptSlash(`/${name}`, claude)).toBeNull()
+      expect(interceptSlash(`/${name}`, codex)).toBeNull()
+    }
   })
 })
 

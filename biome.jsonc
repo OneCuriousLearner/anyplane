@@ -57,8 +57,9 @@
         "noUselessLabel": "off"
       },
       "correctness": {
-        // WS 回调在 React 渲染外触发，hooks 依赖数组多处刻意省略（ref+state 双写模式，
-        // 见 docs/audits/2026-09-17-architecture-review.md 发现六）；13.4 store 化后再评估
+        // 刻意关闭：WS 回调在 React 渲染外触发，hooks 依赖数组多处省略。
+        // 13.4 已把 messages/draft 等真双写迁到 store，但其余 hook 仍是 ref+setState；
+        // 全开会逼出一批无语义包装。不是待办，打开前须先迁完剩余双写。
         "useExhaustiveDependencies": "off",
         // switch 内 lexical 声明本仓写法一贯（case 块带大括号），风格类
         "noSwitchDeclarations": "off"
@@ -151,8 +152,8 @@
     },
     {
       // 依赖红线③：routes 一律经 backends/port 的注册表（portFor/backendPort）分发，
-      // 禁止直连具体后端 port/runtime（13.3 注册表化后存量已清零，无豁免清单）。
-      // *.test.ts 排除：测试注册真实适配器必须 import 具体 port（装配替身，镜像 index.ts）
+      // 禁止直连具体后端实现（port/runtime/discovery/backend/modelNames）。*.test.ts 排除：
+      // 测试注册真实适配器必须 import 具体 port（装配替身，镜像 index.ts）
       "includes": ["server/src/routes/**", "!server/src/routes/**/*.test.ts"],
       "linter": {
         "rules": {
@@ -162,8 +163,16 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["**/backends/claude/port", "**/backends/codex/port", "**/backends/codex/runtime"],
-                    "message": "依赖红线：routes 禁止直连具体 port/runtime，一律经 backends/port 的 portFor/backendPort 分发"
+                    "group": [
+                      "**/backends/claude/port",
+                      "**/backends/codex/port",
+                      "**/backends/codex/runtime",
+                      "**/backends/claude/discovery",
+                      "**/backends/claude/backend",
+                      "**/backends/claude/modelNames",
+                      "**/backends/codex/backend"
+                    ],
+                    "message": "依赖红线：routes 禁止直连具体后端实现，一律经 backends/port 的 portFor/backendPort 分发"
                   }
                 ]
               }

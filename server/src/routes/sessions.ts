@@ -2,13 +2,12 @@
 // git 信息缓存也在这里（仅列表端点使用）。
 
 import type { ArchivedEntry, CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
-import { keyFor } from '../backends/claude/backend'
-import { type DiscoveredSession, listSessions, sanitizePath } from '../backends/claude/discovery'
-import { listSessions as listCodexSessions } from '../backends/codex/backend'
 import { backendPort, portFor, type RouteResult } from '../backends/port'
+import type { SessionSummary } from '../backends/types'
 import { type GitInfo, readGitInfo } from '../fsbrowse'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
+import { sanitizePath } from '../util'
 import { json, readJsonBody } from './http'
 
 /** RouteResult → HTTP 响应（状态码逐字保留） */
@@ -31,8 +30,8 @@ function gitInfoOfCached(cwd: string | undefined, read: typeof readGitInfo): Git
 }
 
 export interface SessionRouteDeps {
-  listCodexSessions: typeof listCodexSessions
-  listSessions: typeof listSessions
+  listCodexSessions: () => Promise<SessionSummary[]>
+  listSessions: () => Promise<SessionSummary[]> | SessionSummary[]
   readGitInfo: typeof readGitInfo
   statusOf: typeof statusOf
   portFor: typeof portFor
@@ -41,13 +40,13 @@ export interface SessionRouteDeps {
 }
 
 export const defaultSessionRouteDeps: SessionRouteDeps = {
-  listCodexSessions,
-  listSessions,
+  // 经注册表取用适配器（routes 不 import 具体后端——依赖红线③）；箭头函数惰性求值，
+  // 注册发生在装配层（index.ts），模块加载期不会触发未注册错误
+  listCodexSessions: () => backendPort('codex').listSessions(),
+  listSessions: () => backendPort('claude').listSessions(),
   readGitInfo,
   statusOf,
   portFor,
-  // 经注册表取用适配器（routes 不 import 具体 port——依赖红线③）；箭头函数惰性求值，
-  // 注册发生在装配层（index.ts），模块加载期不会触发未注册错误
   listCodexArchived: () => backendPort('codex').listArchived(),
   listClaudeArchived: () => backendPort('claude').listArchived(),
 }
@@ -58,30 +57,42 @@ export async function handleSessionRoutes(
   deps: SessionRouteDeps = defaultSessionRouteDeps,
 ): Promise<Response | undefined> {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
-    // codex RPC 与 claude 同步扫盘相互独立——先发起 RPC 再扫，墙钟取两者较大值而非相加
-    //（此端点被每个打开的标签页 10s 轮询）。中间无 await，rejection 一定先于下方 catch 被接管。
-    const codexP = deps.listCodexSessions()
-    const sessions = deps.listSessions()
-    const claudeRows: SessionInfo[] = sessions.map((s: DiscoveredSession) => {
+    // 两边同时发起，墙钟取较大值。allSettled 立刻给两边挂上 handler——
+    // 先 await 一侧再 catch 另一侧会在间隔里冒 unhandledRejection（本仓当致命退出）。
+    // Claude 失败仍上抛；Codex 失败只降级空列表。
+    const [claudeResult, codexResult] = await Promise.allSettled([
+      Promise.resolve(deps.listSessions()),
+      deps.listCodexSessions(),
+    ])
+    if (claudeResult.status === 'rejected') throw claudeResult.reason
+    const sessions = claudeResult.value
+    const claudeRows: SessionInfo[] = sessions.map((s) => {
       const git = gitInfoOfCached(s.cwd, deps.readGitInfo)
       return {
-        ...s,
+        sessionId: s.id,
+        cwd: s.cwd,
+        slug: s.slug ?? '',
+        title: s.title,
+        lastPrompt: s.lastPrompt,
+        mtime: s.mtime,
+        sizeBytes: s.sizeBytes ?? 0,
+        status: s.status,
+        live: s.live,
         backend: 'claude' as const,
         gitBranch: git?.branch,
         worktreeOf: git?.worktreeOf,
-        key: keyFor(s.slug, s.sessionId),
+        key: s.key,
         // listSessions 已扫过 pid 文件，复用其结果，不为每行再扫一次（null = 已知不在线）
         managed: deps.statusOf(
-          keyFor(s.slug, s.sessionId),
+          s.key,
           s.live ? { status: s.status, pid: s.live.pid } : null,
         ),
       }
     })
     // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
     let codexRows: SessionInfo[] = []
-    try {
-      const threads = await codexP
-      codexRows = threads.map((t): SessionInfo => {
+    if (codexResult.status === 'fulfilled') {
+      codexRows = codexResult.value.map((t): SessionInfo => {
         const git = gitInfoOfCached(t.cwd, deps.readGitInfo)
         return {
           sessionId: t.id,
@@ -99,8 +110,11 @@ export async function handleSessionRoutes(
           managed: deps.statusOf(t.key),
         }
       })
-    } catch (e) {
-      log.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
+    } else {
+      log.warn(
+        '[api] codex thread/list 失败（仅返回 claude 会话）:',
+        codexResult.reason instanceof Error ? codexResult.reason.message : codexResult.reason,
+      )
     }
     return json([...codexRows, ...claudeRows])
   }

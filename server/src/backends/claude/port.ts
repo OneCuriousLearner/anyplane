@@ -2,7 +2,7 @@
 // 方法体多为 index.ts 原 claude 分支的逐字搬迁——重构红线是零行为改动。
 
 import { appendFileSync, existsSync } from 'node:fs'
-import type { ArchivedEntry, QueryResultPayload, SessionState } from '@anyplane/protocol'
+import type { ArchivedEntry, HistoryResponse, QueryResultPayload, SessionState, TierModelName } from '@anyplane/protocol'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from '../../archive'
 import { defaultPermissionMode } from '../../config'
 import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
@@ -19,9 +19,10 @@ import {
   type SessionHandle,
   type StatusContext,
 } from '../port'
-import type { SpawnOptions } from '../types'
-import { hydratedContextOf, keyForBranch, keyForNew as claudeKeyForNew, parseKey, splitExistingKey, type ParsedKey } from './backend'
-import { liveSessionInfo } from './discovery'
+import type { SessionSummary, SpawnOptions } from '../types'
+import { hydratedContextOf, keyFor, keyForBranch, keyForNew as claudeKeyForNew, parseKey, splitExistingKey, type ParsedKey } from './backend'
+import { listSessions as listDiscoveredSessions, liveSessionInfo, readHistory as readClaudeHistory } from './discovery'
+import { resolveTierModelNames } from './modelNames'
 import { processManager, type ClaudeSession } from './processManager'
 import { sessionModelOf } from './sessionModels'
 import { TranscriptTailer } from './tailer'
@@ -46,6 +47,10 @@ class ClaudePort implements BackendPort {
 
   keyForNew(cwd: string): string {
     return claudeKeyForNew(cwd)
+  }
+
+  listTierModelNames(cwd?: string): Record<string, TierModelName> {
+    return resolveTierModelNames(cwd)
   }
 
   sessionOf(key: string): SessionHandle | undefined {
@@ -544,6 +549,30 @@ class ClaudePort implements BackendPort {
     } catch (e) {
       return { ok: false, error: errorMessage(e), status: 500 }
     }
+  }
+
+  async listSessions(): Promise<SessionSummary[]> {
+    return listDiscoveredSessions().map((s) => ({
+      backend: 'claude' as const,
+      key: keyFor(s.slug, s.sessionId),
+      id: s.sessionId,
+      cwd: s.cwd,
+      slug: s.slug,
+      title: s.title,
+      lastPrompt: s.lastPrompt,
+      mtime: s.mtime,
+      sizeBytes: s.sizeBytes,
+      status: s.status,
+      live: s.live,
+    }))
+  }
+
+  async readHistory(
+    target: string,
+    extra?: { slug?: string; before?: number; limit?: number },
+  ): Promise<HistoryResponse> {
+    if (!extra?.slug) throw new Error('claude readHistory 需要 slug')
+    return readClaudeHistory(extra.slug, target, extra)
   }
 
   /** claude 无官方归档概念：回收站即 ~/.anyplane/trash/claude/ 的 transcript 迁移记录 */
