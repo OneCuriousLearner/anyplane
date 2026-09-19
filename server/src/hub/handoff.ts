@@ -1,10 +1,8 @@
 // 接力（handoff）跨后端编排：源会话自摘要 → 目标会话播种 → 血缘落盘。
 // 领域函数（简报生成/播种文案/血缘 IO）在 ../handoff.ts；这里只做编排与进度事件推源 Hub。
 
-import { keyFor } from '../backends/claude/backend'
 import type { BackendName } from '@anyplane/protocol'
-import { keyFor as codexKeyFor } from '../backends/codex/backend'
-import { backendPort, portFor } from '../backends/port'
+import { backendPort, portFor, resolvedSessionKey } from '../backends/port'
 import { appendLineage, seedMessage, type HandoffDetail } from '../handoff'
 import { errorMessage, sanitizePath } from '../util'
 import { broadcast } from './broadcast'
@@ -40,28 +38,18 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
       if (sourceHub) broadcast(sourceHub, { kind: 'handoff_brief', brief })
 
       // 2. 目标会话播种（服务端直接发送首条消息；启动失败抛错）
-      const targetKey = backendPort(toBackend).keyForNew(sourceCwd)
+      const toPort = backendPort(toBackend)
+      const targetKey = toPort.keyForNew(sourceCwd)
       const targetHub = getHub(targetKey)
       const seed = seedMessage(sourceCwd, fromBackend, brief)
-      const targetSessionId = await portFor(targetKey).seedHandoffTarget(targetHub, seed)
-      const toResolvedKey =
-        toBackend === 'codex'
-          ? targetSessionId
-            ? codexKeyFor(targetSessionId)
-            : undefined
-          : targetSessionId
-            ? keyFor(sanitizePath(sourceCwd), targetSessionId)
-            : undefined
-      const fromResolvedKey = (() => {
-        if (fromBackend === 'claude') {
-          if (fromKey.startsWith('s|')) return fromKey
-          const sidNow = fromPort.sessionOf(fromKey)?.sessionId
-          return sidNow ? keyFor(sanitizePath(sourceCwd), sidNow) : undefined
-        }
-        if (fromKey.startsWith('x|')) return fromKey
-        const tidNow = fromPort.sessionOf(fromKey)?.sessionId
-        return tidNow ? codexKeyFor(tidNow) : undefined
-      })()
+      const targetSessionId = await toPort.seedHandoffTarget(targetHub, seed)
+      const toResolvedKey = targetSessionId ? toPort.keyForExisting(targetSessionId, sourceCwd) : undefined
+      const fromResolvedKey = resolvedSessionKey(
+        fromPort,
+        fromKey,
+        fromPort.sessionOf(fromKey)?.sessionId,
+        sourceCwd,
+      )
 
       // 播种进程/线程落在 n|/xn| key 上，而 handoff_done 导航走 resolved key：立即三层重键
       // （Hub / 进程 map / 存活 WS data.key，镜像 callbacks.ts 的 /clear 重键）。不重键的话
@@ -71,7 +59,7 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
         hubs.delete(targetKey)
         targetHub.key = toResolvedKey
         hubs.set(toResolvedKey, targetHub)
-        portFor(toResolvedKey).rekeySession?.(targetHub, targetKey, toResolvedKey, targetSessionId)
+        portFor(toResolvedKey).rekeySession(targetHub, targetKey, toResolvedKey, targetSessionId)
         for (const ws of targetHub.clients) {
           if (!ws.data.inbox) ws.data.key = toResolvedKey
         }

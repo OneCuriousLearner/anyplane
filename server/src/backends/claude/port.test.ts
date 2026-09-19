@@ -37,3 +37,13 @@ describe('claudePort.statusOf model 离线回填', () => {
     expect(st.model).toBeUndefined()
   })
 })
+
+describe('claudePort.keyForExisting', () => {
+  test('cwd 经 sanitizePath 作 slug', () => {
+    expect(claudePort.keyForExisting('sid-1', '/tmp/my proj')).toBe('s|-tmp-my-proj|sid-1')
+  })
+
+  test('缺 cwd 是编程错误，fail fast', () => {
+    expect(() => claudePort.keyForExisting('sid-1')).toThrow('需要 cwd')
+  })
+})

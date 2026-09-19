@@ -2,13 +2,11 @@
 // /clear 重键的三层同步（Hub / 进程 map / 存活 WS 的 data.key）全在这里——少一层即双进程或消息黑洞。
 
 import { decisionOfRule, matchApprovalRule } from '../approvalRules'
-import { keyFor, parseKey } from '../backends/claude/backend'
-import { processManager } from '../backends/claude/processManager'
 import { isInternalUserMessage, type CliMessage } from '../backends/claude/protocol'
 import { portFor } from '../backends/port'
 import { config } from '../config'
 import { log } from '../log'
-import { sanitizePath, summarizeInput } from '../util'
+import { summarizeInput } from '../util'
 import { broadcast, publishInbox } from './broadcast'
 import { deliverApproval } from './lifecycle'
 import { hubs } from './registry'
@@ -26,7 +24,7 @@ export function sessionCallbacks(hub: Hub) {
       // /clear（别名 /reset /new）：CLI 发 conversation_reset 并以新 session_id 续跑。
       // Hub 随之重键到 s|slug|<newSid>——新会话页承载后续对话，旧 transcript 原样留存。
       // claude-only 语义，守卫防漂移：codex 若未来发出同形事件，落入普通透传而不是
-      // 误触 claude 专属的重键（parseKey/processManager.rekey 作用在 x| key 上即消息黑洞）。
+      // 误触 claude 专属的重键（keyForExisting/rekeySession 作用在 x| key 上即消息黑洞）。
       if (msg.type === 'conversation_reset' && portFor(hub.key).name === 'claude') {
         // 判别联合覆盖语义纪律：rewind 期间 /clear 的 user 消息被 rewindBusy 拒，
         // 同真理论上不可达；若仍撞上（上游行为漂移），rekey 必须生效（否则后续消息全乱），
@@ -39,10 +37,11 @@ export function sessionCallbacks(hub: Hub) {
       }
       if (hub.transition?.kind === 'rekey' && msg.type === 'system' && msg.subtype === 'init') {
         hub.transition = undefined
+        const port = portFor(hub.key)
         const newSid = String(msg.session_id ?? '')
-        const cwd = hub.spawnOpts?.cwd ?? parseKey(hub.key)?.cwd
+        const cwd = hub.spawnOpts?.cwd ?? port.handoffSource(hub.key).cwd
         if (newSid && cwd) {
-          const newKey = keyFor(sanitizePath(cwd), newSid)
+          const newKey = port.keyForExisting(newSid, cwd)
           const oldKey = hub.key
           hubs.delete(oldKey)
           hub.goal = undefined // 上下文已清，goal 与待审批随之失效
@@ -51,13 +50,13 @@ export function sessionCallbacks(hub: Hub) {
           hub.key = newKey
           hubs.set(newKey, hub)
           // 进程 map 同步重键：否则按新 key 查不到进程会再 spawn 一个（双进程同 transcript）
-          processManager.rekey(oldKey, newKey)
+          port.rekeySession(hub, oldKey, newKey, newSid)
           // 重键后同步改写存活连接的 data.key：message 路由（getHub(ws.data.key)）依赖它，
           // 否则旧 key 上的后续消息会新建空 Hub（消息黑洞）
           for (const ws of hub.clients) {
             if (!ws.data.inbox) ws.data.key = newKey
           }
-          // 已知限制：新 transcript 文件尚未落盘时 parseKey 无法反查 cwd（进程存活期间无影响，
+          // 已知限制：新 transcript 文件尚未落盘时 handoffSource 无法反查 cwd（进程存活期间无影响，
           // spawnOpts 持有 cwd；空闲回收后若文件仍未写则报"无法解析会话"）
           broadcast(hub, { kind: 'moved', targetKey: newKey, targetSessionId: newSid, reason: 'clear' })
           pushStatus(hub)

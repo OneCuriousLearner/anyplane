@@ -7,7 +7,7 @@ import { archiveClaudeSession, listTrash, restoreClaudeSession } from '../../arc
 import { defaultPermissionMode } from '../../config'
 import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
-import { errorMessage, transcriptPathOf } from '../../util'
+import { errorMessage, sanitizePath, transcriptPathOf } from '../../util'
 import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
@@ -47,6 +47,11 @@ class ClaudePort implements BackendPort {
 
   keyForNew(cwd: string): string {
     return claudeKeyForNew(cwd)
+  }
+
+  keyForExisting(sessionId: string, cwd?: string): string {
+    if (!cwd) throw new Error('[claude] keyForExisting 需要 cwd')
+    return keyFor(sanitizePath(cwd), sessionId)
   }
 
   listTierModelNames(cwd?: string): Record<string, TierModelName> {

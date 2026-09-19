@@ -23,11 +23,12 @@ const inbox: InboxEvent[] = []
 
 interface FakeWs {
   sent: string[]
+  data: { key: string; inbox?: true }
   send(text: string): void
 }
 
-function fakeWs(): FakeWs {
-  return { sent: [], send(text: string) { this.sent.push(text) } }
+function fakeWs(key: string): FakeWs {
+  return { sent: [], data: { key }, send(text: string) { this.sent.push(text) } }
 }
 
 function payloads(ws: FakeWs): Array<Record<string, unknown>> {
@@ -39,7 +40,7 @@ const extraKeys: string[] = []
 function freshHub(): { hub: Hub; ws: FakeWs } {
   hubs.delete(KEY)
   const hub = getHub(KEY)
-  const ws = fakeWs()
+  const ws = fakeWs(KEY)
   hub.clients.add(ws as never)
   return { hub, ws }
 }
@@ -48,7 +49,7 @@ function hubAt(key: string): { hub: Hub; ws: FakeWs } {
   extraKeys.push(key)
   hubs.delete(key)
   const hub = getHub(key)
-  const ws = fakeWs()
+  const ws = fakeWs(key)
   hub.clients.add(ws as never)
   return { hub, ws }
 }
@@ -119,6 +120,37 @@ describe('sessionCallbacks.conversation_reset', () => {
     sessionCallbacks(hub).onMessage({ type: 'conversation_reset' } as CliMessage)
     expect(hub.transition).toBeUndefined()
     expect(payloads(ws)[0]).toMatchObject({ kind: 'cli', msg: { type: 'conversation_reset' } })
+  })
+
+  test('init 完成三层重键：Hub 注册表 / ws.data.key / moved，key 经 port 构造', () => {
+    const oldKey = 'n|%2Ftmp%2Fclear-cwd'
+    const { hub, ws } = hubAt(oldKey)
+    const cb = sessionCallbacks(hub)
+    cb.onMessage({ type: 'conversation_reset' } as CliMessage)
+    cb.onMessage({ type: 'system', subtype: 'init', session_id: 'new-sid-1' } as CliMessage)
+
+    const newKey = 's|-tmp-clear-cwd|new-sid-1'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(hub.transition).toBeUndefined()
+    expect(ws.data.key).toBe(newKey)
+    expect(hubs.get(oldKey)).toBeUndefined()
+    expect(hubs.get(newKey)).toBe(hub)
+    expect(payloads(ws).some((p) => p.kind === 'moved' && p.targetKey === newKey && p.reason === 'clear')).toBe(true)
+  })
+
+  test('cwd 优先 spawnOpts，缺席时从 n| key 解析（不直连 parseKey）', () => {
+    const oldKey = 'n|%2Ftmp%2Ffrom-key'
+    const { hub, ws } = hubAt(oldKey)
+    hub.spawnOpts = { cwd: '/explicit/spawn-cwd' }
+    const cb = sessionCallbacks(hub)
+    cb.onMessage({ type: 'conversation_reset' } as CliMessage)
+    cb.onMessage({ type: 'system', subtype: 'init', session_id: 'sid-opts' } as CliMessage)
+
+    const newKey = 's|-explicit-spawn-cwd|sid-opts'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(ws.data.key).toBe(newKey)
   })
 })
 
