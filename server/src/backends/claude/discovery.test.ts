@@ -2,8 +2,8 @@
 // tool_result / isMeta / 系统注入标签消息不得标为可回滚（它们没有文件 checkpoint）。
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { config } from '../../config'
 import { entryToHistoryMessage, isSelectableRewindTarget, readHistory } from './discovery'
 
@@ -155,6 +155,83 @@ describe('entryToHistoryMessage（readHistory 与 tailer 共用的单条解析�
     const side = { type: 'assistant', isSidechain: true, uuid: 's1', message: { content: [{ type: 'text', text: '子代理结论' }] } }
     expect(entryToHistoryMessage(side)).toBeNull()
     expect(entryToHistoryMessage(side, { allowSidechain: true })).toMatchObject({ uuid: 's1', blocks: [{ kind: 'text', text: '子代理结论' }] })
+  })
+
+  test('非字符串 text/thinking 不落块（typeof 守卫）', () => {
+    expect(
+      entryToHistoryMessage({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 42 }, { type: 'thinking', thinking: { n: 1 } }] },
+      }),
+    ).toBeNull()
+  })
+})
+
+// 1x1 透明 PNG（与 uploads.test.ts 同字节）；image 用例会写 ~/.anyplane/uploads，收尾删掉
+const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+const imageUploads: string[] = []
+
+describe('entryToHistoryMessage 图片落盘（discovery onImage）', () => {
+  afterAll(() => {
+    for (const p of imageUploads) rmSync(p, { force: true })
+  })
+
+  test('base64 png → kind:image，src 走 /api/uploads/<hash>.png', () => {
+    const msg = entryToHistoryMessage({
+      type: 'user',
+      uuid: 'img1',
+      message: {
+        content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG_B64 } }],
+      },
+    })
+    expect(msg?.blocks).toHaveLength(1)
+    const b = msg?.blocks[0]
+    expect(b?.kind).toBe('image')
+    if (b?.kind !== 'image' || !b.src) throw new Error('expected image src')
+    expect(b.src).toMatch(/^\/api\/uploads\/[0-9a-f]{16}\.png$/)
+    imageUploads.push(join(homedir(), '.anyplane', 'uploads', basename(b.src)))
+  })
+
+  test('非法 source（非 base64）→ 不落块，整条 null', () => {
+    expect(
+      entryToHistoryMessage({
+        type: 'user',
+        message: { content: [{ type: 'image', source: { type: 'url', url: 'https://x' } }] },
+      }),
+    ).toBeNull()
+  })
+
+  test('saveUpload 拒绝的类型 → 文本占位 [图片]', () => {
+    const msg = entryToHistoryMessage({
+      type: 'user',
+      uuid: 'img-bad',
+      message: {
+        content: [{ type: 'image', source: { type: 'base64', media_type: 'image/svg+xml', data: PNG_B64 } }],
+      },
+    })
+    expect(msg).toMatchObject({ uuid: 'img-bad', blocks: [{ kind: 'text', text: '[图片]' }] })
+  })
+
+  test('空 data → saveUpload 抛错 → [图片]', () => {
+    const msg = entryToHistoryMessage({
+      type: 'user',
+      message: { content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: '' } }] },
+    })
+    expect(msg?.blocks).toEqual([{ kind: 'text', text: '[图片]' }])
+  })
+
+  test('图文混排：合法图 + 文本都在', () => {
+    const msg = entryToHistoryMessage({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'text', text: '见图' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG_B64 } },
+        ],
+      },
+    })
+    expect(msg?.blocks[0]).toEqual({ kind: 'text', text: '见图' })
+    expect(msg?.blocks[1]?.kind).toBe('image')
   })
 })
 

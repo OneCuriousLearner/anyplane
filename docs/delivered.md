@@ -10,6 +10,28 @@
 
 ---
 
+## AI 维护残留机械清理（PR #58 / #59）——2026-09-19
+
+定性：仓库的 AI 维护债是**重构残留**（过期指针、双写壳、巨型文件、同形映射各写一份），
+不是典型 slop。分两档只做机械清理，不改语义、不动 13.5。
+
+**第一档（PR #58）**：过期 `AGENTS.md` / 审计指针；Biome 把 list/history/modelNames 收到
+`BackendPort` 后才能禁 `discovery`/`backend` 直连；`isCodexKey` 前缀判定进 `port.ts`；
+`sanitizePath` 再导出删除；`setDraft` 去双写名；斜杠分区表 + `conversation_reset` 不变量。
+review 收口：`readHistory` 必须 await（`JSON.stringify(Promise)` 曾是 `"{}"`）、列表
+`Promise.allSettled`（避免 `await` 打断 unhandledRejection 即致命退出）、`SessionInfo.live` 恢复。
+
+**第二档（PR #59）**：`SessionList` 抽出通知菜单 / 行操作 / 分组行（本体 476 行）；
+`handleCli` 按 type 拆函数，入口走 `CLI_INGEST_TYPES` 穷尽分发；
+`cliContentToHistoryBlocks` web/server 同形（签名对齐 + 夹具对拍），图片仍只在
+`discovery` 的 `onImage` 落盘。两份审计只加「已落地 / 仍有效」头，正文不改。
+
+**刻意不做**（留给后续维护者，清单在 ROADMAP 方向十三「待排期」）：AgentEvent、
+processManager 会话类、两套摘要口径、会话类统一、ensure 时序红线根治、真 CLI e2e 进 CI。
+
+**验证**：PR #58 后 702/0；PR #59 含 review 补测后 720/0。chrome-devtools：列表分组、
+通知菜单（页内/推送/webhook/测试）、行菜单（重命名/回收站）。
+
 ## 方向十二（续）：Codex 会话发现改读盘优先——2026-09-14
 
 方向十一评审发现「状态探测经 ensureRpc 永久拉起 app-server」时实证出更深的既有行为：

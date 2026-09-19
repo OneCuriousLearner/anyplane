@@ -2,7 +2,7 @@
 // 从 pages/Chat.tsx 下沉（F1）——无组件状态、无 React 依赖，bun:test 直接钉住。
 
 import type { HistoryMessage } from '@anyplane/protocol'
-import { toolResultText } from './blocks'
+import { cliContentToHistoryBlocks } from './contentBlocks'
 import type { SessionState } from '@anyplane/protocol'
 
 /** 复制到剪贴板：clipboard API 仅在安全上下文可用，http 局域网访问走 textarea 回退 */
@@ -57,25 +57,13 @@ export function statusLineOf(
 /**
  * 把一条实时 sidechain CLI 消息（带 parent_tool_use_id 的完整 assistant/user）转成
  * HistoryMessage 形状，使其可以复用 appendHistoryMsg 落进后台任务桶。
- * 与 discovery.entryToHistoryMessage 的块映射保持一致（text/thinking/tool_use/tool_result）。
+ * 块映射正本在 contentBlocks.ts（与服务端 discovery 同形）。
  */
 export function cliSidechainToHistory(rec: Record<string, unknown>): HistoryMessage | null {
   const type = rec.type
   if (type !== 'assistant' && type !== 'user') return null
   const content = (rec.message as { content?: unknown } | undefined)?.content
-  const blocks: { kind: 'text' | 'thinking' | 'tool_use' | 'tool_result'; text?: string; name?: string; id?: string; input?: unknown; isError?: boolean }[] = []
-  if (typeof content === 'string') {
-    if (content.trim()) blocks.push({ kind: 'text', text: content })
-  } else if (Array.isArray(content)) {
-    for (const c of content as Record<string, unknown>[]) {
-      if (c?.type === 'text' && typeof c.text === 'string' && c.text.trim()) blocks.push({ kind: 'text', text: c.text })
-      else if (c?.type === 'thinking' && typeof c.thinking === 'string' && c.thinking.trim())
-        blocks.push({ kind: 'thinking', text: c.thinking })
-      else if (c?.type === 'tool_use') blocks.push({ kind: 'tool_use', name: c.name as string, id: c.id as string, input: c.input })
-      else if (c?.type === 'tool_result')
-        blocks.push({ kind: 'tool_result', id: c.tool_use_id as string, text: toolResultText(c.content), isError: c.is_error === true })
-    }
-  }
+  const blocks = cliContentToHistoryBlocks(content)
   if (blocks.length === 0) return null
   return { uuid: rec.uuid as string | undefined, role: type, blocks, timestamp: rec.timestamp as string | undefined }
 }

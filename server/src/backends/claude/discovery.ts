@@ -6,6 +6,7 @@ import { basename, join } from 'node:path'
 import { saveUpload } from '../../uploads'
 import { config } from '../../config'
 import { sanitizePath, transcriptPathOf } from '../../util'
+import { cliContentToHistoryBlocks } from './contentBlocks'
 import { backgroundAlive, daemonAgents } from './agents'
 import { isInternalUserMessage, type CliMessage } from './protocol'
 
@@ -278,7 +279,7 @@ export function listSessions(): DiscoveredSession[] {
 
 // ---------- 历史消息（供 UI 首次加载） ----------
 
-// 共享类型正本在 ../types（后端无关抽象层）；此处 import 自用 + re-export 兼容既有 import 路径
+// HistoryBlock / HistoryMessage 正本在 @anyplane/protocol；图片落盘仍由本文件 onImage 承接
 
 /** 提取 tool_result 的纯文本内容（content 可能是 string 或 text 块数组） */
 function toolResultText(rc: unknown): string {
@@ -343,33 +344,23 @@ export function entryToHistoryMessage(
   // 子代理内部消息不进主对话抄本（侧链文件解析时由 allowSidechain 放行）
   if (obj.isSidechain && !opts?.allowSidechain) return null
   const message = obj.message as { content?: unknown } | undefined
-  const content = message?.content
-  const blocks: HistoryBlock[] = []
-  if (typeof content === 'string') {
-    if (content.trim()) blocks.push({ kind: 'text', text: content })
-  } else if (Array.isArray(content)) {
-    for (const c of content) {
-      if (c?.type === 'text' && c.text?.trim()) blocks.push({ kind: 'text', text: c.text })
-      else if (c?.type === 'thinking' && c.thinking?.trim()) blocks.push({ kind: 'thinking', text: c.thinking })
-      else if (c?.type === 'tool_use') blocks.push({ kind: 'tool_use', name: c.name, id: c.id, input: c.input })
-      else if (c?.type === 'image' && c.source?.type === 'base64' && typeof c.source.data === 'string') {
-        // 历史中的 base64 原图：hash 命名落盘去重，前端经 /api/uploads 展示
-        try {
-          const path = saveUpload({
-            name: 'history',
-            mediaType: String(c.source.media_type ?? 'image/png'),
-            dataBase64: c.source.data,
-          })
-          blocks.push({ kind: 'image', src: `/api/uploads/${basename(path)}` })
-        } catch {
-          blocks.push({ kind: 'text', text: '[图片]' })
-        }
-      } else if (c?.type === 'tool_result') {
-        const rt = toolResultText(c.content)
-        blocks.push({ kind: 'tool_result', id: c.tool_use_id, text: rt, isError: c.is_error === true })
+  const blocks = cliContentToHistoryBlocks(message?.content, {
+    toolResultText,
+    onImage: (c) => {
+      const source = c.source as { type?: string; data?: string; media_type?: string } | undefined
+      if (source?.type !== 'base64' || typeof source.data !== 'string') return undefined
+      try {
+        const path = saveUpload({
+          name: 'history',
+          mediaType: String(source.media_type ?? 'image/png'),
+          dataBase64: source.data,
+        })
+        return { kind: 'image', src: `/api/uploads/${basename(path)}` }
+      } catch {
+        return { kind: 'text', text: '[图片]' }
       }
-    }
-  }
+    },
+  })
   if (blocks.length === 0) return null
   return {
     uuid: obj.uuid as string | undefined,
