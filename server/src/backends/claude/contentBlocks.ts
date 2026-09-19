@@ -1,16 +1,24 @@
 // CLI / transcript content → HistoryBlock 的纯映射（text/thinking/tool_use/tool_result）。
-// 与 web/src/lib/contentBlocks.ts 同形；改映射须两边同步。
+// 与 web/src/lib/contentBlocks.ts 同形（签名 + 循环体）；改映射须两边同步。
 // 图片由调用方 onImage 承接（本侧历史落盘；前端 live sidechain 不接图）。
 
 import type { HistoryBlock } from '@anyplane/protocol'
 
+/** 与 web/src/lib/blocks.ts `toolResultText` 同算法；discovery 可传入自己的口径覆盖。 */
+function defaultToolResultText(rc: unknown): string {
+  if (typeof rc === 'string') return rc
+  if (Array.isArray(rc)) return rc.map((x) => (x?.type === 'text' ? String(x.text ?? '') : '')).join('')
+  return ''
+}
+
 export function cliContentToHistoryBlocks(
   content: unknown,
-  opts: {
-    toolResultText: (rc: unknown) => string
+  opts?: {
+    toolResultText?: (rc: unknown) => string
     onImage?: (c: Record<string, unknown>) => HistoryBlock | undefined
   },
 ): HistoryBlock[] {
+  const toolResultText = opts?.toolResultText ?? defaultToolResultText
   const blocks: HistoryBlock[] = []
   if (typeof content === 'string') {
     if (content.trim()) blocks.push({ kind: 'text', text: content })
@@ -25,13 +33,13 @@ export function cliContentToHistoryBlocks(
     else if (raw?.type === 'tool_use')
       blocks.push({ kind: 'tool_use', name: raw.name as string, id: raw.id as string, input: raw.input })
     else if (raw?.type === 'image') {
-      const img = opts.onImage?.(raw)
+      const img = opts?.onImage?.(raw)
       if (img) blocks.push(img)
     } else if (raw?.type === 'tool_result')
       blocks.push({
         kind: 'tool_result',
         id: raw.tool_use_id as string,
-        text: opts.toolResultText(raw.content),
+        text: toolResultText(raw.content),
         isError: raw.is_error === true,
       })
   }

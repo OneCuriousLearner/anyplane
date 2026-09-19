@@ -1,14 +1,18 @@
 // CLI / transcript content → HistoryBlock 的纯映射（text/thinking/tool_use/tool_result）。
-// 与 server/src/backends/claude/contentBlocks.ts 同形；改映射须两边同步。
+// 与 server/src/backends/claude/contentBlocks.ts 同形（签名 + 循环体）；改映射须两边同步。
 // 图片由调用方 onImage 承接（服务端历史落盘；前端 live sidechain 不接图）。
 
 import type { HistoryBlock } from '@anyplane/protocol'
-import { toolResultText } from './blocks'
+import { toolResultText as defaultToolResultText } from './blocks'
 
 export function cliContentToHistoryBlocks(
   content: unknown,
-  onImage?: (c: Record<string, unknown>) => HistoryBlock | undefined,
+  opts?: {
+    toolResultText?: (rc: unknown) => string
+    onImage?: (c: Record<string, unknown>) => HistoryBlock | undefined
+  },
 ): HistoryBlock[] {
+  const toolResultText = opts?.toolResultText ?? defaultToolResultText
   const blocks: HistoryBlock[] = []
   if (typeof content === 'string') {
     if (content.trim()) blocks.push({ kind: 'text', text: content })
@@ -23,7 +27,7 @@ export function cliContentToHistoryBlocks(
     else if (raw?.type === 'tool_use')
       blocks.push({ kind: 'tool_use', name: raw.name as string, id: raw.id as string, input: raw.input })
     else if (raw?.type === 'image') {
-      const img = onImage?.(raw)
+      const img = opts?.onImage?.(raw)
       if (img) blocks.push(img)
     } else if (raw?.type === 'tool_result')
       blocks.push({

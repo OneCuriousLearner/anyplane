@@ -26,6 +26,7 @@ import {
   type IngestState,
 } from '../lib/ingest'
 import type { CliMsg } from '@anyplane/protocol'
+import { cliIngestTypeOf } from '../lib/cliIngest'
 import type { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
 
@@ -474,7 +475,9 @@ export function useTranscriptIngest(opts: {
   }
 
   const handleCli = (msg: CliMsg, replay = false) => {
-    switch (msg.type) {
+    const kind = cliIngestTypeOf(msg.type)
+    if (!kind) return
+    switch (kind) {
       case 'stream_event':
         handleStreamEvent(msg)
         return
