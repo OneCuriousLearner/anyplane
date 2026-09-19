@@ -132,11 +132,35 @@ describe('wsOpen：inbox 频道', () => {
     expect(row?.spawned).toBe(false)
   })
 
-  test('InboxChannel 未注入时 inbox 开连接 fail fast', () => {
+  test('InboxChannel 未注入时 inbox 开连接 fail fast，且不挂 keepalive', () => {
     resetInboxChannelForTest()
     const ws = inboxWs()
     liveSockets.push(ws)
     expect(() => wsOpen(ws as never)).toThrow('InboxChannel')
+    expect(ws.data.keepalive).toBeUndefined()
+  })
+
+  test('开/关走 InboxChannel：add 与 remove 各一次、同一连接', () => {
+    const added: unknown[] = []
+    const removed: unknown[] = []
+    setInboxChannel({
+      add: (ws) => {
+        added.push(ws)
+        addInboxClient(ws)
+      },
+      remove: (ws) => {
+        removed.push(ws)
+        removeInboxClient(ws)
+      },
+      snapshot: inboxSnapshot,
+    })
+    const ws = inboxWs()
+    liveSockets.push(ws)
+    wsOpen(ws as never)
+    expect(added).toEqual([ws])
+    expect(removed).toEqual([])
+    wsClose(ws as never)
+    expect(removed).toEqual([ws])
   })
 })
 

@@ -19,6 +19,8 @@
 
 **刻意不做**：搬家改名（批次 C）、不改 inbox 扇出/快照语义。
 
+review 收口：单测锁 add/remove 各一次；inbox 开连接先取 Channel 再挂 keepalive（未装配不漏定时器）。
+
 ## hub 编排收口 BackendPort（/clear 与接力）——2026-09-19
 
 定性：合入机械两档后的全仓勘察里，唯一高层越层是 hub 为 `/clear` 与接力直连
