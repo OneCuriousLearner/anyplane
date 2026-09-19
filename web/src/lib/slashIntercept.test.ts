@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { FALLBACK_COMMANDS } from './slashCommands'
 import { interceptSlash } from './slashIntercept'
 
 const claude = { isCodex: false }
@@ -62,6 +63,19 @@ describe('interceptSlash codex 专属（claude 透传）', () => {
     expect(interceptSlash('/clear', codex)).toEqual({ type: 'newThread' })
     expect(interceptSlash('/new', claude)).toBeNull()
     expect(interceptSlash('/clear', claude)).toBeNull() // claude /clear 透传（CLI 换 sessionId 续跑正是想要的语义）
+  })
+})
+
+describe('FALLBACK_COMMANDS ↔ 拦截表不变式', () => {
+  test('每个面板自有命令至少在一侧被拦截，或列入透传名单', () => {
+    // 两侧都不拦的面板项才进此集合（目前为空：新增 FALLBACK 必须选边，不许静默透传）
+    const PASSTHROUGH = new Set<string>()
+    for (const name of FALLBACK_COMMANDS) {
+      if (PASSTHROUGH.has(name)) continue
+      const claudeHit = interceptSlash(`/${name}`, claude)
+      const codexHit = interceptSlash(`/${name}`, codex)
+      expect(claudeHit !== null || codexHit !== null).toBe(true)
+    }
   })
 })
 

@@ -9,10 +9,6 @@ import { sanitizePath, transcriptPathOf } from '../../util'
 import { backgroundAlive, daemonAgents } from './agents'
 import { isInternalUserMessage, type CliMessage } from './protocol'
 
-/** 与快照 sanitizePath 一致：非字母数字 → '-'（截断/hash 情形极罕见，此处不实现）。
- *  正本已移至 server/src/util.ts（叶子层，供 processManager 水合复用而不成环），此处 re-export 兼容既有引用。 */
-export { sanitizePath } from '../../util'
-
 /** 状态词表正本在 @anyplane/protocol（SessionInfo.status 共用同一闭集） */
 import type { HistoryBlock, HistoryMessage, SessionStatus, SubagentHistory } from '@anyplane/protocol'
 

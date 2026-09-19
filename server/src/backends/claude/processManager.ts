@@ -1,5 +1,6 @@
 // Claude CLI 子进程管理：spawn / NDJSON 读写 / 控制请求 / 空闲回收
-// 跨平台：Windows 上 claude 可能是 .cmd/.bat（需 cmd.exe 包装）或 .exe
+// 跨平台：Windows 上 claude 可能是 .cmd/.bat 或 .exe；Bun >= 1.4 可直接执行 .cmd，
+// 不再需要 cmd.exe 包装（旧包装已拆除——Bun 的 argv 引号会把手工引号转义坏）。
 //
 // busy 语义：优先信任 Claude Code 的 system/session_state_changed，另以
 // task_started/task_notification 维护后台任务表。后者覆盖 background Agent、

@@ -1,7 +1,7 @@
 // codex 后端适配器：把 codexRuntime 的能力包装成 BackendPort。
 // 方法体多为 index.ts 原 codex 分支的逐字搬迁——重构红线是零行为改动。
 
-import type { ArchivedEntry, CodexModelInfo, QueryResultPayload, SessionState } from '@anyplane/protocol'
+import type { ArchivedEntry, CodexModelInfo, HistoryResponse, QueryResultPayload, SessionState } from '@anyplane/protocol'
 import { defaultPermissionMode } from '../../config'
 import { generateCodexBrief, type HandoffDetail } from '../../handoff'
 import { log } from '../../log'
@@ -17,8 +17,16 @@ import {
   type SessionHandle,
   type StatusContext,
 } from '../port'
-import type { SpawnOptions } from '../types'
-import { keyFor, keyForNew as codexKeyForNew, listArchivedSessions, parseKey as codexParseKey, splitThreadId } from './backend'
+import type { SessionSummary, SpawnOptions } from '../types'
+import {
+  keyFor,
+  keyForNew as codexKeyForNew,
+  listArchivedSessions,
+  listSessions as listCodexSessions,
+  parseKey as codexParseKey,
+  readHistory as readCodexHistory,
+  splitThreadId,
+} from './backend'
 import { codexRuntime, type CodexSession } from './runtime'
 
 class CodexPort implements BackendPort {
@@ -279,6 +287,14 @@ class CodexPort implements BackendPort {
 
   rename(key: string, title: string): Promise<RouteResult> {
     return this.threadRpc(key, 'thread/name/set', { name: title })
+  }
+
+  listSessions(): Promise<SessionSummary[]> {
+    return listCodexSessions()
+  }
+
+  async readHistory(target: string): Promise<HistoryResponse> {
+    return { messages: await readCodexHistory(target), fileBytes: 0 }
   }
 
   /** codex 归档列表：复用 backend 的 toSummary 唯一映射；RPC 失败降级空数组不拖垮 claude trash */

@@ -21,7 +21,7 @@ describe('isCodexKey / isExistingKey', () => {
   })
 })
 
-describe('slugOf（与服务端 discovery.sanitizePath 一致）', () => {
+describe('slugOf（与服务端 util.sanitizePath 一致）', () => {
   test('非字母数字全部转 -', () => {
     expect(slugOf('/srv/anyplane')).toBe('-srv-anyplane')
     expect(slugOf('C:\\Users\\name\\项目')).toBe('C--Users-name---')

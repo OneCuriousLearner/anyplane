@@ -1,10 +1,8 @@
 // 其余 REST 路由：fs/list、handoff、lineage、uploads、history（claude/codex）、
 // codex/models、config、claude/model-names、backends/status。
 
-import type { LineageNode, LineageResponse, ServerConfigInfo } from '@anyplane/protocol'
-import { readHistory, sanitizePath } from '../backends/claude/discovery'
+import type { HistoryResponse, LineageNode, LineageResponse, ServerConfigInfo } from '@anyplane/protocol'
 import { resolveTierModelNames } from '../backends/claude/modelNames'
-import { readHistory as readCodexHistory } from '../backends/codex/backend'
 import { backendPort, describeKey } from '../backends/port'
 import { getBackendsStatus } from '../backends/status'
 import { config } from '../config'
@@ -14,17 +12,22 @@ import { runHandoff } from '../hub/handoff'
 import { resolveApprovalRest } from '../hub/lifecycle'
 import { log } from '../log'
 import { resolveUpload } from '../uploads'
-import { errorMessage } from '../util'
+import { errorMessage, sanitizePath } from '../util'
 import { json, readJsonBody } from './http'
 
 export interface MiscRouteDeps {
-  readHistory: typeof readHistory
+  readHistory: (
+    slug: string,
+    sessionId: string,
+    opts?: { limit?: number; before?: number },
+  ) => HistoryResponse | Promise<HistoryResponse>
   runHandoff: typeof runHandoff
   getBackendsStatus: typeof getBackendsStatus
 }
 
 export const defaultMiscRouteDeps: MiscRouteDeps = {
-  readHistory,
+  readHistory: (slug, sessionId, opts) =>
+    backendPort('claude').readHistory(sessionId, { slug, before: opts?.before, limit: opts?.limit }),
   runHandoff,
   getBackendsStatus,
 }
@@ -151,8 +154,7 @@ export async function handleMiscRoutes(
   const codexHistMatch = url.pathname.match(/^\/api\/codex\/history\/([^/]+)$/)
   if (codexHistMatch && req.method === 'GET') {
     try {
-      const messages = await readCodexHistory(codexHistMatch[1])
-      return json({ messages, fileBytes: 0 })
+      return json(await backendPort('codex').readHistory(codexHistMatch[1]))
     } catch (e) {
       return json({ error: errorMessage(e) }, { status: 500 })
     }

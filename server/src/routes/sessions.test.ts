@@ -44,7 +44,9 @@ describe('GET /api/sessions', () => {
         ],
         listSessions: () => [
           {
-            sessionId: 'session-1',
+            backend: 'claude',
+            key: 's|-repo-claude|session-1',
+            id: 'session-1',
             cwd: '/repo/claude',
             slug: '-repo-claude',
             title: 'Claude session',
@@ -96,7 +98,9 @@ describe('GET /api/sessions', () => {
         },
         listSessions: () => [
           {
-            sessionId: 'session-fallback',
+            backend: 'claude',
+            key: 's|repo|session-fallback',
+            id: 'session-fallback',
             slug: 'repo',
             mtime: 1,
             sizeBytes: 2,

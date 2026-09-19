@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { keyFor as claudeKeyFor, keyForBranch, keyForNew as claudeKeyForNew } from './claude/backend'
 import { keyFor as codexKeyFor, keyForNew as codexKeyForNew } from './codex/backend'
-import { backendPort, describeKey, portFor, registerBackend, resetBackendsForTest, type BackendPort } from './port'
+import { backendPort, describeKey, isCodexKey, portFor, registerBackend, resetBackendsForTest, type BackendPort } from './port'
 
 // describeKey 是 key 形状的零 I/O 解析唯一正本（routes/misc、push/fanout 共用）；
 // 本测试把它与两后端 keyFor/keyForNew/keyForBranch 构造器的一一对应锁死——
@@ -60,6 +60,17 @@ describe('describeKey', () => {
 
 // 注册表（13.3）：契约叶子不自带适配器单例，portFor/backendPort 经 registerBackend 取用。
 // 用最小假 port 锁死分发与 fail fast——不测真实适配器（那是各 port 自身测试的事）。
+describe('isCodexKey', () => {
+  test('前缀判定、不预解码：x|/xn| 为真，损坏 xn| 仍为真', () => {
+    expect(isCodexKey('x|th-1')).toBe(true)
+    expect(isCodexKey('xn|%2Ftmp')).toBe(true)
+    expect(isCodexKey('xn|%E4%B8')).toBe(true)
+    expect(isCodexKey('s|slug|sid')).toBe(false)
+    expect(isCodexKey('n|%2Ftmp')).toBe(false)
+    expect(isCodexKey('b|%2Ftmp|src')).toBe(false)
+  })
+})
+
 describe('注册表：backendPort / portFor', () => {
   // bun test 单进程跨文件共享注册表：本文件用过假 port，结束后复位清场——
   // 其他文件各自在顶部注册真实适配器，任何执行顺序下都不互相污染（AGENTS.md 复位口纪律）

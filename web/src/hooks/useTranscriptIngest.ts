@@ -51,7 +51,7 @@ export interface TranscriptIngestApi {
   setInitInfo: React.Dispatch<React.SetStateAction<{ model?: string; slashCommands?: string[] }>>
   setEffort: React.Dispatch<React.SetStateAction<string | undefined>>
   setMsgs(up: (prev: ChatMsg[]) => ChatMsg[]): void
-  setDraftBoth(d: Draft | null): void
+  setDraft(d: Draft | null): void
   pushMsg(m: ChatMsg): void
   pushSystem(text: string, kind?: 'info' | 'error'): void
   /** message_stop / result 时把草稿固化为一条 assistant 消息 */
@@ -128,7 +128,7 @@ export function useTranscriptIngest(opts: {
   const setMsgs = (up: (prev: ChatMsg[]) => ChatMsg[]) => {
     messagesStore.set(up)
   }
-  const setDraftBoth = (d: Draft | null) => {
+  const setDraft = (d: Draft | null) => {
     draftStore.set(d)
   }
   const pushMsg = (m: ChatMsg) => {
@@ -196,7 +196,7 @@ export function useTranscriptIngest(opts: {
   /** 会话切换重置（E3 组合层调用；顺序即原 E3 清空段前 7 步） */
   const reset = () => {
     setMsgs(() => [])
-    setDraftBoth(null)
+    setDraft(null)
     pendingResultsRef.current.clear()
     toolPosRef.current.clear()
     seenIdsRef.current.clear()
@@ -214,7 +214,7 @@ export function useTranscriptIngest(opts: {
   const commitDraft = () => {
     const d = draftStore.get()
     if (!d) return
-    setDraftBoth(null)
+    setDraft(null)
     if (d.blocks.length === 0) return
     const blocks: Block[] = []
     for (const b of d.blocks) {
@@ -270,7 +270,7 @@ export function useTranscriptIngest(opts: {
       if (!ev?.type) return
       switch (ev.type) {
         case 'message_start':
-          setDraftBoth({ msgId: ev.message?.id, blocks: [] })
+          setDraft({ msgId: ev.message?.id, blocks: [] })
           break
         case 'content_block_start': {
           const t = ev.content_block?.type
@@ -290,7 +290,7 @@ export function useTranscriptIngest(opts: {
                 jsonBuf: t === 'tool_use' ? '' : undefined,
               },
             ].sort((a, b) => a.idx - b.idx)
-            setDraftBoth({ ...d, blocks })
+            setDraft({ ...d, blocks })
           }
           break
         }
@@ -311,7 +311,7 @@ export function useTranscriptIngest(opts: {
             b.text += delta.thinking
           } else if (delta.type === 'input_json_delta' && delta.partial_json) b.jsonBuf = (b.jsonBuf ?? '') + delta.partial_json
           // signature_delta 永不展示
-          setDraftBoth({ ...d, blocks: [...d.blocks] })
+          setDraft({ ...d, blocks: [...d.blocks] })
           break
         }
         case 'message_stop':
@@ -369,7 +369,7 @@ export function useTranscriptIngest(opts: {
           b.jsonBuf = c.input != null ? JSON.stringify(c.input) : b.jsonBuf
         }
       }
-      setDraftBoth({ ...d, blocks: dblocks })
+      setDraft({ ...d, blocks: dblocks })
       return
     }
 
@@ -501,7 +501,7 @@ export function useTranscriptIngest(opts: {
       setInitInfo,
       setEffort,
       setMsgs,
-      setDraftBoth,
+      setDraft,
       pushMsg,
       pushSystem,
       commitDraft,

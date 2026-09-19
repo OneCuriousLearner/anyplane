@@ -65,7 +65,7 @@ export function useSessionSocket(opts: {
      *  用户翻过的更早页不在重载中丢失；tail_reset/thread_reverted 内容被截断，必须默认窗口重置 */
     const reloadTranscript = (label: string, preserveLoaded = false) => {
       ingestApi.gapReloadingRef.current = true
-      ingestApi.setDraftBoth(null)
+      ingestApi.setDraft(null)
       ingestApi.pendingResultsRef.current.clear()
       ingestApi.setPhase(undefined)
       const gapKey = session.key
@@ -111,7 +111,7 @@ export function useSessionSocket(opts: {
               // 自愈：权威 idle 到达时清掉陈旧流式草稿。服务端重启/断线期间 turn 终结时
               // 客户端拿不到终结事件，"生成中"会永远挂着（实测：watch 重载后复现）。
               // 等审批（waiting/requires_action）期间草稿是合法的，不在此清理。
-              ingestApi.setDraftBoth(null)
+              ingestApi.setDraft(null)
               ingestApi.setPhase(undefined)
               // turn 已终结：此刻仍未配对的 tool_result 不会再等到它的调用了，
               // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）。
@@ -279,7 +279,7 @@ export function useSessionSocket(opts: {
             // 回滚会销毁并重生 CLI 进程（dispose 先摘 map 再 kill，onExit 不会触发），
             // 进行中的流式草稿/待配对工具结果/相位指示全部失效，必须一并清理，
             // 否则陈旧草稿会挂在回滚标签之下。
-            ingestApi.setDraftBoth(null)
+            ingestApi.setDraft(null)
             ingestApi.pendingResultsRef.current.clear()
             ingestApi.setPhase(undefined)
             ingestApi.setMsgs((prev) => {
@@ -295,7 +295,7 @@ export function useSessionSocket(opts: {
             //（与 rewound 的 idx+1 保留目标不同，注意两后端的语义差）。
             // thread_reverted 系统消息随后到达（回声），5s 窗口内不再触发权威重载
             lastRevertedAtRef.current = Date.now()
-            ingestApi.setDraftBoth(null)
+            ingestApi.setDraft(null)
             ingestApi.pendingResultsRef.current.clear()
             ingestApi.setPhase(undefined)
             ingestApi.setMsgs((prev) => {
@@ -365,7 +365,7 @@ export function useSessionSocket(opts: {
           }
           case 'tail_reset': {
             // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
-            ingestApi.setDraftBoth(null)
+            ingestApi.setDraft(null)
             ingestApi.pendingResultsRef.current.clear()
             const keyAtFetch = session.key
             fetchHistory(session.slug, session.sessionId)
