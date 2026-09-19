@@ -15,8 +15,10 @@ export interface GitInfo {
 
 /**
  * 读 git 信息（普通仓库 .git/HEAD；worktree 的 .git 是 gitdir 指向文件）。
- * worktree 判定：gitdir 指针含 `/.git/worktrees/` 段——主仓库根即该段前缀。
- * 子模块的 gitdir 指向 `/.git/modules/`，不匹配该段，不会被误标为 worktree。
+ * worktree 判定：gitdir 的固定布局是 <git 公共目录>/worktrees/<name>——剥掉该后缀得
+ * 公共目录，再以结尾形态区分宿主：`.../.git` → 普通仓库（宿主是父目录）；
+ * `....git`（bare）→ 宿主即其自身；含 `/.git/modules/` 的是子模块的 worktree——
+ * 从 gitdir 反推不出子模块 checkout 路径，不标注（分支仍读，仅缺徽章）。
  */
 export function readGitInfo(cwd: string): GitInfo | undefined {
   try {
@@ -28,9 +30,14 @@ export function readGitInfo(cwd: string): GitInfo | undefined {
     // gitdir 允许相对路径（相对 cwd），先归一为绝对路径再反推
     const gitdir = resolve(cwd, ptr.slice(7).trim())
     const info: GitInfo = { branch: readHeadBranch(gitdir) }
-    // 分隔符归一后定位模式段；截取下标在原串上同样成立（替换不改长度）
-    const idx = gitdir.replaceAll('\\', '/').indexOf('/.git/worktrees/')
-    if (idx > 0) info.worktreeOf = gitdir.slice(0, idx)
+    // 分隔符归一后剥布局后缀（worktreeOf 因此是正斜杠归一路径——跨平台一致的 wire 形态）
+    const norm = gitdir.replaceAll('\\', '/')
+    const m = /^(.*)\/worktrees\/[^/]+\/?$/.exec(norm)
+    if (m && !m[1]!.includes('/.git/modules/')) {
+      const common = m[1]!
+      if (common.endsWith('/.git')) info.worktreeOf = common.slice(0, -'/.git'.length)
+      else if (common.endsWith('.git')) info.worktreeOf = common
+    }
     return info
   } catch {
     return undefined

@@ -29,8 +29,8 @@ describe('readGitInfo', () => {
     expect(readGitInfo(repo)?.branch).toBe('0123456')
   })
 
-  test('worktree：gitdir 含 /.git/worktrees/ 段时反推主仓库根', () => {
-    // 与 git worktree add 的真实布局同形：<main>/.git/worktrees/<name>
+  test('worktree：gitdir 为 <main>/.git/worktrees/<name> 布局时反推主仓库根', () => {
+    // 与 git worktree add 的真实布局同形
     const main = join(root, 'main-repo')
     const gitdir = join(main, '.git', 'worktrees', 'wt1')
     mkdirSync(gitdir, { recursive: true })
@@ -38,7 +38,8 @@ describe('readGitInfo', () => {
     const wt = join(root, 'wt-checkout')
     mkdirSync(wt, { recursive: true })
     writeFileSync(join(wt, '.git'), `gitdir: ${gitdir}\n`)
-    expect(readGitInfo(wt)).toEqual({ branch: 'worktree-branch', worktreeOf: main })
+    // worktreeOf 是正斜杠归一路径（wire 形态跨平台一致）
+    expect(readGitInfo(wt)).toEqual({ branch: 'worktree-branch', worktreeOf: main.replaceAll('\\', '/') })
   })
 
   test('worktree：相对 gitdir 指针先按 cwd 归一再反推', () => {
@@ -49,10 +50,31 @@ describe('readGitInfo', () => {
     const wt = join(root, 'rel-checkout')
     mkdirSync(wt, { recursive: true })
     writeFileSync(join(wt, '.git'), 'gitdir: ../rel-main/.git/worktrees/wt2\n')
-    expect(readGitInfo(wt)).toEqual({ branch: 'rel-branch', worktreeOf: main })
+    expect(readGitInfo(wt)).toEqual({ branch: 'rel-branch', worktreeOf: main.replaceAll('\\', '/') })
   })
 
-  test('子模块 gitdir（/.git/modules/）不误判为 worktree，分支仍读', () => {
+  test('bare 主仓库的 worktree：<repo>.git/worktrees/<name> 布局，宿主是其自身', () => {
+    const bare = join(root, 'srv', 'repo.git')
+    const gitdir = join(bare, 'worktrees', 'wt3')
+    mkdirSync(gitdir, { recursive: true })
+    writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/bare-branch\n')
+    const wt = join(root, 'bare-checkout')
+    mkdirSync(wt, { recursive: true })
+    writeFileSync(join(wt, '.git'), `gitdir: ${gitdir}\n`)
+    expect(readGitInfo(wt)).toEqual({ branch: 'bare-branch', worktreeOf: bare.replaceAll('\\', '/') })
+  })
+
+  test('子模块的 worktree（/.git/modules/ 布局）不标注（反推不出 checkout 根），分支仍读', () => {
+    const gitdir = join(root, 'super2', '.git', 'modules', 'sub', 'worktrees', 'wt4')
+    mkdirSync(gitdir, { recursive: true })
+    writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/sub-wt-branch\n')
+    const wt = join(root, 'sub-wt-checkout')
+    mkdirSync(wt, { recursive: true })
+    writeFileSync(join(wt, '.git'), `gitdir: ${gitdir}\n`)
+    expect(readGitInfo(wt)).toEqual({ branch: 'sub-wt-branch' })
+  })
+
+  test('子模块 gitdir（/.git/modules/，无 worktrees 段）分支仍读、不标 worktree', () => {
     const gitdir = join(root, 'super', '.git', 'modules', 'sub')
     mkdirSync(gitdir, { recursive: true })
     writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/sub-branch\n')
