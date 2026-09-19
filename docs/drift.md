@@ -16,6 +16,39 @@ CI 周报（`.github/workflows/protocol-drift.yml`，每周一）发现漂移会
    防止将来重新论证）。
 5. 关闭 issue。
 
+## 2026-09-19
+
+### codex 0.154.0 → 0.155.1：19 处真实 schema 变更，全部 additive；另有 3 条运行时行为漂移
+
+本地 codex 升到 0.155.1 后 v0.2.0 发版前 e2e 暴露三个异常，顺藤摸瓜完成本次漂移评估。
+基线刷新到 861 个类型文件。
+
+**行尾误报修复（工具链）**：`check-codex-schema.ts` 此前对全量文件逐字节比较——Windows 上
+`core.autocrlf=true` 把基线签出为 CRLF，而 `generate-ts` 输出恒为 LF，导致**无漂移时也
+误报 122 处假变更**（本次 127 处里仅 19 处为真）。已改为比较前归一 `\r\n`→`\n`。
+
+| 变更 | 评估 | 代办 |
+|---|---|---|
+| `ClientRequest` +4 RPC（`memory/status`、`thread/attachment/add|list|remove`、`userVerification/cancel`） | 记忆状态查询、线程附件管理、身份验证取消——与 AnyPlane 控制面无关 | 不接入 |
+| `ServerNotification` +`thread/attachment/updated` | 附件变更通知，我们不消费附件 | 不接入（宽松解析透传） |
+| `FeedbackUploadResponse` +6 字段 | 反馈上传应答，不使用的端点 | 无 |
+| `v2/index.ts` +14 导出 | 新类型 re-export | 无 |
+
+**运行时行为漂移（schema 看不出的三条，裸 app-server 探针复现，与 AnyPlane 代码无关）**：
+
+1. **`ephemeral paginated thread/fork` 强制 `excludeTurns: true`**（0.155.1 新增校验，缺省报
+   -32600）——`handoff.ts` 的 codex→claude 接力因此断裂。已修：`runtime.ts` 的
+   `runEphemeralQuestion` 恒传 `excludeTurns: true`（字段在 0.154.0 schema 已存在且可选，
+   一次性问答不读 fork 的 turns，双版本兼容）。
+2. ~~spawn_agent 子代理 turn 挂起~~——**复评后非 0.155.1 回归**：与
+   `docs/research/2026-09-11-codex-upstream-behavior-notes.md`「模型侧 flake」节已记载的
+   spawn→wait 死循环同族（0.148.0/0.153.4 同现），本次只是换了模型复现，按既有结论处理。
+3. **服务端 spawn 的 app-server 里 shell for-loop 一律 cygwin fork 崩溃**
+   （`fatal error - CreateFileMapping … Win32 error 5`）——裸 app-server 两种 spawn 方式均复现、
+   直跑 Git Bash 正常，根因为 e2e 硬杀进程泄漏的 msys 共享内存 section 被长命父进程持有
+   （Bun Windows 句柄继承问题家族），重启 Windows 自愈；非协议问题，详见
+   `docs/research/2026-09-11-codex-upstream-behavior-notes.md`「模型侧 flake」节。
+
 ## 2026-09-17（issue #31 / #32）
 
 ### claude SDK 0.3.274：controlSubtypes +2（#31）

@@ -50,6 +50,13 @@
   `turns/list` 对 legacy 可用但内嵌 items 只有 user/agentMessage，`items/list` 对 legacy 报 -32601
   ——**legacy 线程只能继续走 `thread/read includeTurns` 的残缺现状，借不了分页 API 补齐**。
 
+## 回滚与分叉（0.155.1 实测）
+
+- **0.155.1 起 `ephemeral paginated thread/fork` 强制 `excludeTurns: true`**，缺省直接报
+  -32600（`ephemeral paginated thread/fork requires excludeTurns: true`）。非 ephemeral 的
+  legacy fork 不受影响。AnyPlane 侧已恒传 `excludeTurns: true`（`runEphemeralQuestion`，
+  字段自 0.154.0 存在，双版本兼容）。
+
 ## 回滚（方向四，0.153.4 实测）
 
 - paginated 走 `thread/revert`：原地截断持久历史，thread id/连接/订阅全保留，完成后服务端发
@@ -70,3 +77,11 @@
   deepseek-v4-flash 在 0.148.0 与 0.153.4 **同现 spawn→wait→再 spawn 死循环**，
   直连 app-server（无 AnyPlane 介入）也复现——上游/模型侧问题，与 AnyPlane 及 CLI 升级无关。
   升级回归时这三项失败**不代表协议回归**，看 A/B/C1/C2 即可。
+  0.155.1 换 kimi-for-coding 复现同族症状（子代理 turn >380s 无 result），结论不变。
+- **msys2 CreateFileMapping 崩溃（2026-09-19，0.155.1 + Windows 实测）**：e2e 大量硬杀
+  codex/bash 进程后，新建 bash 一律 `fatal error - CreateFileMapping S-1-5-21-…-1001.1,
+  Win32 error 5`——被杀进程泄漏的共享内存 section 被长命父进程（dev server / Claude Code 自身）
+  继承持有，同名重建即 ACCESS_DENIED；已开着的 Git Bash 窗口不受影响。Bun Windows 句柄继承
+  问题家族（参 AGENTS.md socket 继承 bug）。**自愈方式：重启 Windows / 注销重登**。
+  此时 `e2e-codex-streaming` 的 B 组断言（partial 工具结果）全挂是环境故障，不是协议回归——
+  用 `e2e-codex-delta` 探针验证 wire 上 outputDelta 通路即可区分。

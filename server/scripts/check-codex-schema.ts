@@ -59,14 +59,17 @@ if (update || !existsSync(baselineDir)) {
 const baseline = collect(baselineDir)
 let changes = 0
 const changeSummary: string[] = []
+// 行尾归一：Windows 上 git autocrlf 会把基线签出为 CRLF，而 generate-ts 输出恒为 LF，
+// 不归一则全量文件误报漂移（2026-09-19 实测 127 处假变更里 122 处是纯行尾差异）。
+const norm = (s: string) => s.replace(/\r\n/g, '\n')
 for (const [rel, content] of now) {
   const old = baseline.get(rel)
   if (old === undefined) {
     console.log(`⚠ 新增类型文件: ${rel}`)
     changes++
     changeSummary.push(`新增 ${rel}`)
-  } else if (old !== content) {
-    const addedLines = content.split('\n').length - old.split('\n').length
+  } else if (norm(old) !== norm(content)) {
+    const addedLines = norm(content).split('\n').length - norm(old).split('\n').length
     console.log(`⚠ 变更: ${rel} (${addedLines >= 0 ? '+' : ''}${addedLines} 行)`)
     changes++
     changeSummary.push(`变更 ${rel}`)
