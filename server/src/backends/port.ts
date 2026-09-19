@@ -23,6 +23,7 @@ import type {
   ContextUsageInfo,
   HistoryResponse,
   ImageAttachment,
+  TierModelName,
   QueryResultPayload,
   ServerEvent,
   SessionState,
@@ -197,6 +198,8 @@ export interface BackendPort {
   keyForNew(cwd: string): string
   /** 模型目录（capabilities.modelCatalog；codex model/list RPC） */
   listModels?(): Promise<CodexModelInfo[]>
+  /** 各档实际配置的模型名（claude StatusPill 透传；缺席 = 该后端无此能力） */
+  listTierModelNames?(cwd?: string): Record<string, TierModelName>
 }
 
 /** 两后端会话状态的公共字段（claude/codex 会话句柄结构化同形，契约见 backends/types.ts 末尾） */

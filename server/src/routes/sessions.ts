@@ -57,11 +57,15 @@ export async function handleSessionRoutes(
   deps: SessionRouteDeps = defaultSessionRouteDeps,
 ): Promise<Response | undefined> {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
-    // codex RPC 与 claude 扫盘相互独立——先发起两边再 await，墙钟取两者较大值而非相加
-    //（此端点被每个打开的标签页 10s 轮询）。中间无 await，rejection 一定先于下方 catch 被接管。
-    const codexP = deps.listCodexSessions()
-    const claudeP = Promise.resolve(deps.listSessions())
-    const sessions = await claudeP
+    // 两边同时发起，墙钟取较大值。allSettled 立刻给两边挂上 handler——
+    // 先 await 一侧再 catch 另一侧会在间隔里冒 unhandledRejection（本仓当致命退出）。
+    // Claude 失败仍上抛；Codex 失败只降级空列表。
+    const [claudeResult, codexResult] = await Promise.allSettled([
+      Promise.resolve(deps.listSessions()),
+      deps.listCodexSessions(),
+    ])
+    if (claudeResult.status === 'rejected') throw claudeResult.reason
+    const sessions = claudeResult.value
     const claudeRows: SessionInfo[] = sessions.map((s) => {
       const git = gitInfoOfCached(s.cwd, deps.readGitInfo)
       return {
@@ -73,6 +77,7 @@ export async function handleSessionRoutes(
         mtime: s.mtime,
         sizeBytes: s.sizeBytes ?? 0,
         status: s.status,
+        live: s.live,
         backend: 'claude' as const,
         gitBranch: git?.branch,
         worktreeOf: git?.worktreeOf,
@@ -86,9 +91,8 @@ export async function handleSessionRoutes(
     })
     // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
     let codexRows: SessionInfo[] = []
-    try {
-      const threads = await codexP
-      codexRows = threads.map((t): SessionInfo => {
+    if (codexResult.status === 'fulfilled') {
+      codexRows = codexResult.value.map((t): SessionInfo => {
         const git = gitInfoOfCached(t.cwd, deps.readGitInfo)
         return {
           sessionId: t.id,
@@ -106,8 +110,11 @@ export async function handleSessionRoutes(
           managed: deps.statusOf(t.key),
         }
       })
-    } catch (e) {
-      log.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
+    } else {
+      log.warn(
+        '[api] codex thread/list 失败（仅返回 claude 会话）:',
+        codexResult.reason instanceof Error ? codexResult.reason.message : codexResult.reason,
+      )
     }
     return json([...codexRows, ...claudeRows])
   }

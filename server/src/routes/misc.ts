@@ -2,7 +2,6 @@
 // codex/models、config、claude/model-names、backends/status。
 
 import type { HistoryResponse, LineageNode, LineageResponse, ServerConfigInfo } from '@anyplane/protocol'
-import { resolveTierModelNames } from '../backends/claude/modelNames'
 import { backendPort, describeKey } from '../backends/port'
 import { getBackendsStatus } from '../backends/status'
 import { config } from '../config'
@@ -144,7 +143,7 @@ export async function handleMiscRoutes(
     }
     const limit = num('limit')
     return json(
-      deps.readHistory(slug, sessionId, {
+      await deps.readHistory(slug, sessionId, {
         before: num('before', true),
         limit: limit == null ? undefined : Math.min(limit, 10_000),
       }),
@@ -180,7 +179,9 @@ export async function handleMiscRoutes(
   }
   // 各档实际配置的模型名（StatusPill 透传显示；每次调用实时读盘，配置改动即见）
   if (url.pathname === '/api/claude/model-names' && req.method === 'GET') {
-    return json({ models: resolveTierModelNames(url.searchParams.get('cwd') ?? undefined) })
+    return json({
+      models: backendPort('claude').listTierModelNames?.(url.searchParams.get('cwd') ?? undefined) ?? {},
+    })
   }
   // 双后端登录状态（列表页「该去登录哪个」指引；60s 服务端缓存，探针成本不随轮询放大）
   if (url.pathname === '/api/backends/status' && req.method === 'GET') {

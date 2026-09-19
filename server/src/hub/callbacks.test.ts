@@ -34,9 +34,20 @@ function payloads(ws: FakeWs): Array<Record<string, unknown>> {
   return ws.sent.map((text) => JSON.parse(text) as Record<string, unknown>)
 }
 
+const extraKeys: string[] = []
+
 function freshHub(): { hub: Hub; ws: FakeWs } {
   hubs.delete(KEY)
   const hub = getHub(KEY)
+  const ws = fakeWs()
+  hub.clients.add(ws as never)
+  return { hub, ws }
+}
+
+function hubAt(key: string): { hub: Hub; ws: FakeWs } {
+  extraKeys.push(key)
+  hubs.delete(key)
+  const hub = getHub(key)
   const ws = fakeWs()
   hub.clients.add(ws as never)
   return { hub, ws }
@@ -50,6 +61,8 @@ beforeEach(() => {
 afterEach(() => {
   resetInboxSinkForTest()
   hubs.delete(KEY)
+  for (const k of extraKeys) hubs.delete(k)
+  extraKeys.length = 0
   inbox.length = 0
 })
 
@@ -83,6 +96,29 @@ describe('sessionCallbacks.onMessage', () => {
     ])
     expect(hub.cliRing?.map((slot) => slot.seq)).toEqual([1, 2])
     expect(inbox).toEqual([{ type: 'done', key: KEY, ok: true }])
+  })
+})
+
+describe('sessionCallbacks.conversation_reset', () => {
+  test('claude key 进入 rekey，事件不进抄本', () => {
+    const { hub, ws } = hubAt('n|%2Ftmp')
+    sessionCallbacks(hub).onMessage({ type: 'conversation_reset' } as CliMessage)
+    expect(hub.transition).toEqual({ kind: 'rekey' })
+    expect(ws.sent).toEqual([])
+  })
+
+  test('codex key 不重键，落入普通透传', () => {
+    const { hub, ws } = hubAt('x|thread-1')
+    sessionCallbacks(hub).onMessage({ type: 'conversation_reset' } as CliMessage)
+    expect(hub.transition).toBeUndefined()
+    expect(payloads(ws)[0]).toMatchObject({ kind: 'cli', msg: { type: 'conversation_reset' } })
+  })
+
+  test('损坏 xn| 编码仍归 codex，不误触 claude 重键', () => {
+    const { hub, ws } = hubAt('xn|%E4%B8')
+    sessionCallbacks(hub).onMessage({ type: 'conversation_reset' } as CliMessage)
+    expect(hub.transition).toBeUndefined()
+    expect(payloads(ws)[0]).toMatchObject({ kind: 'cli', msg: { type: 'conversation_reset' } })
   })
 })
 

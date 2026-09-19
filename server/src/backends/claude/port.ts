@@ -2,7 +2,7 @@
 // 方法体多为 index.ts 原 claude 分支的逐字搬迁——重构红线是零行为改动。
 
 import { appendFileSync, existsSync } from 'node:fs'
-import type { ArchivedEntry, HistoryResponse, QueryResultPayload, SessionState } from '@anyplane/protocol'
+import type { ArchivedEntry, HistoryResponse, QueryResultPayload, SessionState, TierModelName } from '@anyplane/protocol'
 import { archiveClaudeSession, listTrash, restoreClaudeSession } from '../../archive'
 import { defaultPermissionMode } from '../../config'
 import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
@@ -22,6 +22,7 @@ import {
 import type { SessionSummary, SpawnOptions } from '../types'
 import { hydratedContextOf, keyFor, keyForBranch, keyForNew as claudeKeyForNew, parseKey, splitExistingKey, type ParsedKey } from './backend'
 import { listSessions as listDiscoveredSessions, liveSessionInfo, readHistory as readClaudeHistory } from './discovery'
+import { resolveTierModelNames } from './modelNames'
 import { processManager, type ClaudeSession } from './processManager'
 import { sessionModelOf } from './sessionModels'
 import { TranscriptTailer } from './tailer'
@@ -46,6 +47,10 @@ class ClaudePort implements BackendPort {
 
   keyForNew(cwd: string): string {
     return claudeKeyForNew(cwd)
+  }
+
+  listTierModelNames(cwd?: string): Record<string, TierModelName> {
+    return resolveTierModelNames(cwd)
   }
 
   sessionOf(key: string): SessionHandle | undefined {
