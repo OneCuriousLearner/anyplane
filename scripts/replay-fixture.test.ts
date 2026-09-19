@@ -7,7 +7,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ClaudeSession } from '../server/src/backends/claude/processManager'
-import type { CliMessage } from '../server/src/backends/claude/protocol'
+import type { CliMessage } from '../server/src/backends/claude/streamJson'
 
 const FIXTURE = join(import.meta.dir, '..', 'server', 'scripts', 'fixtures', 'claude-turn-basic.jsonl')
 

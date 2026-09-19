@@ -2,7 +2,7 @@
 
 import type { ApprovalDecision } from '@anyplane/protocol'
 import type { SessionCallbacks } from '../types'
-import type { CliMessage } from '../claude/protocol'
+import type { CliMessage } from '../claude/streamJson'
 import { saveUpload } from '../../uploads'
 import { errorMessage } from '../../util'
 import { config } from '../../config'

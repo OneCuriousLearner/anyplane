@@ -1,7 +1,7 @@
 // 冒烟测试：spawn 真实 claude CLI，走 stream-json 协议收发一轮
 // 用法：bun run server/scripts/smoke.ts [cwd]
 import { resolveClaudeCommand } from '../src/backends/claude/processManager'
-import { userMessage } from '../src/backends/claude/protocol'
+import { userMessage } from '../src/backends/claude/streamJson'
 
 const cwd = process.argv[2] ?? process.cwd()
 const { cmd, prefix } = resolveClaudeCommand()

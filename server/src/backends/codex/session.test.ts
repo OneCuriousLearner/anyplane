@@ -7,7 +7,7 @@ import { CodexRuntime } from './runtime'
 import { CodexSession } from './session'
 import { ThreadTranslator } from './translate'
 import { readReasoning } from './reasoningStore'
-import type { CliMessage } from '../claude/protocol'
+import type { CliMessage } from '../claude/streamJson'
 
 const REASONING_THREAD = `test-child-${crypto.randomUUID()}`
 afterAll(() => {

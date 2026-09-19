@@ -5,8 +5,8 @@
 // Codex 后端负责把 ThreadItem/审批/状态事件翻译成该形状，前端与 WS 协议不变。
 //
 // 依赖方向：本模块不 import 任何具体后端的实现模块。
-// 唯一的例外是 './claude/protocol' 的 CliMessage——统一边界格式
-// 本身就是 claude stream-json 形状（见上），协议类型以 claude/protocol 为正本。
+// 唯一的例外是 './claude/streamJson' 的 CliMessage——统一边界格式
+// 本身就是 claude stream-json 形状（见上），线格式类型以 claude/streamJson 为正本。
 //
 // 前后端共享的契约类型（HistoryBlock/HistoryMessage/SubagentHistory/ApprovalDecision/
 // ContextUsageInfo/BackgroundTask/BackendName）已全部收敛进 @anyplane/protocol（方向十三 13.1），
@@ -14,7 +14,7 @@
 // 新增前后端共享类型一律去 protocol 包，不要写在这里。
 
 import type { BackendName, SessionStatus } from '@anyplane/protocol'
-import type { CliMessage } from './claude/protocol'
+import type { CliMessage } from './claude/streamJson'
 
 /** 会话列表项（聚合 Claude discovery 与 Codex thread/list） */
 export interface SessionSummary {

@@ -2,7 +2,7 @@
 // /clear 重键的三层同步（Hub / 进程 map / 存活 WS 的 data.key）全在这里——少一层即双进程或消息黑洞。
 
 import { decisionOfRule, matchApprovalRule } from '../approvalRules'
-import { isInternalUserMessage, type CliMessage } from '../backends/claude/protocol'
+import { isInternalUserMessage, type CliMessage } from '../backends/claude/streamJson'
 import { portFor } from '../backends/port'
 import { config } from '../config'
 import { log } from '../log'
