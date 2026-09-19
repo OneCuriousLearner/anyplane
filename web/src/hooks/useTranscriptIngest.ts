@@ -252,237 +252,249 @@ export function useTranscriptIngest(opts: {
     })
   }
 
-  // ---------- CLI 消息处理 ----------
-  const handleCli = (msg: CliMsg, replay = false) => {
+  // ---------- CLI 消息处理（按 type 拆；handleCli 只分发） ----------
+
+  const handleStreamEvent = (msg: CliMsg) => {
     const rec = msg as Record<string, unknown>
-
-    // 流式增量事件（Anthropic API SSE 透传）
-    if (msg.type === 'stream_event') {
-      const ev = rec.event as
-        | {
-            type?: string
-            index?: number
-            message?: { id?: string }
-            content_block?: { type?: string; id?: string; name?: string }
-            delta?: { type?: string; text?: string; thinking?: string; partial_json?: string }
-          }
-        | undefined
-      if (!ev?.type) return
-      switch (ev.type) {
-        case 'message_start':
-          setDraft({ msgId: ev.message?.id, blocks: [] })
-          break
-        case 'content_block_start': {
-          const t = ev.content_block?.type
-          const d: Draft = draftStore.get() ?? { blocks: [] }
-          const idx = ev.index ?? d.blocks.length
-          if (!d.blocks.some((b) => b.idx === idx)) {
-            // store 纪律：blocks 也必须新引用——旧实现 push+sort 就地改后 {...d} 浅拷，
-            // 新旧快照共享同一 blocks 数组（memo 到 draft.blocks 的消费方会拿到推送前的块表）
-            const blocks = [
-              ...d.blocks,
-              {
-                idx,
-                kind: (t === 'thinking' ? 'thinking' : t === 'tool_use' ? 'tool' : 'text') as Draft['blocks'][number]['kind'],
-                text: '',
-                toolId: ev.content_block?.id,
-                name: ev.content_block?.name,
-                jsonBuf: t === 'tool_use' ? '' : undefined,
-              },
-            ].sort((a, b) => a.idx - b.idx)
-            setDraft({ ...d, blocks })
-          }
-          break
+    const ev = rec.event as
+      | {
+          type?: string
+          index?: number
+          message?: { id?: string }
+          content_block?: { type?: string; id?: string; name?: string }
+          delta?: { type?: string; text?: string; thinking?: string; partial_json?: string }
         }
-        case 'content_block_delta': {
-          const delta = ev.delta
-          if (!delta) break
-          const d: Draft = draftStore.get() ?? { blocks: [] }
-          const idx = ev.index ?? d.blocks.length - 1
-          let b = d.blocks.find((x) => x.idx === idx)
-          if (!b) {
-            b = { idx, kind: 'text', text: '' }
-            d.blocks.push(b)
-            d.blocks.sort((a, z) => a.idx - z.idx)
-          }
-          if (delta.type === 'text_delta' && delta.text) b.text += delta.text
-          else if (delta.type === 'thinking_delta' && delta.thinking) {
-            b.kind = 'thinking'
-            b.text += delta.thinking
-          } else if (delta.type === 'input_json_delta' && delta.partial_json) b.jsonBuf = (b.jsonBuf ?? '') + delta.partial_json
-          // signature_delta 永不展示
-          setDraft({ ...d, blocks: [...d.blocks] })
-          break
+      | undefined
+    if (!ev?.type) return
+    switch (ev.type) {
+      case 'message_start':
+        setDraft({ msgId: ev.message?.id, blocks: [] })
+        break
+      case 'content_block_start': {
+        const t = ev.content_block?.type
+        const d: Draft = draftStore.get() ?? { blocks: [] }
+        const idx = ev.index ?? d.blocks.length
+        if (!d.blocks.some((b) => b.idx === idx)) {
+          // store 纪律：blocks 也必须新引用——旧实现 push+sort 就地改后 {...d} 浅拷，
+          // 新旧快照共享同一 blocks 数组（memo 到 draft.blocks 的消费方会拿到推送前的块表）
+          const blocks = [
+            ...d.blocks,
+            {
+              idx,
+              kind: (t === 'thinking' ? 'thinking' : t === 'tool_use' ? 'tool' : 'text') as Draft['blocks'][number]['kind'],
+              text: '',
+              toolId: ev.content_block?.id,
+              name: ev.content_block?.name,
+              jsonBuf: t === 'tool_use' ? '' : undefined,
+            },
+          ].sort((a, b) => a.idx - b.idx)
+          setDraft({ ...d, blocks })
         }
-        case 'message_stop':
-          commitDraft()
-          break
-        // content_block_stop / message_delta 无需处理（assistant 快照与 result 会收尾）
+        break
       }
+      case 'content_block_delta': {
+        const delta = ev.delta
+        if (!delta) break
+        const d: Draft = draftStore.get() ?? { blocks: [] }
+        const idx = ev.index ?? d.blocks.length - 1
+        let b = d.blocks.find((x) => x.idx === idx)
+        if (!b) {
+          b = { idx, kind: 'text', text: '' }
+          d.blocks.push(b)
+          d.blocks.sort((a, z) => a.idx - z.idx)
+        }
+        if (delta.type === 'text_delta' && delta.text) b.text += delta.text
+        else if (delta.type === 'thinking_delta' && delta.thinking) {
+          b.kind = 'thinking'
+          b.text += delta.thinking
+        } else if (delta.type === 'input_json_delta' && delta.partial_json) b.jsonBuf = (b.jsonBuf ?? '') + delta.partial_json
+        // signature_delta 永不展示
+        setDraft({ ...d, blocks: [...d.blocks] })
+        break
+      }
+      case 'message_stop':
+        commitDraft()
+        break
+      // content_block_stop / message_delta 无需处理（assistant 快照与 result 会收尾）
+    }
+  }
+
+  const handleAssistant = (msg: CliMsg) => {
+    const rec = msg as Record<string, unknown>
+    if (taskApi.appendSidechain(rec)) return
+    const content = (rec.message as { content?: unknown } | undefined)?.content
+    const blocks = Array.isArray(content) ? content : []
+    const msgId = (rec.message as { id?: string } | undefined)?.id
+    const d = draftStore.get()
+    // 兜底草稿（中途接入没见过 message_start，msgId 为 undefined）与本轮快照同源，
+    // 必须落入合并分支——否则快照直推一份、message_stop 的 commitDraft 再推一份，
+    // 同一轮回复在抄本里渲染两次（且同 id 工具块互相污染配对）
+    if (!d || (d.msgId !== undefined && msgId !== d.msgId)) {
+      const toolIds = blocks.filter((c) => c?.type === 'tool_use' && c.id).map((c) => String(c.id))
+      const keys = liveMessageKeys({ uuid: msg.uuid, messageId: msgId, toolIds })
+      // uuid / message.id / 工具块 id 任一已在抄本（HTTP 历史或先前 live）即跳过——
+      // 旧实现只比 message.id，而落盘 id 是 uuid，Codex 甚至没有 uuid，重连补发会重复气泡
+      if (hitsSeen(seenIdsRef.current, keys)) return
+      const direct: Block[] = []
+      for (const c of blocks) {
+        if (c?.type === 'text' && c.text?.trim()) direct.push({ kind: 'text', text: c.text })
+        else if (c?.type === 'thinking' && c.thinking?.trim()) direct.push({ kind: 'thinking', text: c.thinking })
+        else if (c?.type === 'tool_use')
+          direct.push({ kind: 'tool', id: c.id ?? nextId(), name: c.name ?? '?', input: c.input, pending: true })
+      }
+      if (direct.length > 0) pushMsg({ id: msg.uuid ?? msgId ?? nextId(), role: 'assistant', blocks: direct })
       return
     }
-
-    if (msg.type === 'control_response') {
-      const resp = rec.response as { subtype?: string; error?: string } | undefined
-      if (resp?.subtype === 'error') pushSystem(`⚠ ${resp.error ?? '控制请求失败'}`, 'error')
-      return
+    const dblocks = d.blocks.map((b) => ({ ...b }))
+    for (const c of blocks) {
+      const kind = c?.type === 'thinking' ? 'thinking' : c?.type === 'tool_use' ? 'tool' : 'text'
+      const b = dblocks.find((x) => !x.finalized && x.kind === kind && (kind !== 'tool' || !c.id || x.toolId === c.id))
+      if (!b) continue
+      b.finalized = true
+      if (c?.type === 'text' && c.text) b.text = c.text
+      else if (c?.type === 'thinking' && c.thinking) b.text = c.thinking
+      else if (c?.type === 'tool_use') {
+        b.name = c.name ?? b.name
+        b.toolId = c.id ?? b.toolId
+        b.jsonBuf = c.input != null ? JSON.stringify(c.input) : b.jsonBuf
+      }
     }
+    setDraft({ ...d, blocks: dblocks })
+  }
 
-    if (msg.type === 'assistant') {
-      if (taskApi.appendSidechain(rec)) return
+  const handleUser = (msg: CliMsg) => {
+    if (msg.isMeta) return
+    const rec = msg as Record<string, unknown>
+    // codex 工具输出的流式部分结果：更新运行中工具卡的文本，但不做任何终态动作
+    //（不 settle 桶、不进乱序缓冲、不标 seen——终态 tool_result 随后走正常路径收尾）
+    if (rec.partial === true) {
       const content = (rec.message as { content?: unknown } | undefined)?.content
       const blocks = Array.isArray(content) ? content : []
-      const msgId = (rec.message as { id?: string } | undefined)?.id
-      const d = draftStore.get()
-      // 兜底草稿（中途接入没见过 message_start，msgId 为 undefined）与本轮快照同源，
-      // 必须落入合并分支——否则快照直推一份、message_stop 的 commitDraft 再推一份，
-      // 同一轮回复在抄本里渲染两次（且同 id 工具块互相污染配对）
-      if (!d || (d.msgId !== undefined && msgId !== d.msgId)) {
-        const toolIds = blocks.filter((c) => c?.type === 'tool_use' && c.id).map((c) => String(c.id))
-        const keys = liveMessageKeys({ uuid: msg.uuid, messageId: msgId, toolIds })
-        // uuid / message.id / 工具块 id 任一已在抄本（HTTP 历史或先前 live）即跳过——
-        // 旧实现只比 message.id，而落盘 id 是 uuid，Codex 甚至没有 uuid，重连补发会重复气泡
-        if (hitsSeen(seenIdsRef.current, keys)) return
-        // 没有对应草稿（如中途接入）：直接落为完整消息
-        const direct: Block[] = []
-        for (const c of blocks) {
-          if (c?.type === 'text' && c.text?.trim()) direct.push({ kind: 'text', text: c.text })
-          else if (c?.type === 'thinking' && c.thinking?.trim()) direct.push({ kind: 'thinking', text: c.thinking })
-          else if (c?.type === 'tool_use')
-            direct.push({ kind: 'tool', id: c.id ?? nextId(), name: c.name ?? '?', input: c.input, pending: true })
-        }
-        if (direct.length > 0) pushMsg({ id: msg.uuid ?? msgId ?? nextId(), role: 'assistant', blocks: direct })
-        return
-      }
-      // 块快照：把草稿中对应的增量块定稿（去重关键：同 message.id 同 kind 按序匹配）
-      const dblocks = d.blocks.map((b) => ({ ...b }))
-      for (const c of blocks) {
-        const kind = c?.type === 'thinking' ? 'thinking' : c?.type === 'tool_use' ? 'tool' : 'text'
-        const b = dblocks.find((x) => !x.finalized && x.kind === kind && (kind !== 'tool' || !c.id || x.toolId === c.id))
-        if (!b) continue
-        b.finalized = true
-        if (c?.type === 'text' && c.text) b.text = c.text
-        else if (c?.type === 'thinking' && c.thinking) b.text = c.thinking
-        else if (c?.type === 'tool_use') {
-          b.name = c.name ?? b.name
-          b.toolId = c.id ?? b.toolId
-          b.jsonBuf = c.input != null ? JSON.stringify(c.input) : b.jsonBuf
-        }
-      }
-      setDraft({ ...d, blocks: dblocks })
-      return
-    }
-
-    if (msg.type === 'user') {
-      if (msg.isMeta) return
-      // codex 工具输出的流式部分结果：更新运行中工具卡的文本，但不做任何终态动作
-      //（不 settle 桶、不进乱序缓冲、不标 seen——终态 tool_result 随后走正常路径收尾）
-      if (rec.partial === true) {
-        const content = (rec.message as { content?: unknown } | undefined)?.content
-        const blocks = Array.isArray(content) ? content : []
-        const append = rec.append === true
-        for (const c of blocks) {
-          if (c?.type === 'tool_result') {
-            const id = c.tool_use_id as string | undefined
-            const text = toolResultText(c.content)
-            if (!id) continue
-            setMsgs((prev) => pairToolResultPartialIn(prev, toolPosRef.current, id, text, append).msgs)
-          }
-        }
-        return
-      }
-      if (taskApi.appendSidechain(rec)) return
-      const content = (rec.message as { content?: unknown } | undefined)?.content
-      const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
-      const textBlocks: Block[] = []
+      const append = rec.append === true
       for (const c of blocks) {
         if (c?.type === 'tool_result') {
-          const resultText = toolResultText(c.content)
-          pairToolResult(c.tool_use_id, resultText, c.is_error === true)
-          // 主线 Agent tool_result 是子代理的终态兜底（正常路径是 task_notification 先到）
-          taskApi.settleBucketFromResult(c.tool_use_id, resultText, c.is_error === true)
-        } else if (c?.type === 'text' && c.text?.trim()) {
-          // /goal 的评估器反馈（Stop hook）：goal 循环内的中途评估，渲染为系统提示而非用户气泡
-          if (c.text.startsWith('Stop hook feedback:')) {
-            const body = c.text.replace(/^Stop hook feedback:\s*/, '')
-            pushSystem(`◎ 目标评估：${body.slice(0, 300)}`)
-            continue
-          }
-          textBlocks.push({ kind: 'text', text: c.text })
-        }
-      }
-      if (textBlocks.length > 0) {
-        const keys = liveMessageKeys({ uuid: msg.uuid })
-        if (hitsSeen(seenIdsRef.current, keys)) return
-        pushMsg({ id: msg.uuid ?? nextId(), role: 'user', blocks: textBlocks })
-      }
-      return
-    }
-
-    if (msg.type === 'system') {
-      switch (msg.subtype) {
-        case 'init': {
-          const slash = Array.isArray(rec.slash_commands) ? (rec.slash_commands as string[]) : undefined
-          setInitInfo({ model: rec.model as string | undefined, slashCommands: slash })
-          setPermMode(rec.permissionMode as string | undefined)
-          break
-        }
-        case 'status': {
-          // status 是 string|null（如 "requesting"/"compacting"），不是对象——勿迭代
-          const st = rec.status
-          setPhase(typeof st === 'string' ? st : undefined)
-          if (typeof rec.permissionMode === 'string') setPermMode(rec.permissionMode)
-          break
-        }
-        case 'thinking_tokens':
-          break // 增量 token 估算，不展示
-        case 'task_started': {
-          // 生命周期事件是桶的主注册点（实现在 hooks/useTaskBuckets.ts）
-          taskApi.taskStarted(rec)
-          if (!replay) pushSystem(`⚙ 后台任务启动：${String(rec.description ?? '')}`)
-          break
-        }
-        case 'task_progress': {
-          taskApi.taskProgress(rec)
-          break
-        }
-        case 'task_updated': {
-          taskApi.taskUpdated(rec)
-          break
-        }
-        case 'task_notification': {
-          const summary = typeof rec.summary === 'string' ? rec.summary : ''
-          taskApi.taskNotification(rec)
-          if (!replay) pushSystem(`⚙ 后台任务完成${summary ? `：${summary.slice(0, 200)}` : ''}`)
-          break
-        }
-        case 'compact_boundary': {
-          if (replay) break
-          const meta = (rec.compactMetadata ?? {}) as { preTokens?: number; postTokens?: number }
-          pushMsg({ id: nextId(), role: 'system', systemKind: 'divider', compactMeta: meta, blocks: [] })
-          break
+          const id = c.tool_use_id as string | undefined
+          const text = toolResultText(c.content)
+          if (!id) continue
+          setMsgs((prev) => pairToolResultPartialIn(prev, toolPosRef.current, id, text, append).msgs)
         }
       }
       return
     }
-
-    if (msg.type === 'result') {
-      commitDraft()
-      setPhase(undefined)
-      // 补发的旧 result 已在 HTTP 历史里，再落「本轮」会在底部堆出一串重复页脚
-      if (replay) return
-      if (msg.uuid && hitsSeen(seenIdsRef.current, [msg.uuid])) return
-      if (msg.uuid) rememberKeys(seenIdsRef.current, [msg.uuid])
-      const isErr = rec.is_error === true
-      const dur = typeof rec.duration_ms === 'number' ? `${Math.round(rec.duration_ms / 1000)}s` : undefined
-      const usage = rec.usage as { output_tokens?: number } | undefined
-      const parts = [dur, usage?.output_tokens != null ? `${usage.output_tokens} tok` : undefined].filter(Boolean)
-      if (isErr) {
-        pushSystem(`⚠ ${String(rec.result ?? rec.subtype ?? '执行出错')}`, 'error')
-      } else if (parts.length > 0) {
-        pushSystem(`─ 本轮 ${parts.join(' · ')}`)
+    if (taskApi.appendSidechain(rec)) return
+    const content = (rec.message as { content?: unknown } | undefined)?.content
+    const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
+    const textBlocks: Block[] = []
+    for (const c of blocks) {
+      if (c?.type === 'tool_result') {
+        const resultText = toolResultText(c.content)
+        pairToolResult(c.tool_use_id, resultText, c.is_error === true)
+        // 主线 Agent tool_result 是子代理的终态兜底（正常路径是 task_notification 先到）
+        taskApi.settleBucketFromResult(c.tool_use_id, resultText, c.is_error === true)
+      } else if (c?.type === 'text' && c.text?.trim()) {
+        // /goal 的评估器反馈（Stop hook）：goal 循环内的中途评估，渲染为系统提示而非用户气泡
+        if (c.text.startsWith('Stop hook feedback:')) {
+          const body = c.text.replace(/^Stop hook feedback:\s*/, '')
+          pushSystem(`◎ 目标评估：${body.slice(0, 300)}`)
+          continue
+        }
+        textBlocks.push({ kind: 'text', text: c.text })
       }
-      return
+    }
+    if (textBlocks.length > 0) {
+      const keys = liveMessageKeys({ uuid: msg.uuid })
+      if (hitsSeen(seenIdsRef.current, keys)) return
+      pushMsg({ id: msg.uuid ?? nextId(), role: 'user', blocks: textBlocks })
+    }
+  }
+
+  const handleSystem = (msg: CliMsg, replay: boolean) => {
+    const rec = msg as Record<string, unknown>
+    switch (msg.subtype) {
+      case 'init': {
+        const slash = Array.isArray(rec.slash_commands) ? (rec.slash_commands as string[]) : undefined
+        setInitInfo({ model: rec.model as string | undefined, slashCommands: slash })
+        setPermMode(rec.permissionMode as string | undefined)
+        break
+      }
+      case 'status': {
+        // status 是 string|null（如 "requesting"/"compacting"），不是对象——勿迭代
+        const st = rec.status
+        setPhase(typeof st === 'string' ? st : undefined)
+        if (typeof rec.permissionMode === 'string') setPermMode(rec.permissionMode)
+        break
+      }
+      case 'thinking_tokens':
+        break // 增量 token 估算，不展示
+      case 'task_started': {
+        taskApi.taskStarted(rec)
+        if (!replay) pushSystem(`⚙ 后台任务启动：${String(rec.description ?? '')}`)
+        break
+      }
+      case 'task_progress': {
+        taskApi.taskProgress(rec)
+        break
+      }
+      case 'task_updated': {
+        taskApi.taskUpdated(rec)
+        break
+      }
+      case 'task_notification': {
+        const summary = typeof rec.summary === 'string' ? rec.summary : ''
+        taskApi.taskNotification(rec)
+        if (!replay) pushSystem(`⚙ 后台任务完成${summary ? `：${summary.slice(0, 200)}` : ''}`)
+        break
+      }
+      case 'compact_boundary': {
+        if (replay) break
+        const meta = (rec.compactMetadata ?? {}) as { preTokens?: number; postTokens?: number }
+        pushMsg({ id: nextId(), role: 'system', systemKind: 'divider', compactMeta: meta, blocks: [] })
+        break
+      }
+    }
+  }
+
+  const handleResult = (msg: CliMsg, replay: boolean) => {
+    const rec = msg as Record<string, unknown>
+    commitDraft()
+    setPhase(undefined)
+    // 补发的旧 result 已在 HTTP 历史里，再落「本轮」会在底部堆出一串重复页脚
+    if (replay) return
+    if (msg.uuid && hitsSeen(seenIdsRef.current, [msg.uuid])) return
+    if (msg.uuid) rememberKeys(seenIdsRef.current, [msg.uuid])
+    const isErr = rec.is_error === true
+    const dur = typeof rec.duration_ms === 'number' ? `${Math.round(rec.duration_ms / 1000)}s` : undefined
+    const usage = rec.usage as { output_tokens?: number } | undefined
+    const parts = [dur, usage?.output_tokens != null ? `${usage.output_tokens} tok` : undefined].filter(Boolean)
+    if (isErr) {
+      pushSystem(`⚠ ${String(rec.result ?? rec.subtype ?? '执行出错')}`, 'error')
+    } else if (parts.length > 0) {
+      pushSystem(`─ 本轮 ${parts.join(' · ')}`)
+    }
+  }
+
+  const handleCli = (msg: CliMsg, replay = false) => {
+    switch (msg.type) {
+      case 'stream_event':
+        handleStreamEvent(msg)
+        return
+      case 'control_response': {
+        const resp = (msg as Record<string, unknown>).response as { subtype?: string; error?: string } | undefined
+        if (resp?.subtype === 'error') pushSystem(`⚠ ${resp.error ?? '控制请求失败'}`, 'error')
+        return
+      }
+      case 'assistant':
+        handleAssistant(msg)
+        return
+      case 'user':
+        handleUser(msg)
+        return
+      case 'system':
+        handleSystem(msg, replay)
+        return
+      case 'result':
+        handleResult(msg, replay)
+        return
     }
   }
 
