@@ -50,6 +50,13 @@
   `turns/list` 对 legacy 可用但内嵌 items 只有 user/agentMessage，`items/list` 对 legacy 报 -32601
   ——**legacy 线程只能继续走 `thread/read includeTurns` 的残缺现状，借不了分页 API 补齐**。
 
+## 回滚与分叉（0.155.1 实测）
+
+- **0.155.1 起 `ephemeral paginated thread/fork` 强制 `excludeTurns: true`**，缺省直接报
+  -32600（`ephemeral paginated thread/fork requires excludeTurns: true`）。非 ephemeral 的
+  legacy fork 不受影响。AnyPlane 侧已恒传 `excludeTurns: true`（`runEphemeralQuestion`，
+  字段自 0.154.0 存在，双版本兼容）。
+
 ## 回滚（方向四，0.153.4 实测）
 
 - paginated 走 `thread/revert`：原地截断持久历史，thread id/连接/订阅全保留，完成后服务端发
@@ -70,3 +77,19 @@
   deepseek-v4-flash 在 0.148.0 与 0.153.4 **同现 spawn→wait→再 spawn 死循环**，
   直连 app-server（无 AnyPlane 介入）也复现——上游/模型侧问题，与 AnyPlane 及 CLI 升级无关。
   升级回归时这三项失败**不代表协议回归**，看 A/B/C1/C2 即可。
+  0.155.1 换 kimi-for-coding 复现同族症状（子代理 turn >380s 无 result），结论不变。
+- **msys2 CreateFileMapping 崩溃（2026-09-19，0.155.1 + Windows 实测，根因已定位）**：
+  `command/exec` 与 Bash 工具命令在**除 `dangerFullAccess` 外的所有沙箱档**（默认/
+  readOnly/workspaceWrite）下，msys2/cygwin 二进制（bash.exe、whoami.exe 等 Git usr/bin
+  全体）必现 `fatal error - CreateFileMapping S-1-5-21-…-1001.1, Win32 error 5`；同命令
+  `dangerFullAccess` 正常，PowerShell/cmd 全档正常（非 cygwin 不碰共享内存 section）。
+  **根因**：0.155.1 起 Windows 沙箱走 restricted token（codex-rs `windows-sandbox-rs/
+  token.rs`：`CreateRestrictedToken(DISABLE_MAX_PRIVILEGE | LUA_TOKEN | WRITE_RESTRICTED)`），
+  msys2 运行时无法用该 token 创建/打开以其 SID 命名的共享内存 section。上游同类报告：
+  openai/codex#12000。**重启 Windows 不能治愈**（与进程泄漏无关；唯一已知缓解是
+  `sandboxPolicy: dangerFullAccess`，代价是放弃沙箱）。偶发成功（如 e2e-codex-delta
+  turn1 出过 tick-1）的最自洽解释：受限 token 进程在 section 尚不存在时**新建**可以成功，
+  一旦本机已有正常 token 创建的同名 section（如长活的 Git Bash 会话），**打开**即
+  ACCESS_DENIED——故表现 flaky 且与"谁先起跑"相关。e2e-codex-streaming 的 B 组断言
+  在此环境下失败是环境/上游问题，不是协议回归——用 `e2e-codex-delta` 的 outputDelta
+  探针验证 wire 通路即可区分。

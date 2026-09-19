@@ -250,7 +250,9 @@ export class CodexRuntime {
     timeoutMs = 180_000,
     onDelta?: (delta: string, thinking?: boolean) => void,
   ): Promise<{ text: string; usage?: Record<string, number> }> {
-    const fork = (await this.rpcRequest('thread/fork', { threadId: sourceThreadId, ephemeral: true }, 60_000)) as {
+    // excludeTurns 自 0.155.1 起对 ephemeral paginated fork 是硬性要求（缺省报 -32600）；
+    // 字段在 0.154.0 schema 已存在（可选），一次性问答不读 fork 的 turns，恒传 true 双版本兼容。
+    const fork = (await this.rpcRequest('thread/fork', { threadId: sourceThreadId, ephemeral: true, excludeTurns: true }, 60_000)) as {
       thread: { id: string }
     }
     const forkId = fork.thread.id
