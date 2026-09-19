@@ -3,9 +3,8 @@
 import type { ServerWebSocket } from 'bun'
 import { portFor } from '../backends/port'
 import { log } from '../log'
-import { addInboxClient, inboxSnapshot, removeInboxClient } from '../push/inbox'
 import { errorMessage } from '../util'
-import { replayApprovals, sendTo } from './broadcast'
+import { inboxChannel, replayApprovals, sendTo } from './broadcast'
 import { handleClientMessage } from './messages'
 import { getHub, hubs } from './registry'
 import { statusOf } from './status'
@@ -14,18 +13,25 @@ import type { WSData, WSDataInbox } from './types'
 // 30s 协议层下行 ping：前端 ReconnectingSocket 没有应用层心跳，空闲会话的 /ws 长连接
 // 可能数分钟无任何消息——Bun.serve 默认 idleTimeout=120s 会把它静默掐断（前端重连虽无感，
 // 但审批/事件推送会落在重连窗口里）；经 gateway 访问时也能为后端腿持续制造下行流量。
-export function wsOpen(ws: ServerWebSocket<WSData>): void {
+function startKeepalive(ws: ServerWebSocket<WSData>): void {
   ws.data.keepalive = setInterval(() => {
     try {
       ws.ping()
     } catch {}
   }, 30_000)
+}
+
+export function wsOpen(ws: ServerWebSocket<WSData>): void {
   if (ws.data.inbox) {
-    addInboxClient(ws as ServerWebSocket<WSDataInbox>)
+    // 先取 Channel：未装配即 fail fast，不先挂 keepalive（否则 throw 会漏定时器）
+    const inbox = inboxChannel()
+    startKeepalive(ws)
+    inbox.add(ws as ServerWebSocket<WSDataInbox>)
     // inbox 频道发的是 InboxEvent（非会话 ServerEvent），sendTo 不适用，直发
-    ws.send(JSON.stringify(inboxSnapshot()))
+    ws.send(JSON.stringify(inbox.snapshot()))
     return
   }
+  startKeepalive(ws)
   const hub = getHub(ws.data.key)
   hub.clients.add(ws)
   portFor(ws.data.key).sessionOf(ws.data.key)?.attachClient()
@@ -47,7 +53,7 @@ export function wsMessage(ws: ServerWebSocket<WSData>, raw: string | Buffer): vo
 export function wsClose(ws: ServerWebSocket<WSData>): void {
   if (ws.data.keepalive) clearInterval(ws.data.keepalive)
   if (ws.data.inbox) {
-    removeInboxClient(ws as ServerWebSocket<WSDataInbox>)
+    inboxChannel().remove(ws as ServerWebSocket<WSDataInbox>)
     return
   }
   let hub = hubs.get(ws.data.key)
