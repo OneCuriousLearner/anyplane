@@ -3,7 +3,7 @@
 
 import type { ArchivedEntry, CodexModelInfo, HistoryResponse, QueryResultPayload, SessionState } from '@anyplane/protocol'
 import { defaultPermissionMode } from '../../config'
-import { generateCodexBrief, type HandoffDetail } from '../../handoff'
+import { briefPrompt, type HandoffDetail } from '../../lineage'
 import { log } from '../../log'
 import { errorMessage } from '../../util'
 import type { Hub } from '../../hub/types'
@@ -248,7 +248,7 @@ class CodexPort implements BackendPort {
     sourceId: string,
     detail: HandoffDetail,
   ): Promise<{ text: string; usage?: Record<string, number> }> {
-    return generateCodexBrief(sourceId, detail)
+    return codexRuntime.runEphemeralQuestion(sourceId, briefPrompt(detail))
   }
 
   async seedHandoffTarget(hub: Hub, seed: string): Promise<string | undefined> {

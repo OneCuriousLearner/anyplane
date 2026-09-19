@@ -14,7 +14,7 @@ import {
   validSecret,
   webhookCount,
   type PushPayload,
-} from '../push'
+} from '../push/vapid'
 import { approvalPageHtml, sessionNameOf } from '../push/fanout'
 import { errorMessage } from '../util'
 import { json, readJsonBody } from './http'

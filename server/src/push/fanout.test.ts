@@ -4,7 +4,7 @@
 // - approvalPageHtml：webhook 一键审批确认页——工具名/摘要/会话名全部转义（XSS 面），
 //   能力 secret 只经页面 URL 传递、绝不写进 HTML
 // - fanoutPush：inbox 事件 → 推送载荷装配与类型过滤（snapshot/approval_resolved 不推送）
-// webhook 通道走 config.pushWebhooks 改写 + 全局 fetch 捕获（push.test.ts 同款模式），
+// webhook 通道走 config.pushWebhooks 改写 + 全局 fetch 捕获（vapid.test.ts 同款模式），
 // 零真实出站；订阅表本机为空（subscriptionCount=0），web push 腿不产生捕获。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'

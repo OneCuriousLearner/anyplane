@@ -1,0 +1,57 @@
+// 接力领域：共用简报文案 + 血缘 IO。
+// 编排在 hub/handoff.ts；各后端的 fork 简报在对应 port（claude 离线 spawn / codex ephemeral）。
+// 已在 handoff-lab 实验验证：两家的"对话内隐藏设计"可经简报无损传递（见 docs/plans/unified-agent-plane.md 附录）。
+
+import { join } from 'node:path'
+import type { BackendName, LineageRecord } from '@anyplane/protocol'
+import { ccDataDir, readJsonFile, writeJsonFile } from './util'
+
+/** 简报详略词表：wire 正本是 protocol LineageRecord.detail，此处派生别名（不另立联合） */
+export type HandoffDetail = LineageRecord['detail']
+
+const BRIEF_LIMITS: Record<HandoffDetail, number> = { brief: 300, standard: 500, detailed: 800 }
+
+export const BACKEND_LABEL: Record<BackendName, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+}
+
+/** 两个后端共用的简报提示词（与实验验证过的措辞一致） */
+export function briefPrompt(detail: HandoffDetail): string {
+  return `假设你要把这个项目交接给另一个 coding agent（它看不到我们的对话，只能看到文件系统和 git 历史）继续开发。请写一份交接简报，包含：项目目标、当前进度、关键架构决策（尤其是只存在于我们对话里、没写进任何文件的决定）、文件清单与状态、明确的下一步任务。${BRIEF_LIMITS[detail]}字以内，直接输出简报正文，不要客套话。`
+}
+
+/** 目标会话的首条消息：简报 + 现场确认指令（实验验证的关键一环） */
+export function seedMessage(cwd: string, sourceBackend: BackendName, brief: string): string {
+  return `你在 ${cwd} 接替另一个 agent（${BACKEND_LABEL[sourceBackend]}）继续开发这个项目。以下是它写的交接简报：
+
+${brief}
+
+请先确认现场（git log --oneline、读关键文件验证简报属实），然后继续接手工作。`
+}
+
+// ---------- 血缘 ----------
+
+// LineageRecord 正本在 @anyplane/protocol（前端接力链渲染共用同一形状）
+
+function lineagePath(): string {
+  return join(ccDataDir(), 'lineage.json')
+}
+
+export function appendLineage(rec: LineageRecord): void {
+  const path = lineagePath()
+  const all = readJsonFile<LineageRecord[]>(path) ?? []
+  all.push(rec)
+  writeJsonFile(path, all, { pretty: true })
+}
+
+export function lineageFor(key: string): LineageRecord[] {
+  const all = readJsonFile<LineageRecord[]>(lineagePath()) ?? []
+  return all.filter(
+    (r) =>
+      r.fromKey === key ||
+      r.toKey === key ||
+      r.fromResolvedKey === key ||
+      r.toResolvedKey === key,
+  )
+}

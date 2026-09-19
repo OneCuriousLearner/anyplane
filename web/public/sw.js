@@ -30,7 +30,7 @@ function approvalPageUrl(actions) {
   }
 }
 
-// payload 形状见 server/src/push.ts 的 PushPayload
+// payload 形状见 server/src/push/vapid.ts 的 PushPayload
 self.addEventListener('push', (e) => {
   if (!e.data) return
   let p

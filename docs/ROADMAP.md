@@ -59,7 +59,7 @@ iOS 半区 spike 收官但**被平台回归阻断**（见下）。**完整踩坑
 iOS 当前替代路径：通知点正文进 app 内审批（两步，永远可用）。
 
 **待办（按优先级）**：
-1. **等监视器变红** → 启动 iOS APNs 接入（$99 账号 + `push.ts` 的 HTTP/2 + JWT 通道；
+1. **等监视器变红** → 启动 iOS APNs 接入（$99 账号 + `push/vapid.ts` 的 HTTP/2 + JWT 通道；
    载荷红线见下）与 TestFlight 一步审批验收
 2. **Android 15+ 的 `dataSync` FGS 配额**（6h/24h，全天挂监听会被强停且配额内禁重启）：
    评估 specialUse 类型或到点提醒兜底——上架前必须定案
@@ -87,7 +87,7 @@ iOS 当前替代路径：通知点正文进 app 内审批（两步，永远可�
 iOS 的 Web Push 本来就走 APNs，换原生壳**不新增**第三方——这一点不构成阻碍。
 真正的变化是载荷可见性：Web Push 是 aes128gcm 端到端加密的（Apple 读不到正文），
 原生 APNs 推送的载荷 Apple 可读。审批通知的内容只有工具名 + 命令摘要 + 项目名，
-且 ntfy/Bark/Server酱 通道本来就是渠道可读（见 `push.ts` 的 webhook 段注释），
+且 ntfy/Bark/Server酱 通道本来就是渠道可读（见 `push/vapid.ts` 的 webhook 段注释），
 故该取舍可接受；但**能力 URL 里的 secret 绝不能进 APNs 明文载荷**——
 APNs 接入时推送只带 requestId，客户端持长期凭据回连本机裁决。
 
@@ -198,7 +198,8 @@ O(会话数 × 文件大小)"表述；但稀疏文件与未清 OS 缓存会影�
 > phase 机）；13.5 时机红线不动；13.6 完成（「合并后自动删分支」已启用）。
 > **同日另交**：AI 维护残留机械清理两档（PR #58 / #59），交付记录见 [delivered.md](delivered.md)；
 > hub 编排收口 BackendPort（/clear 与接力的 key 构造/rekey 不再直连适配器）、
-> inbox 装配注入（InboxChannel，撤 socket.ts 豁免）见 [delivered.md](delivered.md)。
+> inbox 装配注入（InboxChannel，撤 socket.ts 豁免）、
+> 搬家改名（archive / vapid / lineage；`claude/protocol.ts` 仍单独待排）见 [delivered.md](delivered.md)。
 > 下一层（非机械抽出）见本节「待排期」。
 
 **立项背景（2026-09-17）**：一次外部视角的全量架构评审，
@@ -356,7 +357,7 @@ Claude 与 Codex 各自 adapter 翻译进来。这是让 vendor-neutral 从 slog
 | **会话类统一** | `ClaudeSession` / `CodexSession` 结构化同形、实现两份 | 等 13.5 或明确第三家后端 | 不要在 vendor-anchored 词汇表上硬揉成一个类 |
 | **ensure 零 await** | 13.2 已记：Biome/GritQL 够不到 class 方法，仍靠注释 | 根治 = 把同步部分拆成无 Promise 的方法，属 API 形状改造 | 不要加一条永远不响的 lint 规则充数 |
 | **真 CLI e2e** | 仅 `e2e-mock` 进 CI；其余脚本仍手跑（需真实 CLI + 凭据） | 再有一条不需要模型调用的链路（审批以外）再搬 | 不要把依赖真实模型的探针塞进 CI |
-| **搬家改名** | `push.ts` vs `push/`、根 `handoff.ts` vs `hub/handoff.ts`、`archive.ts` 属 Claude 却在根上、`claude/protocol.ts` 与 `@anyplane/protocol` 撞名 | inbox 注入之后；`protocol.ts` 单独 PR | 不要合并互补拆分（加密 vs 扇出、领域 vs 编排） |
+| **claude/protocol.ts 改名** | 与 `@anyplane/protocol` 撞名；其余搬家（archive / vapid / lineage）已落地 | 单独 PR | 不要绑进其它语义改动；引用面宽、零逻辑 |
 
 已写在别处、不要在本表重复开工的：
 

@@ -23,10 +23,10 @@ import {
   randomBytes,
 } from 'node:crypto'
 import { join } from 'node:path'
-import { isLoopbackHostname } from './auth'
-import { config, type PushWebhookConfig } from './config'
-import { ccDataDir, readJsonFile, writeJsonFile } from './util'
-import { log } from './log'
+import { isLoopbackHostname } from '../auth'
+import { config, type PushWebhookConfig } from '../config'
+import { ccDataDir, readJsonFile, writeJsonFile } from '../util'
+import { log } from '../log'
 
 interface PushSubscriptionRow {
   endpoint: string

@@ -10,6 +10,18 @@
 
 ---
 
+## 搬家改名（archive / vapid / lineage）——2026-09-19
+
+定性：同名文件对目录、家放错的检索债。互补拆分保留（加密 vs 扇出、领域 vs 编排），只改家。
+
+**做了什么**：`archive.ts` → `backends/claude/`（只被 claude port 用）；`push.ts` → `push/vapid.ts`（VAPID/aes128gcm 正本，fanout 仍独立）；根 `handoff.ts` → `lineage.ts`（文案 + 血缘），`generateClaudeBrief` / `generateCodexBrief` 推进各 port。
+
+**刻意不做**：`claude/protocol.ts` → `streamJson.ts`（引用面最宽，单独 PR）；不合并 fanout 与 vapid、不合并 hub/handoff 与 lineage。
+
+review 收口：`driftGuard.ts` 头注释的告警投递指向 `push/vapid.ts`。
+
+---
+
 ## inbox 装配注入（InboxChannel）——2026-09-19
 
 定性：hub↛push 红线此前靠 `socket.ts` 豁免（`addInboxClient` / `inboxSnapshot` /

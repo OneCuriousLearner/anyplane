@@ -1,13 +1,14 @@
 // claude 后端适配器：把 processManager/discovery 的能力包装成 BackendPort。
 // 方法体多为 index.ts 原 claude 分支的逐字搬迁——重构红线是零行为改动。
 
+import { spawn } from 'bun'
 import { appendFileSync, existsSync } from 'node:fs'
 import type { ArchivedEntry, HistoryResponse, QueryResultPayload, SessionState, TierModelName } from '@anyplane/protocol'
-import { archiveClaudeSession, listTrash, restoreClaudeSession } from '../../archive'
 import { defaultPermissionMode } from '../../config'
-import { briefPrompt, generateClaudeBrief, type HandoffDetail } from '../../handoff'
+import { briefPrompt, type HandoffDetail } from '../../lineage'
 import { log } from '../../log'
-import { errorMessage, sanitizePath, transcriptPathOf } from '../../util'
+import { childEnv, errorMessage, pumpLines, sanitizePath, transcriptPathOf } from '../../util'
+import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive'
 import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
@@ -23,7 +24,7 @@ import type { SessionSummary, SpawnOptions } from '../types'
 import { hydratedContextOf, keyFor, keyForBranch, keyForNew as claudeKeyForNew, parseKey, splitExistingKey, type ParsedKey } from './backend'
 import { listSessions as listDiscoveredSessions, liveSessionInfo, readHistory as readClaudeHistory } from './discovery'
 import { resolveTierModelNames } from './modelNames'
-import { processManager, type ClaudeSession } from './processManager'
+import { processManager, resolveClaudeCommand, type ClaudeSession } from './processManager'
 import { sessionModelOf } from './sessionModels'
 import { TranscriptTailer } from './tailer'
 
@@ -31,6 +32,83 @@ import { TranscriptTailer } from './tailer'
 function offlineModelOf(key: string): string | undefined {
   const ek = splitExistingKey(key)
   return ek ? sessionModelOf(ek.sessionId) : undefined
+}
+
+/** 离线源：`--fork-session --bare` 一次性问答。在线路径走 side_question，见 forkBriefForHandoff。 */
+async function generateClaudeBrief(
+  cwd: string,
+  sessionId: string,
+  detail: HandoffDetail,
+  timeoutMs = 180_000,
+): Promise<{ text: string; usage?: Record<string, number> }> {
+  const { cmd, prefix } = resolveClaudeCommand()
+  const question = briefPrompt(detail)
+  const proc = spawn(
+    [
+      cmd,
+      ...prefix,
+      '-p',
+      question,
+      '--fork-session',
+      '--resume',
+      sessionId,
+      '-n',
+      'FORK: 交接简报',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      // --bare（2.1.220 实测与 fork-session 兼容）：跳过 hooks/LSP/plugin 同步/CLAUDE.md
+      // 自动发现等，一次性 spawn 提速约 46%（5.6s→3.0s）。简报内容来自对话历史，
+      // CLAUDE.md 缺席对简报质量影响可忽略；用户 hooks 在临时 fork 上本就不该触发。
+      '--bare',
+    ],
+    { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: childEnv() },
+  )
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      try {
+        proc.kill()
+      } catch {}
+      reject(new Error('简报生成超时'))
+    }, timeoutMs)
+    let finalText = ''
+    let isError = false
+    let usage: Record<string, number> | undefined
+    void (async () => {
+      try {
+        await pumpLines(
+          proc.stdout as ReadableStream<Uint8Array>,
+          (line) => {
+            if (!line.startsWith('{')) return
+            let obj: Record<string, unknown>
+            try {
+              obj = JSON.parse(line)
+            } catch {
+              return
+            }
+            if (obj.type === 'result') {
+              finalText = String(obj.result ?? '')
+              isError = obj.is_error === true
+              usage = (obj.usage as Record<string, number> | undefined) ?? undefined
+            }
+          },
+          (e) => {
+            throw e // 交外层 catch 统一 reject
+          },
+        )
+        const code = await proc.exited
+        clearTimeout(timer)
+        if (isError || code !== 0 || !finalText.trim()) {
+          reject(new Error(`简报生成失败: ${finalText || `exit ${code}`}`))
+        } else {
+          resolve({ text: finalText.trim(), usage })
+        }
+      } catch (e) {
+        clearTimeout(timer)
+        reject(e instanceof Error ? e : new Error(String(e)))
+      }
+    })()
+  })
 }
 
 class ClaudePort implements BackendPort {

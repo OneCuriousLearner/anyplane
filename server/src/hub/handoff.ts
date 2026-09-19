@@ -1,9 +1,9 @@
 // 接力（handoff）跨后端编排：源会话自摘要 → 目标会话播种 → 血缘落盘。
-// 领域函数（简报生成/播种文案/血缘 IO）在 ../handoff.ts；这里只做编排与进度事件推源 Hub。
+// 领域函数（播种文案/血缘 IO）在 ../lineage.ts；各后端 fork 简报在对应 port。这里只做编排与进度事件推源 Hub。
 
 import type { BackendName } from '@anyplane/protocol'
 import { backendPort, portFor, resolvedSessionKey } from '../backends/port'
-import { appendLineage, seedMessage, type HandoffDetail } from '../handoff'
+import { appendLineage, seedMessage, type HandoffDetail } from '../lineage'
 import { errorMessage, sanitizePath } from '../util'
 import { broadcast } from './broadcast'
 import { getHub, hubs } from './registry'

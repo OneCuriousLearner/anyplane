@@ -8,13 +8,13 @@
 //   4. 配置了 pushWebhooks 时（driftAlert 默认开），漂移检出即发 error 级通知到手机。
 //
 // 仓库约定：本模块只被服务端入口与两个 check 脚本引用，不产生任何外发请求
-// （告警走 push.ts 的既有 webhook 扇出，配置即信任边界不变）。
+// （告警走 push/vapid.ts 的既有 webhook 扇出，配置即信任边界不变）。
 
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import type { BackendName } from '@anyplane/protocol'
 import { config } from './config'
-import { pushWebhooksToAll } from './push'
+import { pushWebhooksToAll } from './push/vapid'
 import { log } from './log'
 import { ccDataDir, childEnv, readJsonFile, writeJsonFile } from './util'
 

@@ -11,7 +11,7 @@
 // registerBackend 注入，与 initBackendPorts 同一模式，不依赖 ESM 加载顺序副作用。
 
 import type { Hub } from '../hub/types'
-import type { HandoffDetail } from '../handoff'
+import type { HandoffDetail } from '../lineage'
 import { errorMessage } from '../util'
 import type {
   ApprovalDecision,

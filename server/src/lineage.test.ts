@@ -1,4 +1,4 @@
-// 接力编排：briefPrompt/seedMessage 的纯文案契约（进程内），
+// 接力领域：briefPrompt/seedMessage 的纯文案契约（进程内），
 // 以及 appendLineage/lineageFor 的血缘读写（子进程 + 临时 HOME 隔离——
 // ccDataDir 走 homedir() 而 Bun 的 homedir 进程启动时定型，且绝不能触碰真实 ~/.anyplane/lineage.json）。
 
@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { BACKEND_LABEL, briefPrompt, seedMessage } from './handoff'
+import { BACKEND_LABEL, briefPrompt, seedMessage } from './lineage'
 
 describe('briefPrompt', () => {
   test('三档字数上限分别嵌入提示词', () => {
@@ -40,7 +40,7 @@ describe('seedMessage', () => {
 
 // ---------- 血缘（子进程隔离） ----------
 
-const HANDOFF_URL = pathToFileURL(join(import.meta.dir, 'handoff.ts')).href
+const LINEAGE_URL = pathToFileURL(join(import.meta.dir, 'lineage.ts')).href
 const tmpRoots: string[] = []
 
 afterEach(() => {
@@ -92,7 +92,7 @@ const REC_B = {
 describe('appendLineage / lineageFor（子进程 + 临时 HOME）', () => {
   test('文件不存在→创建；连续追加累积；lineageFor 按四个 key 字段匹配且排除无关', () => {
     const home = freshHome()
-    const script = `import { appendLineage, lineageFor } from ${JSON.stringify(HANDOFF_URL)};
+    const script = `import { appendLineage, lineageFor } from ${JSON.stringify(LINEAGE_URL)};
 import { readFileSync } from 'node:fs';
 const before = lineageFor('s|-proj|sid-1'); // 文件都不存在时
 appendLineage(${JSON.stringify(REC_A)});
@@ -123,7 +123,7 @@ console.log(JSON.stringify({
 const dir = process.env.HOME + '/.anyplane';
 mkdirSync(dir, { recursive: true });
 writeFileSync(dir + '/lineage.json', '{corrupted');
-const { appendLineage, lineageFor } = await import(${JSON.stringify(HANDOFF_URL)});
+const { appendLineage, lineageFor } = await import(${JSON.stringify(LINEAGE_URL)});
 appendLineage(${JSON.stringify(REC_A)});
 console.log(JSON.stringify({
   file: JSON.parse(readFileSync(dir + '/lineage.json', 'utf8')).map((r) => r.id),
