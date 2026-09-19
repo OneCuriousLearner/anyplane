@@ -504,7 +504,7 @@ class ClaudePort implements BackendPort {
     return s.sessionId
   }
 
-  /** handoff 播种进程的重键（n|→s|）：进程不换，map 键跟随真实 sessionId。
+  /** /clear 与 handoff 播种的重键（n|→s|）：进程不换，map 键跟随真实 sessionId。
    *  spawnOpts 的 resumeSessionId 无需在此对齐——ensureSpawned 的身份权威行会处理。 */
   rekeySession(_hub: Hub, oldKey: string, newKey: string, _newSessionId: string): void {
     processManager.rekey(oldKey, newKey)

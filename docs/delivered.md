@@ -24,6 +24,8 @@ Biome 红线④：hub 生产路径禁直连 `claude/backend|processManager|port`
 
 **刻意不做**（下一批）：inbox 装配注入、搬家改名、processManager 抽纯函数、13.5。
 
+review 收口：`socket.ts` 豁免改为只放行 push（红线④仍锁具体后端）；`/clear` 单测补进程 map 与 `s|` 二次重键。
+
 ## AI 维护残留机械清理（PR #58 / #59）——2026-09-19
 
 定性：仓库的 AI 维护债是**重构残留**（过期指针、双写壳、巨型文件、同形映射各写一份），
