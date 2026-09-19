@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { keyFor as claudeKeyFor, keyForBranch, keyForNew as claudeKeyForNew } from './claude/backend'
 import { keyFor as codexKeyFor, keyForNew as codexKeyForNew } from './codex/backend'
-import { backendPort, describeKey, isCodexKey, portFor, registerBackend, resetBackendsForTest, type BackendPort } from './port'
+import { backendPort, describeKey, isCodexKey, portFor, registerBackend, resetBackendsForTest, resolvedSessionKey, type BackendPort } from './port'
 
 // describeKey 是 key 形状的零 I/O 解析唯一正本（routes/misc、push/fanout 共用）；
 // 本测试把它与两后端 keyFor/keyForNew/keyForBranch 构造器的一一对应锁死——
@@ -55,6 +55,23 @@ describe('describeKey', () => {
     expect(describeKey('xn|a|b')).toBeNull()
     expect(describeKey('n|%E4%B8')).toBeNull() // 截断的 UTF-8 转义，decodeURIComponent 抛错
     expect(describeKey('')).toBeNull()
+  })
+})
+
+describe('resolvedSessionKey', () => {
+  const port = {
+    keyForExisting: (sessionId: string, cwd?: string) => `s|${cwd ?? ''}|${sessionId}`,
+  } as BackendPort
+
+  test('已是 existing 原样返回，不重建', () => {
+    expect(resolvedSessionKey(port, 's|slug|sid', 'other', '/tmp')).toBe('s|slug|sid')
+    expect(resolvedSessionKey(port, 'x|th-1', 'other')).toBe('x|th-1')
+  })
+
+  test('n|/xn|/b| 升成 existing；sessionId 缺席则 undefined', () => {
+    expect(resolvedSessionKey(port, 'n|%2Ftmp', 'sid-2', '/tmp/proj')).toBe('s|/tmp/proj|sid-2')
+    expect(resolvedSessionKey(port, 'xn|%2Ftmp', 'th-9', '/ignored')).toBe('s|/ignored|th-9')
+    expect(resolvedSessionKey(port, 'n|%2Ftmp', undefined, '/tmp')).toBeUndefined()
   })
 })
 

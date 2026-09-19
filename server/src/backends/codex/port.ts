@@ -45,6 +45,10 @@ class CodexPort implements BackendPort {
     return codexKeyForNew(cwd)
   }
 
+  keyForExisting(sessionId: string, _cwd?: string): string {
+    return keyFor(sessionId)
+  }
+
   listModels(): Promise<CodexModelInfo[]> {
     return codexRuntime.listModels()
   }

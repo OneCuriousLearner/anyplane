@@ -10,6 +10,22 @@
 
 ---
 
+## hub 编排收口 BackendPort（/clear 与接力）——2026-09-19
+
+定性：合入机械两档后的全仓勘察里，唯一高层越层是 hub 为 `/clear` 与接力直连
+`claude/backend.keyFor` / `parseKey` / `processManager.rekey`。`rekeySession` 在 handoff
+路径已经走 port，`/clear` 没走同一口。
+
+**做了什么**：`BackendPort` 补 `keyForExisting`（claude 内 `sanitizePath` 作 slug，codex
+忽略 cwd），`rekeySession` 从可选改为必有；`resolvedSessionKey` 处理「已是 s|/x| 则原样」。
+`hub/callbacks.ts` 与 `hub/handoff.ts` 生产代码不再 import 具体 backend / processManager。
+Biome 红线④：hub 生产路径禁直连 `claude/backend|processManager|port` 与
+`codex/backend|runtime|port`（`*.test.ts` 豁免，镜像 routes）。
+
+**刻意不做**（下一批）：inbox 装配注入、搬家改名、processManager 抽纯函数、13.5。
+
+review 收口：`socket.ts` 豁免改为只放行 push（红线④仍锁具体后端）；`/clear` 单测补进程 map 与 `s|` 二次重键。
+
 ## AI 维护残留机械清理（PR #58 / #59）——2026-09-19
 
 定性：仓库的 AI 维护债是**重构残留**（过期指针、双写壳、巨型文件、同形映射各写一份），

@@ -174,11 +174,10 @@ export interface BackendPort {
   ): Promise<{ text: string; usage?: Record<string, number> }>
   /** 目标会话播种首条消息，返回目标 sessionId（claude 含 init 前 30s 轮询）；启动失败抛错 */
   seedHandoffTarget(hub: Hub, seed: string): Promise<string | undefined>
-  /** 播种拿到真实 id 后的会话重键（n|→s| / xn|→x|）：进程/线程句柄不换，map 键跟随，
-   *  并对齐 spawnOpts 里的会话身份（回收重生须续跑当前会话）。由 hub/handoff.ts 在广播
-   *  handoff_done 前调用——不同步的话浏览器导航到 resolved key 查不到播种进程，live 事件
-   *  进无客户端的旧 Hub，首条用户消息还会再 spawn 一个进程同写一份 transcript。 */
-  rekeySession?(hub: Hub, oldKey: string, newKey: string, newSessionId: string): void
+  /** 播种 / /clear 拿到真实 id 后的会话重键（n|→s| / xn|→x|）：进程/线程句柄不换，map 键跟随，
+   *  并对齐 spawnOpts 里的会话身份（回收重生须续跑当前会话）。由 hub 在换 Hub 注册表键之后调用
+   *  ——不同步的话按新 key 查不到进程，会再 spawn 一个同写一份 transcript。 */
+  rekeySession(hub: Hub, oldKey: string, newKey: string, newSessionId: string): void
 
   // ---------- REST 管理面（归档/恢复/改名） ----------
   archive(key: string): Promise<RouteResult>
@@ -196,6 +195,9 @@ export interface BackendPort {
   ): Promise<HistoryResponse>
   /** 新会话 key 构造（n| / xn|；POST /api/sessions 按 backend 名分发，routes 不 import key 构造函数） */
   keyForNew(cwd: string): string
+  /** 已有会话/线程 key（s| / x|）。cwd 仅 claude 需要（适配器内 sanitizePath 作 slug）；codex 忽略。
+   *  hub 的 /clear 与接力升键走这里，不再直连各 backend.keyFor。 */
+  keyForExisting(sessionId: string, cwd?: string): string
   /** 模型目录（capabilities.modelCatalog；codex model/list RPC） */
   listModels?(): Promise<CodexModelInfo[]>
   /** 各档实际配置的模型名（claude StatusPill 透传；缺席 = 该后端无此能力） */
@@ -260,6 +262,19 @@ export function describeKey(key: string): DescribedKey | null {
   } catch {
     return null
   }
+}
+
+/** n|/xn|/b| 在拿到真实 sessionId 后升成 s|/x|；已是 existing 则原样返回。
+ *  sessionId 缺席（尚未 spawn）返回 undefined。 */
+export function resolvedSessionKey(
+  port: BackendPort,
+  key: string,
+  sessionId: string | undefined,
+  cwd?: string,
+): string | undefined {
+  if (describeKey(key)?.kind === 'existing') return key
+  if (!sessionId) return undefined
+  return port.keyForExisting(sessionId, cwd)
 }
 
 // ---------- 适配器注册表 ----------

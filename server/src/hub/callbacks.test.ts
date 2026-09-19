@@ -4,6 +4,7 @@
 // - 进程退出撤销全部死审批，再推送明确的退出状态
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { processManager } from '../backends/claude/processManager'
 import type { CliMessage } from '../backends/claude/protocol'
 import { claudePort } from '../backends/claude/port'
 import { codexPort } from '../backends/codex/port'
@@ -23,11 +24,12 @@ const inbox: InboxEvent[] = []
 
 interface FakeWs {
   sent: string[]
+  data: { key: string; inbox?: true }
   send(text: string): void
 }
 
-function fakeWs(): FakeWs {
-  return { sent: [], send(text: string) { this.sent.push(text) } }
+function fakeWs(key: string): FakeWs {
+  return { sent: [], data: { key }, send(text: string) { this.sent.push(text) } }
 }
 
 function payloads(ws: FakeWs): Array<Record<string, unknown>> {
@@ -35,11 +37,20 @@ function payloads(ws: FakeWs): Array<Record<string, unknown>> {
 }
 
 const extraKeys: string[] = []
+const sessionMap = () => (processManager as unknown as { sessions: Map<string, { key: string }> }).sessions
+
+/** 往 processManager 登记未退出的假句柄（等价 ensure 的登记半段，不 spawn） */
+function injectFakeSession(key: string): { key: string } {
+  extraKeys.push(key)
+  const fake = { key }
+  sessionMap().set(key, fake)
+  return fake
+}
 
 function freshHub(): { hub: Hub; ws: FakeWs } {
   hubs.delete(KEY)
   const hub = getHub(KEY)
-  const ws = fakeWs()
+  const ws = fakeWs(KEY)
   hub.clients.add(ws as never)
   return { hub, ws }
 }
@@ -48,7 +59,7 @@ function hubAt(key: string): { hub: Hub; ws: FakeWs } {
   extraKeys.push(key)
   hubs.delete(key)
   const hub = getHub(key)
-  const ws = fakeWs()
+  const ws = fakeWs(key)
   hub.clients.add(ws as never)
   return { hub, ws }
 }
@@ -61,7 +72,11 @@ beforeEach(() => {
 afterEach(() => {
   resetInboxSinkForTest()
   hubs.delete(KEY)
-  for (const k of extraKeys) hubs.delete(k)
+  sessionMap().delete(KEY)
+  for (const k of extraKeys) {
+    hubs.delete(k)
+    sessionMap().delete(k)
+  }
   extraKeys.length = 0
   inbox.length = 0
 })
@@ -119,6 +134,59 @@ describe('sessionCallbacks.conversation_reset', () => {
     sessionCallbacks(hub).onMessage({ type: 'conversation_reset' } as CliMessage)
     expect(hub.transition).toBeUndefined()
     expect(payloads(ws)[0]).toMatchObject({ kind: 'cli', msg: { type: 'conversation_reset' } })
+  })
+
+  test('init 完成三层重键：Hub 注册表 / 进程 map / ws.data.key，并广播 moved', () => {
+    const oldKey = 'n|%2Ftmp%2Fclear-cwd'
+    const { hub, ws } = hubAt(oldKey)
+    const fake = injectFakeSession(oldKey)
+    const cb = sessionCallbacks(hub)
+    cb.onMessage({ type: 'conversation_reset' } as CliMessage)
+    cb.onMessage({ type: 'system', subtype: 'init', session_id: 'new-sid-1' } as CliMessage)
+
+    const newKey = 's|-tmp-clear-cwd|new-sid-1'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(hub.transition).toBeUndefined()
+    expect(ws.data.key).toBe(newKey)
+    expect(hubs.get(oldKey)).toBeUndefined()
+    expect(hubs.get(newKey)).toBe(hub)
+    expect(sessionMap().has(oldKey)).toBe(false)
+    expect(sessionMap().get(newKey)).toBe(fake)
+    expect(fake.key).toBe(newKey)
+    expect(payloads(ws).some((p) => p.kind === 'moved' && p.targetKey === newKey && p.reason === 'clear')).toBe(true)
+  })
+
+  test('cwd 优先 spawnOpts，覆盖 n| key 内嵌路径', () => {
+    const oldKey = 'n|%2Ftmp%2Ffrom-key'
+    const { hub, ws } = hubAt(oldKey)
+    hub.spawnOpts = { cwd: '/explicit/spawn-cwd' }
+    const cb = sessionCallbacks(hub)
+    cb.onMessage({ type: 'conversation_reset' } as CliMessage)
+    cb.onMessage({ type: 'system', subtype: 'init', session_id: 'sid-opts' } as CliMessage)
+
+    const newKey = 's|-explicit-spawn-cwd|sid-opts'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(ws.data.key).toBe(newKey)
+  })
+
+  test('已是 s| 的第二次 /clear：spawnOpts.cwd 升到新 sid，进程 map 跟随', () => {
+    const oldKey = 's|-tmp-clear-cwd|old-sid'
+    const { hub, ws } = hubAt(oldKey)
+    hub.spawnOpts = { cwd: '/tmp/clear-cwd' }
+    const fake = injectFakeSession(oldKey)
+    const cb = sessionCallbacks(hub)
+    cb.onMessage({ type: 'conversation_reset' } as CliMessage)
+    cb.onMessage({ type: 'system', subtype: 'init', session_id: 'sid-again' } as CliMessage)
+
+    const newKey = 's|-tmp-clear-cwd|sid-again'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(ws.data.key).toBe(newKey)
+    expect(sessionMap().has(oldKey)).toBe(false)
+    expect(sessionMap().get(newKey)).toBe(fake)
+    expect(fake.key).toBe(newKey)
   })
 })
 

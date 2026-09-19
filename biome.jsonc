@@ -117,8 +117,10 @@
     },
     {
       // 依赖红线②：hub/* 绝不 import push/*（循环风险——push/* 合法方向是 push→hub），
-      // inbox 事件经 hub/broadcast 的 InboxSink 注册器流出
-      "includes": ["server/src/hub/**"],
+      // inbox 事件经 hub/broadcast 的 InboxSink 注册器流出。
+      // 依赖红线④：hub 生产代码不直连具体后端（key 构造 / rekey / 进程表一律经 portFor）。
+      // *.test.ts 排除：测试注册真实适配器或替身 processManager 必须 import 具体模块。
+      "includes": ["server/src/hub/**", "!server/src/hub/**/*.test.ts"],
       "linter": {
         "rules": {
           "style": {
@@ -129,6 +131,17 @@
                   {
                     "group": ["**/push", "**/push/**"],
                     "message": "依赖红线：hub 禁止 import push（push→hub 为允许方向；inbox 事件走 InboxSink 注入）"
+                  },
+                  {
+                    "group": [
+                      "**/backends/claude/backend",
+                      "**/backends/claude/processManager",
+                      "**/backends/claude/port",
+                      "**/backends/codex/backend",
+                      "**/backends/codex/runtime",
+                      "**/backends/codex/port"
+                    ],
+                    "message": "依赖红线：hub 禁止直连具体后端实现，key 构造/rekey/会话句柄一律经 backends/port 的 portFor"
                   }
                 ]
               }
@@ -138,14 +151,31 @@
       }
     },
     {
-      // 既有豁免：socket.ts 的 push/inbox 引用（addInboxClient/inboxSnapshot/removeInboxClient）
-      // 当前不构成模块环（push/inbox 不回指 socket），但属红线豁免清单而非先例——
-      // 新增 hub→push import 一律走装配注入
+      // 豁免面只放行 push（socket.ts 的 inbox 客户端登记；批次 B 改装配注入后撤本豁免）。
+      // 本 override 整段替换 hub/** 的 noRestrictedImports，故红线④必须在此重申——
+      // 不得借 inbox 豁免直连具体后端。
       "includes": ["server/src/hub/socket.ts"],
       "linter": {
         "rules": {
           "style": {
-            "noRestrictedImports": "off"
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/backends/claude/backend",
+                      "**/backends/claude/processManager",
+                      "**/backends/claude/port",
+                      "**/backends/codex/backend",
+                      "**/backends/codex/runtime",
+                      "**/backends/codex/port"
+                    ],
+                    "message": "依赖红线：hub 禁止直连具体后端实现，key 构造/rekey/会话句柄一律经 backends/port 的 portFor"
+                  }
+                ]
+              }
+            }
           }
         }
       }
