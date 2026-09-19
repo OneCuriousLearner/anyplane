@@ -3,25 +3,46 @@
 
 import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { DirEntry, DirListResult } from '@anyplane/protocol'
 import { errorMessage } from './util'
 
-/** 读 git 分支名（普通仓库 .git/HEAD；worktree 的 .git 是 gitdir 指向文件）。非仓库返回 undefined */
-export function readGitBranch(cwd: string): string | undefined {
+/** 目录的 git 信息：分支名；cwd 本身是 worktree 时附主仓库根路径。非仓库返回 undefined */
+export interface GitInfo {
+  branch?: string
+  worktreeOf?: string
+}
+
+/**
+ * 读 git 信息（普通仓库 .git/HEAD；worktree 的 .git 是 gitdir 指向文件）。
+ * worktree 判定：gitdir 指针含 `/.git/worktrees/` 段——主仓库根即该段前缀。
+ * 子模块的 gitdir 指向 `/.git/modules/`，不匹配该段，不会被误标为 worktree。
+ */
+export function readGitInfo(cwd: string): GitInfo | undefined {
   try {
-    let head: string
     if (statSync(join(cwd, '.git')).isDirectory()) {
-      head = readFileSync(join(cwd, '.git', 'HEAD'), 'utf8').trim()
-    } else {
-      const ptr = readFileSync(join(cwd, '.git'), 'utf8').trim()
-      if (!ptr.startsWith('gitdir:')) return undefined
-      head = readFileSync(join(ptr.slice(7).trim(), 'HEAD'), 'utf8').trim()
+      return { branch: readHeadBranch(join(cwd, '.git')) }
     }
-    if (head.startsWith('ref:')) {
-      return head.split('/').pop() ?? head
-    }
-    return head.slice(0, 7) // detached HEAD：短 sha
+    const ptr = readFileSync(join(cwd, '.git'), 'utf8').trim()
+    if (!ptr.startsWith('gitdir:')) return undefined
+    // gitdir 允许相对路径（相对 cwd），先归一为绝对路径再反推
+    const gitdir = resolve(cwd, ptr.slice(7).trim())
+    const info: GitInfo = { branch: readHeadBranch(gitdir) }
+    // 分隔符归一后定位模式段；截取下标在原串上同样成立（替换不改长度）
+    const idx = gitdir.replaceAll('\\', '/').indexOf('/.git/worktrees/')
+    if (idx > 0) info.worktreeOf = gitdir.slice(0, idx)
+    return info
+  } catch {
+    return undefined
+  }
+}
+
+/** 读 gitdir 下 HEAD 的分支名；detached HEAD 给短 sha；读不到为 undefined */
+function readHeadBranch(gitdir: string): string | undefined {
+  try {
+    const head = readFileSync(join(gitdir, 'HEAD'), 'utf8').trim()
+    if (head.startsWith('ref:')) return head.split('/').pop() ?? head
+    return head.slice(0, 7)
   } catch {
     return undefined
   }

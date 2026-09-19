@@ -348,15 +348,16 @@ export function SessionList(props: {
       .catch((err) => showToast(String(err)))
   }
 
-  // 按项目目录分组（cwd 缺失时回退 slug）；分组时顺带记录该组的 git 分支
+  // 按项目目录分组（cwd 缺失时回退 slug）；分组时顺带记录该组的 git 分支与 worktree 归属
   const groups = useMemo(() => {
-    const m = new Map<string, { list: SessionInfo[]; branch?: string }>()
+    const m = new Map<string, { list: SessionInfo[]; branch?: string; worktreeOf?: string }>()
     for (const s of sessions) {
       const g = s.cwd ?? s.slug
       let e = m.get(g)
       if (!e) m.set(g, (e = { list: [] }))
       e.list.push(s)
       e.branch ??= s.gitBranch
+      e.worktreeOf ??= s.worktreeOf
     }
     return m
   }, [sessions])
@@ -623,10 +624,22 @@ export function SessionList(props: {
               </svg>
               <span className="truncate text-[15px] font-semibold" title={cwd}>{dirBasename(cwd)}</span>
               <span className="shrink-0 font-mono text-[11px] font-normal text-faint">{group.list.length}</span>
-              {group.branch && (
-                <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-[11px] font-normal text-faint">
-                  <BranchIcon className="h-3 w-3" />
-                  {group.branch}
+              {(group.branch || group.worktreeOf) && (
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[11px] font-normal text-faint">
+                  {group.worktreeOf && (
+                    <span
+                      className="rounded-sm border border-line px-1 text-[10px]"
+                      title={`worktree of ${group.worktreeOf}`}
+                    >
+                      wt·{dirBasename(group.worktreeOf)}
+                    </span>
+                  )}
+                  {group.branch && (
+                    <>
+                      <BranchIcon className="h-3 w-3" />
+                      {group.branch}
+                    </>
+                  )}
                 </span>
               )}
             </button>

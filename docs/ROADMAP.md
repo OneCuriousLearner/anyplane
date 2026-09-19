@@ -182,6 +182,12 @@ O(会话数 × 文件大小)"表述；但稀疏文件与未清 OS 缓存会影�
 它混合了 JIT、分配器与缓存留存，不能当作单个 10 / 100 / 200 / 500 会话工作集；
 只能提示长期高 churn 场景需另做可回收性实验，再决定是否给 `metaCache` 加容量上限。
 
+**fanout 推送测试本机时序敏感（2026-09-19 记录）**：`push/fanout.test.ts` 4 例在本机
+（Windows + 真实 `~/.anyplane` 状态）稳定失败，master 同数值复现、CI 双平台全绿——
+疑似用例间异步泄漏叠加本机 vapid/config 真实状态拖慢 fire-and-forget 链
+（「零订阅早退」用例在 80ms 安静期外捕获到残余请求，失败耗时恰在 81-83ms）。
+修复单列排期；在此之前本地 `bun run verify` 的 test 步以此 4 例为已知豁免，CI 才是真判定。
+
 ## 方向十三：结构性债务偿还（外部架构评审的行动项）
 
 > **进度（2026-09-19）**：13.1 / 13.2 已交付（`@anyplane/protocol` 单一类型正本 +
@@ -370,6 +376,18 @@ MCP 管理面板、`generate_session_title` 控制通道）见 [delivered.md](de
 - **codex `permissions` named-profile 迁移**：`sandboxPolicy` 未 deprecated，不急；
   迁移时注意 `sandboxPolicy` 与 `permissions` 互斥不能同发。
   升级 codex 前跑 `bun run server/scripts/check-codex-schema.ts`。
+- **git worktree 创建/编排（L2-L4，2026-09-19 评估后暂不做）**：L1 显示层已交付
+  （列表组头标注 `wt·<主仓库名>`，检测正本 `fsbrowse.ts readGitInfo`）。
+  暂不做的理由：worktree 并行是桌面编排场景（Conductor/Crystal 赛道），与移动控制面
+  定位错位；用户呼声为零；ROADMAP 上有更接近核心卖点的待办。**若将来做，路线已裁定**：
+  走 AnyPlane 服务端自编排（`git worktree add` 后以 worktree 为 cwd 起会话，两后端天然通用），
+  **不透传 claude `--worktree`**——headless+`--worktree` 是官方未验证组合（退出清理由 TUI
+  组件承担、fork 清 `worktreeSession` 元数据与 rewind 重 spawn 语义冲突），且 codex 无对应物，
+  会制造新能力分叉。设计难点不在创建而在清理语义，保守线：**永不自动删 worktree，
+  归档时仅提示路径**。触发信号：真实用户反复手动 `git worktree add` 再回 AnyPlane 选目录，
+  或第三家后端接入需要并行模型。兼容性欠账（留待触碰时处理）：官方 `EnterWorktreeTool`
+  可在会话运行中切换 CLI 内部 cwd，而 AnyPlane 的会话 cwd 是 transcript 首个 cwd 字段的
+  快照不跟随——L1 标注的是 spawn 目录的归属，运行中切换不会反映。
 
 ## 更远的地平线（只记录，不动手）
 

@@ -54,7 +54,10 @@ describe('GET /api/sessions', () => {
             live: { pid: 123 },
           },
         ],
-        readGitBranch: (cwd) => (cwd.endsWith('codex') ? 'codex-branch' : 'claude-branch'),
+        readGitInfo: (cwd) =>
+          cwd.endsWith('codex')
+            ? { branch: 'codex-branch' }
+            : { branch: 'claude-branch', worktreeOf: '/repo/main' },
         statusOf: (key) => ({ spawned: false, busy: false, sessionId: key }),
       }),
     )
@@ -71,11 +74,14 @@ describe('GET /api/sessions', () => {
       gitBranch: 'codex-branch',
       managed: { sessionId: 'x|thread-1' },
     })
+    // codex 行无 worktreeOf 字段（mock 未给），claude 行透传 worktreeOf
+    expect('worktreeOf' in rows[0]!).toBe(false)
     expect(rows[1]).toMatchObject({
       sessionId: 'session-1',
       backend: 'claude',
       key: 's|-repo-claude|session-1',
       gitBranch: 'claude-branch',
+      worktreeOf: '/repo/main',
       managed: { sessionId: 's|-repo-claude|session-1' },
     })
   })
@@ -97,7 +103,7 @@ describe('GET /api/sessions', () => {
             status: 'offline',
           },
         ],
-        readGitBranch: () => undefined,
+        readGitInfo: () => undefined,
         statusOf: () => ({ spawned: false, busy: false, sessionState: 'idle' }),
       }),
     )

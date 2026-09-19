@@ -1,12 +1,12 @@
 // 会话列表与管理路由：/api/sessions（GET/POST）+ archive/restore/archived/rename。
-// git 分支缓存也在这里（仅列表端点使用）。
+// git 信息缓存也在这里（仅列表端点使用）。
 
 import type { ArchivedEntry, CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
 import { keyFor } from '../backends/claude/backend'
 import { type DiscoveredSession, listSessions, sanitizePath } from '../backends/claude/discovery'
 import { listSessions as listCodexSessions } from '../backends/codex/backend'
 import { backendPort, portFor, type RouteResult } from '../backends/port'
-import { readGitBranch } from '../fsbrowse'
+import { type GitInfo, readGitInfo } from '../fsbrowse'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
 import { json, readJsonBody } from './http'
@@ -16,24 +16,24 @@ function routeResultJson(r: RouteResult): Response {
   return r.ok ? json({ ok: true }) : json({ error: r.error }, { status: r.status })
 }
 
-// ---------- /api/sessions 的 git 分支缓存 ----------
-// 列表被前端轮询，每个 cwd 的分支读取是 2-3 次同步文件 IO；分支变化不需要秒级新鲜度，30s TTL。
+// ---------- /api/sessions 的 git 信息缓存 ----------
+// 列表被前端轮询，每个 cwd 的读取是 2-3 次同步文件 IO；分支变化不需要秒级新鲜度，30s TTL。
 const BRANCH_CACHE_TTL_MS = 30_000
-const branchCache = new Map<string, { branch: string | undefined; at: number }>()
+const gitInfoCache = new Map<string, { info: GitInfo | undefined; at: number }>()
 
-function branchOfCached(cwd: string | undefined, readBranch: typeof readGitBranch): string | undefined {
+function gitInfoOfCached(cwd: string | undefined, read: typeof readGitInfo): GitInfo | undefined {
   if (!cwd) return undefined
-  const hit = branchCache.get(cwd)
-  if (hit && Date.now() - hit.at < BRANCH_CACHE_TTL_MS) return hit.branch
-  const branch = readBranch(cwd) // 普通仓库与 worktree 都支持
-  branchCache.set(cwd, { branch, at: Date.now() })
-  return branch
+  const hit = gitInfoCache.get(cwd)
+  if (hit && Date.now() - hit.at < BRANCH_CACHE_TTL_MS) return hit.info
+  const info = read(cwd) // 普通仓库与 worktree 都支持
+  gitInfoCache.set(cwd, { info, at: Date.now() })
+  return info
 }
 
 export interface SessionRouteDeps {
   listCodexSessions: typeof listCodexSessions
   listSessions: typeof listSessions
-  readGitBranch: typeof readGitBranch
+  readGitInfo: typeof readGitInfo
   statusOf: typeof statusOf
   portFor: typeof portFor
   listCodexArchived: () => Promise<ArchivedEntry[]>
@@ -43,7 +43,7 @@ export interface SessionRouteDeps {
 export const defaultSessionRouteDeps: SessionRouteDeps = {
   listCodexSessions,
   listSessions,
-  readGitBranch,
+  readGitInfo,
   statusOf,
   portFor,
   // 经注册表取用适配器（routes 不 import 具体 port——依赖红线③）；箭头函数惰性求值，
@@ -62,35 +62,43 @@ export async function handleSessionRoutes(
     //（此端点被每个打开的标签页 10s 轮询）。中间无 await，rejection 一定先于下方 catch 被接管。
     const codexP = deps.listCodexSessions()
     const sessions = deps.listSessions()
-    const claudeRows: SessionInfo[] = sessions.map((s: DiscoveredSession) => ({
-      ...s,
-      backend: 'claude' as const,
-      gitBranch: branchOfCached(s.cwd, deps.readGitBranch),
-      key: keyFor(s.slug, s.sessionId),
-      // listSessions 已扫过 pid 文件，复用其结果，不为每行再扫一次（null = 已知不在线）
-      managed: deps.statusOf(
-        keyFor(s.slug, s.sessionId),
-        s.live ? { status: s.status, pid: s.live.pid } : null,
-      ),
-    }))
+    const claudeRows: SessionInfo[] = sessions.map((s: DiscoveredSession) => {
+      const git = gitInfoOfCached(s.cwd, deps.readGitInfo)
+      return {
+        ...s,
+        backend: 'claude' as const,
+        gitBranch: git?.branch,
+        worktreeOf: git?.worktreeOf,
+        key: keyFor(s.slug, s.sessionId),
+        // listSessions 已扫过 pid 文件，复用其结果，不为每行再扫一次（null = 已知不在线）
+        managed: deps.statusOf(
+          keyFor(s.slug, s.sessionId),
+          s.live ? { status: s.status, pid: s.live.pid } : null,
+        ),
+      }
+    })
     // codex 线程：app-server 未安装/未登录时静默降级为空列表，不拖垮 claude 列表
     let codexRows: SessionInfo[] = []
     try {
       const threads = await codexP
-      codexRows = threads.map((t): SessionInfo => ({
-        sessionId: t.id,
-        cwd: t.cwd,
-        slug: 'codex',
-        title: t.title,
-        lastPrompt: t.lastPrompt,
-        mtime: t.mtime,
-        sizeBytes: 0,
-        status: t.status,
-        backend: 'codex' as const,
-        gitBranch: branchOfCached(t.cwd, deps.readGitBranch),
-        key: t.key,
-        managed: deps.statusOf(t.key),
-      }))
+      codexRows = threads.map((t): SessionInfo => {
+        const git = gitInfoOfCached(t.cwd, deps.readGitInfo)
+        return {
+          sessionId: t.id,
+          cwd: t.cwd,
+          slug: 'codex',
+          title: t.title,
+          lastPrompt: t.lastPrompt,
+          mtime: t.mtime,
+          sizeBytes: 0,
+          status: t.status,
+          backend: 'codex' as const,
+          gitBranch: git?.branch,
+          worktreeOf: git?.worktreeOf,
+          key: t.key,
+          managed: deps.statusOf(t.key),
+        }
+      })
     } catch (e) {
       log.warn('[api] codex thread/list 失败（仅返回 claude 会话）:', e instanceof Error ? e.message : e)
     }
