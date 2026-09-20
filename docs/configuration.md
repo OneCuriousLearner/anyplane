@@ -32,6 +32,8 @@ README 只保留最常用的几项，这里是完整配置说明。
 
 环境变量覆盖：`ANYPLANE_PORT`、`ANYPLANE_HOST`、`ANYPLANE_TOKEN`、`CLAUDE_CONFIG_DIR`、`ANYPLANE_CLAUDE_PATH`（`claudePath` 的环境变量直通；显式路径不参与 PATH 候选的 `.exe` 偏好竞争）。
 
+启动后默认在交互终端打开浏览器（`http://localhost:7480/`，配了 token 则带 `?token=`）。关掉：命令行加 `--no-open`，或设 `ANYPLANE_NO_OPEN=1` / `ANYPLANE_OPEN=0`。管道、CI、Docker 内不会弹浏览器。
+
 ## 日志
 
 默认输出保持人眼可读的 `[scope] 消息 k=v` 形态，无需配置。排查问题时有两个开关：

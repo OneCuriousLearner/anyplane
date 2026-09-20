@@ -51,3 +51,4 @@ npm 包 `anyplane` 的发布入口只有两个，外人默认都走不通：
 - `0.1.3`：上下文窗口改用官方 `get_context_usage` 权威值；协议漂移预警自动化（CI 挂接）；Codex ThreadItem 补齐 5 种（live/历史同形）；下行事件序号与重连补发（断线不丢消息）；审批规则引擎 P1；结构化 logger；官网改版。
 - `0.1.4`：体验批修——本地斜杠命令不再清零上下文环；刷新恢复当前会话（hash 路由）；codex 页脚补耗时；tail/离线会话回填模型；Markdown 空链接/相对路径拦截。
 - `0.2.0`：Capacitor 原生壳落地（Android/iOS 包壳、原生审批通知链路、国产 ROM JSI 失效绕行与遥测定位）；方向十一 Onboarding（双后端登录状态页、单阶段 all-in-one Docker 镜像、公网一键脚本、安装漏斗修复、codex 读盘优先发现）；方向十二韧性（codex runtime 拆分、优雅停机）；方向十三结构债（`@anyplane/protocol` 共享类型包、Biome 依赖红线、mock CLI e2e 进 CI、后端能力声明化 + `portFor` 注册表、13.4 审批/Hub/store/props 四批重构）；网关 502/500 语义与 dev 孤儿修复；官网改版；测试大补课（688 用例）。
+- `0.2.1`：启动收口——末行醒目提示打开地址，交互终端默认拉起系统浏览器（`--no-open` / `ANYPLANE_NO_OPEN=1` / CI / Docker 不弹）。
