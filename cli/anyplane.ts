@@ -6,6 +6,7 @@
  */
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { resolveCliCommand } from './args'
 
 const pkg = (await Bun.file(new URL('../package.json', import.meta.url)).json()) as {
   version: string
@@ -19,9 +20,13 @@ Usage:
   anyplane version     打印版本
   anyplane help        本帮助
 
+Flags:
+  --no-open            启动后不自动打开浏览器（默认在交互终端打开 http://localhost:7480/）
+
 Config:
   ./anyplane.config.json → ~/.anyplane/config.json → 环境变量
   ANYPLANE_PORT / ANYPLANE_HOST / ANYPLANE_TOKEN / CLAUDE_CONFIG_DIR
+  ANYPLANE_NO_OPEN=1   与 --no-open 相同
 
 Docs: https://github.com/OneCuriousLearner/anyplane
 `
@@ -39,7 +44,8 @@ function whichAny(names: string[]): string | null {
   return null
 }
 
-const cmd = process.argv[2] ?? 'start'
+const argv = process.argv.slice(2)
+const cmd = resolveCliCommand(argv)
 
 switch (cmd) {
   case 'start': {

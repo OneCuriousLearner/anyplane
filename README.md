@@ -45,7 +45,7 @@ You need **Bun ≥ 1.4.0** and a logged-in official `claude` CLI on your PATH. T
 bunx anyplane
 ```
 
-Open <http://localhost:7480>. The frontend ships prebuilt in the npm package — no clone, no build step. Config and runtime data live in `~/.anyplane/`.
+The server starts on <http://localhost:7480> and opens your default browser. Pass `--no-open` (or `ANYPLANE_NO_OPEN=1`) to skip. The frontend ships prebuilt in the npm package — no clone, no build step. Config and runtime data live in `~/.anyplane/`.
 
 Don't have Bun? `npm i -g anyplane` and `npx anyplane` work too — they'll tell you how to install Bun if it's missing.
 
