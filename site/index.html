@@ -13,7 +13,7 @@
 <link rel="icon" href='data:image/svg+xml,<svg viewBox="32 32 256 256" xmlns="http://www.w3.org/2000/svg"><path fill="%238c8c8c" fill-rule="evenodd" d="M 138.67 32 L 32 288 L 74.67 288 L 122.67 172.8 L 170.67 288 L 234.67 288 L 261.33 224 L 181.33 32 L 160 32 Z M 160 83.2 L 213.33 211.2 L 197.16 254.32 L 142.93 124.16 Z"/></svg>'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@1,6..72,500&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #060608;
@@ -45,10 +45,10 @@
 
   /* ---------- top bar ---------- */
   header {
-    position: sticky; top: 0; z-index: 10;
-    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
-    background: rgba(6,6,8,.55);
-    border-bottom: 1px solid var(--hair);
+    position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    background: transparent;
+    border-bottom: 0;
   }
   header .wrap { display: flex; align-items: center; gap: .7rem; height: 3.6rem; }
   .mark { width: 1.5rem; height: 1.5rem; color: var(--ink); flex: none; }
@@ -73,41 +73,41 @@
   .langswitch button.on { color: var(--ink); background: var(--glass-2); }
   .langswitch button:hover { color: var(--ink); }
 
-  /* ---------- hero: the sky ---------- */
-  .hero { position: relative; min-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
-  #sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .hero .center {
-    position: relative; z-index: 2; flex: 1;
-    display: flex; flex-direction: column; justify-content: center; align-items: center;
-    text-align: center; padding: 4rem 1.5rem 3rem;
+  /* ---------- hero: night wing ---------- */
+  .hero { position: relative; height: 100dvh; min-height: 100svh; overflow: hidden; background: #000; }
+  .hero .shot {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; object-position: 68% 48%;
+    display: block;
   }
-  .eyebrow {
-    font: 600 .7rem var(--mono); letter-spacing: .3em; color: var(--faint);
-    margin-bottom: 2.2rem;
+  .hero .center {
+    position: absolute; z-index: 2;
+    right: clamp(1.2rem, 3vw, 2.4rem);
+    bottom: clamp(1.4rem, 4vh, 2.6rem);
+    display: flex; flex-direction: column; align-items: flex-end; gap: .85rem;
+    text-align: right;
   }
   h1 {
-    font: 500 clamp(2.8rem, 7.5vw, 6.4rem)/1.02 var(--display);
-    letter-spacing: -.03em; max-width: 12ch;
+    font: italic 500 clamp(1.7rem, 1.1rem + 2.4vw, 5.2rem)/1.05 "Newsreader", var(--display);
+    letter-spacing: -.035em; color: #f4f1ea;
+    text-shadow: 0 8px 28px rgba(0,0,0,.55);
   }
-  h1 em { font-style: normal; color: var(--dim); }
-  .lede { margin-top: 2rem; max-width: 36rem; color: var(--dim); font-size: 1.06rem; line-height: 1.75; }
-  .lede strong { color: var(--ink); font-weight: 600; }
-
-  .install { margin-top: 3rem; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+  h1 em { font-style: inherit; color: rgba(244,241,234,.62); }
   .cmd {
-    display: inline-flex; align-items: center; gap: .9rem;
-    font: 600 1rem var(--mono); color: var(--ink);
-    background: rgba(255,255,255,.03); border: 1px solid var(--hair); border-radius: 999px;
-    padding: .8rem .7rem .8rem 1.4rem;
+    display: inline-flex; align-items: center; gap: .7rem;
+    font: 600 clamp(.72rem, .55rem + .28vw, .95rem) var(--mono); color: #f4f1ea;
+    background: rgba(0,0,0,.42); border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
+    padding: .5rem .5rem .5rem 1rem;
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   }
-  .cmd .dollar { color: var(--faint); }
+  .cmd .dollar { color: rgba(255,255,255,.45); }
   .copy {
-    font: 600 .72rem var(--mono); letter-spacing: .08em; color: var(--dim);
-    background: var(--glass); border: 1px solid var(--hair); border-radius: 999px;
-    padding: .42rem .9rem; cursor: pointer; transition: color .15s;
+    font: 600 .68rem var(--mono); letter-spacing: .08em; color: #111;
+    background: #f4f1ea; border: 0; border-radius: 999px;
+    padding: .32rem .7rem; cursor: pointer;
   }
-  .copy:hover { color: var(--ink); }
+  .copy:hover { filter: brightness(1.06); }
 
   /* ---------- the departure board (split-flap) ---------- */
   .boardzone { padding: 7rem 1rem 5.5rem; display: flex; flex-direction: column; align-items: center; }
@@ -254,7 +254,6 @@
   @media (prefers-reduced-motion: reduce) {
     *, .flap.flip { animation: none !important; }
     html { scroll-behavior: auto; }
-    #sky { display: none; }
   }
 </style>
 </head>
@@ -277,22 +276,14 @@
 </header>
 
 <main>
-  <!-- HERO: the sky -->
-  <div class="hero">
-    <canvas id="sky"></canvas>
+  <!-- HERO -->
+  <div class="hero" data-focus="0.72 0.49" data-anchor="0.65 0.40">
+    <img class="shot" src="assets/city-from-plane.jpg" alt="">
     <div class="center">
-      <p class="eyebrow" data-i18n="eyebrow">SELF-HOSTED · NO ACCOUNT · MIT</p>
       <h1 data-i18n="h1">Run your agents,<br><em>on any plane.</em></h1>
-      <p class="lede" data-i18n="lede">
-        Let the agents run — <strong>go live your life.</strong>
-        When Claude Code or Codex needs you, the approval lands on your lock screen —
-        clear it there and get back to what you were doing.
-      </p>
-      <div class="install">
-        <span class="cmd"><span class="dollar">$</span> bunx anyplane
-          <button class="copy" id="copy" type="button" data-i18n="copy">COPY</button>
-        </span>
-      </div>
+      <span class="cmd"><span class="dollar">$</span> bunx anyplane
+        <button class="copy" id="copy" type="button" data-i18n="copy">COPY</button>
+      </span>
     </div>
   </div>
 
@@ -307,9 +298,9 @@
     <p class="cap" data-i18n="proof.cap">THE TOWER, LIVE</p>
     <div class="frame">
       <div class="card">
-        <img src="greeting_macbook.png" alt="AnyPlane on a MacBook: project-grouped session list and a live conversation" loading="lazy">
+        <img src="assets/greeting_macbook.png" alt="AnyPlane on a MacBook: project-grouped session list and a live conversation" loading="lazy">
       </div>
-      <img class="phone" src="greeting_iphone.png" alt="The same AnyPlane session on a phone, tracking live" loading="lazy">
+      <img class="phone" src="assets/greeting_iphone.png" alt="The same AnyPlane session on a phone, tracking live" loading="lazy">
     </div>
     <p class="line" data-i18n="proof.line">Every session, both runtimes, one tab. Approvals clear from the lock screen; <strong>transcripts never leave your disk.</strong></p>
   </section>
@@ -518,265 +509,37 @@ npm i -g anyplane</pre>
 
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // ---------- hero sky: 夜间空域全景 ----------
-  // 分层：夜空渐变 → 月晕 → 双层星野(鼠标视差) → 雷达扫掠+回波 → 巡航航班
-  // → 地平线城市灯 → 跑道透视灯光 → 进近着陆航班 → 偶发流星
-  const cv = document.getElementById('sky');
-  const ctx = cv.getContext('2d');
-  let W, H;
-  function sizeSky() {
-    const DPR = Math.min(devicePixelRatio || 1, 2);
-    W = cv.clientWidth; H = cv.clientHeight;
-    cv.width = W * DPR; cv.height = H * DPR;
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  }
-  sizeSky(); addEventListener('resize', sizeSky);
-
-  const rnd = (a, b) => a + Math.random() * (b - a);
-  const TAU = Math.PI * 2;
-
-  // 星野：depth 供视差分层
-  const STARS = Array.from({ length: 170 }, () => ({
-    x: Math.random(), y: Math.random() * .66,
-    r: rnd(.35, 1.5), a: rnd(.08, .5),
-    sp: rnd(.4, 1.6), ph: rnd(0, TAU), depth: rnd(.25, 1),
-  }));
-  // 巡航航班：双向弧线 + 尾迹 + 航行灯
-  const FLIGHTS = Array.from({ length: 7 }, (_, i) => ({
-    y0: .08 + i * .095,
-    lift: .06 + (i % 3) * .05,
-    speed: .00005 + i * .000009,
-    t: Math.random(),
-    dir: i % 2 ? -1 : 1,
-  }));
-  // 地平线城市灯
-  const CITY = Array.from({ length: 46 }, () => ({
-    x: Math.random(), dy: rnd(-2.5, 2.5), a: rnd(.12, .4),
-    warm: Math.random() < .6, ph: rnd(0, TAU),
-  }));
-  // 进近航班：沿跑道中线由远及近落地
-  const approach = { t: rnd(0, .5), speed: .00048 };
-  // 流星
-  let meteor = null, nextMeteorAt = performance.now() + 2600;
-
-  // 鼠标视差（仅精确指针；reduced 下不挂监听）
-  let mx = .5, my = .5, smx = .5, smy = .5;
-  if (!reduced && matchMedia('(pointer: fine)').matches) {
-    addEventListener('mousemove', (e) => { mx = e.clientX / innerWidth; my = e.clientY / innerHeight; }, { passive: true });
-  }
-
-  function arcPoint(f, t) {
-    const x = -W * .1 + W * 1.2 * t;
-    const y = H * (0.6 - f.y0 * .5);
-    return [x, y - Math.sin(t * Math.PI) * H * f.lift];
-  }
-
-  function drawSky(now) {
-    smx += (mx - smx) * .04; smy += (my - smy) * .04;
-    const px = smx - .5, py = smy - .5;
-    const VPX = W / 2, VPY = H * .78; // 跑道消失点 = 雷达中心
-
-    ctx.clearRect(0, 0, W, H);
-    // 夜空底色
-    const sky = ctx.createLinearGradient(0, 0, 0, H);
-    sky.addColorStop(0, '#04050a');
-    sky.addColorStop(.55, '#070b17');
-    sky.addColorStop(.82, '#0d1628');
-    sky.addColorStop(1, '#0a1120');
-    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
-    // 月晕
-    const m = ctx.createRadialGradient(W * .78 + px * 18, H * .16 + py * 10, 0, W * .78 + px * 18, H * .16 + py * 10, H * .34);
-    m.addColorStop(0, 'rgba(196,210,238,.07)');
-    m.addColorStop(1, 'transparent');
-    ctx.fillStyle = m; ctx.fillRect(0, 0, W, H);
-    // 星野（视差 + 闪烁）
-    for (const s of STARS) {
-      const tw = s.a * (.55 + .45 * Math.sin(now * .001 * s.sp + s.ph));
-      ctx.fillStyle = `rgba(232,240,255,${tw.toFixed(3)})`;
-      ctx.beginPath(); ctx.arc(s.x * W + px * 16 * s.depth, s.y * H + py * 9 * s.depth, s.r, 0, 7); ctx.fill();
+  // ---------- hero adaptive crop ----------
+  (function () {
+    const hero = document.querySelector('.hero');
+    const img = hero && hero.querySelector('.shot');
+    if (!hero || !img) return;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const pair = (src, fb) => {
+      const x = String(src || '').trim().split(/[\s,]+/).map(Number);
+      return [Number.isFinite(x[0]) ? x[0] : fb[0], Number.isFinite(x[1]) ? x[1] : fb[1]];
+    };
+    function fit() {
+      const [fx, fy] = pair(hero.dataset.focus, [0.5, 0.5]);
+      const [ax, ay] = pair(hero.dataset.anchor, [0.5, 0.5]);
+      const vw = hero.clientWidth, vh = hero.clientHeight;
+      const iw = img.naturalWidth, ih = img.naturalHeight;
+      if (!vw || !vh || !iw || !ih) return;
+      const vpA = vw / vh, imgA = iw / ih;
+      let cropW, cropH;
+      if (vpA > imgA) { cropW = 1; cropH = imgA / vpA; }
+      else { cropH = 1; cropW = vpA / imgA; }
+      const x = clamp(fx - cropW * ax, 0, 1 - cropW);
+      const y = clamp(fy - cropH * ay, 0, 1 - cropH);
+      const box = [x, y, cropW, cropH].map((n) => +(n * 100).toFixed(3));
+      img.style.objectFit = 'fill';
+      img.style.objectViewBox = `xywh(${box[0]}% ${box[1]}% ${box[2]}% ${box[3]}%)`;
     }
-
-    // 巡航航班
-    for (let i = 0; i < FLIGHTS.length; i++) {
-      const f = FLIGHTS[i];
-      ctx.strokeStyle = 'rgba(150,172,222,.1)';
-      ctx.beginPath();
-      for (let t = 0; t <= 1.001; t += .02) {
-        const [x, y] = arcPoint(f, t);
-        t === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      const tt = f.dir === 1 ? f.t : 1 - f.t;
-      const [x, y] = arcPoint(f, tt);
-      const [tx, ty] = arcPoint(f, tt - f.dir * .045);
-      const grad = ctx.createLinearGradient(tx, ty, x, y);
-      grad.addColorStop(0, 'transparent');
-      grad.addColorStop(1, 'rgba(206,220,248,.6)');
-      ctx.strokeStyle = grad; ctx.lineWidth = 1.4;
-      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
-      ctx.lineWidth = 1;
-      ctx.fillStyle = 'rgba(242,246,255,.92)';
-      ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill();
-      if (((now / 480 + i * .63) % 2) < .72) {
-        ctx.fillStyle = 'rgba(229,72,77,.8)';
-        ctx.beginPath(); ctx.arc(x, y + 2.6, 1, 0, 7); ctx.fill();
-      }
-      f.t += f.speed;
-      if (f.t > 1.05) { f.t = -0.05; f.y0 = .08 + Math.random() * .6; }
-    }
-
-    // 地平线 + 地面压暗
-    ctx.strokeStyle = 'rgba(140,162,214,.15)';
-    ctx.beginPath(); ctx.moveTo(0, VPY); ctx.lineTo(W, VPY); ctx.stroke();
-    const ground = ctx.createLinearGradient(0, VPY, 0, H);
-    ground.addColorStop(0, 'rgba(3,4,8,0)');
-    ground.addColorStop(1, 'rgba(2,3,6,.55)');
-    ctx.fillStyle = ground; ctx.fillRect(0, VPY, W, H - VPY);
-    // 城市灯（轻微闪烁）
-    for (const c of CITY) {
-      const fl = c.a * (.7 + .3 * Math.sin(now * .002 + c.ph));
-      ctx.fillStyle = c.warm ? `rgba(255,205,140,${fl.toFixed(3)})` : `rgba(190,215,255,${fl.toFixed(3)})`;
-      ctx.fillRect(c.x * W + px * 6, VPY + c.dy, 1.4, 1.4);
-    }
-
-    // 跑道：透视道面 + 入口斑马线 + 接地带 + 边灯辉光 + PAPI + 滑行道蓝灯
-    const RB = H * 1.04; // 道面近端（画面底缘之外）
-    const rwY = (p) => VPY + Math.pow(p, 1.9) * (RB - VPY);
-    const rwHW = (p) => 4 + Math.pow(p, 1.9) * W * .3;
-    // 沥青道面
-    const asph = ctx.createLinearGradient(0, VPY, 0, RB);
-    asph.addColorStop(0, 'rgba(24,27,36,.85)');
-    asph.addColorStop(1, 'rgba(10,11,16,.92)');
-    ctx.fillStyle = asph;
-    ctx.beginPath();
-    ctx.moveTo(VPX - rwHW(0), VPY); ctx.lineTo(VPX + rwHW(0), VPY);
-    ctx.lineTo(VPX + rwHW(1), RB); ctx.lineTo(VPX - rwHW(1), RB);
-    ctx.closePath(); ctx.fill();
-    // 灯光在道面上的暖晕
-    const rwGlow = ctx.createRadialGradient(VPX, H * .95, 0, VPX, H * .95, W * .3);
-    rwGlow.addColorStop(0, 'rgba(255,200,120,.06)');
-    rwGlow.addColorStop(1, 'transparent');
-    ctx.fillStyle = rwGlow;
-    ctx.beginPath();
-    ctx.moveTo(VPX - rwHW(0), VPY); ctx.lineTo(VPX + rwHW(0), VPY);
-    ctx.lineTo(VPX + rwHW(1), RB); ctx.lineTo(VPX - rwHW(1), RB);
-    ctx.closePath(); ctx.fill();
-    // 道面边线
-    ctx.strokeStyle = 'rgba(225,232,245,.16)';
-    for (const s of [-1, 1]) {
-      ctx.beginPath();
-      ctx.moveTo(VPX + s * rwHW(0) * .92, VPY);
-      ctx.lineTo(VPX + s * rwHW(1) * .92, RB);
-      ctx.stroke();
-    }
-    // 中线虚线
-    for (let i = 0; i < 10; i++) {
-      const p = .06 + i * .1, y = rwY(p);
-      ctx.fillStyle = `rgba(235,240,250,${(.12 + p * .42).toFixed(3)})`;
-      const dh = 2 + p * 10;
-      ctx.fillRect(VPX - .7, y - dh / 2, 1.4, dh);
-    }
-    // 接地带标识：三对白色长条
-    for (const p of [.3, .45, .6]) {
-      const y = rwY(p), bw = rwHW(p) * .1, bh = 2 + p * 8;
-      ctx.fillStyle = `rgba(230,236,248,${(.14 + p * .3).toFixed(3)})`;
-      for (const s of [-1, 1]) {
-        ctx.fillRect(VPX + s * rwHW(p) * .32 - bw / 2, y - bh / 2, bw, bh);
-      }
-    }
-    // 入口斑马线（piano keys）
-    for (let k = 0; k < 5; k++) {
-      const p = .82 + k * .03, y = rwY(p);
-      const bh = (rwY(p + .018) - y) * .8, bw = rwHW(p) * .09;
-      ctx.fillStyle = `rgba(235,240,250,${(.3 + p * .25).toFixed(3)})`;
-      for (const s of [-1, 1]) {
-        for (const o of [.2, .38]) {
-          ctx.fillRect(VPX + s * rwHW(p) * o - bw / 2, y, bw, bh);
-        }
-      }
-    }
-    // 边灯：琥珀，近端带辉光
-    for (let i = 0; i <= 14; i++) {
-      const p = i / 14, y = rwY(p), hw = rwHW(p) * 1.05;
-      const r = .6 + p * 2, a = .18 + p * .55;
-      if (p > .55) {
-        for (const s of [-1, 1]) {
-          const halo = ctx.createRadialGradient(VPX + s * hw, y, 0, VPX + s * hw, y, r * 4.5);
-          halo.addColorStop(0, `rgba(255,190,100,${(a * .35).toFixed(3)})`);
-          halo.addColorStop(1, 'transparent');
-          ctx.fillStyle = halo;
-          ctx.beginPath(); ctx.arc(VPX + s * hw, y, r * 4.5, 0, 7); ctx.fill();
-        }
-      }
-      ctx.fillStyle = `rgba(255,196,110,${a.toFixed(3)})`;
-      ctx.beginPath(); ctx.arc(VPX - hw, y, r, 0, 7); ctx.arc(VPX + hw, y, r, 0, 7); ctx.fill();
-    }
-    // PAPI：跑道左侧四灯（近红远白），进近航班的坡度参照
-    {
-      const p = .52, y = rwY(p), x0 = VPX - rwHW(p) * 1.22;
-      const cols = ['255,90,90', '255,90,90', '240,245,255', '240,245,255'];
-      for (let i = 0; i < 4; i++) {
-        ctx.fillStyle = `rgba(${cols[i]},${(.45 + p * .3).toFixed(3)})`;
-        ctx.beginPath(); ctx.arc(x0 - i * (5 + p * 5), y, 1.1 + p * 1.1, 0, 7); ctx.fill();
-      }
-    }
-    // 滑行道：右侧一排蓝灯
-    for (let i = 0; i <= 16; i++) {
-      const p = i / 16, y = rwY(p);
-      ctx.fillStyle = `rgba(100,150,255,${(.1 + p * .38).toFixed(3)})`;
-      ctx.beginPath(); ctx.arc(VPX + rwHW(p) * 1.5, y, .5 + p * 1.4, 0, 7); ctx.fill();
-    }
-    // 跑道入口：一排绿色门槛灯
-    ctx.fillStyle = 'rgba(90,220,150,.55)';
-    for (let i = -3; i <= 3; i++) {
-      ctx.beginPath(); ctx.arc(VPX + i * 7, H * 1.005, 1.8, 0, 7); ctx.fill();
-    }
-
-    // 进近航班：从消失点沿中线下滑，越近越亮越大
-    approach.t += approach.speed;
-    if (approach.t > 1) approach.t = -.18; // 落地后停顿再放下一段
-    if (approach.t > 0) {
-      const p = approach.t, e = p * p;
-      const ay = VPY + e * (H * .98 - VPY);
-      const ar = .8 + p * 2.4, aa = .25 + p * .7;
-      // 着陆灯拖出的短光痕
-      const lg = ctx.createLinearGradient(VPX, ay - 26 * p - 6, VPX, ay);
-      lg.addColorStop(0, 'transparent');
-      lg.addColorStop(1, `rgba(255,236,190,${(aa * .8).toFixed(3)})`);
-      ctx.strokeStyle = lg; ctx.lineWidth = 1 + p;
-      ctx.beginPath(); ctx.moveTo(VPX, ay - 26 * p - 6); ctx.lineTo(VPX, ay); ctx.stroke();
-      ctx.lineWidth = 1;
-      ctx.fillStyle = `rgba(255,244,214,${aa.toFixed(3)})`;
-      ctx.beginPath(); ctx.arc(VPX, ay, ar, 0, 7); ctx.fill();
-    }
-
-    // 流星：随机划过，带渐隐尾
-    if (!meteor && now > nextMeteorAt) {
-      meteor = {
-        x: rnd(.08, .8) * W, y: rnd(.04, .28) * H,
-        ang: rnd(.12, .3) * Math.PI * (Math.random() < .5 ? 1 : -1),
-        len: rnd(120, 240), start: now, dur: 850,
-      };
-    }
-    if (meteor) {
-      const p = (now - meteor.start) / meteor.dur;
-      if (p > 1) { meteor = null; nextMeteorAt = now + rnd(5000, 12000); }
-      else {
-        const dx = Math.cos(meteor.ang) * meteor.len, dy = Math.abs(Math.sin(meteor.ang)) * meteor.len;
-        const hx = meteor.x + dx * p, hy = meteor.y + dy * p;
-        const tx = meteor.x + dx * Math.max(0, p - .3), ty = meteor.y + dy * Math.max(0, p - .3);
-        const mg = ctx.createLinearGradient(tx, ty, hx, hy);
-        mg.addColorStop(0, 'transparent');
-        mg.addColorStop(1, `rgba(255,255,255,${(.85 * (1 - p * .6)).toFixed(3)})`);
-        ctx.strokeStyle = mg; ctx.lineWidth = 1.3;
-        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(hx, hy); ctx.stroke();
-        ctx.lineWidth = 1;
-      }
-    }
-
-    if (!reduced) requestAnimationFrame(drawSky);
-  }
-  drawSky(performance.now());
+    const run = () => { if (img.naturalWidth) fit(); };
+    if (img.complete) run();
+    img.addEventListener('load', run);
+    new ResizeObserver(run).observe(hero);
+  })();
 
   // ---------- split-flap departure board（降速版） ----------
   const CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/:*·→|+?';
