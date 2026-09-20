@@ -2,18 +2,23 @@
 
 本文记录每次发 npm 版本的关键事项与信任模型。AGENTS.md 只放指针，细节以此文为准。
 
-## 发版四步（唯一入口）
+## 发版入口
+
+master 有分支保护：功能先进 PR，**等 PR 的 CI 绿再合入**。然后：
 
 ```bash
 # 1. 改根 package.json 的 version（0.x 阶段：功能 = minor，修复 = patch）
-# 2. git commit
+# 2. git commit（版本号 + 本文版本史）
+# 3. PR 合入 master
 git tag v<x.y.z>
 git push origin v<x.y.z>
 ```
 
 tag 推送触发 `.github/workflows/release.yml`：`bun install --frozen-lockfile` → `bun test` → `bun run build` → **校验 tag 与 package.json 版本一致** → `npm publish`（Trusted Publishing，OIDC）。
 
-**绝不绕过 CI 手动 `npm publish`**——除非 CI 本身坏了（此时先修 CI）。
+**绝不绕过 CI 手动 `npm publish`**——除非 CI 本身坏了（此时先修 CI）。等这次 job 打出 `+ anyplane@x.y.z` 再往下走。
+
+**tag 不会自动生成 GitHub Release。** npm 发布成功后补一条（`gh release create` 或网页），标 Latest，写用户能看懂的说明，不要只丢 commit 列表。
 
 ## 谁能发布：默认只有仓库 owner
 
@@ -52,3 +57,4 @@ npm 包 `anyplane` 的发布入口只有两个，外人默认都走不通：
 - `0.1.4`：体验批修——本地斜杠命令不再清零上下文环；刷新恢复当前会话（hash 路由）；codex 页脚补耗时；tail/离线会话回填模型；Markdown 空链接/相对路径拦截。
 - `0.2.0`：Capacitor 原生壳落地（Android/iOS 包壳、原生审批通知链路、国产 ROM JSI 失效绕行与遥测定位）；方向十一 Onboarding（双后端登录状态页、单阶段 all-in-one Docker 镜像、公网一键脚本、安装漏斗修复、codex 读盘优先发现）；方向十二韧性（codex runtime 拆分、优雅停机）；方向十三结构债（`@anyplane/protocol` 共享类型包、Biome 依赖红线、mock CLI e2e 进 CI、后端能力声明化 + `portFor` 注册表、13.4 审批/Hub/store/props 四批重构）；网关 502/500 语义与 dev 孤儿修复；官网改版；测试大补课（688 用例）。
 - `0.2.1`：启动收口——末行醒目提示打开地址，交互终端默认拉起系统浏览器（`--no-open` / `ANYPLANE_NO_OPEN=1` / CI / Docker 不弹）。
+- `0.2.2`：启动横幅带 package.json 版本；对照 npm latest，落后则提示 `bunx anyplane@latest`（bunx/npx 缓存旧包）。
