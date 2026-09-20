@@ -47,6 +47,8 @@ bunx anyplane
 
 The server starts on <http://localhost:7480> and opens your default browser. Pass `--no-open` (or `ANYPLANE_NO_OPEN=1`) to skip. The frontend ships prebuilt in the npm package — no clone, no build step. Config and runtime data live in `~/.anyplane/`.
 
+`bunx` / `npx` cache the first download. If startup doesn't match the latest npm version, refresh with `bunx anyplane@latest` (or `npx anyplane@latest`). Global installs: `npm i -g anyplane@latest`.
+
 Don't have Bun? `npm i -g anyplane` and `npx anyplane` work too — they'll tell you how to install Bun if it's missing.
 
 Running from source (Bun only — do not use npm / yarn / pnpm):

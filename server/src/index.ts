@@ -31,6 +31,8 @@ import { initInbox } from './push/inbox'
 import { handleApi } from './routes/api'
 import { json } from './routes/http'
 import { openDefaultBrowser, shouldOpenBrowser } from './openBrowser'
+import { packageVersion } from './pkgVersion'
+import { checkForNpmUpdate } from './updateCheck'
 import { errorMessage, hasSupportedBunVersion } from './util'
 
 // ---------- sessionKey ----------
@@ -250,8 +252,9 @@ const displayHost = isLoopbackHost(config.host)
 const baseUrl = `http://${displayHost}:${server.port}/`
 // 带 token 的完整 URL 只向交互终端直出（绕过 logger）——stdout 会被 nohup/journal 持久化。
 const accessUrl = `${baseUrl}${config.authToken ? `?token=${config.authToken}` : ''}`
+const version = packageVersion()
 log.info(
-  `[anyplane] listening on ${baseUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version} auth=${config.authToken ? 'token' : 'off'}`,
+  `[anyplane] ${version} listening on ${baseUrl} pid=${process.pid} ppid=${process.ppid} bun=${Bun.version} auth=${config.authToken ? 'token' : 'off'}`,
 )
 log.info(`[anyplane] permissionPolicy=${config.permissionPolicy} claudeConfigDir=${config.claudeConfigDir}`)
 if (!config.authToken) {
@@ -295,6 +298,9 @@ if (shouldOpenBrowser()) {
     log.warn(`[anyplane] 无法自动打开浏览器，请手动访问 ${baseUrl}${opened.error ? `：${opened.error}` : ''}`)
   }
 }
+
+// bunx/npx 会缓存首次下载的包。落后于 npm latest 时提醒 @latest，不阻塞启动。
+void checkForNpmUpdate(version)
 
 process.on('exit', (code) => {
   log.info(`[anyplane] process exit pid=${process.pid} code=${code} shuttingDown=${lifecycle.isShuttingDown()}`)

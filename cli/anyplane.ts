@@ -28,6 +28,9 @@ Config:
   ANYPLANE_PORT / ANYPLANE_HOST / ANYPLANE_TOKEN / CLAUDE_CONFIG_DIR
   ANYPLANE_NO_OPEN=1   与 --no-open 相同
 
+Refresh a cached bunx/npx install:
+  bunx anyplane@latest
+
 Docs: https://github.com/OneCuriousLearner/anyplane
 `
 

@@ -429,8 +429,8 @@
           <h3 data-i18n="step1.h">Run it</h3>
           <pre data-i18n="step1.pre"><span class="c"># one command, front-end prebuilt (via bunx)</span>
 bunx anyplane
-<span class="c"># or from npm — it tells you how to get Bun if it's missing</span>
-npm i -g anyplane</pre>
+<span class="c"># bunx caches the first download — refresh with:</span>
+bunx anyplane@latest</pre>
         </div>
         <div class="step">
           <h3 data-i18n="step2.h">Configure (optional)</h3>
@@ -485,7 +485,7 @@ npm i -g anyplane</pre>
       'm4': 'VAPID (RFC 8292) and aes128gcm payloads (RFC 8291) implemented in-house — no push SDK, no third party reading your approvals.',
       'sec.takeoff': 'TAKEOFF',
       'step1.h': 'Run it',
-      'step1.pre': '<span class="c"># one command, front-end prebuilt (via bunx)</span>\nbunx anyplane\n<span class="c"># or from npm — it tells you how to get Bun if it\'s missing</span>\nnpm i -g anyplane',
+      'step1.pre': '<span class="c"># one command, front-end prebuilt (via bunx)</span>\nbunx anyplane\n<span class="c"># bunx caches the first download — refresh with:</span>\nbunx anyplane@latest',
       'step2.h': 'Configure (optional)',
       'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># LAN access always requires a token.</span>',
       'req': 'REQUIRES — Bun ≥ 1.4.0 · claude and/or codex CLI on PATH, logged in',
@@ -518,7 +518,7 @@ npm i -g anyplane</pre>
       'm4': 'VAPID（RFC 8292）与 aes128gcm 载荷（RFC 8291）全部自实现——不用推送 SDK，没有第三方读得到你的审批。',
       'sec.takeoff': '起飞',
       'step1.h': '跑起来',
-      'step1.pre': '<span class="c"># 一条命令，前端已预构建（经 bunx）</span>\nbunx anyplane\n<span class="c"># 或从 npm 安装——缺 Bun 时会告诉你怎么装</span>\nnpm i -g anyplane',
+      'step1.pre': '<span class="c"># 一条命令，前端已预构建（经 bunx）</span>\nbunx anyplane\n<span class="c"># bunx 会缓存第一次下载，刷新用：</span>\nbunx anyplane@latest',
       'step2.h': '配置（可选）',
       'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># 局域网访问必须配置 token。</span>',
       'req': '运行要求 — Bun ≥ 1.4.0 · PATH 中有已登录的 claude 和/或 codex CLI',
@@ -551,7 +551,7 @@ npm i -g anyplane</pre>
       'm4': 'VAPID（RFC 8292）與 aes128gcm 酬載（RFC 8291）全部自行實作——不用推播 SDK，沒有第三方讀得到你的審批。',
       'sec.takeoff': '起飛',
       'step1.h': '跑起來',
-      'step1.pre': '<span class="c"># 一條指令，前端已預建置（經 bunx）</span>\nbunx anyplane\n<span class="c"># 或從 npm 安裝——缺 Bun 時會告訴你怎麼裝</span>\nnpm i -g anyplane',
+      'step1.pre': '<span class="c"># 一條指令，前端已預建置（經 bunx）</span>\nbunx anyplane\n<span class="c"># bunx 會快取第一次下載，刷新用：</span>\nbunx anyplane@latest',
       'step2.h': '設定（可選）',
       'step2.pre': '<span class="c"># ~/.anyplane/config.json</span>\n{ "host": "0.0.0.0", "authToken": "long-random" }\n<span class="c"># 區網存取必須設定 token。</span>',
       'req': '執行需求 — Bun ≥ 1.4.0 · PATH 中有已登入的 claude 和/或 codex CLI',
