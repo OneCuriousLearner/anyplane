@@ -45,10 +45,16 @@
 
   /* ---------- top bar ---------- */
   header {
-    position: absolute; top: 0; left: 0; right: 0; z-index: 10;
-    backdrop-filter: none; -webkit-backdrop-filter: none;
+    position: sticky; top: 0; z-index: 10;
     background: transparent;
-    border-bottom: 0;
+    border-bottom: 1px solid transparent;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    transition: background .2s, border-color .2s, backdrop-filter .2s;
+  }
+  header.scrolled {
+    background: rgba(6,6,8,.55);
+    border-bottom-color: var(--hair);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
   }
   header .wrap { display: flex; align-items: center; gap: .7rem; height: 3.6rem; }
   .mark { width: 1.5rem; height: 1.5rem; color: var(--ink); flex: none; }
@@ -74,7 +80,12 @@
   .langswitch button:hover { color: var(--ink); }
 
   /* ---------- hero: night wing ---------- */
-  .hero { position: relative; height: 100dvh; min-height: 100svh; overflow: hidden; background: #000; }
+  .hero {
+    position: relative;
+    height: 100dvh; min-height: 100svh;
+    margin-top: -3.6rem;
+    overflow: hidden; background: #000;
+  }
   .hero .shot {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
@@ -254,6 +265,7 @@
   @media (prefers-reduced-motion: reduce) {
     *, .flap.flip { animation: none !important; }
     html { scroll-behavior: auto; }
+    header { transition: none; }
   }
 </style>
 </head>
@@ -508,6 +520,18 @@ npm i -g anyplane</pre>
   setLang(detectLang());
 
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  (function () {
+    const header = document.querySelector('header');
+    const hero = document.querySelector('.hero');
+    if (!header || !hero) return;
+    const sync = () => {
+      header.classList.toggle('scrolled', hero.getBoundingClientRect().bottom <= header.offsetHeight);
+    };
+    new IntersectionObserver(sync, { threshold: [0, 1] }).observe(hero);
+    addEventListener('scroll', sync, { passive: true });
+    sync();
+  })();
 
   // ---------- hero adaptive crop ----------
   (function () {
