@@ -120,26 +120,35 @@
   }
   .copy:hover { filter: brightness(1.06); }
 
-  /* ---------- the departure board (split-flap) ---------- */
-  .boardzone { padding: 7rem 1rem 5.5rem; display: flex; flex-direction: column; align-items: center; }
-  .flapboard {
-    background: #0b0b0d;
-    border: 1px solid rgba(255,255,255,.09);
-    border-radius: 18px;
-    padding: clamp(1.4rem, 4vw, 3rem);
-    box-shadow: 0 60px 140px -40px rgba(0,0,0,.9), 0 0 120px rgba(255,255,255,.03) inset;
+  /* ---------- FIDS wall：单独一屏 ---------- */
+  .boardzone {
+    min-height: 100dvh; min-height: 100svh;
+    padding: 0;
+    display: flex; flex-direction: column; justify-content: center; align-items: stretch;
+    overflow-x: clip;
+    background:
+      radial-gradient(70% 45% at 50% 38%, rgba(120,130,160,.08), transparent 72%),
+      var(--bg);
   }
-  .flapline { display: flex; gap: .18em; margin-bottom: .18em; }
+  .flapboard {
+    width: 100%;
+    flex: 1 1 auto;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: clamp(2.2rem, 8vh, 8rem) 0;
+    background: #0b0b0d;
+    box-shadow: inset 0 1px 0 var(--hair), inset 0 -1px 0 rgba(0,0,0,.55);
+  }
+  .flapline { display: flex; justify-content: center; gap: 2px; margin-bottom: 2px; }
   .flapline:last-child { margin-bottom: 0; }
   .flap {
-    width: 1.02ch; height: 1.5em;
+    width: 1.02ch; height: 1.48em;
     display: inline-flex; align-items: center; justify-content: center;
-    font: 600 clamp(.72rem, 2.2vw, 1.45rem)/1 var(--mono);
+    font: 600 var(--flap-fs, clamp(1.15rem, min(5.1vw, 11vh), 14rem))/1 var(--mono);
     color: var(--ink);
-    background: linear-gradient(#17171a 48%, #101013 52%);
-    border-radius: 4px;
+    background: linear-gradient(#17171a 47%, #101013 53%);
+    border-radius: 1px;
     position: relative;
-    /* 颜色绝不渐变——翻牌机只在翻动时换牌；透明度渐变供空格归位用 */
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
     transition: opacity .35s;
   }
   .flap::after {
@@ -148,48 +157,77 @@
   }
   .flap.dim { color: var(--faint); }
   .flap.hot { color: var(--red); }
-  /* 先淡出（透明），类名归位在透明之后由 JS 完成，避免颜色被看到突变 */
-  .flap.blank { opacity: 0; color: var(--ink); }
-  .flap.flip { animation: flip .1s linear; }
+  .flap.blank {
+    opacity: 1;
+    color: transparent;
+    background: linear-gradient(#101012 47%, #0a0a0c 53%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .flap.blank::after { background: rgba(0,0,0,.55); }
+  .flap.flip { animation: flip .12s linear; }
   @keyframes flip {
     0% { transform: rotateX(0); filter: brightness(1); }
-    50% { transform: rotateX(-70deg); filter: brightness(.55); }
+    50% { transform: rotateX(-72deg); filter: brightness(.55); }
     100% { transform: rotateX(0); filter: brightness(1); }
   }
   .boardcap {
-    margin-top: 2.6rem; max-width: 34rem; text-align: center;
-    color: var(--dim); font-size: 1.02rem; line-height: 1.75;
+    flex: none;
+    margin: 0 auto;
+    max-width: 40rem;
+    padding: clamp(1.1rem, 3vh, 2rem) 1.5rem clamp(1.6rem, 4vh, 2.6rem);
+    font: .78rem/1.65 var(--mono); letter-spacing: .02em;
+    color: var(--dim); text-align: left;
   }
   .boardcap strong { color: var(--ink); font-weight: 600; }
 
-  /* ---------- the big proof shot ---------- */
-  .proof { position: relative; padding: 7rem 0 8rem; overflow: hidden; }
+  /* ---------- the big proof shot：单独一屏 ---------- */
+  .proof {
+    position: relative;
+    min-height: 100dvh; min-height: 100svh;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: clamp(1.6rem, 5vh, 4rem) 0;
+    overflow-x: clip;
+  }
   .proof::before { /* 截图区下方的阴影背景：一层贴地的暗色辉光，把截图托起来 */
     content: ""; position: absolute; left: 50%; bottom: -12%; transform: translateX(-50%);
     width: 90rem; height: 34rem; pointer-events: none;
     background: radial-gradient(50% 55% at 50% 60%, rgba(120,130,160,.14), transparent 70%);
   }
   .proof .cap {
+    flex: none;
     text-align: center; font: 600 .7rem var(--mono); letter-spacing: .3em; color: var(--faint);
-    margin-bottom: 3rem;
+    margin-bottom: clamp(1rem, 3vh, 2.4rem);
   }
   .frame {
     position: relative; z-index: 2;
-    max-width: 66rem; margin: 0 auto; padding: 0 1.5rem;
+    display: flex; justify-content: center;
+    width: 100%;
+    max-width: 92vw;
+    margin: 0 auto;
+    padding: 0;
+    flex: 0 1 auto;
   }
-  /* 截图自带 MacBook 壳且四周透明——不再加卡片框，整机靠投影浮起 */
-  .frame .card > img {
+  /* 卡片跟着笔记本实际成像收缩，手机按这张图的宽度定比例，不跟视口自己缩放 */
+  .frame .card {
+    position: relative;
+    width: max-content;
+    max-width: 100%;
+  }
+  .frame .card > img:not(.phone) {
+    width: auto; height: auto;
+    max-width: min(88vw, 140vh);
+    max-height: 62vh;
+    object-fit: contain; display: block;
     filter: drop-shadow(0 80px 110px rgba(0,0,0,.85)) drop-shadow(0 24px 40px rgba(0,0,0,.6));
   }
-  .frame img { width: 100%; display: block; }
   .frame .phone {
-    position: absolute; right: clamp(.2rem, 3vw, 2.4rem); bottom: -3rem; z-index: 3;
-    width: clamp(150px, 21vw, 250px);
+    position: absolute; right: 1%; bottom: 2.5%; z-index: 3;
+    width: 23%; height: auto;
     filter: drop-shadow(0 46px 70px rgba(0,0,0,.7));
   }
   .proof .line {
-    position: relative; z-index: 2;
-    max-width: 40rem; margin: 4rem auto 0; text-align: center;
+    position: relative; z-index: 2; flex: none;
+    max-width: 40rem; margin: clamp(1.4rem, 4vh, 3rem) auto 0; text-align: center;
     color: var(--dim); font-size: 1.05rem; line-height: 1.8; padding: 0 1.5rem;
   }
   .proof .line strong { color: var(--ink); font-weight: 600; }
@@ -250,17 +288,28 @@
     .gates, .steps { grid-template-columns: 1fr; }
     .manual .k { min-width: 0; }
     .manual li { flex-direction: column; gap: .25rem; }
-    .flapline { gap: .12em; }
-    .frame .phone { width: 27vw; right: .1rem; bottom: -1.2rem; }
-    /* 移动端牌面放大：牌子左对齐，右侧空白列溢出视口（clip 不产生横向滚动） */
-    .boardzone { padding-left: 0; padding-right: 0; align-items: flex-start; overflow-x: clip; }
-    .flapboard { margin-left: 1rem; }
-    .flap { font-size: clamp(1.05rem, 5.2vw, 1.45rem); }
-    .boardcap { align-self: center; padding: 0 1.5rem; }
+    .boardcap { padding-left: 1.2rem; padding-right: 1.2rem; }
+    .proof .line { font-size: .95rem; }
+    .proof .cap { margin-bottom: 1.2rem; }
+  }
+  /* 窄屏翻牌：格子均分行宽，字号由 --flap-fs 按一屏剩余高度计算 */
+  @media (max-width: 1024px) {
+    .flapboard { padding: clamp(1.2rem, 4vh, 2.4rem) .75rem; }
+    .flapline { gap: 3px; justify-content: stretch; width: 100%; }
+    .flap {
+      flex: 1 1 0;
+      width: auto;
+      min-width: 0;
+      height: 1.58em;
+      font-size: var(--flap-fs, clamp(1.4rem, min(11vw, 5.5vh), 3.2rem));
+    }
   }
   @media (max-width: 560px) {
     .wordmark { display: none; }
     .pill { padding: .3rem .7rem; }
+  }
+  @media (max-width: 430px) {
+    .pill { display: none; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, .flap.flip { animation: none !important; }
@@ -311,8 +360,8 @@
     <div class="frame">
       <div class="card">
         <img src="assets/greeting_macbook.png" alt="AnyPlane on a MacBook: project-grouped session list and a live conversation" loading="lazy">
+        <img class="phone" src="assets/greeting_iphone.png" alt="The same AnyPlane session on a phone, tracking live" loading="lazy">
       </div>
-      <img class="phone" src="assets/greeting_iphone.png" alt="The same AnyPlane session on a phone, tracking live" loading="lazy">
     </div>
     <p class="line" data-i18n="proof.line">Every session, both runtimes, one tab. Approvals clear from the lock screen; <strong>transcripts never leave your disk.</strong></p>
   </section>
@@ -567,47 +616,117 @@ npm i -g anyplane</pre>
 
   // ---------- split-flap departure board（降速版） ----------
   const CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/:*·→|+?';
-  const COLS = 30;
   // 牌面固定英文——机场出发大屏的语言，中文用户同样读得懂，拼音反而出戏
-  const PAGES = [
-    [
-      { t: 'ANYPLANE TOWER · LOCAL', cls: 'dim' },
-      { t: '' },
-      { t: 'CLAUDE CODE    RUNNING' },
-      { t: 'CODEX          WAITING', hot: true },
-      { t: '               APPROVE?', hot: true },
+  const WIDE = {
+    cols: 30,
+    pages: [
+      [
+        { t: 'ANYPLANE TOWER · LOCAL', cls: 'dim' },
+        { t: '' },
+        { t: 'CLAUDE CODE    RUNNING' },
+        { t: 'CODEX          WAITING', hot: true },
+        { t: '               APPROVE?', hot: true },
+      ],
+      [
+        { t: 'ANYPLANE TOWER · LOCAL', cls: 'dim' },
+        { t: '' },
+        { t: 'CLAUDE CODE    RUNNING' },
+        { t: 'CODEX          CLEARED' },
+        { t: '               VIA PUSH', cls: 'dim' },
+      ],
+      [
+        { t: 'NO ACCOUNT · NO RELAY', cls: 'dim' },
+        { t: '' },
+        { t: 'TRANSCRIPTS    ON DISK' },
+        { t: 'TOKENS         LOCAL' },
+        { t: 'CLOUD          NONE' },
+      ],
     ],
-    [
-      { t: 'ANYPLANE TOWER · LOCAL', cls: 'dim' },
-      { t: '' },
-      { t: 'CLAUDE CODE    RUNNING' },
-      { t: 'CODEX          CLEARED' },
-      { t: '               VIA PUSH', cls: 'dim' },
+  };
+  const NARROW = {
+    cols: 10,
+    pages: [
+      [
+        { t: 'ANYPLANE', cls: 'dim' },
+        { t: 'TOWER', cls: 'dim' },
+        { t: '' },
+        { t: 'CLAUDE' },
+        { t: 'RUNNING' },
+        { t: 'CODEX', hot: true },
+        { t: 'WAITING', hot: true },
+        { t: 'APPROVE?', hot: true },
+      ],
+      [
+        { t: 'ANYPLANE', cls: 'dim' },
+        { t: 'TOWER', cls: 'dim' },
+        { t: '' },
+        { t: 'CLAUDE' },
+        { t: 'RUNNING' },
+        { t: 'CODEX' },
+        { t: 'CLEARED' },
+        { t: 'VIA PUSH', cls: 'dim' },
+      ],
+      [
+        { t: 'NO ACCOUNT', cls: 'dim' },
+        { t: 'NO RELAY', cls: 'dim' },
+        { t: '' },
+        { t: 'ON DISK' },
+        { t: 'TOKENS' },
+        { t: 'LOCAL' },
+        { t: 'CLOUD' },
+        { t: 'NONE' },
+      ],
     ],
-    [
-      { t: 'NO ACCOUNT · NO RELAY', cls: 'dim' },
-      { t: '' },
-      { t: 'TRANSCRIPTS    ON DISK' },
-      { t: 'TOKENS         LOCAL' },
-      { t: 'CLOUD          NONE' },
-    ],
-  ];
+  };
+  const boardMq = matchMedia('(max-width: 1024px)');
+  let COLS = 30;
+  let PAGES = WIDE.pages;
   const board = document.getElementById('board');
   const grid = [];
-  for (let r = 0; r < PAGES[0].length; r++) {
-    const line = document.createElement('div');
-    line.className = 'flapline';
-    const cells = [];
-    for (let c = 0; c < COLS; c++) {
-      const f = document.createElement('span');
-      f.className = 'flap blank';
-      f.textContent = ' ';
-      line.appendChild(f);
-      cells.push(f);
-    }
-    board.appendChild(line);
-    grid.push(cells);
+  function applyLayout() {
+    const L = boardMq.matches ? NARROW : WIDE;
+    COLS = L.cols;
+    PAGES = L.pages;
   }
+  function mountBoard() {
+    board.replaceChildren();
+    grid.length = 0;
+    for (let r = 0; r < PAGES[0].length; r++) {
+      const line = document.createElement('div');
+      line.className = 'flapline';
+      const cells = [];
+      for (let c = 0; c < COLS; c++) {
+        const f = document.createElement('span');
+        f.className = 'flap blank';
+        f.textContent = ' ';
+        line.appendChild(f);
+        cells.push(f);
+      }
+      board.appendChild(line);
+      grid.push(cells);
+    }
+  }
+  applyLayout();
+  mountBoard();
+  function fitBoard() {
+    const zone = board.closest('.boardzone');
+    const cap = zone.querySelector('.boardcap');
+    const cs = getComputedStyle(board);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const availH = Math.max(80, zone.clientHeight - (cap ? cap.offsetHeight : 0) - padY);
+    const availW = Math.max(80, board.clientWidth);
+    const rows = Math.max(grid.length, 1);
+    const gapY = 2 * (rows - 1);
+    const gapX = (boardMq.matches ? 3 : 2) * (COLS - 1);
+    const flapW = (availW - gapX) / COLS;
+    const rowH = (availH * 0.94 - gapY) / rows;
+    const fromW = flapW / (boardMq.matches ? 0.70 : 0.62);
+    const fromH = rowH / (boardMq.matches ? 1.58 : 1.48);
+    const fs = Math.max(15, Math.min(fromW, fromH, 240));
+    board.style.setProperty('--flap-fs', fs.toFixed(1) + 'px');
+  }
+  fitBoard();
+  new ResizeObserver(fitBoard).observe(board.closest('.boardzone'));
   function pad(s) { return (s + ' '.repeat(COLS)).slice(0, COLS); }
   function showPage(page) {
     for (let r = 0; r < grid.length; r++) {
@@ -619,16 +738,8 @@ npm i -g anyplane</pre>
         const target = text[c];
         const delay = Math.random() * 1200 + r * 160;
         if (target === ' ') {
-          // 空格→空格：完全不动，避免格子淡入淡出闪一下
           if (cell.textContent === ' ') continue;
-          // 翻动全程保持原颜色类，落定后先淡出（透明），透明后再归位 blank（颜色随 blank 复位，不可见）
-          spinTo(cell, ' ', delay, () => {
-            cell.style.opacity = '0';
-            setTimeout(() => {
-              cell.className = 'flap blank';
-              cell.style.opacity = '';
-            }, 400); // .35s transition 收尾后
-          });
+          spinTo(cell, ' ', delay, () => { cell.className = 'flap blank'; });
           continue;
         }
         const charSame = cell.textContent === target;
@@ -689,6 +800,19 @@ npm i -g anyplane</pre>
       }
     }, { threshold: .2 }).observe(board);
   }
+  boardMq.addEventListener('change', () => {
+    applyLayout();
+    mountBoard();
+    fitBoard();
+    page = 0;
+    boardStarted = false;
+    const r = board.getBoundingClientRect();
+    const onScreen = r.top < innerHeight && r.bottom > 0;
+    if (reduced || onScreen) {
+      boardStarted = true;
+      showPage(PAGES[0]);
+    }
+  });
 
   // ---------- 复制安装命令 ----------
   const btn = document.getElementById('copy');
