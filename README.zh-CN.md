@@ -35,6 +35,8 @@ bunx anyplane
 
 服务起来后会打开默认浏览器访问 <http://localhost:7480>。不想自动打开就加 `--no-open`（或 `ANYPLANE_NO_OPEN=1`）。前端已随 npm 包预构建，无需 clone 仓库；配置文件和运行数据默认放在 `~/.anyplane/`。
 
+`bunx` / `npx` 会缓存第一次下载的包。启动日志里的版本对不上 npm latest 时，用 `bunx anyplane@latest`（或 `npx anyplane@latest`）刷新。全局安装：`npm i -g anyplane@latest`。
+
 没装 Bun 也可以从 npm 装（`npm i -g anyplane` / `npx anyplane`）——启动时会告诉你怎么补上 Bun。
 
 从源码运行（开发用，本项目仅使用 Bun，请勿用 npm / yarn / pnpm）：

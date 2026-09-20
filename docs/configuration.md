@@ -34,6 +34,8 @@ README 只保留最常用的几项，这里是完整配置说明。
 
 启动后默认在交互终端打开浏览器（`http://localhost:7480/`，配了 token 则带 `?token=`）。关掉：命令行加 `--no-open`，或设 `ANYPLANE_NO_OPEN=1` / `ANYPLANE_OPEN=0`。管道、CI、Docker 内不会弹浏览器。
 
+启动后会对照 npm `latest`（6 小时内不重复打 registry）。落后则提示 `bunx anyplane@latest`。关掉：`ANYPLANE_NO_UPDATE_CHECK=1`。CI 默认不检查。
+
 ## 日志
 
 默认输出保持人眼可读的 `[scope] 消息 k=v` 形态，无需配置。排查问题时有两个开关：
