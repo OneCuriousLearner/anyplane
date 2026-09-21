@@ -176,27 +176,41 @@ function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?:
   return { title: title ?? firstPrompt, lastPrompt, cwd }
 }
 
+/** (mtimeMs, size) 键 LRU：transcript 只追加，键变即内容变（外部回滚/重建改 size/mtime
+ *  自然失效）；命中触摸提鲜，超封顶淘汰最早未用。meta 与全量解析两级缓存同骨架。 */
+function createMtimeLru<V>(cap: number) {
+  const cache = new Map<string, { mtimeMs: number; size: number; value: V }>()
+  return {
+    get(path: string, mtimeMs: number, size: number): V | undefined {
+      const hit = cache.get(path)
+      if (!hit || hit.mtimeMs !== mtimeMs || hit.size !== size) return undefined
+      // LRU 触摸：命中即最新，淘汰从最早未用开始
+      cache.delete(path)
+      cache.set(path, hit)
+      return hit.value
+    },
+    set(path: string, mtimeMs: number, size: number, value: V): void {
+      cache.set(path, { mtimeMs, size, value })
+      while (cache.size > cap) {
+        const oldest = cache.keys().next().value
+        if (oldest === undefined) break
+        cache.delete(oldest)
+      }
+    },
+  }
+}
+
 /** extractMeta 的 (mtimeMs, size) 记忆化：/api/sessions 每 10s 轮询会全量重扫 transcripts，
  *  不变文件（绝大多数）的 128KB 头尾读 + 逐行 JSON.parse 全部跳过；活跃会话 mtime 必变，自动重读。
  *  LRU 封顶防长期运行无界增长（对照 parseCache 的 PARSE_CACHE_CAP——此前这里无任何上限） */
 const META_CACHE_CAP = 64
-const metaCache = new Map<string, { mtimeMs: number; size: number; meta: ReturnType<typeof extractMeta> }>()
+const metaCache = createMtimeLru<ReturnType<typeof extractMeta>>(META_CACHE_CAP)
 
 function extractMetaCached(path: string, mtimeMs: number, size: number): ReturnType<typeof extractMeta> {
-  const hit = metaCache.get(path)
-  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) {
-    // LRU 触摸：命中即最新，淘汰从最早未用开始
-    metaCache.delete(path)
-    metaCache.set(path, hit)
-    return hit.meta
-  }
+  const hit = metaCache.get(path, mtimeMs, size)
+  if (hit) return hit
   const meta = extractMeta(path)
-  metaCache.set(path, { mtimeMs, size, meta })
-  while (metaCache.size > META_CACHE_CAP) {
-    const oldest = metaCache.keys().next().value
-    if (oldest === undefined) break
-    metaCache.delete(oldest)
-  }
+  metaCache.set(path, mtimeMs, size, meta)
   return meta
 }
 
@@ -425,27 +439,17 @@ interface ParsedTranscript {
   legacySidechain: Map<string, HistoryMessage[]>
 }
 const PARSE_CACHE_CAP = 8
-const parseCache = new Map<string, { mtimeMs: number; size: number; parsed: ParsedTranscript }>()
+const parseCache = createMtimeLru<ParsedTranscript>(PARSE_CACHE_CAP)
 
 function peekParseCache(path: string, mtimeMs: number, size: number): ParsedTranscript | undefined {
-  const hit = parseCache.get(path)
-  if (!hit || hit.mtimeMs !== mtimeMs || hit.size !== size) return undefined
-  // LRU 触摸：命中即最新，淘汰从最早未用开始
-  parseCache.delete(path)
-  parseCache.set(path, hit)
-  return hit.parsed
+  return parseCache.get(path, mtimeMs, size)
 }
 
 function parseTranscriptCached(path: string, mtimeMs: number, size: number, raw: Buffer): ParsedTranscript {
   const hit = peekParseCache(path, mtimeMs, size)
   if (hit) return hit
   const parsed = parseTranscript(raw)
-  parseCache.set(path, { mtimeMs, size, parsed })
-  while (parseCache.size > PARSE_CACHE_CAP) {
-    const oldest = parseCache.keys().next().value
-    if (oldest === undefined) break
-    parseCache.delete(oldest)
-  }
+  parseCache.set(path, mtimeMs, size, parsed)
   return parsed
 }
 

@@ -37,6 +37,39 @@ export function writeJsonFile(path: string, value: unknown, opts?: { mode?: numb
   renameSync(tmp, path)
 }
 
+/**
+ * ~/.anyplane 下的「单文件 JSON 小表」脚手架（session-models/context-windows 等同构模块的
+ * 公共壳）：惰性路径 + memo 读 + 值变才写（tmp+rename 原子替换）+ 测试重定向钩子。
+ * 写失败静默——这类表是缓存而非权威状态，下次登记自然会再写。
+ */
+export function jsonTableStore<T>(filename: string) {
+  let storeFile: string | undefined
+  let table: Record<string, T> | undefined
+  const file = (): string => (storeFile ??= join(ccDataDir(), filename))
+  const load = (): Record<string, T> => (table ??= readJsonFile<Record<string, T>>(file()) ?? {})
+  return {
+    get(key: string): T | undefined {
+      return load()[key]
+    },
+    /** 登记（值不变不写盘；落盘失败不阻塞调用方，下次登记时再写） */
+    remember(key: string, value: T): void {
+      const t = load()
+      if (t[key] === value) return
+      t[key] = value
+      try {
+        writeJsonFile(file(), t)
+      } catch {
+        // 落盘失败不阻塞：本表是缓存性质，下次登记会再写
+      }
+    },
+    /** 测试钩子：重定向存储文件并重置内存缓存（不传则恢复默认路径） */
+    setStoreFileForTest(p: string | undefined): void {
+      storeFile = p
+      table = undefined
+    },
+  }
+}
+
 /** unknown 错误 → 单行文案（broadcast/json 响应用；console.* 请直接传原对象保留堆栈） */
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)

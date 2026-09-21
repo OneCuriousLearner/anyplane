@@ -5,7 +5,7 @@
 import type { HistoryMessage } from '@anyplane/protocol'
 import type { SessionSummary } from '../types'
 import { log } from '../../log'
-import { listThreadsFromDisk } from './discovery'
+import { listThreadsFromDisk, mergeRowInto } from './discovery'
 import { codexRuntime } from './runtime'
 
 export function keyFor(threadId: string): string {
@@ -94,19 +94,10 @@ async function rpcRowsWithBackoff(archived: boolean): Promise<ThreadRow[]> {
 
 /** 同 thread id 去重（updatedAt 降序输入）：resume 续跑在多轨都可能产生同 id 多行
  *  （读盘轨在 discovery 内已去过一道；live/RPC 轨上游 fs-scan 按文件出项也会重）。
- *  双轨在同一汇聚点去重，卡片数不随所走轨道翻转；createdAt 取更早者。 */
+ *  双轨在同一汇聚点去重，卡片数不随所走轨道翻转；单行归并口径与读盘轨同一份实现 */
 function dedupRows(rows: ThreadRow[]): ThreadRow[] {
   const byId = new Map<string, ThreadRow>()
-  for (const r of rows) {
-    const id = String(r.id)
-    const existing = byId.get(id)
-    if (!existing) {
-      byId.set(id, { ...r })
-      continue
-    }
-    if (!existing.preview && r.preview) existing.preview = r.preview
-    if (r.createdAt && (!existing.createdAt || r.createdAt < existing.createdAt)) existing.createdAt = r.createdAt
-  }
+  for (const r of rows) mergeRowInto(byId, r)
   return [...byId.values()]
 }
 

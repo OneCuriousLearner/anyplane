@@ -10,41 +10,21 @@
 // 会话。**刻意不做长期缓存语义**：live 会话不读这张表，配置改动下个会话即自愈。
 // 落 ~/.anyplane/context-windows.json。
 
-import { join } from 'node:path'
-import { ccDataDir, readJsonFile, writeJsonFile } from '../../util'
+import { jsonTableStore } from '../../util'
 
-let storeFile: string | undefined
-let table: Record<string, number> | undefined
-
-function file(): string {
-  return (storeFile ??= join(ccDataDir(), 'context-windows.json'))
-}
-
-function load(): Record<string, number> {
-  return (table ??= readJsonFile<Record<string, number>>(file()) ?? {})
-}
+const store = jsonTableStore<number>('context-windows.json')
 
 /** 登记权威窗口大小（get_context_usage 应答时调用）。值不变则不写盘 */
 export function rememberContextWindow(model: string, windowSize: number): void {
   if (!model || !Number.isFinite(windowSize) || windowSize <= 0) return
-  const t = load()
-  if (t[model] === windowSize) return
-  t[model] = windowSize
-  try {
-    writeJsonFile(file(), t)
-  } catch {
-    // 落盘失败不阻塞会话：下个会话的 get_context_usage 会再写
-  }
+  store.remember(model, windowSize)
 }
 
 /** 查已习得的权威窗口；未见过返回 undefined，由调用方回退启发式 */
 export function learnedContextWindow(model: string | undefined): number | undefined {
   if (!model) return undefined
-  return load()[model]
+  return store.get(model)
 }
 
 /** 测试钩子：重定向存储文件并重置内存缓存（不传则恢复默认路径） */
-export function setContextWindowStoreForTest(p: string | undefined): void {
-  storeFile = p
-  table = undefined
-}
+export const setContextWindowStoreForTest = store.setStoreFileForTest

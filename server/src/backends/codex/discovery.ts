@@ -32,6 +32,22 @@ export interface DiskThreadRow {
 /** 磁盘格式漂移信号：调用方据此回退 RPC 并告警（不允许静默返回空列表） */
 export class DiskDiscoveryError extends Error {}
 
+/** 同 thread id 去重的单行归并（首见建行、缺 preview 回填、createdAt 取更早）：
+ *  resume 续跑在多轨都产生同 id 多行——读盘轨（resume 多文件）与本模块调用方的
+ *  live/RPC 汇聚点（fs-scan 按文件出项）共用同一口径，卡片数不随所走轨道翻转 */
+export function mergeRowInto<T extends { id: unknown; preview?: string; createdAt?: number }>(
+  byId: Map<string, T>,
+  row: T,
+): void {
+  const existing = byId.get(String(row.id))
+  if (!existing) {
+    byId.set(String(row.id), { ...row })
+    return
+  }
+  if (!existing.preview && row.preview) existing.preview = row.preview
+  if (row.createdAt && (!existing.createdAt || row.createdAt < existing.createdAt)) existing.createdAt = row.createdAt
+}
+
 const SESSIONS_DIR = 'sessions'
 const ARCHIVED_DIR = 'archived_sessions'
 const SESSION_INDEX = 'session_index.jsonl'
@@ -324,14 +340,7 @@ export async function listThreadsFromDisk(
       parsedFiles++
       if (entry.sawSessionMeta) sawAnySessionMeta = true
       if (!entry.row) continue
-      const existing = byId.get(entry.row.id)
-      if (!existing) {
-        byId.set(entry.row.id, { ...entry.row })
-      } else {
-        if (!existing.preview && entry.row.preview) existing.preview = entry.row.preview
-        if (entry.row.createdAt && (!existing.createdAt || entry.row.createdAt < existing.createdAt))
-          existing.createdAt = entry.row.createdAt
-      }
+      mergeRowInto(byId, entry.row)
     }
     // 早停：更旧的文件只可能用于回填，凑满即收
     if (byId.size >= limit) break
