@@ -97,6 +97,13 @@ export class CodexRuntime {
           log.error(`[codex] app-server 退出 code=${code}`)
         }
         this.rpc = undefined
+        // 收集器必须随进程退出一并终结：否则 ephemeral fork 的 180s 超时会经 rpcRequest →
+        // ensureRpc 为一个已随进程消亡的 fork 线程重新拉起整个 app-server 进程
+        for (const c of this.collectors.values()) {
+          clearTimeout(c.timer)
+          c.reject(new Error('codex app-server 已退出'))
+        }
+        this.collectors.clear()
         for (const s of this.sessions.values()) s.handleProcessExit()
       }
       const initRes = await handshakeAppServer(rpc)
@@ -233,6 +240,9 @@ export class CodexRuntime {
       if (turn?.status === 'completed') c.resolve({ text: c.text.trim(), usage: c.usage })
       else c.reject(new Error(turn?.error?.message ?? `fork 问答未完成 (${turn?.status ?? '?'})`))
     } else if (method === 'error') {
+      // willRetry 的 error 是 transient（上游自动重试、turn 未被打断）——立即 reject 会让
+      // 本可成功的简报/侧问被误判失败；忽略它，等终态 turn/completed 或 willRetry:false 的 error
+      if ((params as { willRetry?: unknown }).willRetry === true) return
       clearTimeout(c.timer)
       this.collectors.delete(threadId)
       const err = params.error as { message?: string } | undefined

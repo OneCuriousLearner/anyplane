@@ -135,8 +135,11 @@ function turnsToHistory(threadId: string, turns: HistoryTurn[]): HistoryMessage[
   for (let ti = 0; ti < turns.length; ti++) {
     const turn = turns[ti]
     const msgs = itemsToHistory(turn.items ?? [], typeof turn.id === 'string' ? turn.id : undefined)
-    if (reasoning.length > 0) {
-      const start = turn.startedAt ?? 0
+    // startedAt 缺失（中断/失败的 turn，协议 v2/Turn.ts: startedAt: number | null）时时间窗
+    // 无法定位：start 兜底 0 会让窗口吞进任意早的 thinking，右界又落到下一轮起点+30s——
+    // 错插比缺失更糟（叙事错乱且无日志）。保守跳过该轮的侧车回插
+    if (reasoning.length > 0 && turn.startedAt != null) {
+      const start = turn.startedAt
       // completedAt 缺失（中断/失败的 turn）：窗口收口到下一轮起点，
       // 否则只有 start+30s，中断前已落盘的 thinking 会被永久漏掉
       const nextStart = turns[ti + 1]?.startedAt
