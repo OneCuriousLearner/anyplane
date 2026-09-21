@@ -1,4 +1,5 @@
-// 提交前一键验证：与 CI 同口径依次跑 typecheck → lint → bun test。
+// 提交前本地闸：依次跑 typecheck → lint → bun test。
+// 不是 CI——CI 另有 Windows 矩阵、e2e-mock、build、docker（见 AGENTS.md）。
 // 纯 Bun 实现、零 shell 语法——Windows / Linux / macOS 同一行为
 //（本项目本就全平台统一 Bun >= 1.4.0 门槛）。
 //
@@ -50,7 +51,7 @@ for (const step of steps) {
     continue
   }
   // test 步：退出码之外，强制确认完整 pass/fail 汇总行真实存在且 fail 为 0——
-  // 教训：bun test 输出被截断时 exit code 之外的"绿"不可信（见 AGENTS.md 测试纪律）。
+  // 教训：bun test 输出被截断时 exit code 之外的"绿"不可信（见 AGENTS.md 开发纪律）。
   const tail = out.slice(-800)
   const pass = tail.match(/(\d+)\s*pass(?:es)?\b/i)
   const fail = tail.match(/(\d+)\s*fail(?:ures)?\b/i)

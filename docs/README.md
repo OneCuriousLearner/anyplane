@@ -6,7 +6,7 @@
 
 | 文档 | 角色 |
 |---|---|
-| [configuration.md](configuration.md) | 配置全集：配置项、审批规则引擎、推送 webhook、日志、平台注意事项（README 只保留常用项） |
+| [configuration.md](configuration.md) | 配置全集：配置项、审批规则引擎、推送 webhook、日志、e2e 自定义模型、平台注意事项（README 只保留常用项） |
 | [gateway.md](gateway.md) | 域名访问（80/443 网关）与远程容器部署 |
 | [public-access.md](public-access.md) | 公网接入三套免 VPS 配方（Tailscale funnel / CF Tunnel / IPv6+DDNS）与安全红线 |
 | [releasing.md](releasing.md) | 发版流程与 npm 发布权限模型 |
