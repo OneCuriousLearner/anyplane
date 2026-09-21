@@ -151,6 +151,8 @@ export function hasSupportedBunVersion(): boolean {
  * 逐行泵取 NDJSON 流（TextDecoder 增量解码 + \n 切分 + 末尾余量冲刷）。
  * claude 子进程 stdout、codex app-server stdout、接力简报一次性进程共用。
  * 读取异常经 onError 上报（缺省打日志），不会抛出打断调用方。
+ * 行切分用 offset 游标而非每行 slice：长行/高频小 chunk 下避免 O(n²) 的字符串搬运，
+ * 每 chunk 末尾一次 compact 把已消费前缀砍掉。
  */
 export async function pumpLines(
   stream: ReadableStream<Uint8Array>,
@@ -160,17 +162,20 @@ export async function pumpLines(
   const reader = stream.getReader()
   const decoder = new TextDecoder()
   let buf = ''
+  let offset = 0
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
       buf += decoder.decode(value, { stream: true })
       let idx: number
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx).trim()
-        buf = buf.slice(idx + 1)
+      while ((idx = buf.indexOf('\n', offset)) >= 0) {
+        const line = buf.slice(offset, idx).trim()
+        offset = idx + 1
         if (line) onLine(line)
       }
+      buf = buf.slice(offset)
+      offset = 0
     }
     if (buf.trim()) onLine(buf.trim())
   } catch (e) {
