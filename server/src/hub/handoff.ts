@@ -2,9 +2,9 @@
 // 领域函数（播种文案/血缘 IO）在 ../lineage.ts；各后端 fork 简报在对应 port。这里只做编排与进度事件推源 Hub。
 
 import type { BackendName } from '@anyplane/protocol'
-import { backendPort, portFor, resolvedSessionKey } from '../backends/port'
+import { backendPort, portFor, resolvedSessionKey, slugForBackend } from '../backends/port'
 import { appendLineage, seedMessage, type HandoffDetail } from '../lineage'
-import { errorMessage, sanitizePath } from '../util'
+import { errorMessage } from '../util'
 import { broadcast } from './broadcast'
 import { rekeyHub } from './lifecycle'
 import { getHub, hubs } from './registry'
@@ -110,7 +110,7 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
             targetSessionId,
             // 目标 slug/cwd 以下发为准：源会话是 codex 时 session.slug 恒为 'codex'，
             // 前端若沿用源 slug 会把 claude 目标的历史请求打到 projects/codex/（空白）
-            targetSlug: toBackend === 'codex' ? 'codex' : sanitizePath(sourceCwd),
+            targetSlug: slugForBackend(toBackend, sourceCwd),
             targetCwd: sourceCwd,
             toBackend,
             brief,

@@ -13,7 +13,7 @@
 import type { Hub } from '../hub/types'
 import type { HandoffDetail } from '../lineage'
 import { log } from '../log'
-import { errorMessage } from '../util'
+import { errorMessage, sanitizePath } from '../util'
 import type {
   ApprovalDecision,
   ArchivedEntry,
@@ -330,6 +330,12 @@ export function isCodexKey(key: string): boolean {
  *  key 形状判定走 isCodexKey——刻意不做 URI 解码。 */
 export function portFor(key: string): BackendPort {
   return backendPort(isCodexKey(key) ? 'codex' : 'claude')
+}
+
+/** 列表/接力下发用的 slug 口径唯一实现：codex 恒 'codex'，claude 取 cwd 的 sanitizePath。
+ *  routes 与 hub 都经此取 slug，不各自手写 vendor 三元。 */
+export function slugForBackend(backend: BackendName, cwd: string): string {
+  return backend === 'codex' ? 'codex' : sanitizePath(cwd)
 }
 
 // ---------- /btw 侧问的共享信封（校验失败文案与 btw_result 广播只有一份，双后端不分叉） ----------

@@ -2,12 +2,11 @@
 // git 信息缓存也在这里（仅列表端点使用）。
 
 import type { ArchivedEntry, CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
-import { backendPort, portFor, type RouteResult } from '../backends/port'
+import { backendPort, portFor, slugForBackend, type RouteResult } from '../backends/port'
 import type { SessionSummary } from '../backends/types'
 import { type GitInfo, readGitInfo } from '../fsbrowse'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
-import { sanitizePath } from '../util'
 import { json, readJsonBody } from './http'
 
 /** RouteResult → HTTP 响应（状态码逐字保留） */
@@ -125,7 +124,7 @@ export async function handleSessionRoutes(
     const port = backendPort(body.backend === 'codex' ? 'codex' : 'claude')
     const res: CreateSessionResponse = {
       key: port.keyForNew(body.cwd),
-      slug: port.name === 'codex' ? 'codex' : sanitizePath(body.cwd),
+      slug: slugForBackend(port.name, body.cwd),
       backend: port.name,
     }
     return json(res)
