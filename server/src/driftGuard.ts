@@ -93,7 +93,9 @@ export function markChecked(cli: BackendName): void {
   saveState(state)
 }
 
-/** 漂移检出时调用：控制台 +（配置 webhook 时）手机告警。同一版本只告警一次。 */
+/** 漂移检出时调用：控制台 +（配置 webhook 时）手机告警。同一版本只告警一次。
+ *  落盘须在投递成功之后：先写 alerted 再投递，瞬时失败会让该版本的手机告警永久丢失
+ *  （alerted 拦截重发）——手机推送是 driftAlert 唯一触达渠道，失败必须能重试 */
 export async function alertDrift(cli: BackendName, summary: string): Promise<void> {
   log.error(`[drift] ⚠ ${cli} 协议漂移：${summary}`)
   if (config.driftAlert === false) return
@@ -101,8 +103,6 @@ export async function alertDrift(cli: BackendName, summary: string): Promise<voi
   const v = cliVersionOf(cli) ?? 'unknown'
   const state = loadState()
   if (state.alerted?.[cli] === v) return // 同版本已告警过
-  state.alerted = { ...(state.alerted ?? {}), [cli]: v }
-  saveState(state)
   try {
     await pushWebhooksToAll({
       type: 'error',
@@ -110,6 +110,12 @@ export async function alertDrift(cli: BackendName, summary: string): Promise<voi
       body: `${cli} ${v}：${summary}。请运行检查脚本评估后更新基线。`,
     })
   } catch (e) {
-    log.warn('[drift] webhook 告警投递失败:', e)
+    log.warn('[drift] webhook 告警投递失败（alerted 未记录，下轮漂移检出会重试）:', e)
+    return
   }
+  // 保存前重读：state 在 await 前加载，另一后端的 alertDrift 交叠落盘会与本地的
+  // 读-改-写竞态——用旧快照写回会丢掉对方的告警标记（loadState 带文件级 tmp+rename，重读廉价）
+  const fresh = loadState()
+  fresh.alerted = { ...(fresh.alerted ?? {}), [cli]: v }
+  saveState(fresh)
 }
