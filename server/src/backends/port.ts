@@ -12,6 +12,7 @@
 
 import type { Hub } from '../hub/types'
 import type { HandoffDetail } from '../lineage'
+import { log } from '../log'
 import { errorMessage } from '../util'
 import type {
   ApprovalDecision,
@@ -55,6 +56,24 @@ export function initBackendPorts(s: HubServices): void {
 export function hubServices(): HubServices {
   if (!services) throw new Error('[port] initBackendPorts 未在装配层调用')
   return services
+}
+
+/**
+ * rewind 过渡置位/复位对：两个适配器的回滚入口共用（覆盖已有过渡必须留痕——
+ * 静默覆盖会让「回滚中放行新消息/吞掉三层重键」无迹可查，hub/types.ts 纪律）。
+ * 复位只清自己置的位：联合是互斥单值，rewind 复位不得清掉期间被置上的其他过渡。
+ */
+export function beginRewindTransition(hub: Hub): void {
+  if (hub.transition) {
+    log.warn(`[ws ${hub.key}] rewind 覆盖了进行中的 transition=${hub.transition.kind}（预期外）`)
+  }
+  hub.transition = { kind: 'rewind' }
+  hubServices().pushStatus(hub, { rewindPending: true })
+}
+
+export function endRewindTransition(hub: Hub): void {
+  if (hub.transition?.kind === 'rewind') hub.transition = undefined
+  hubServices().pushStatus(hub, { rewindPending: false })
 }
 
 // ---------- 会话句柄面 ----------

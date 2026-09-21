@@ -12,8 +12,10 @@ import { archiveClaudeSession, listTrash, restoreClaudeSession } from './archive
 import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
+  beginRewindTransition,
   btwDeliver,
   btwRejectNoSession,
+  endRewindTransition,
   hubServices,
   type BackendPort,
   type RouteResult,
@@ -370,13 +372,9 @@ class ClaudePort implements BackendPort {
     // 官方 TUI 的“恢复代码和对话”也是两个动作。这里必须先收到文件
     // checkpoint 成功响应，才允许销毁旧进程并以 resume-session-at 截断对话。
     // rewind_files 没有 CLI 侧超时，大项目恢复可达分钟级，给足 120s。
-    // 置位前检查已有过渡（hub/types.ts 纪律）：rekey 进行中覆盖会让紧随的 init
-    // 跳过三层重键（进程跑新会话而 Hub 留在旧 key，少一层即双进程家族）
-    if (hub.transition) {
-      log.warn(`[ws ${hub.key}] rewind 覆盖了进行中的 transition=${hub.transition.kind}（预期外）`)
-    }
-    hub.transition = { kind: 'rewind' }
-    hubServices().pushStatus(hub, { rewindPending: true })
+    // 置位前检查已有过渡（实现集中在 backends/port.beginRewindTransition）：
+    // rekey 进行中覆盖会让紧随的 init 跳过三层重键（进程跑新会话而 Hub 留在旧 key，少一层即双进程家族）
+    beginRewindTransition(hub)
     void s.sendControlAndWait('rewind_files', { user_message_id: at }, 120_000)
       .then(() => {
         if (processManager.get(hub.key) !== s || s.exited) {
@@ -398,9 +396,8 @@ class ClaudePort implements BackendPort {
         )
       })
       .finally(() => {
-        // 只清自己置的位：联合是互斥单值，rewind 复位不得清掉期间被置上的其他过渡
-        if (hub.transition?.kind === 'rewind') hub.transition = undefined
-        hubServices().pushStatus(hub, { rewindPending: false })
+        // 只清自己置的位（实现集中在 backends/port.endRewindTransition）
+        endRewindTransition(hub)
       })
   }
 
