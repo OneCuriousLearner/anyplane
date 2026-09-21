@@ -110,6 +110,36 @@ describe('GET /api/history/:slug/:sessionId 查询参数', () => {
     })
     expect(await response!.json()).toEqual({ messages: [], fileBytes: 0, hasMore: false })
   })
+
+  // slug/sessionId/threadId 会拼进文件路径——形状闸与 splitExistingKey 同口径（[a-zA-Z0-9-]），
+  // 异常形状不匹配路由（聚合层落 404），readHistory 不被调用
+  test('形状闸：含 . / _ 等路径字符的标识不落路由', async () => {
+    let called = false
+    const d = deps({
+      readHistory: () => {
+        called = true
+        return { messages: [], fileBytes: 0, hasMore: false }
+      },
+    })
+    for (const p of ['/api/history/re..po/x', '/api/history/repo/x.y', '/api/history/repo/x_y']) {
+      const res = await handleMiscRoutes(new Request(`http://localhost${p}`), new URL(`http://localhost${p}`), d)
+      expect(res).toBeUndefined()
+    }
+    const codexRes = await handleMiscRoutes(
+      new Request('http://localhost/api/codex/history/ab..cd'),
+      new URL('http://localhost/api/codex/history/ab..cd'),
+    )
+    expect(codexRes).toBeUndefined()
+    expect(called).toBe(false)
+    // 合法形状照常落路由（闸不误伤）
+    const ok = await handleMiscRoutes(
+      new Request('http://localhost/api/history/repo/session-1'),
+      new URL('http://localhost/api/history/repo/session-1'),
+      d,
+    )
+    expect(ok?.status).toBe(200)
+    expect(called).toBe(true)
+  })
 })
 
 describe('GET /api/backends/status', () => {
