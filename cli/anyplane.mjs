@@ -81,10 +81,14 @@ if (typeof globalThis.Bun !== 'undefined') {
 
   const { spawn } = await import('node:child_process')
   const entry = fileURLToPath(new URL('./anyplane.ts', import.meta.url))
-  // .cmd shim 必须经 cmd.exe 承载（同 resolveClaudeCommand 的 /d /s /c 包装）；
-  // Windows 上 Ctrl+C 由控制台送达整个进程组，这层包装不会吞信号
+  // .cmd shim 必须经 cmd.exe 承载；Windows 下 Ctrl+C 由控制台送达整个进程组，这层包装不会吞信号。
+  // /s 下 cmd 对「多 argv 项」的引号剥离有兼容性怪癖（空格路径断裂）——整串手工引号、
+  // cmd 后只传一个参数项；内嵌引号按 cmd 规则 doubling。用户参数经 argv 到达，引号转义后无注入面。
   const isCmdShim = isWin && bun.toLowerCase().endsWith('.cmd')
-  const spawnArgs = isCmdShim ? ['/d', '/s', '/c', bun, entry, ...args] : [entry, ...args]
+  const quoteCmd = (s) => `"${s.replace(/"/g, '""')}"`
+  const spawnArgs = isCmdShim
+    ? ['/d', '/s', '/c', `${quoteCmd(bun)} ${quoteCmd(entry)} ${args.map(quoteCmd).join(' ')}`]
+    : [entry, ...args]
   const spawnCmd = isCmdShim ? 'cmd.exe' : bun
   // spawn 对损坏的 exe 可能同步抛（Windows EFTYPE），与异步 error 事件走同一条报错路径
   let child

@@ -57,6 +57,12 @@ export function parseArgs(argv: string[]): PublicAccessArgs {
   if (recipe === 'caddy' && !domain) {
     throw new Error(`caddy 配方需要域名参数：bun run public-access caddy <domain>\n\n${USAGE}`)
   }
+  if (domain !== undefined && !/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$/.test(domain)) {
+    // domain 会插值进 Caddyfile 站点块：Caddyfile 是指令式配置语言（import 可包含任意
+    // 文件），空格/换行/花括号既可能被当额外指令注入，也会让 caddy run 以难诊断的
+    // 解析错误退出。argv 无 shell 注入面，校验只针对配置文件生成层
+    throw new Error(`域名非法（只允许字母/数字/点/连字符）：${domain}\n\n${USAGE}`)
+  }
   return { recipe, domain, port, httpsPort }
 }
 

@@ -6,7 +6,7 @@
  * 与 docs:claude 同一套路。learn.chatgpt.com 是 OpenAI 第一方产品文档；
  * developers.openai.com/codex/llms.txt 目前指向同一份索引，不再重复拉取。
  */
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 
 const BASE = 'https://learn.chatgpt.com'
@@ -44,6 +44,14 @@ function localPathFor(url: string): string {
   return join(OUT, u.pathname.replace(/^\//, ''))
 }
 
+/** tmp+rename 原子替换：中断/Ctrl+C 不会留下半截 md 与「新索引+半新半旧页面」的混版镜像
+ *（旧实现直接 writeFile 最终路径，docs 镜像会被当协议正本引用，混版静默污染依据） */
+async function writeFileAtomic(dest: string, body: string): Promise<void> {
+  const tmp = `${dest}.tmp`
+  await writeFile(tmp, body, 'utf8')
+  await rename(tmp, dest)
+}
+
 async function mapPool<T>(
   items: T[],
   concurrency: number,
@@ -73,11 +81,11 @@ async function main() {
 
   console.log('fetch llms.txt …')
   const llmsTxt = await fetchText(`${BASE}/llms.txt`)
-  await writeFile(join(OUT, 'llms.txt'), llmsTxt, 'utf8')
+  await writeFileAtomic(join(OUT, 'llms.txt'), llmsTxt)
 
   console.log('fetch llms-full.txt …')
   const llmsFull = await fetchText(`${BASE}/docs/llms-full.txt`)
-  await writeFile(join(OUT, 'llms-full.txt'), llmsFull, 'utf8')
+  await writeFileAtomic(join(OUT, 'llms-full.txt'), llmsFull)
 
   const urls = extractMdUrls(llmsTxt)
   console.log(`fetch ${urls.length} markdown pages (concurrency=${CONCURRENCY}) …`)
@@ -87,7 +95,7 @@ async function main() {
     await mkdir(dirname(dest), { recursive: true })
     const body = await fetchText(url)
     if (!body.trim()) throw new Error('empty body')
-    await writeFile(dest, body, 'utf8')
+    await writeFileAtomic(dest, body)
     process.stdout.write('.')
   })
   process.stdout.write('\n')
@@ -101,7 +109,24 @@ async function main() {
     pagesOk: ok,
     pagesFail: fail.map((f) => ({ url: f.item, err: f.err })),
   }
-  await writeFile(join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8')
+  await writeFileAtomic(join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
+
+  // 上游已删除/改名的页面在本地无限期残留（索引不再指向它们）——prune 掉，
+  // 否则陈旧页面会被后续开发当现行协议正本引用，静默漂移
+  const wanted = new Set(urls.map((u) => localPathFor(u)))
+  let pruned = 0
+  async function walkPrune(dir: string): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name)
+      if (entry.isDirectory()) await walkPrune(p)
+      else if (entry.name.endsWith('.md') && !wanted.has(p)) {
+        await rm(p, { force: true })
+        pruned++
+      }
+    }
+  }
+  await walkPrune(OUT)
+  if (pruned) console.log(`pruned ${pruned} stale pages`)
 
   console.log(
     `done → ${relative(process.cwd(), OUT)} | pages ${ok}/${urls.length}` +
