@@ -28,7 +28,7 @@ import { config, type PushWebhookConfig } from '../config'
 import { ccDataDir, readJsonFile, writeJsonFile } from '../util'
 import { log } from '../log'
 
-interface PushSubscriptionRow {
+export interface PushSubscriptionRow {
   endpoint: string
   keys: { p256dh: string; auth: string }
   /** 能力密钥：直接审批 URL 的鉴权凭据 */
@@ -187,8 +187,19 @@ function loadSubs(): PushSubscriptionRow[] {
   return subs
 }
 
+/** 测试注入口开关：setSubsForTest 注入注册表时暂停落盘（不碰真实 ~/.anyplane） */
+let subsPersist = true
+
 function saveSubs(): void {
+  if (!subsPersist) return
   writeJsonFile(subsPath(), loadSubs(), { mode: 0o600, pretty: true })
+}
+
+/** 测试专用：整体替换订阅注册表并暂停落盘；传 undefined 恢复读盘行为。
+ *   bun test 单进程跨文件共享模块实例，碰本单态的用例结束必须 setSubsForTest(undefined) 复位。 */
+export function setSubsForTest(rows: PushSubscriptionRow[] | undefined): void {
+  subs = rows
+  subsPersist = rows === undefined
 }
 
 export function addSubscription(
@@ -318,6 +329,14 @@ export async function pushToAll(payload: PushPayload): Promise<{ sent: number; p
   let pruned = 0
   await Promise.allSettled(
     all.map(async (row) => {
+      // 白名单随配置收紧后，存量订阅不得继续收通知（注册期校验只管新订阅）：
+      // 投递前重验，不过则摘除——与 404/410 同款「已失效才摘」语义
+      if (!endpointAllowed(row.endpoint)) {
+        pruned++
+        removeSubscription(row.endpoint)
+        log.warn(`[push] endpoint 已不在白名单，摘除订阅：${row.endpoint.slice(0, 60)}`)
+        return
+      }
       try {
         const status = await sendOne(row, payload)
         if (status === 404 || status === 410) {

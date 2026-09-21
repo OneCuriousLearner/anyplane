@@ -281,3 +281,55 @@ describe('webhook 通道', () => {
     expect(r.sent).toBe(1)
   })
 })
+
+// ---------- pushToAll 投递期白名单重验 ----------
+// 注册期校验只管新订阅；pushAllowHosts 收紧后存量订阅必须停止收通知并被摘除。
+
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { pushToAll, setSubsForTest, subscriptionCount, type PushSubscriptionRow } from './vapid'
+
+/** 造一行加密链路可走通的订阅（合法 P-256 点作 p256dh；fetch 已被 stub，投递不真的出网） */
+function fakeSub(endpoint: string, secret: string): PushSubscriptionRow {
+  const pair = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const jwk = pair.publicKey.export({ format: 'jwk' }) as { x: string; y: string }
+  const p256dh = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]).toString('base64url')
+  return { endpoint, keys: { p256dh, auth: randomBytes(16).toString('base64url') }, secret, createdAt: 0 }
+}
+
+describe('pushToAll 投递期白名单重验', () => {
+  afterEach(() => {
+    setSubsForTest(undefined)
+    config.pushAllowHosts = originalAllow
+    globalThis.fetch = originalFetch
+  })
+
+  test('白名单收紧后：存量违例订阅不投递并被摘除，合规订阅照常', async () => {
+    const captured: CapturedReq[] = []
+    captureFetch(captured)
+    setSubsForTest([
+      fakeSub('https://fcm.googleapis.com/wp/ok', 's-ok'),
+      fakeSub('https://evil.example.com/push', 's-evil'),
+    ])
+    config.pushAllowHosts = ['fcm.googleapis.com']
+
+    const r = await pushToAll(DONE)
+    expect(r.sent).toBe(1)
+    expect(r.pruned).toBe(1)
+    expect(subscriptionCount()).toBe(1)
+    expect(captured.map((c) => c.url)).toEqual(['https://fcm.googleapis.com/wp/ok'])
+  })
+
+  test('默认白名单下两条合规订阅都投递（回归：重验不误伤）', async () => {
+    const captured: CapturedReq[] = []
+    captureFetch(captured)
+    setSubsForTest([
+      fakeSub('https://fcm.googleapis.com/wp/a', 's-a'),
+      fakeSub('https://web.push.apple.com/b', 's-b'),
+    ])
+    const r = await pushToAll(DONE)
+    expect(r.sent).toBe(2)
+    expect(r.pruned).toBe(0)
+    expect(subscriptionCount()).toBe(2)
+    expect(captured).toHaveLength(2)
+  })
+})
