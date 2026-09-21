@@ -199,6 +199,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     setApprovals([])
     ingestApi.setPhase(undefined)
     taskApi.clear()
+    // 输入草稿与待发送图片同样是 Chat 级状态、组件跨会话复用不重置：不清的话
+    // A 会话打了一半的话切到 B 仍在输入框，误发送会作为用户消息进 B 的抄本
+    setInput('')
+    setPendingImages([])
     if (!isExisting) return
     loadSessionHistory()
       .then((resp) => {

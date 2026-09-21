@@ -296,21 +296,33 @@ export function useTranscriptIngest(opts: {
       case 'content_block_delta': {
         const delta = ev.delta
         if (!delta) break
-        const d: Draft = draftStore.get() ?? { blocks: [] }
-        const idx = ev.index ?? d.blocks.length - 1
-        let b = d.blocks.find((x) => x.idx === idx)
-        if (!b) {
-          b = { idx, kind: 'text', text: '' }
-          d.blocks.push(b)
-          d.blocks.sort((a, z) => a.idx - z.idx)
+        const cur: Draft = draftStore.get() ?? { blocks: [] }
+        const idx = ev.index ?? cur.blocks.length - 1
+        const existing = cur.blocks.find((x) => x.idx === idx)
+        // store 纪律：blocks 与块对象都必须新引用——就地 push/就地改 text 会让新旧快照共享
+        // 同一数组（content_block_start 分支注释有完整判例；React 并发的 getSnapshot
+        // 一致性依赖不可变更新）
+        if (delta.type === 'signature_delta') break // 永不展示
+        let nextBlock: Draft['blocks'][number]
+        if (!existing) {
+          nextBlock =
+            delta.type === 'thinking_delta'
+              ? { idx, kind: 'thinking', text: String(delta.thinking ?? '') }
+              : delta.type === 'input_json_delta'
+                ? { idx, kind: 'text', text: '', jsonBuf: String(delta.partial_json ?? '') }
+                : { idx, kind: 'text', text: String(delta.text ?? '') }
+        } else {
+          nextBlock =
+            delta.type === 'thinking_delta'
+              ? { ...existing, kind: 'thinking', text: existing.text + String(delta.thinking ?? '') }
+              : delta.type === 'input_json_delta'
+                ? { ...existing, jsonBuf: (existing.jsonBuf ?? '') + String(delta.partial_json ?? '') }
+                : { ...existing, text: existing.text + String(delta.text ?? '') }
         }
-        if (delta.type === 'text_delta' && delta.text) b.text += delta.text
-        else if (delta.type === 'thinking_delta' && delta.thinking) {
-          b.kind = 'thinking'
-          b.text += delta.thinking
-        } else if (delta.type === 'input_json_delta' && delta.partial_json) b.jsonBuf = (b.jsonBuf ?? '') + delta.partial_json
-        // signature_delta 永不展示
-        setDraft({ ...d, blocks: [...d.blocks] })
+        const blocks = existing
+          ? cur.blocks.map((x) => (x.idx === idx ? nextBlock : x))
+          : [...cur.blocks, nextBlock].sort((a, z) => a.idx - z.idx)
+        setDraft({ ...cur, blocks })
         break
       }
       case 'message_stop':

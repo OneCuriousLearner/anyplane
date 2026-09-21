@@ -58,12 +58,22 @@ export function statusLineOf(
  * 把一条实时 sidechain CLI 消息（带 parent_tool_use_id 的完整 assistant/user）转成
  * HistoryMessage 形状，使其可以复用 appendHistoryMsg 落进后台任务桶。
  * 块映射正本在 contentBlocks.ts（与服务端 discovery 同形）。
+ * onImage 承接桶转录里的图片（codex 子线程 userMessage 的 image/localImage 已被
+ * 服务端翻译成 {type:'image', url:/api/uploads/...} wire 块）——此前无承接方，图片被静默丢弃。
  */
 export function cliSidechainToHistory(rec: Record<string, unknown>): HistoryMessage | null {
   const type = rec.type
   if (type !== 'assistant' && type !== 'user') return null
   const content = (rec.message as { content?: unknown } | undefined)?.content
-  const blocks = cliContentToHistoryBlocks(content)
+  const blocks = cliContentToHistoryBlocks(content, {
+    onImage: (c) => {
+      const url = typeof c.url === 'string' ? c.url : undefined
+      // 只放行本站 uploads 路径（服务端已把 localImage 解析为 /api/uploads/<hash> URL）
+      return url && /^\/api\/uploads\/[0-9a-f]{16}\.(jpg|png|gif|webp)$/.test(url)
+        ? { kind: 'image', src: url }
+        : undefined
+    },
+  })
   if (blocks.length === 0) return null
   return { uuid: rec.uuid as string | undefined, role: type, blocks, timestamp: rec.timestamp as string | undefined }
 }
