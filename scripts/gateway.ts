@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { detectProtocol, isOwnGatewayCmd, modeCookie, parseRequestUrl, pickMode, type Mode } from './gateway-lib'
 import { loadAnyplaneConfigFile } from '../server/src/config'
 import { describePid, listListenPids, terminatePids } from '../server/src/portTakeover'
-import { ensurePrivateDir, escapeHtml as htmlEscape } from '../server/src/util'
+import { ensurePrivateDir, errorMessage, escapeHtml as htmlEscape } from '../server/src/util'
 
 type GatewayCfg = {
   httpPort: number
@@ -210,7 +210,7 @@ async function proxyHttp(req: Request, url: URL, target: string, proto: string, 
     headers.set('x-anyplane-mode', mode)
     return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = errorMessage(e)
     const isDev = mode === 'dev'
     // 友好提示页必须带真 502：状态码 200 会让浏览器缓存/监控/搜索引擎把
     // "后端未就绪"当成正常页面，排障方向完全反掉。
@@ -282,7 +282,7 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
     } catch (e) {
       // 400 只给请求本身有问题（parseRequestUrl 返回 null，见上）；能走到这里的
       // 都是网关自身未预期的异常，按 HTTP 语义报 500。
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = errorMessage(e)
       console.error(`[gateway] 请求处理失败 ${JSON.stringify(req.url)}: ${msg}`)
       return new Response('Internal Server Error', { status: 500 })
     }
@@ -557,7 +557,7 @@ function startMux(
     },
   })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = errorMessage(e)
     console.error(`[gateway] 监听 0.0.0.0:${publicPort} 失败：${msg}`)
     if (msg.includes('EADDRINUSE') || msg.includes('Failed to listen')) {
       console.error('[gateway] 端口仍被占用。默认会替换上一份 scripts/gateway.ts；其它进程请用 --no-replace 查看后手动处理。')

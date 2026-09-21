@@ -6,7 +6,7 @@
 // 契约类型（BackendLoginState/BackendStatus/BackendsStatus）正本在 @anyplane/protocol。
 
 import type { BackendStatus, BackendsStatus } from '@anyplane/protocol'
-import { childEnv } from '../util'
+import { childEnv, errorMessage } from '../util'
 import { resolveClaudeCommand } from './claude/processManager'
 import { RpcClient } from './codex/rpc'
 import { codexRuntime, handshakeAppServer } from './codex/runtime'
@@ -108,7 +108,7 @@ async function probeClaude(): Promise<BackendStatus> {
     ])
     return parseClaudeAuthStatusOutput(code, out, errText)
   } catch (e) {
-    return { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
+    return { state: 'unknown', error: errorMessage(e) }
   } finally {
     clearTimeout(timer)
   }
@@ -132,7 +132,7 @@ async function probeCodex(): Promise<BackendStatus> {
       }
       return classifyCodexAccount(res)
     } catch (e) {
-      return { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
+      return { state: 'unknown', error: errorMessage(e) }
     }
   }
 
@@ -155,7 +155,7 @@ async function probeCodex(): Promise<BackendStatus> {
     }
     return classifyCodexAccount(res)
   } catch (e) {
-    return { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
+    return { state: 'unknown', error: errorMessage(e) }
   } finally {
     rpc?.kill()
   }
