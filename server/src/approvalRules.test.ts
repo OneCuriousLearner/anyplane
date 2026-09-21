@@ -73,6 +73,19 @@ describe('globMatch：路径匹配（锚定、大小写不敏感）', () => {
     expect(globMatch('src/a+b.ts', 'src/a+b.ts')).toBe(true)
     expect(globMatch('src/a+b.ts', 'src/aab.ts')).toBe(false)
   })
+
+  test('? 按字面处理（曾是正则量词：开头的 ? 还会让 new RegExp 抛 SyntaxError 打死消息泵）', () => {
+    expect(globMatch('file?.ts', 'file?.ts')).toBe(true)
+    expect(globMatch('file?.ts', 'file.ts')).toBe(false)
+    expect(() => globMatch('?*.ts', '?x.ts')).not.toThrow()
+    expect(globMatch('?*.ts', '?x.ts')).toBe(true)
+  })
+
+  test('path glob 在 parse 期做转换试匹配（防线：未来 glob 改动引入正则错误时 fail fast，不拖到运行期炸消息泵）', () => {
+    // 当前字符集全部转义/安全，常规输入不会抛——本断言钉住「parse 接受合法 glob」
+    expect(() => parseApprovalRules([{ match: { path: 'src/**' }, action: 'allow' }])).not.toThrow()
+    expect(() => parseApprovalRules([{ match: { path: 'a(b[c?d' }, action: 'allow' }])).not.toThrow()
+  })
 })
 
 describe('domainMatch：域名后缀匹配', () => {

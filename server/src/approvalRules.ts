@@ -55,6 +55,16 @@ export function parseApprovalRules(raw: unknown): ApprovalRule[] {
         throw new Error(`approvalRules[${i}].match.command 正则无效: ${m.command}（${(e as Error).message}）`)
       }
     }
+    if (m.path !== undefined) {
+      // path 经 globMatch 现场转正则——与 command 同级的 fail fast：匹配在审批到达时
+      // 于进程消息泵的同步栈执行，一次 SyntaxError 会打死整个会话的 stdout 读取循环。
+      // 用安全值试匹配一次，把转换期错误提前到启动期
+      try {
+        globMatch(m.path, 'x')
+      } catch (e) {
+        throw new Error(`approvalRules[${i}].match.path glob 无效: ${m.path}（${(e as Error).message}）`)
+      }
+    }
     if (m.tool === undefined && m.command === undefined && m.path === undefined && m.domain === undefined) {
       throw new Error(`approvalRules[${i}].match 至少要有一个匹配字段（tool/command/path/domain）`)
     }
@@ -113,7 +123,10 @@ export function commandMatches(pattern: string, cmd: string, action: 'allow' | '
 }
 
 /** 极简 glob（两端锚定，与 minimatch 惯例一致）：`**\/` 跨零或多路径段，`**` 任意，`*` 段内任意。
- *  大小写不敏感、`\` 归一为 `/`（Windows 路径）。想匹配任意位置的文件写 `**\/*.test.ts`。 */
+ *  大小写不敏感、`\` 归一为 `/`（Windows 路径）。想匹配任意位置的文件写 `**\/*.test.ts`。
+ *  转义字符集必须覆盖 `?`：它是正则量词——`?*.ts` 若以 `?` 开头 new RegExp 直接抛
+ *  SyntaxError，而 matchApprovalRule 在进程消息泵的同步栈上运行，一次抛错会打死整个
+ *  会话的 stdout 读取循环（can_use_tool 永久悬挂） */
 export function globMatch(pattern: string, value: string): boolean {
   const norm = (s: string) => s.replace(/\\/g, '/')
   const p = norm(pattern)
@@ -134,7 +147,7 @@ export function globMatch(pattern: string, value: string): boolean {
         re += '[^/]*'
       }
     } else {
-      re += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      re += ch.replace(/[.+^${}()|[\]\\?]/g, '\\$&')
     }
   }
   return new RegExp(`^${re}$`, 'i').test(v)
