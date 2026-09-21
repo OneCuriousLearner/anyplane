@@ -161,14 +161,14 @@ describe('ThreadTranslator 工具项', () => {
     expect(completed[0]).toMatchObject({ message: { content: [{ content: '搜索结果…', is_error: false }] } })
   })
 
-  test('contextCompaction → compact_boundary；review 模式 → system 文本', () => {
+  test('contextCompaction → compact_boundary；review 模式 → system 文本（带 item id，与历史同 uuid）', () => {
     const t = new ThreadTranslator()
     expect(t.itemCompleted({ id: 'x1', type: 'contextCompaction' })).toEqual([{ type: 'system', subtype: 'compact_boundary' }])
     expect(t.itemCompleted({ id: 'x2', type: 'enteredReviewMode', review: '未提交改动' })).toEqual([
-      { type: 'system', subtype: 'status', text: '进入代码审查：未提交改动' },
+      { type: 'system', subtype: 'status', text: '进入代码审查：未提交改动', uuid: 'x2' },
     ])
     expect(t.itemCompleted({ id: 'x3', type: 'exitedReviewMode', review: 'LGTM' })).toEqual([
-      { type: 'system', subtype: 'status', text: '审查完成\nLGTM' },
+      { type: 'system', subtype: 'status', text: '审查完成\nLGTM', uuid: 'x3' },
     ])
   })
 })
@@ -292,14 +292,35 @@ describe('itemsToHistory', () => {
     expect(msgs[0]!.blocks).toEqual([{ kind: 'text', text: '看这个\n[图片]\n[skill: review]\n[README.md]\n[音频]' }])
   })
 
-  test('contextCompaction → system 分隔；子代理项走侧栏不进主线', () => {
+  test('contextCompaction → system 分隔；subAgentActivity 走侧栏不进主线；collab 主线出卡与 live 同形', () => {
     const msgs = itemsToHistory([
       { id: 'x1', type: 'contextCompaction' },
-      // collabAgentToolCall/subAgentActivity 有意不进主线（侧栏桶负责）
-      { id: 'x2', type: 'collabAgentToolCall' },
-      { id: 'x3', type: 'subAgentActivity' },
+      // collabAgentToolCall 主线出卡（live 的 itemStarted/Completed 同样出卡——红线 live/历史同形）；
+      // subAgentActivity 是纯生命周期事件，主线 live 同样不进，跳过不算丢
+      { id: 'x2', type: 'collabAgentToolCall', tool: 'spawnAgent', prompt: '调研', status: 'completed', receiverThreadIds: ['t-child'] },
+      { id: 'x3', type: 'subAgentActivity', agentThreadId: 't-child' },
     ])
-    expect(msgs).toEqual([{ uuid: 'x1', role: 'system', subtype: 'compact_boundary', blocks: [] }])
+    expect(msgs).toEqual([
+      { uuid: 'x1', role: 'system', subtype: 'compact_boundary', blocks: [] },
+      {
+        uuid: 'x2',
+        role: 'assistant',
+        blocks: [{ kind: 'tool_use', id: 'x2', name: 'Collab', input: { tool: 'spawnAgent', prompt: '调研' } }],
+      },
+      {
+        uuid: 'x2-r',
+        role: 'user',
+        rewindable: false,
+        blocks: [
+          {
+            kind: 'tool_result',
+            id: 'x2',
+            text: 'spawnAgent → completed\nagents: 1',
+            isError: false,
+          },
+        ],
+      },
+    ])
   })
 
   // 这五种是官方 ThreadItem union 成员，此前 live 与历史双双静默丢弃——

@@ -289,6 +289,9 @@ server ${prodUp ? '<span class="ok">在线</span>' : '<span class="bad">离线</
   }
 }
 
+/** 后端 WS 握手窗口内的上行帧排队上限（超出即断开，客户端重连恢复） */
+const WS_QUEUE_CAP = 256
+
 const wsHandler: import('bun').WebSocketHandler<WSProxyData> = {
   // 30s 协议层下行 ping：对应用透明的死连接探测，并在链路上持续制造下行流量，
   // 压住按"下行静默"掐连接的中间代理（nginx proxy_read_timeout 类）。
@@ -311,19 +314,43 @@ const wsHandler: import('bun').WebSocketHandler<WSProxyData> = {
       } catch {}
     })
     backend.addEventListener('close', (ev) => {
+      // 连接失败时排队消息无任何补偿——客户端会重连，此后从权威历史/状态恢复
+      ws.data.queue = []
       try {
         ws.close(ev.code, ev.reason)
       } catch {}
     })
     backend.addEventListener('error', () => {
+      ws.data.queue = []
       try {
         ws.close()
       } catch {}
     })
+    // 握手超时兜底：目标黑洞化时 Bun 客户端默认 120s 才放弃——排队内存无界增长前先断
+    const handshakeTimer = setTimeout(() => {
+      if (backend.readyState !== WebSocket.OPEN) {
+        ws.data.queue = []
+        try {
+          ws.close(1011, 'backend handshake timeout')
+          backend.close()
+        } catch {}
+      }
+    }, 30_000)
+    backend.addEventListener('open', () => clearTimeout(handshakeTimer), { once: true })
+    backend.addEventListener('close', () => clearTimeout(handshakeTimer), { once: true })
   },
   message(ws, raw) {
     const b = ws.data.backend
     if (!b || b.readyState !== WebSocket.OPEN) {
+      // 握手窗口内的上行帧暂存待 flush。上限防黑洞主机拖住握手期间的内存无界增长
+      if (ws.data.queue.length >= WS_QUEUE_CAP) {
+        console.warn(`[gateway] WS 排队超限（后端 ${ws.data.dest} 未就绪），断开连接`)
+        ws.data.queue = []
+        try {
+          ws.close(1013, 'queue overflow')
+        } catch {}
+        return
+      }
       ws.data.queue.push(raw)
       return
     }
@@ -331,6 +358,7 @@ const wsHandler: import('bun').WebSocketHandler<WSProxyData> = {
   },
   close(ws) {
     if (ws.data.keepalive) clearInterval(ws.data.keepalive)
+    ws.data.queue = []
     try {
       ws.data.backend?.close()
     } catch {}
@@ -347,11 +375,26 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
 }
 
 function parseHostPort(s: string): { hostname: string; port: number } {
+  // IPv6 字面量带方括号（[::1]:36000）：剥括号按整段主机名解析
+  if (s.startsWith('[')) {
+    const close = s.indexOf(']')
+    if (close > 0) {
+      const portPart = s.slice(close + 1)
+      if (!portPart) return { hostname: s.slice(1, close), port: 22 }
+      if (!portPart.startsWith(':')) throw new Error(`sshTarget 非法: ${s}`)
+      const port = Number(portPart.slice(1))
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error(`sshTarget 端口非法: ${s}`)
+      return { hostname: s.slice(1, close), port }
+    }
+  }
   const i = s.lastIndexOf(':')
   // 无端口时默认 22（ssh 标准端口）——slice(0, -1) 会截掉主机名末字符并给出 NaN 端口
   if (i <= 0) return { hostname: s, port: 22 }
   const port = Number(s.slice(i + 1))
-  return { hostname: s.slice(0, i), port: Number.isFinite(port) && port > 0 ? port : 22 }
+  // 畸形端口 fail fast：静默回退 22 会把 SSH 流量悄悄转去目标机的 sshd，
+  // 连上的不是预期后端且无任何告警（配置打错的典型迷惑形态）
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error(`sshTarget 端口非法: ${s}`)
+  return { hostname: s.slice(0, i), port }
 }
 
 function attachPeer(a: import('bun').Socket<PipeData>, b: import('bun').Socket<PipeData>) {
@@ -585,6 +628,10 @@ const internalTls = Bun.serve<WSProxyData>({
 const internalHttpPort = internalHttp.port
 const internalTlsPort = internalTls.port
 if (!internalHttpPort || !internalTlsPort) throw new Error('[gateway] 内部代理端口分配失败')
+
+// sshTarget 在首个 SSH 连接到达前就先校验好：畸形配置在启动期 fail fast，
+// 而不是等 data 回调里抛 uncaughtException（进程直接退出且无线索）
+if (cfg.muxSsh) parseHostPort(cfg.sshTarget)
 
 if (cfg.replace) await replaceStaleGateway([cfg.httpPort, cfg.httpsPort])
 

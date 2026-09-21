@@ -17,6 +17,15 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['caddy'])).toThrow(/需要域名/)
   })
 
+  test('caddy 域名字符集校验（Caddyfile 插值防注入/防难诊断的解析错误）', () => {
+    expect(() => parseArgs(['caddy', 'ap.example.com'])).not.toThrow()
+    expect(() => parseArgs(['caddy', 'ap example.com'])).toThrow(/域名非法/)
+    expect(() => parseArgs(['caddy', 'a{b}'])).toThrow(/域名非法/)
+    expect(() => parseArgs(['caddy', 'a\nimport /etc/passwd'])).toThrow(/域名非法/)
+    // - 开头的域名走不到字符集校验，先被「未知参数」拒绝——同样不可照抄
+    expect(() => parseArgs(['caddy', '-evil.com'])).toThrow(/未知参数/)
+  })
+
   test('未知配方与未知参数拒绝', () => {
     expect(() => parseArgs(['ngrok'])).toThrow(/未知配方/)
     expect(() => parseArgs(['funnel', '--wat'])).toThrow(/未知参数/)

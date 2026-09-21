@@ -27,6 +27,10 @@ export class TranscriptTailer {
   private debounce?: ReturnType<typeof setTimeout>
   private stopped = false
   private lastTickAt = 0
+  /** 上次读取时的文件身份（POSIX dev+ino；rename 原子替换会换 inode）。
+   *  外部进程「写临时文件 + rename」替换 transcript 且新文件不小于旧偏移时，size 检测
+   *  会把错位字节当正常增长读入（内容缺口且无 tail_reset）——inode 变化是对称的重建信号 */
+  private fileId: { dev: number; ino: number } | undefined
 
   constructor(
     private path: string,
@@ -35,6 +39,16 @@ export class TranscriptTailer {
   ) {
     // 未指定偏移时只关注新内容（与「加载历史后订阅」的调用约定一致）
     this.offset = startOffset ?? this.size()
+    this.fileId = this.statId()
+  }
+
+  private statId(): { dev: number; ino: number } | undefined {
+    try {
+      const st = statSync(this.path)
+      return { dev: st.dev, ino: st.ino }
+    } catch {
+      return undefined // 文件尚未创建（pid 会话刚起步）或已删除
+    }
   }
 
   start(): void {
@@ -80,13 +94,15 @@ export class TranscriptTailer {
     if (this.stopped) return
     this.ensureWatcher()
     const size = this.size()
-    if (size < this.offset) {
-      // 截断/重建：偏移已失效。自停并通知，等客户端重载历史后用新偏移重新订阅，
-      // 避免从 0 重放整个文件与重载结果重复。
+    const id = this.statId()
+    if (size < this.offset || (id && this.fileId && (id.dev !== this.fileId.dev || id.ino !== this.fileId.ino))) {
+      // 截断/重建，或文件被 rename 原子替换（inode 变化）——偏移已失效。自停并通知，等客户端
+      // 重载历史后用新偏移重新订阅，避免从 0 重放整个文件与重载结果重复
       this.stop()
       this.events.onReset()
       return
     }
+    if (id) this.fileId = id
     const grew = size > this.offset
     if (grew) {
       let fd = -1

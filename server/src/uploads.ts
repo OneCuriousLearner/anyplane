@@ -11,6 +11,11 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp
 /** claude API 硬限制：base64 后 5MB（constants/apiLimits.ts） */
 export const MAX_IMAGE_BASE64 = 5 * 1024 * 1024
 
+/** 附件 mediaType 白名单校验（hub 消息面与 saveUpload 落盘面共用同一口径） */
+export function isAllowedImageType(mediaType: string): boolean {
+  return (ALLOWED_IMAGE_TYPES as readonly string[]).includes(mediaType)
+}
+
 export interface ImageAttachment {
   name: string
   mediaType: string
@@ -30,7 +35,7 @@ const EXT_OF: Record<string, string> = {
 
 /** 校验并落盘，返回绝对路径。超出限制/类型不支持抛错。 */
 export function saveUpload(att: ImageAttachment): string {
-  if (!ALLOWED_IMAGE_TYPES.includes(att.mediaType as (typeof ALLOWED_IMAGE_TYPES)[number])) {
+  if (!isAllowedImageType(att.mediaType)) {
     throw new Error(`不支持的图片类型 ${att.mediaType}（支持 jpeg/png/gif/webp）`)
   }
   if (att.dataBase64.length > MAX_IMAGE_BASE64) {

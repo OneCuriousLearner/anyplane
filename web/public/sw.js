@@ -89,7 +89,15 @@ self.addEventListener('notificationclick', (e) => {
             })
           }
         })
-        .catch(() => {}),
+        .catch(() => {
+          // 网络级失败（断网/服务端重启/网关 502）：通知已关闭、审批未送达——必须有反馈，
+          // 否则 CLI 侧 can_use_tool 悬挂等待，用户误以为已审批，会话永久卡 waiting
+          return self.registration.showNotification('审批未送达', {
+            body: '网络错误，请重新点击通知或在应用内处理',
+            icon: '/icon-192.png',
+            tag: 'ccr-action-failed',
+          })
+        }),
     )
     return
   }

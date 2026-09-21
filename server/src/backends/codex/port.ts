@@ -147,7 +147,11 @@ class CodexPort implements BackendPort {
       return
     }
     // revert/fork 是异步 RPC（最长 60s）窗口：置 transition=rewind 门控用户消息
-    //（hub/messages.ts user 分支），否则新 turn 与 thread/revert 并发会截掉刚开始的对话
+    //（hub/messages.ts user 分支），否则新 turn 与 thread/revert 并发会截掉刚开始的对话。
+    // 覆盖已有过渡须留痕（hub/types.ts 纪律）：rekey 期间到达会吞掉三层重键，静默覆盖无从排查
+    if (hub.transition) {
+      log.warn(`[ws ${hub.key}] rewind 覆盖了进行中的 transition=${hub.transition.kind}（预期外）`)
+    }
     hub.transition = { kind: 'rewind' }
     hubServices().pushStatus(hub, { rewindPending: true })
     void codexRuntime
@@ -182,11 +186,17 @@ class CodexPort implements BackendPort {
 
   // ---------- 消息域 ----------
 
-  /** interrupt/set_model/set_permission_mode/compact 直接翻译；其余控制请求暂无对应物 */
+  /** interrupt/set_model/set_permission_mode/compact 直接翻译；其余控制请求暂无对应物。
+   *  会话未 spawn 时显式拒绝而非静默丢弃：compact 等没有 hub 层缓存等价物（与 model/mode 不同），
+   *  请求无声消失用户无从察觉；claude 适配器同场景懒 spawn 后投递，这里至少给错误反馈。
+   *  set_model/set_permission_mode 例外保持静默——hub 层已缓存进 spawnOpts 首条消息时应用
+   *  （messages.ts 注释『未 spawn 时首条消息应用，两个后端同此序』），报错是误报 */
   deliverControl(hub: Hub, subtype: string, extra: Record<string, unknown>): void {
     const s = codexRuntime.get(hub.key)
     if (s && !s.exited) {
       s.sendControl(subtype, extra)
+    } else if (subtype !== 'set_model' && subtype !== 'set_permission_mode') {
+      hubServices().broadcastError(hub, '会话未启动：发送一条消息启动 CLI 后再执行该操作')
     }
     hubServices().pushStatus(hub)
   }

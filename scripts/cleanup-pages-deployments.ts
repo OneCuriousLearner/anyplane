@@ -78,9 +78,12 @@ const keepOf = { production: KEEP_PRODUCTION, preview: KEEP_PREVIEW }
 const doomed: Deployment[] = []
 for (const [env, list] of Object.entries(byEnv) as [keyof typeof byEnv, Deployment[]][]) {
   const excess = list.slice(keepOf[env])
-  // 红线：最新生产部署永不在删除集内（理论上 slice 已保证，这里是防御双保险）
+  // 红线：正服务线上域名的是「最近一个构建成功的部署」——构建失败的生产部署不占流量，
+  // 若只按 created_on 保护 list[0]，失败部署堆积超保留数后真正 serving 的会被删（线上 404）。
+  // latest_stage 缺失（旧数据）视为未知，保守参与保护兜底
+  const serving = list.find((d) => d.latest_stage?.status !== 'failure') ?? list[0]
   // 红线过滤后的真实删除集才进日志——否则红线生效时「待删」会比实际删除数虚高
-  const doomedInEnv = excess.filter((d) => !(env === 'production' && d === list[0]))
+  const doomedInEnv = excess.filter((d) => !(env === 'production' && d === serving))
   doomed.push(...doomedInEnv)
   console.log(`${env}: 共 ${list.length} 个，保留 ${Math.min(keepOf[env], list.length)} 个，待删 ${doomedInEnv.length} 个`)
 }

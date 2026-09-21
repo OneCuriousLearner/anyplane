@@ -64,6 +64,9 @@ async function generateClaudeBrief(
     ],
     { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: childEnv() },
   )
+  // stderr 必须持续消费：CLI 出错（升级提示/重试栈）会往 stderr 写，OS 管道缓冲
+  // （~64KB）写满后子进程阻塞，stdout 停更——表现是「简报生成超时」而非真实错误
+  const stderrText = new Response(proc.stderr as ReadableStream<Uint8Array>).text()
   return await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       try {
@@ -99,7 +102,10 @@ async function generateClaudeBrief(
         const code = await proc.exited
         clearTimeout(timer)
         if (isError || code !== 0 || !finalText.trim()) {
-          reject(new Error(`简报生成失败: ${finalText || `exit ${code}`}`))
+          // stderr 已全程消费（防管道阻塞，见 spawn 处注释）；失败时把尾部附进错误信息——
+          // 否则 CLI 的真实报错被吞，用户只看到「exit 1」
+          const errTail = (await stderrText).trim().slice(-300)
+          reject(new Error(`简报生成失败: ${finalText || errTail || `exit ${code}`}`))
         } else {
           resolve({ text: finalText.trim(), usage })
         }
@@ -364,6 +370,11 @@ class ClaudePort implements BackendPort {
     // 官方 TUI 的“恢复代码和对话”也是两个动作。这里必须先收到文件
     // checkpoint 成功响应，才允许销毁旧进程并以 resume-session-at 截断对话。
     // rewind_files 没有 CLI 侧超时，大项目恢复可达分钟级，给足 120s。
+    // 置位前检查已有过渡（hub/types.ts 纪律）：rekey 进行中覆盖会让紧随的 init
+    // 跳过三层重键（进程跑新会话而 Hub 留在旧 key，少一层即双进程家族）
+    if (hub.transition) {
+      log.warn(`[ws ${hub.key}] rewind 覆盖了进行中的 transition=${hub.transition.kind}（预期外）`)
+    }
     hub.transition = { kind: 'rewind' }
     hubServices().pushStatus(hub, { rewindPending: true })
     void s.sendControlAndWait('rewind_files', { user_message_id: at }, 120_000)
@@ -658,16 +669,22 @@ class ClaudePort implements BackendPort {
     return readClaudeHistory(extra.slug, target, extra)
   }
 
-  /** claude 无官方归档概念：回收站即 ~/.anyplane/trash/claude/ 的 transcript 迁移记录 */
+  /** claude 无官方归档概念：回收站即 ~/.anyplane/trash/claude/ 的 transcript 迁移记录。
+   *  契约与 codex 侧对齐（BackendPort.listArchived 注释）：单后端失败降级为空数组不拖垮另一端 */
   async listArchived(): Promise<ArchivedEntry[]> {
-    return listTrash().map((t) => ({
-      key: t.key,
-      sessionId: t.sessionId,
-      slug: t.slug,
-      backend: 'claude' as const,
-      trashedAt: t.trashedAt,
-      sizeBytes: t.sizeBytes,
-    }))
+    try {
+      return listTrash().map((t) => ({
+        key: t.key,
+        sessionId: t.sessionId,
+        slug: t.slug,
+        backend: 'claude' as const,
+        trashedAt: t.trashedAt,
+        sizeBytes: t.sizeBytes,
+      }))
+    } catch (e) {
+      log.warn('[api] claude trash 列表失败:', e instanceof Error ? e.message : e)
+      return []
+    }
   }
 }
 

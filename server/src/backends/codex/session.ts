@@ -43,6 +43,9 @@ export interface CodexSpawnOpts {
 
 interface PendingCodexApproval {
   rpcId: number | string
+  /** requestUserInput 的原始 params：sendApproval 需要原始 question id 把答案映射回
+   *  上游要求的 {answers: {questionId: {answers: string[]}}} 形状 */
+  input?: unknown
 }
 
 /** 工具流式部分结果的合并窗口：outputDelta 按字节块到达（高频时每 token 一批），
@@ -167,8 +170,24 @@ export class CodexSession {
     }
   }
 
-  /** attach / 首条消息时启动：resume 已有线程或 start 新线程 */
+  /** attach / 首条消息时启动：resume 已有线程或 start 新线程。
+   *  in-flight 守卫：连发两条消息（或 warm attach 与首条消息交叠）会并发走到这里，
+   *  没有守卫会发出两次 thread/start 产生孤儿线程；共享同一 starting Promise 后，
+   *  后到的调用await同一启动结果，天然收敛到同一线程 */
+  private starting: Promise<void> | undefined
+
   async start(): Promise<void> {
+    if (this.threadId && this.translator) return // 已加载
+    if (this.starting) return this.starting
+    this.starting = this.doStart()
+    try {
+      await this.starting
+    } finally {
+      this.starting = undefined
+    }
+  }
+
+  private async doStart(): Promise<void> {
     if (this.threadId && this.translator) return // 已加载
     const rpc = await this.runtime.ensureRpc()
     const perm = mapPermissionMode(this.opts.permissionMode)
@@ -453,6 +472,16 @@ export class CodexSession {
       }
       case 'error': {
         const err = params.error as { message?: string } | undefined
+        // 上游 ErrorNotification.willRetry：transient 错误（StreamError 等），turn 未被
+        // 打断、app-server 自动重试——只留痕系统提示，绝不可发 result/置 idle：误终态会
+        // 触发 hub 侧 result 收尾（inbox done、goal 清除）并与随后的真实 turn/completed 双重页脚
+        if (params.willRetry === true) {
+          this.emit({ type: 'system', subtype: 'status', text: `⚠ ${err?.message ?? 'codex 错误'}（上游自动重试中）` })
+          break
+        }
+        // 终态错误：turn 已死。currentTurnId 必须清掉——残留会让随后的
+        // serverRequest/resolved 把 runState 拨回 running，再无 turn/completed 复位（会话永 busy）
+        this.currentTurnId = undefined
         this.emit({
           type: 'result',
           subtype: 'error',
@@ -495,15 +524,36 @@ export class CodexSession {
         toolName = 'Permissions'
         input = { reason: params.reason, permissions: params.permissions }
         break
-      case 'item/tool/requestUserInput':
+      case 'item/tool/requestUserInput': {
         toolName = 'AskUserQuestion'
+        // 翻译成前端 AskUserQuestionCard 的消费形状；原始 params 存进 pending——
+        // 裁决时 sendApproval 需要原始 question id 映射回上游要求的
+        // {answers: {questionId: {answers: string[]}}}（回 {decision} 会被上游 serde 拒绝、答案静默丢弃）
+        const questions = (Array.isArray(params.questions) ? params.questions : []) as Array<
+          Record<string, unknown>
+        >
+        input = {
+          questions: questions.map((q) => ({
+            question: String(q?.question ?? ''),
+            header: String(q?.header ?? ''),
+            multiSelect: false,
+            options: Array.isArray(q?.options)
+              ? (q.options as Array<Record<string, unknown>>).map((o) => ({
+                  label: String(o?.label ?? ''),
+                  description: String(o?.description ?? ''),
+                }))
+              : [],
+          })),
+          codexQuestionIds: questions.map((q) => String(q?.id ?? '')),
+        }
         break
+      }
       default:
         // 未知 server request：拒绝掉避免悬挂（elicitation 等后续支持）
         this.runtime.respondSafe(id, { decision: 'decline' })
         return
     }
-    this.approvals.set(requestId, { rpcId: id })
+    this.approvals.set(requestId, { rpcId: id, input })
     this.setRunState('requires_action')
     this.cb.onApprovalRequest({ requestId, toolName, input, toolUseId: String(params.itemId ?? '') })
   }
@@ -639,8 +689,24 @@ export class CodexSession {
     const pending = this.approvals.get(requestId)
     this.approvals.delete(requestId)
     if (!pending) return
-    const mapped = mapApprovalDecision(decision)
-    this.runtime.respondSafe(pending.rpcId, { decision: mapped })
+    const reqInput = pending.input as { codexQuestionIds?: string[] } | undefined
+    if (Array.isArray(reqInput?.codexQuestionIds)) {
+      // requestUserInput 的应答形状是 {answers: {questionId: {answers: string[]}}}（协议正本
+      // v2/ToolRequestUserInputResponse.ts）；decision 语义映射：allow=带上用户答案，deny=空答案
+      const answers: Record<string, { answers: string[] }> = {}
+      if (decision.behavior === 'allow') {
+        const updated = (decision as { updatedInput?: { questions?: Array<{ question?: string }>; answers?: Record<string, string> } }).updatedInput
+        const byQuestion = updated?.answers ?? {}
+        const ids = reqInput.codexQuestionIds
+        for (let i = 0; i < ids.length; i++) {
+          const ans = byQuestion[updated?.questions?.[i]?.question ?? '']
+          answers[ids[i]!] = { answers: ans ? [ans] : [] }
+        }
+      }
+      this.runtime.respondSafe(pending.rpcId, { answers })
+    } else {
+      this.runtime.respondSafe(pending.rpcId, { decision: mapApprovalDecision(decision) })
+    }
     if (this.approvals.size === 0 && this.runState === 'requires_action') {
       this.setRunState(this.currentTurnId ? 'running' : 'idle')
     }

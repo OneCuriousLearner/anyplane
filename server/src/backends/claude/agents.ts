@@ -60,7 +60,11 @@ export function parseAgentsJson(text: string): Map<string, DaemonAgent> {
 
 // /api/sessions 每 10s 轮询一次，而每次 spawn `claude agents --json --all` 都是全量 CLI 冷启动。
 // 15s TTL 意味着列表页开着就每 ~15s 白 spawn 一个 CLI；后台 agent 的存活态不需要秒级新鲜度。
+// 注释口径修正：值经评审放宽到 60s（间隔越高，列表 busy 徽章的滞后越可接受），以行为为准。
 const TTL_MS = 60_000
+// 刷新失败的最大容忍陈旧期：超过后清空缓存而非无限期保留——CLI 被卸载/长期失败时，
+// 旧缓存里的 interactive 条目会让列表页永久挂一个 busy 幽灵会话（见 daemonLiveOf 的校验）
+const MAX_STALE_MS = 10 * 60_000
 let cache: { at: number; map: Map<string, DaemonAgent> } | undefined
 let inflight = false
 
@@ -97,10 +101,13 @@ function refresh(): void {
 /**
  * 同步取 daemon 视图（listSessions 是同步热路径）：TTL 内直接命中；
  * 过期则返回旧数据并触发后台刷新（stale-while-revalidate），首轮冷启动为空表。
+ * 陈旧有上限：刷新持续失败超过 MAX_STALE_MS 后清空缓存——否则 CLI 被卸载时旧缓存
+ * 会让列表页无限期挂着再也结束不了的 busy 幽灵会话。
  */
 export function daemonAgents(): Map<string, DaemonAgent> {
   const now = Date.now()
   if (cache && now - cache.at < TTL_MS) return cache.map
   refresh()
+  if (cache && now - cache.at >= MAX_STALE_MS) cache = undefined
   return cache?.map ?? new Map()
 }

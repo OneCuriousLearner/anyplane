@@ -264,3 +264,96 @@ describe('thread/reverted 通知', () => {
     expect(msgs).toEqual([{ type: 'system', subtype: 'thread_reverted' }])
   })
 })
+
+describe('error 通知（willRetry 口径对齐上游 ErrorNotification）', () => {
+  test('willRetry:true 是 transient：只留痕系统提示，不发 result、不翻 idle', () => {
+    const { session, msgs } = makeSession()
+    session.handleNotification('turn/started', { threadId: 'parent-tid', turn: { id: 't-1' } })
+    session.handleNotification('error', { threadId: 'parent-tid', willRetry: true, error: { message: 'stream hiccup' } })
+    expect(msgs.at(-1)).toEqual({ type: 'system', subtype: 'status', text: '⚠ stream hiccup（上游自动重试中）' })
+    expect(msgs.some((m) => m.type === 'result')).toBe(false) // 误终态会触发 hub 侧 turn 收尾
+    expect(session.busy).toBe(true) // turn 未被打断，仍是 running
+  })
+
+  test('willRetry:false 是终态：清 currentTurnId 并翻 idle（残留 turnId 会让审批终结把状态拨回 running）', () => {
+    const { session, msgs } = makeSession()
+    session.handleNotification('turn/started', { threadId: 'parent-tid', turn: { id: 't-1' } })
+    session.handleNotification('error', { threadId: 'parent-tid', willRetry: false, error: { message: 'boom' } })
+    expect(msgs.some((m) => m.type === 'result' && m.is_error === true && m.result === 'boom')).toBe(true)
+    expect(session.busy).toBe(false)
+    // currentTurnId 已清：随后的审批终结不再把 runState 拨回 running
+    session.handleServerRequest(1, 'item/commandExecution/requestApproval', { threadId: 'parent-tid', command: 'ls' })
+    session.handleNotification('serverRequest/resolved', { threadId: 'parent-tid', requestId: 1 })
+    expect(session.busy).toBe(false)
+  })
+})
+
+describe('requestUserInput 应答形状（协议正本 v2/ToolRequestUserInputResponse）', () => {
+  test('裁决映射为 {answers: {questionId: {answers}}}，不再回 {decision}（serde 拒绝会静默丢答案）', () => {
+    const { runtime, session } = makeSession()
+    const responded: unknown[] = []
+    ;(runtime as unknown as { respondSafe: (id: number | string, r: unknown) => void }).respondSafe = (_id, r) =>
+      responded.push(r)
+    session.handleServerRequest(7, 'item/tool/requestUserInput', {
+      threadId: 'parent-tid',
+      itemId: 'item-1',
+      questions: [
+        { id: 'q1', header: '选择', question: '继续吗？', options: [{ label: '是' }, { label: '否' }] },
+      ],
+    })
+    session.sendApproval('cx-7', {
+      behavior: 'allow',
+      updatedInput: {
+        questions: [{ question: '继续吗？', header: '选择', options: [{ label: '是', description: '' }] }],
+        answers: { '继续吗？': '是' },
+      },
+    })
+    expect(responded).toEqual([{ answers: { q1: { answers: ['是'] } } }])
+    // deny = 空答案（用户拒绝回答），不是 decline——上游对 requestUserInput 没有 decline 语义
+    session.handleServerRequest(8, 'item/tool/requestUserInput', {
+      threadId: 'parent-tid',
+      itemId: 'item-2',
+      questions: [{ id: 'q9', header: 'h', question: 'q', options: [] }],
+    })
+    session.sendApproval('cx-8', { behavior: 'deny', message: '用户在远程端拒绝了该操作' })
+    expect(responded[1]).toEqual({ answers: {} })
+  })
+})
+
+describe('start() in-flight 守卫（连发消息/双端 attach 不再发出两次 thread/start）', () => {
+  test('同一句柄的并发 start 共享同一启动结果：第二次不重复 RPC，不产生孤儿线程', async () => {
+    const runtime = new CodexRuntime()
+    const rpcCalls: Array<{ method: string; params?: unknown }> = []
+    // 注入假 RPC：thread/start 挂起模拟网络窗口（threadId/translator 晚到）
+    let releaseThreadId: ((v: { thread: { id: string } }) => void) | undefined
+    const rpc = {
+      exited: false,
+      request: (method: string, params?: unknown) => {
+        rpcCalls.push({ method, params })
+        if (method === 'thread/start') {
+          return new Promise((resolve) => {
+            releaseThreadId = resolve as (v: { thread: { id: string } }) => void
+          })
+        }
+        return Promise.resolve({})
+      },
+      notify: () => {},
+    }
+    ;(runtime as unknown as { rpc: unknown }).rpc = rpc
+    const s = new CodexSession('xn|%2Ftmp', { cwd: '/tmp' }, runtime, {
+      onMessage: () => {},
+      onApprovalRequest: () => {},
+      onExit: () => {},
+      onStatusChange: () => {},
+    })
+    runtime.registerThread = () => {} // 假 RPC 场景跳过注册
+    const p1 = s.start()
+    const p2 = s.start() // 并发：threadId/translator 尚未就位，旧实现会发第二次 thread/start
+    // start 内部首个 await 之前不发出 RPC：先让 doStart 的微任务跑到 thread/start
+    await new Promise((r) => setTimeout(r, 0))
+    releaseThreadId!({ thread: { id: 't-real' } })
+    await Promise.all([p1, p2])
+    expect(rpcCalls.filter((c) => c.method === 'thread/start')).toHaveLength(1)
+    expect(s.sessionId).toBe('t-real')
+  })
+})

@@ -34,13 +34,21 @@ ${brief}
 
 // LineageRecord 正本在 @anyplane/protocol（前端接力链渲染共用同一形状）
 
+import { log } from './log'
+
 function lineagePath(): string {
   return join(ccDataDir(), 'lineage.json')
 }
 
 export function appendLineage(rec: LineageRecord): void {
   const path = lineagePath()
-  const all = readJsonFile<LineageRecord[]>(path) ?? []
+  const stored = readJsonFile<LineageRecord[]>(path)
+  if (stored === undefined) {
+    // 文件存在但解析失败（手改/磁盘事故）：静默当空表会以「只含新记录」重写，此前全部
+    // 接力历史被无警告抹掉（vapid loadSubs 对同形状损坏有 warn 先例）——必须留痕
+    log.warn('[lineage] lineage.json 损坏，此前血缘记录将被覆盖（仅剩本次新记录）')
+  }
+  const all = stored ?? []
   all.push(rec)
   writeJsonFile(path, all, { pretty: true })
 }

@@ -213,11 +213,22 @@ export function SessionList(props: {
     }
   }
 
+  /** 轮询在途守卫：服务端偶发慢响应（>10s）时，上一个请求未回来新周期又发出——
+   *  慢的旧响应后至会把新列表覆盖成旧快照（刚建的会话瞬消失/归档的会话瞬复活）。
+   *  超时兜底必须有：裸 fetch 无 AbortSignal，挂死的响应（TCP 不返回）会让守卫
+   *  卡死、轮询与手动刷新全部静默停摆——race 超时即可复位（底层 fetch 随它去） */
+  const refreshingRef = useRef(false)
   const refresh = () => {
-    fetchSessions()
+    if (refreshingRef.current) return
+    refreshingRef.current = true
+    const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('refresh timeout')), 15_000))
+    Promise.race([fetchSessions(), timeout])
       .then(setSessions)
-      .catch(() => {}) // 401 由 App 令牌门接管
-      .finally(() => setLoading(false))
+      .catch(() => {}) // 401 由 App 令牌门接管；超时下一轮重试
+      .finally(() => {
+        refreshingRef.current = false
+        setLoading(false)
+      })
   }
   useEffect(() => {
     refresh()

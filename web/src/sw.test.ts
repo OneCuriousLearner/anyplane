@@ -3,7 +3,7 @@
 //
 // 被锁住的行为：Safari（iOS/macOS）与旧 Firefox 桌面忽略通知 actions，按钮路径在这些平台
 // 必须降级为「点击直达 GET 确认页」，否则用户看到「需要审批」却无从裁决。
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -145,7 +145,17 @@ describe('sw.js 非审批通知不受降级影响', () => {
 })
 
 describe('sw.js 直接审批的同源闸', () => {
-  /** stub 全局 fetch 捕获 action POST 的 URL 列表 */
+  /** stub 全局 fetch 捕获 action POST 的 URL 列表。
+   *  覆写后必须成对复位：bun test 单进程跨文件共享全局，遗留 stub 会被后续文件
+   *  （server 侧 push 测试先保存 globalThis.fetch 再恢复的模式）级联成污染链 */
+  let realFetch: typeof fetch
+  beforeEach(() => {
+    realFetch = globalThis.fetch
+  })
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
   function captureFetches(): string[] {
     const urls: string[] = []
     globalThis.fetch = (async (input: unknown) => {
@@ -179,5 +189,20 @@ describe('sw.js 直接审批的同源闸', () => {
     const waits = click({ actions: evil }, 'allow')
     await Promise.all(waits)
     expect(urls).toEqual([])
+  })
+
+  test('网络级失败补发「审批未送达」通知（审批无声丢失会让会话永久卡 waiting）', async () => {
+    globalThis.fetch = (async () => {
+      throw new Error('network down')
+    }) as unknown as typeof fetch
+    const { handlers, shown } = loadSw(2)
+    const waits: Promise<unknown>[] = []
+    handlers.notificationclick!({
+      notification: { data: { actions: ACTIONS }, close: () => {} },
+      action: 'allow',
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    })
+    await Promise.all(waits)
+    expect(shown.some((n) => n.title === '审批未送达')).toBe(true)
   })
 })

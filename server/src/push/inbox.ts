@@ -7,6 +7,7 @@ import type { ServerWebSocket } from 'bun'
 import { setInboxChannel, setInboxSink } from '../hub/broadcast'
 import { hubs } from '../hub/registry'
 import { statusOf } from '../hub/status'
+import { log } from '../log'
 import type { WSDataInbox } from '../hub/types'
 import { summarizeInput } from '../util'
 import { fanoutPush } from './fanout'
@@ -27,7 +28,11 @@ function publish(ev: InboxEvent): void {
     for (const ws of inboxClients) {
       try {
         ws.send(text)
-      } catch {}
+      } catch (e) {
+        // 与 hub/broadcast 同一竞态语义：向刚关闭的连接发送是预期内噪声，降 debug 留痕
+        // （排查「通知栏没汇总」时开 debug 可见；裸吞会让收件箱侧零线索）
+        log.debug('[inbox] 下行扇出失败（连接可能已关闭）', { error: e instanceof Error ? e.message : String(e) })
+      }
     }
   }
   fanoutPush(ev)

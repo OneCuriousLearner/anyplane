@@ -6,6 +6,7 @@ import type { ServerWebSocket } from 'bun'
 import { portFor } from '../backends/port'
 import { replayCliSince } from '../cliReplay'
 import { errFields, log } from '../log'
+import { MAX_IMAGE_BASE64, isAllowedImageType } from '../uploads'
 import { errorMessage } from '../util'
 import { broadcast, broadcastError, replayApprovals, sendTo } from './broadcast'
 import { resolveApproval, rewindBusy } from './lifecycle'
@@ -67,12 +68,25 @@ export function handleClientMessage(
     case 'user': {
       if (rewindBusy(hub, '正在恢复文件，请等待回滚完成后再发送消息')) return
       const sendMode = data.sendMode === 'steer' || data.sendMode === 'queue' ? data.sendMode : undefined
-      // 图片附件：服务端统一校验（类型/大小），claude 并 content blocks，codex 落盘走 localImage
-      const attachments = (Array.isArray(data.attachments) ? data.attachments : []).map((a) => ({
+      // 图片附件：服务端统一校验（类型/大小）——claude 并 content blocks 直接进 stdin，
+      // codex 落盘走 localImage（saveUpload 内部同口径校验）。缺省mediaType/超 5MB 的附件
+      // 若放行，claude 路径会原样抵达 API（400 毁掉整轮）或撑爆 stdin
+      const rawAttachments = Array.isArray(data.attachments) ? data.attachments : []
+      const attachments = rawAttachments.map((a) => ({
         name: String(a.name ?? 'image'),
         mediaType: String(a.mediaType ?? 'image/png'),
         dataBase64: String(a.dataBase64 ?? ''),
       }))
+      for (const att of attachments) {
+        if (!isAllowedImageType(att.mediaType)) {
+          broadcastError(hub, `不支持的图片类型 ${att.mediaType}（支持 jpeg/png/gif/webp）`)
+          return
+        }
+        if (att.dataBase64.length > MAX_IMAGE_BASE64) {
+          broadcastError(hub, `图片超过 5MB 限制（${att.name}）`)
+          return
+        }
+      }
       const text = String(data.text ?? '')
       void (async () => {
         const port = resolvePort(hub.key)

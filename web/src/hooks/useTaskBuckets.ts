@@ -82,6 +82,9 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
 } {
   const { isCodex } = opts
   const taskMapRef = useRef(new Map<string, TaskBucket>())
+  /** 已驱逐的桶键（终态宽限期满即永久——红线语义）：迟到的补发事件（重连重放的
+   *  task_progress/sidechain）不得把同一 toolUseId 重建为 running 僵尸桶 */
+  const evictedRef = useRef(new Set<string>())
   const [tasks, setTasks] = useState<TaskFeed[]>([])
   const [tasksOpen, setTasksOpen] = useState(false)
 
@@ -89,7 +92,9 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
   const pubTasks = () =>
     setTasks([...taskMapRef.current.values()].map((b) => ({ ...b, messages: [...b.messages] })))
 
-  const taskBucket = (toolUseId: string): TaskBucket => {
+  const taskBucket = (toolUseId: string): TaskBucket | undefined => {
+    // 终态驱逐是永久的：迟到事件（重连补放）命中墓碑直接丢弃，不再重建僵尸桶
+    if (evictedRef.current.has(toolUseId)) return undefined
     let b = taskMapRef.current.get(toolUseId)
     if (!b) {
       b = { toolUseId, status: 'running', messages: [], toolIdx: new Map(), pending: new Map(), seen: new Set() }
@@ -100,6 +105,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
 
   const appendTaskMsg = (toolUseId: string, h: HistoryMessage) => {
     const b = taskBucket(toolUseId)
+    if (!b) return // 已驱逐（终态永久语义）：迟到 sidechain 不得重建僵尸桶
     // 历史加载与 live 追加可能重叠（落盘与 WS 投递交界），按 uuid 去重
     if (h.uuid) {
       if (b.seen.has(h.uuid)) return
@@ -190,6 +196,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
         continue
       }
       const b = taskBucket(t.toolUseId)
+      if (!b) continue // 已驱逐：水合不复活终态任务
       b.status = 'running'
       b.agentId = t.id // stop_task 需要 task_id，水合路径此前只建桶不记 agentId
       b.description = t.description ?? b.description
@@ -217,6 +224,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     const toolUseId = rec.tool_use_id as string | undefined
     if (!toolUseId) return
     const b = taskBucket(toolUseId)
+    if (!b) return // 已驱逐：task_started 重放不得重建僵尸桶
     // claude 用 task_id；codex 合成事件经 agent_thread_id 携带子线程 id（终态后懒拉转录用），后者优先
     b.agentId =
       (rec.agent_thread_id as string | undefined) ?? (rec.task_id as string | undefined) ?? b.agentId
@@ -232,11 +240,13 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
   }
 
   /** 心跳：拟人化动作描述 + 用量，解决"长 turn 安静期像卡住"的体感。
-   *  桶不存在也补建——中途接入错过 task_started 时，心跳就是首个可见信号。 */
+   *  桶不存在也补建——中途接入错过 task_started 时，心跳就是首个可见信号；
+   *  但已驱逐的不重建（终态永久）：迟到的重放心跳会把僵尸桶复活成永不驱逐的 running 卡 */
   const taskProgress = (rec: Record<string, unknown>) => {
     const toolUseId = rec.tool_use_id as string | undefined
     if (!toolUseId) return
     const b = taskBucket(toolUseId)
+    if (!b) return
     b.activity = (rec.description as string | undefined) ?? b.activity
     b.lastToolName = (rec.last_tool_name as string | undefined) ?? b.lastToolName
     b.usage = (rec.usage as TaskFeed['usage'] | undefined) ?? b.usage
@@ -259,18 +269,21 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     const toolUseId = rec.tool_use_id as string | undefined
     if (!toolUseId) return
     const b = taskBucket(toolUseId)
+    if (!b) return // 已驱逐：重放的 task_notification 不复活
     markTerminal(b, rec.status === 'completed' ? 'done' : rec.status === 'stopped' ? 'stopped' : 'error')
     b.summary = summary || b.summary
     b.usage = (rec.usage as TaskFeed['usage'] | undefined) ?? b.usage
     pubTasks()
   }
 
-  /** 历史加载的桶重建：清桶 → 回填口径见 selectHistoryBuckets（纯函数，可单测） */
+  /** 历史加载的桶重建：清桶（整段重载是新的生命周期，墓碑一并清）→ 回填口径见 selectHistoryBuckets */
   const resetFromHistory = (msgs: ChatMsg[], resp: HistoryResponse) => {
     taskMapRef.current.clear()
+    evictedRef.current.clear()
     for (const s of selectHistoryBuckets(msgs, resp.subagents)) {
       const id = (s.toolUseId ?? s.agentId)!
       const b = taskBucket(id)
+      if (!b) continue // 墓碑刚清，理论上必建成；守卫与 backfill 同口径
       b.agentId = s.agentId ?? b.agentId
       b.agentType = s.agentType ?? b.agentType
       b.description = s.description ?? b.description
@@ -286,6 +299,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
       const id = (s.toolUseId ?? s.agentId)!
       if (taskMapRef.current.has(id)) continue
       const b = taskBucket(id)
+      if (!b) continue // 已驱逐：历史回填不复活终态任务
       b.agentId = s.agentId ?? b.agentId
       b.agentType = s.agentType ?? b.agentType
       b.description = s.description ?? b.description
@@ -297,6 +311,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
 
   const clear = () => {
     taskMapRef.current.clear()
+    evictedRef.current.clear()
     setTasks([])
     setTasksOpen(false)
   }
@@ -308,8 +323,10 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
       let dirty = false
       for (const [id, b] of taskMapRef.current) {
         if (b.evictAfter != null && now >= b.evictAfter) {
-          // 报告摘要仍留在主线 Agent 工具卡与「⚙ 后台任务完成」系统消息里，驱逐不丢信息
+          // 报告摘要仍留在主线 Agent 工具卡与「⚙ 后台任务完成」系统消息里，驱逐不丢信息。
+          // 墓碑记录驱逐事实：终态只有宽限期驱逐一种语义，驱逐即永久——迟到事件不得复活
           taskMapRef.current.delete(id)
+          evictedRef.current.add(id)
           dirty = true
         }
       }

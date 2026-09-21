@@ -13,7 +13,7 @@ import type { HistoryResponse, SessionInfo } from '@anyplane/protocol'
 import type { NavigateSession } from '../lib/sessionHash'
 import { reconcileApprovals } from '../lib/approvals'
 import { nextId, type Block } from '../lib/blocks'
-import { appendHistoryMsg, flushStrayResults, hitsSeen, type IngestState } from '../lib/ingest'
+import { appendHistoryMsg, flushStrayResults, hitsSeen, rememberKeys, type IngestState } from '../lib/ingest'
 import type { ServerEvent, SessionState } from '@anyplane/protocol'
 import { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
@@ -52,6 +52,9 @@ export function useSessionSocket(opts: {
   /** codex thread/revert 双信号去重：'reverted'（本地截断）后 5s 内到达的 cli
    *  thread_reverted（权威重载）是同一事件的回声，跳过避免二次重载 */
   const lastRevertedAtRef = useRef(0)
+  /** tail_reset 重载序号：连续两次截断的在途 fetch 只认最后发出的一次——
+   *  慢的旧响应后至会把已被截掉的对话复活进抄本 */
+  const tailResetSeqRef = useRef(0)
 
   // ---------- WS 连接 ----------
   useEffect(() => {
@@ -107,14 +110,26 @@ export function useSessionSocket(opts: {
             if (ev.state.exited) {
               ingestApi.commitDraft()
               ingestApi.setPhase(undefined)
-            } else if (ev.state.sessionState === 'idle' && !ev.state.busy && !ev.state.waiting && ingestApi.draftStore.get()) {
+              // turn 已死：缓冲的孤儿结果不会再有配对机会，浮现为孤立提示
+              if (ingestApi.historyBeforeRef.current == null) {
+                ingestApi.setMsgs((prev) => {
+                  const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
+                  flushStrayResults(st)
+                  return st.msgs
+                })
+              }
+            } else if (ev.state.sessionState === 'idle' && !ev.state.busy && !ev.state.waiting) {
               // 自愈：权威 idle 到达时清掉陈旧流式草稿。服务端重启/断线期间 turn 终结时
               // 客户端拿不到终结事件，"生成中"会永远挂着（实测：watch 重载后复现）。
               // 等审批（waiting/requires_action）期间草稿是合法的，不在此清理。
-              ingestApi.setDraft(null)
-              ingestApi.setPhase(undefined)
+              if (ingestApi.draftStore.get()) {
+                ingestApi.setDraft(null)
+                ingestApi.setPhase(undefined)
+              }
               // turn 已终结：此刻仍未配对的 tool_result 不会再等到它的调用了，
               // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）。
+              // 与 draft 解耦：常态下 tool_result 先于 message_stop 到达，commitDraft 后
+              // draft 为 null——挂在 draft 非空条件里会让孤儿结果永远滞留缓冲。
               // 例外：还有更早历史页未加载（hasMore）时缓冲留着——其 tool_use 可能在
               // 未加载页里，翻到该页时 prepend 的索引重建会完成配对（提前浮现会永久钉在尾部）
               if (ingestApi.historyBeforeRef.current != null) break
@@ -321,15 +336,18 @@ export function useSessionSocket(opts: {
             break
           case 'tail': {
             // 外部会话 transcript 追加：与历史共用同一套归并；uuid 去重走 seenIds
-            //（与 live 路径同一机制；曾是每事件全表 some 的 O(n) 扫描，PR#53 review）
+            //（与 live 路径同一机制）。查到即记的闭环必须完整：重连重订阅后服务端按旧
+            // 偏移重放整段，去重集里若没有 tail uuid，每条都会重复追加一份
             const h = ev.msg
             if (h.uuid && hitsSeen(ingestApi.seenIdsRef.current, [h.uuid])) break
+            if (ingestApi.gapReloadingRef.current) break
             ingestApi.setMsgs((prev) => {
               const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
               appendHistoryMsg(st, h)
               // 不在此 flush：tail 是逐条到达，tool_use 可能在后续行；孤儿在权威 idle 时统一浮现
               return st.msgs
             })
+            if (h.uuid) rememberKeys(ingestApi.seenIdsRef.current, [h.uuid])
             // 尾到的主线 tool_result 给已存在桶补终态——外部会话（tailer 路径）没有
             // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
             for (const blk of h.blocks) {
@@ -364,14 +382,18 @@ export function useSessionSocket(opts: {
             break
           }
           case 'tail_reset': {
-            // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅
+            // 外部会话截断了 transcript（rewind / clear）：重载历史并用新偏移重新订阅。
+            // 在途守卫：切走（key 比对）+ 乱序（tailResetSeq 只认最后一次 fetch——连续两次
+            // 截断时慢的旧响应后至会把已被截掉的对话复活进抄本，epoch 守卫做不到这一点，
+            // 因为两个响应同属当前坐标系）
             ingestApi.setDraft(null)
             ingestApi.pendingResultsRef.current.clear()
             const keyAtFetch = session.key
+            const seqAtFetch = ++tailResetSeqRef.current
             fetchHistory(session.slug, session.sessionId)
               .then((resp) => {
-                // 异步返回时用户可能已切走：socket 已换成新会话的，弃掉过期结果
                 if (sockRef.current?.key !== keyAtFetch) return
+                if (tailResetSeqRef.current !== seqAtFetch) return // 更新的 tail_reset 已发出，旧响应作废
                 ingestApi.applyHistory(resp)
               })
               .catch(() => {})

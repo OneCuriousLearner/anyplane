@@ -53,11 +53,26 @@ interface PidFile {
 function isProcessRunning(pid: number): boolean {
   try {
     process.kill(pid, 0)
-    return true
   } catch (e: unknown) {
     // EPERM 说明进程存在但无权信号
     return (e as NodeJS.ErrnoException).code === 'EPERM'
   }
+  // kill(pid,0) 不校验进程身份：CLI 被 kill -9 后 pid 文件残留，PID 被系统复用于
+  // 无关进程时会被当成 live 会话（归档/改名/回滚被拒、列表幽灵 busy）。POSIX 下再校验
+  // /proc cmdline 指向 claude；显式 claudePath（可改名包装器）以其文件名兜底——
+  // 短名（≤2 字符）无判别力不采用；无 /proc 的平台维持原判（身份校验的子进程成本不划算）
+  if (process.platform !== 'win32' && process.platform !== 'darwin') {
+    try {
+      const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+      if (!cmdline) return false // 僵尸进程：cmdline 为空
+      if (cmdline.includes('claude')) return true
+      const explicit = config.claudePath ? basename(config.claudePath) : ''
+      return explicit.length > 2 && cmdline.includes(explicit)
+    } catch {
+      return false
+    }
+  }
+  return true
 }
 
 /** 外部运行中会话的实时状态（来自 ~/.claude/sessions/<pid>.json）；tailer 用它反映非 spawn 会话的 busy/idle */
@@ -162,14 +177,26 @@ function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?:
 }
 
 /** extractMeta 的 (mtimeMs, size) 记忆化：/api/sessions 每 10s 轮询会全量重扫 transcripts，
- *  不变文件（绝大多数）的 128KB 头尾读 + 逐行 JSON.parse 全部跳过；活跃会话 mtime 必变，自动重读 */
+ *  不变文件（绝大多数）的 128KB 头尾读 + 逐行 JSON.parse 全部跳过；活跃会话 mtime 必变，自动重读。
+ *  LRU 封顶防长期运行无界增长（对照 parseCache 的 PARSE_CACHE_CAP——此前这里无任何上限） */
+const META_CACHE_CAP = 64
 const metaCache = new Map<string, { mtimeMs: number; size: number; meta: ReturnType<typeof extractMeta> }>()
 
 function extractMetaCached(path: string, mtimeMs: number, size: number): ReturnType<typeof extractMeta> {
   const hit = metaCache.get(path)
-  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) return hit.meta
+  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) {
+    // LRU 触摸：命中即最新，淘汰从最早未用开始
+    metaCache.delete(path)
+    metaCache.set(path, hit)
+    return hit.meta
+  }
   const meta = extractMeta(path)
   metaCache.set(path, { mtimeMs, size, meta })
+  while (metaCache.size > META_CACHE_CAP) {
+    const oldest = metaCache.keys().next().value
+    if (oldest === undefined) break
+    metaCache.delete(oldest)
+  }
   return meta
 }
 
@@ -199,8 +226,11 @@ export function listSessions(): DiscoveredSession[] {
     if (a.kind === 'background') {
       return backgroundAlive(a.state) ? { pid: a.pid ?? 0, kind: 'background', status: 'busy' } : undefined
     }
-    // interactive：daemon 还在跟踪即视为活着（pid 文件刚被清理的竞态兜底）
+    // interactive：daemon 还在跟踪即视为活着（pid 文件刚被清理的竞态兜底）。
+    // pid 存在时必须复核进程存活：否则 CLI 崩溃后残留 daemon 缓存会让列表页
+    // 永久挂一个 busy 幽灵会话（PID 复用时还可能把无关进程当外部 CLI）
     if (a.pid || a.status) {
+      if (a.pid && !isProcessRunning(a.pid)) return undefined
       return { pid: a.pid ?? 0, startedAt: a.startedAt ? new Date(a.startedAt).toISOString() : undefined, kind: a.kind, status: normalizeStatus(a.status) }
     }
     return undefined
