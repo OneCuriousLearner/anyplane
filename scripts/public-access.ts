@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadAnyplaneConfigFile } from '../server/src/config'
-import { ensurePrivateDir } from '../server/src/util'
+import { ensurePrivateDir, errorMessage } from '../server/src/util'
 import { run, type RunDeps } from './public-access-lib'
 
 const deps: RunDeps = {
@@ -69,7 +69,7 @@ try {
 } catch (e) {
   // 顶层兜底：配置解析错误（坏 approvalRules 刻意 fail-fast）、写盘失败等，
   // 统一成一行可读报错，而不是 unhandled rejection 堆栈
-  const msg = e instanceof Error ? e.message : String(e)
+  const msg = errorMessage(e)
   console.error(`[public-access] ${msg}`)
   process.exit(1)
 }

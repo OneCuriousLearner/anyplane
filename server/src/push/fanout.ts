@@ -1,8 +1,8 @@
 // Web Push / webhook 的通知载荷组装与扇出；会话显示名、审批摘要、审批确认页 HTML 的唯一正本。
 // 依赖方向：push → hub（registry）允许，反向禁止（hub 经 hub/broadcast 的 InboxSink 出口）。
 
+import { basename } from 'node:path'
 import type { InboxEvent } from '@anyplane/protocol'
-import { parseKey } from '../backends/claude/backend'
 import { describeKey, portFor } from '../backends/port'
 import { log } from '../log'
 import { pushToAll, pushWebhooksToAll, subscriptionCount, webhookCount, type PushPayload } from './vapid'
@@ -11,17 +11,19 @@ import { hubs } from '../hub/registry'
 import type { PendingApproval } from '../hub/types'
 
 /** 会话显示名：项目目录 basename（approval 只在 spawn 后发生，spawnOpts.cwd 必有）。
- *  s| 未 spawn 时经 parseKey 反查真实 cwd——每 Hub 至多一次（缓存在 hub.nameCwd，
- *  避免推送事件触发反复 listSessions 全盘扫描）；b|/n|/xn| 的 cwd 内嵌在 key 里直接取
- * （describeKey 零 I/O 形状解析）。parseKey 也查不到（slug 目录已删）时以 slug 末段近似。 */
+ *  s| 未 spawn 时经 port 反查真实 cwd——每 Hub 至多一次（缓存在 hub.nameCwd，
+ *  避免推送事件触发反复 listSessions 全盘扫描；handoffSource 是契约口，routes/hub
+ *  同款走法，push 不直连具体后端）。b|/n|/xn| 的 cwd 内嵌在 key 里直接取
+ * （describeKey 零 I/O 形状解析）。反查也查不到（slug 目录已删）时以 slug 末段近似。 */
 export function sessionNameOf(key: string): string {
-  const base = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() ?? cwd
+  // node:path basename 跨平台正确（win32 认 '\'）；根路径 basename 为 '' 时退回原值
+  const base = (cwd: string) => basename(cwd) || cwd
   const hub = hubs.get(key)
   if (hub?.spawnOpts?.cwd) return base(hub.spawnOpts.cwd)
   const d = describeKey(key)
   if ((d?.kind === 'new' || d?.kind === 'branch') && d.cwd) return base(d.cwd)
   if (d?.kind === 'existing' && d.backend === 'claude') {
-    if (hub && hub.nameCwd === undefined) hub.nameCwd = parseKey(key)?.cwd ?? ''
+    if (hub && hub.nameCwd === undefined) hub.nameCwd = portFor(key).handoffSource(key).cwd ?? ''
     if (hub?.nameCwd) return base(hub.nameCwd)
     // slug 是 sanitizePath(cwd)：末段即目录名（近似，仅推送显示用）
     if (d.slug) return d.slug.split('-').pop() ?? key.slice(0, 18)

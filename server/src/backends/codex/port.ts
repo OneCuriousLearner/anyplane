@@ -9,8 +9,10 @@ import { errorMessage } from '../../util'
 import type { Hub } from '../../hub/types'
 import {
   baseStatusOf,
+  beginRewindTransition,
   btwDeliver,
   btwRejectNoSession,
+  endRewindTransition,
   hubServices,
   type BackendPort,
   type RouteResult,
@@ -148,12 +150,9 @@ class CodexPort implements BackendPort {
     }
     // revert/fork 是异步 RPC（最长 60s）窗口：置 transition=rewind 门控用户消息
     //（hub/messages.ts user 分支），否则新 turn 与 thread/revert 并发会截掉刚开始的对话。
-    // 覆盖已有过渡须留痕（hub/types.ts 纪律）：rekey 期间到达会吞掉三层重键，静默覆盖无从排查
-    if (hub.transition) {
-      log.warn(`[ws ${hub.key}] rewind 覆盖了进行中的 transition=${hub.transition.kind}（预期外）`)
-    }
-    hub.transition = { kind: 'rewind' }
-    hubServices().pushStatus(hub, { rewindPending: true })
+    // 覆盖已有过渡须留痕（实现集中在 backends/port.beginRewindTransition）：
+    // rekey 期间到达会吞掉三层重键，静默覆盖无从排查
+    beginRewindTransition(hub)
     void codexRuntime
       .historyModeOf(tid)
       .then(async (mode) => {
@@ -178,9 +177,8 @@ class CodexPort implements BackendPort {
       })
       .catch((e) => hubServices().broadcastError(hub, `回滚失败: ${errorMessage(e)}`))
       .finally(() => {
-        // 只清自己置的位（同 claude 适配器的覆盖语义纪律）
-        if (hub.transition?.kind === 'rewind') hub.transition = undefined
-        hubServices().pushStatus(hub, { rewindPending: false })
+        // 只清自己置的位（实现集中在 backends/port.endRewindTransition）
+        endRewindTransition(hub)
       })
   }
 

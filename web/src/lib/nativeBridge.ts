@@ -17,7 +17,7 @@
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications, type LocalNotificationsPlugin } from '@capacitor/local-notifications'
 import type { InboxEvent } from '@anyplane/protocol'
-import { postJson } from './api'
+import { errorMessage, postJson } from './api'
 import { getToken } from './auth'
 import { createStore } from './store'
 import { inboxSubscribe } from './inboxBus'
@@ -338,7 +338,7 @@ export async function setupNativeBridge(): Promise<void> {
 
     await continueNativeSetup()
   } catch (e) {
-    setStatus({ error: `原生桥初始化失败：${e instanceof Error ? e.message : String(e)}` })
+    setStatus({ error: `原生桥初始化失败：${errorMessage(e)}` })
   }
 }
 

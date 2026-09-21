@@ -16,6 +16,23 @@ export function rewindBusy(hub: Hub, message = '已有回滚操作正在进行')
 }
 
 /**
+ * 三层重键（Hub / 进程 map / 存活 WS 的 data.key）：/clear 对话重置（callbacks.ts）与
+ * 接力播种落 resolved key（handoff.ts）共用——少一层即双进程或消息黑洞：
+ * 进程 map 不重键则按新 key 查不到进程会再 spawn 一个（双进程同 transcript）；
+ * 存活连接的 data.key 不改写则 message 路由（getHub(ws.data.key)）落空，旧 key 上新建空 Hub。
+ * rekey 前后 backend 不变（n|→s|、/clear 同进程），portFor(newKey) 与旧 key 同适配器。
+ */
+export function rekeyHub(hub: Hub, oldKey: string, newKey: string, newSessionId: string): void {
+  hubs.delete(oldKey)
+  hub.key = newKey
+  hubs.set(newKey, hub)
+  portFor(newKey).rekeySession(hub, oldKey, newKey, newSessionId)
+  for (const ws of hub.clients) {
+    if (!ws.data.inbox) ws.data.key = newKey
+  }
+}
+
+/**
  * 审批投递共享半段：手动裁决（resolveApproval）与规则自动裁决（callbacks.ts）共用——
  * 退出检查 + sendApproval 异常防护 + 外部门禁刷新。
  * 留痕事件不进这里：手动路径广播 approval_resolved（有 pending 卡要清），

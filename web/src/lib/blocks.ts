@@ -52,19 +52,23 @@ export interface DraftBlockLike {
   jsonBuf?: string
 }
 
+/** 流式 JSON 缓冲 → 已解析参数（流式 JSON 尚未闭合时留空）。草稿块落 Block 与 commitDraft 共用。 */
+export function parseDraftJsonBuf(jsonBuf?: string): unknown {
+  if (!jsonBuf) return undefined
+  try {
+    return JSON.parse(jsonBuf)
+  } catch {
+    return undefined
+  }
+}
+
 export function draftBlockToBlock(b: DraftBlockLike): Block {
   if (b.kind === 'tool') {
-    let input: unknown
-    try {
-      input = b.jsonBuf ? JSON.parse(b.jsonBuf) : undefined
-    } catch {
-      /* 流式 JSON 尚未闭合，参数留空 */
-    }
     return {
       kind: 'tool',
       id: b.toolId ?? `draft-${b.idx}`,
       name: b.name ?? '…',
-      input,
+      input: parseDraftJsonBuf(b.jsonBuf),
       pending: true,
     }
   }

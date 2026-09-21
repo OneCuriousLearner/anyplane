@@ -8,8 +8,8 @@
 // E3（session.key 历史加载 effect）留 Chat 组合层：reset 先于建连的顺序纪律在那。
 
 import { useRef, useState } from 'react'
-import type { HistoryResponse, SubagentHistory } from '@anyplane/protocol'
-import { nextId, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import type { BackendCapabilities, HistoryResponse, SubagentHistory } from '@anyplane/protocol'
+import { nextId, parseDraftJsonBuf, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 import { createStore, useStore, type Store } from '../lib/store'
 import {
   appendHistoryMsg,
@@ -79,7 +79,9 @@ export interface TranscriptIngestApi {
 }
 
 export function useTranscriptIngest(opts: {
-  isCodex: boolean
+  /** 会话能力（status 首帧后可知）：tailer === false 的后端不发 tail_subscribe；
+   *  undefined（尚未收到 status）按既有行为发送——服务端无能力时 `?.` no-op 兜底 */
+  capsRef: React.RefObject<BackendCapabilities | undefined>
   sockRef: React.RefObject<SessionSocket | undefined>
   taskApi: TaskBucketsApi
 }): {
@@ -95,7 +97,7 @@ export function useTranscriptIngest(opts: {
   historyBeforeRef: React.RefObject<number | undefined>
   api: TranscriptIngestApi
 } {
-  const { isCodex, sockRef, taskApi } = opts
+  const { capsRef, sockRef, taskApi } = opts
   // messages/draft：store 容器（渲染外读写同点；实例用惰性 useState 保持跨渲染稳定）
   const [messagesStore] = useState(() => createStore<ChatMsg[]>([]))
   const [draftStore] = useState(() => createStore<Draft | null>(null))
@@ -169,9 +171,9 @@ export function useTranscriptIngest(opts: {
     //（清桶 + 未完成 subagent 回填的实现已随桶下沉 hooks/useTaskBuckets.ts）
     taskApi.resetFromHistory(out, resp)
 
-    // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队
-    // codex 的实时流走 app-server 订阅（attach 即 resume），无 tailer
-    if (!isCodex) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
+    // 从历史读取位置续订 transcript 追加（外部会话的实时更新）；socket 未 open 时会排队。
+    // 能力门控：已知无 tailer（codex 实时流走 app-server 订阅）不发；未知时按既有行为发送
+    if (capsRef.current?.tailer !== false) sockRef.current?.send({ kind: 'tail_subscribe', from: resp.fileBytes })
   }
 
   /** 翻页 prepend：更早一页铺到抄本前。去重键并集（防 replay 重复），游标推进；
@@ -220,10 +222,6 @@ export function useTranscriptIngest(opts: {
     const blocks: Block[] = []
     for (const b of d.blocks) {
       if (b.kind === 'tool') {
-        let input: unknown
-        try {
-          input = b.jsonBuf ? JSON.parse(b.jsonBuf) : undefined
-        } catch {}
         const toolId = b.toolId ?? nextId()
         const held = pendingResultsRef.current.get(toolId)
         if (held) pendingResultsRef.current.delete(toolId)
@@ -231,7 +229,7 @@ export function useTranscriptIngest(opts: {
           kind: 'tool',
           id: toolId,
           name: b.name ?? '?',
-          input,
+          input: parseDraftJsonBuf(b.jsonBuf),
           pending: !held,
           resultText: held?.text,
           resultError: held?.isError,

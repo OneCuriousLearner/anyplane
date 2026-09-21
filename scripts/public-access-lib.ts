@@ -3,6 +3,8 @@
 // run() 的全部副作用（进程、网络、文件、配置）经 RunDeps 注入，测试在进程内跑——
 // 绝不能为测试去 spawn 真实隧道二进制（在本机跑 bun test 不应可能改写 tailnet 配置）。
 
+import { errorMessage } from '../server/src/util'
+
 export type Recipe = 'funnel' | 'cf-quick' | 'caddy'
 
 export interface PublicAccessArgs {
@@ -152,7 +154,7 @@ export async function run(argv: string[], deps: RunDeps): Promise<number> {
   try {
     args = parseArgs(argv)
   } catch (e) {
-    return fail(e instanceof Error ? e.message : String(e))
+    return fail(errorMessage(e))
   }
 
   // loadConfig 抛错（坏 approvalRules 是刻意 fail-fast）向上传播，由包装层统一成可读报错

@@ -2,7 +2,7 @@
 // codex/models、config、claude/model-names、backends/status。
 
 import type { HistoryResponse, LineageNode, LineageResponse, ServerConfigInfo } from '@anyplane/protocol'
-import { backendPort, describeKey } from '../backends/port'
+import { backendPort, describeKey, slugForBackend } from '../backends/port'
 import { getBackendsStatus } from '../backends/status'
 import { config } from '../config'
 import { FsBrowseError, listDirectories } from '../fsbrowse'
@@ -93,7 +93,7 @@ export async function handleMiscRoutes(
           nodes[k] = {
             key: k,
             backend: d.backend,
-            slug: d.backend === 'codex' ? 'codex' : sanitizePath(d.cwd ?? ''),
+            slug: slugForBackend(d.backend, d.cwd ?? ''),
             sessionId: 'new',
             cwd: r.cwd,
           }

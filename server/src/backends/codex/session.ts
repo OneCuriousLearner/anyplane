@@ -332,17 +332,7 @@ export class CodexSession {
     for (const m of t.childItemMsgs(childThreadId, item as never, { firstUserTurnId })) this.emit(m)
     // 子线程 rollout 同样不持久化 reasoning：侧车落盘，终态拉取历史时回插
     //（uuid 与 live 转发的思考块同为 item.id，拉取与转发经前端 seen 去重不叠加）
-    if (item.type === 'reasoning') {
-      const text = reasoningText(item.summary, item.content)
-      if (text) {
-        appendReasoning(childThreadId, {
-          ts: Date.now(),
-          turnId: typeof params.turnId === 'string' ? params.turnId : null,
-          text,
-          itemId: item.id,
-        })
-      }
-    }
+    if (item.type === 'reasoning') this.recordReasoning(childThreadId, item, params.turnId)
   }
 
   handleNotification(method: string, params: Params): void {
@@ -416,18 +406,7 @@ export class CodexSession {
         if (itemId) this.outputBufs.delete(itemId) // 终态结果即权威，部分结果缓冲随之失效
         // codex rollout 不持久化 reasoning：侧车落盘，历史读取时按 turn 时间窗回插
         //（itemId 一并落盘：回插消息与 live 流同 uuid，重连补发经前端 seen 去重）
-        if (itemType === 'reasoning' && this.threadId) {
-          const it = item as { summary?: string[]; content?: unknown }
-          const text = reasoningText(it.summary, it.content)
-          if (text) {
-            appendReasoning(this.threadId, {
-              ts: Date.now(),
-              turnId: typeof params.turnId === 'string' ? params.turnId : null,
-              text,
-              itemId,
-            })
-          }
-        }
+        if (itemType === 'reasoning' && this.threadId) this.recordReasoning(this.threadId, item, params.turnId)
         // collab 子线程注册（父子事件链转发的路由表，0.148 实测子线程事件推到父连接）：
         // 最早的注册点是 subAgentActivity started（子线程首批事件紧随其后到达）
         this.registerSpawnedChildren(item as { type?: string }, 1)
@@ -765,8 +744,22 @@ export class CodexSession {
       this.recycleTimer = undefined
     }
   }
-  notifyExternalGate(): void {
-    // codex 进程由 runtime 统一托管，不按会话回收
+
+  /** reasoning 侧车落盘：rollout 不持久化 reasoning（主线与子线程同一口径，
+   *  itemId 作回插 uuid——与 live 转发的思考块同键，重连/拉取去重不叠加） */
+  private recordReasoning(
+    ownerThreadId: string,
+    item: { id?: string; summary?: string[]; content?: unknown },
+    turnId: unknown,
+  ): void {
+    const text = reasoningText(item.summary, item.content)
+    if (!text) return
+    appendReasoning(ownerThreadId, {
+      ts: Date.now(),
+      turnId: typeof turnId === 'string' ? turnId : null,
+      text,
+      itemId: item.id,
+    })
   }
 
   dispose(): void {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  BackendCapabilities,
   CodexModelInfo,
   LineageResponse,
   ServerConfigInfo,
@@ -74,6 +75,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const querySeq = useRef(0)
   const sockRef = useRef<SessionSocket | undefined>(undefined)
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** 会话能力 ref（status 首帧后由渲染体同步）：tailer 门控走能力声明而非 isCodex 硬编码 */
+  const capsRef = useRef<BackendCapabilities | undefined>(undefined)
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
   // 桶状态与辅助群已下沉 hooks/useTaskBuckets.ts（F3）：api 为每渲染重建的普通对象——
@@ -84,7 +87,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   // api 为每渲染重建的普通对象：内部全走 ref/稳定 setState，过期闭包语义等价
   const { messages, draft, phase, initInfo, permMode, effort, hasMoreHistory, historyBeforeRef, api: ingestApi } =
     useTranscriptIngest({
-      isCodex,
+      capsRef,
       sockRef,
       taskApi,
     })
@@ -149,9 +152,10 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       ? JSON.stringify(ev.data, null, 2).slice(0, 8000)
       : `⚠ ${ev.error ?? '查询失败'}`
     setDetailContent(raw)
-    // 按应答形状分发到结构化面板（claude 专属；codex 一律 JSON 直出）。
-    // 形状不匹配的 tab 清空对应结构化态，渲染链自然落回 <pre>
-    const d = ev.ok && !isCodex ? (ev.data as Record<string, unknown>) : undefined
+    // 按应答形状分发到结构化面板（形状不匹配的 tab 清空对应结构化态，渲染链自然落回
+    // <pre>）。codex 应答形状天然不含 mcpServers/categories/applied 字段，判定自然落空，
+    // 不再需要 !isCodex 兜底表（能力差异唯一权威是适配器 capabilities 声明）
+    const d = ev.ok ? (ev.data as Record<string, unknown>) : undefined
     setMcpServers(Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : null)
     setContextData(
       d && Array.isArray(d.categories) && typeof d.totalTokens === 'number'
@@ -225,6 +229,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     sockRef,
     ingestApi,
     taskApi,
+    capsRef,
     loadSessionHistory,
     onNavigate: props.onNavigate,
     onCloseRewind: () => setShowRewind(false),
@@ -240,6 +245,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   /** 会话能力（服务端 capabilities 随 status 首帧下发）：undefined = 未知，门控 UI 隐藏。
    *  查询按钮/分叉入口按此渲染，不再以 isCodex 硬编码推断 */
   const caps = capabilitiesOf(state)
+  capsRef.current = caps
   /** 打开详情抽屉的默认查询：优先 context 用量，退而求其次 MCP 状态（能力白名单 ∩ 按钮表内） */
   const defaultDetailQuery: [string, string] | undefined = caps?.queries.includes('get_context_usage')
     ? ['get_context_usage', QUERY_LABELS.get_context_usage[0]]
@@ -537,7 +543,6 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           <DetailDrawer
             detailTitle={detailTitle}
             detailContent={detailContent}
-            isCodex={isCodex}
             queries={caps?.queries ?? []}
             mcpServers={mcpServers}
             mcpBusy={mcpBusy}

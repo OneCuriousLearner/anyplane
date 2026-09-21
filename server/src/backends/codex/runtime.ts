@@ -41,6 +41,11 @@ const THREAD_SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer'] as const
  *  AnyPlane 面向多 provider 用户（厂商中立定位），会话发现必须全量。 */
 const THREAD_LIST_FILTERS = { sourceKinds: [...THREAD_SOURCE_KINDS], modelProviders: [] as string[] }
 
+/** 活跃/归档列表的完整参数组（paginate 只读，共享常量安全）：
+ *  来源过滤与读盘轨统一口径的漂移点收敛于此——归档页与活跃页曾因 limit=100 单页分裂过一次 */
+const ACTIVE_LIST_PARAMS = { sortKey: 'updated_at', ...THREAD_LIST_FILTERS }
+const ARCHIVED_LIST_PARAMS = { archived: true, ...THREAD_LIST_FILTERS }
+
 type Params = Record<string, unknown>
 
 // ---------- 运行时单例 ----------
@@ -387,12 +392,12 @@ export class CodexRuntime {
 
   /** 会话发现：thread/list 分页拉全（来源过滤与读盘轨统一口径） */
   async listThreads(limitPages = 3): Promise<Params[]> {
-    return this.paginate('thread/list', { sortKey: 'updated_at', ...THREAD_LIST_FILTERS }, limitPages)
+    return this.paginate('thread/list', ACTIVE_LIST_PARAMS, limitPages)
   }
 
   /** 归档线程列表：与活跃列表同一来源过滤与分页深度（旧的 limit=100 单页是历史遗留口径分裂） */
   async listThreadsArchived(limitPages = 3): Promise<Params[]> {
-    return this.paginate('thread/list', { archived: true, ...THREAD_LIST_FILTERS }, limitPages)
+    return this.paginate('thread/list', ARCHIVED_LIST_PARAMS, limitPages)
   }
 
   /** 仅在 app-server 已运行时拉线程列表（复用现有连接，绝不触发 spawn）。
@@ -400,10 +405,7 @@ export class CodexRuntime {
   async listThreadsIfLive(opts: { archived?: boolean; limitPages?: number } = {}): Promise<Params[] | undefined> {
     const rpc = this.peekRpc()
     if (!rpc) return undefined
-    if (opts.archived) {
-      return this.paginate('thread/list', { archived: true, ...THREAD_LIST_FILTERS }, opts.limitPages ?? 3, rpc)
-    }
-    return this.paginate('thread/list', { sortKey: 'updated_at', ...THREAD_LIST_FILTERS }, opts.limitPages ?? 3, rpc)
+    return this.paginate('thread/list', opts.archived ? ARCHIVED_LIST_PARAMS : ACTIVE_LIST_PARAMS, opts.limitPages ?? 3, rpc)
   }
 
   async readHistory(threadId: string): Promise<HistoryMessage[]> {

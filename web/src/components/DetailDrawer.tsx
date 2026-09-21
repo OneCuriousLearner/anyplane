@@ -36,8 +36,7 @@ export interface SettingsDataLite {
 export function DetailDrawer(props: {
   detailTitle: string
   detailContent: string
-  isCodex: boolean
-  /** query 通道能力白名单（服务端 capabilities.queries 下发）：按钮按能力渲染 */
+  /** query 通道能力白名单（服务端 capabilities.queries 下发）：按钮与 MCP 动作按能力渲染 */
   queries: readonly string[]
   mcpServers: McpServerInfo[] | null
   mcpBusy: string | null
@@ -51,7 +50,6 @@ export function DetailDrawer(props: {
   const {
     detailTitle,
     detailContent,
-    isCodex,
     queries,
     mcpServers,
     mcpBusy,
@@ -62,6 +60,10 @@ export function DetailDrawer(props: {
     onRunQuery,
     onClose,
   } = props
+  // MCP 管理动作（重连/启停）按能力白名单渲染，不以 vendor 硬编码（能力差异唯一权威
+  // 是适配器 capabilities 声明；结构化数据 mcpServers/contextData/settingsData 本身已按
+  // 应答形状分发——codex 应答形状天然落空，无需 isCodex 兜底表）
+  const mcpActions = queries.includes('mcp_reconnect')
   return (
     <div className="px-3 py-2">
       <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px]">
@@ -82,7 +84,7 @@ export function DetailDrawer(props: {
           ✕
         </button>
       </div>
-      {detailTitle === 'MCP 状态' && !isCodex && mcpServers ? (
+      {detailTitle === 'MCP 状态' && mcpServers ? (
         /* claude MCP 管理面板：状态 + 重连/启停（toggle 持久化到 settings，与 TUI 同语义） */
         <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
           {mcpServers.length === 0 && (
@@ -120,27 +122,31 @@ export function DetailDrawer(props: {
                   {configLine && <div className="truncate font-mono text-[10px] text-faint">{configLine}</div>}
                   {srv.error && <div className="truncate font-mono text-[10px] text-danger">{srv.error}</div>}
                 </div>
-                <button type="button"
-                  className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
-                  disabled={!!mcpBusy || srv.status === 'disabled'}
-                  title="重新连接（mcp_reconnect）"
-                  onClick={() => onMcpAction(srv.name, 'mcp_reconnect')}
-                >
-                  {reconnecting ? '…' : '重连'}
-                </button>
-                <button type="button"
-                  className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
-                  disabled={!!mcpBusy}
-                  title={srv.status === 'disabled' ? '启用并连接（写入 settings）' : '禁用并断开（写入 settings）'}
-                  onClick={() => onMcpAction(srv.name, 'mcp_toggle', srv.status === 'disabled')}
-                >
-                  {toggling ? '…' : srv.status === 'disabled' ? '启用' : '禁用'}
-                </button>
+                {mcpActions && (
+                  <>
+                    <button type="button"
+                      className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
+                      disabled={!!mcpBusy || srv.status === 'disabled'}
+                      title="重新连接（mcp_reconnect）"
+                      onClick={() => onMcpAction(srv.name, 'mcp_reconnect')}
+                    >
+                      {reconnecting ? '…' : '重连'}
+                    </button>
+                    <button type="button"
+                      className="shrink-0 rounded-full bg-surface2 px-2.5 py-1 font-mono text-[10px] text-faint hover:text-ink disabled:opacity-40"
+                      disabled={!!mcpBusy}
+                      title={srv.status === 'disabled' ? '启用并连接（写入 settings）' : '禁用并断开（写入 settings）'}
+                      onClick={() => onMcpAction(srv.name, 'mcp_toggle', srv.status === 'disabled')}
+                    >
+                      {toggling ? '…' : srv.status === 'disabled' ? '启用' : '禁用'}
+                    </button>
+                  </>
+                )}
               </div>
             )
           })}
         </div>
-      ) : detailTitle === 'context 用量' && !isCodex && contextData ? (
+      ) : detailTitle === 'context 用量' && contextData ? (
         /* claude context 结构化：总量条 + 分类占比（deferred 类别淡显） */
         <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
           <div className="mb-1.5 flex items-baseline justify-between font-mono text-[11px] text-ink">
@@ -179,7 +185,7 @@ export function DetailDrawer(props: {
             </div>
           ))}
         </div>
-      ) : detailTitle === '设置' && !isCodex && settingsData ? (
+      ) : detailTitle === '设置' && settingsData ? (
         /* claude 设置轻结构：生效值 + 来源概览；全量设置不枚举，原始 JSON 折叠兜底 */
         <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
           {settingsData.applied && (

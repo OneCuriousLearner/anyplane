@@ -74,6 +74,23 @@ export function parseApprovalRules(raw: unknown): ApprovalRule[] {
 
 // ---------- 匹配 ----------
 
+// 匹配发生在每条审批到达时的消息泵同步栈上：同一 pattern 每次到达都重新 new RegExp /
+// glob 逐字符转换是纯浪费。按 pattern 缓存编译结果（用户配置的规则数量天然有界，
+// 500 上限只是防恶意热重载灌垃圾的防御）。glob 转换抛错在 parseApprovalRules 已提前
+// fail fast，这里的 try/catch 只是 command 正则的运行期兜底（语义不变）。
+const RE_CACHE_CAP = 500
+const commandReCache = new Map<string, RegExp>()
+const globReCache = new Map<string, RegExp>()
+
+function cachedRegex(cache: Map<string, RegExp>, key: string, compile: (k: string) => RegExp): RegExp {
+  let re = cache.get(key)
+  if (re) return re
+  re = compile(key)
+  if (cache.size >= RE_CACHE_CAP) cache.clear()
+  cache.set(key, re)
+  return re
+}
+
 /** 工具输入字段提取（字段集合与 util.ts summarizeInput 的按工具分发对齐，不另起一套） */
 function extractField(_toolName: string, input: unknown, field: 'command' | 'domain'): string | null {
   if (!input || typeof input !== 'object') return null
@@ -111,9 +128,9 @@ export function extractPaths(input: unknown): string[] {
 /** allow 必须整行命中（`git status && rm` 不得吃掉 `^git status`）；
  *  deny 按用户正则原样（前缀即收紧，`^rm -rf` 能拦住带路径的删除）。 */
 export function commandMatches(pattern: string, cmd: string, action: 'allow' | 'deny'): boolean {
-  let re: RegExp
+  let re: RegExp | null
   try {
-    re = new RegExp(pattern)
+    re = cachedRegex(commandReCache, pattern, () => new RegExp(pattern))
   } catch {
     return false
   }
@@ -129,28 +146,30 @@ export function commandMatches(pattern: string, cmd: string, action: 'allow' | '
  *  会话的 stdout 读取循环（can_use_tool 永久悬挂） */
 export function globMatch(pattern: string, value: string): boolean {
   const norm = (s: string) => s.replace(/\\/g, '/')
-  const p = norm(pattern)
   const v = norm(value)
-  let re = ''
-  for (let i = 0; i < p.length; i++) {
-    const ch = p[i]!
-    if (ch === '*') {
-      if (p[i + 1] === '*') {
-        if (p[i + 2] === '/') {
-          re += '(?:[^/]+/)*' // **/ → 零或多段
-          i += 2
+  const re = cachedRegex(globReCache, norm(pattern), (p) => {
+    let body = ''
+    for (let i = 0; i < p.length; i++) {
+      const ch = p[i]!
+      if (ch === '*') {
+        if (p[i + 1] === '*') {
+          if (p[i + 2] === '/') {
+            body += '(?:[^/]+/)*' // **/ → 零或多段
+            i += 2
+          } else {
+            body += '.*'
+            i += 1
+          }
         } else {
-          re += '.*'
-          i += 1
+          body += '[^/]*'
         }
       } else {
-        re += '[^/]*'
+        body += ch.replace(/[.+^${}()|[\]\\?]/g, '\\$&')
       }
-    } else {
-      re += ch.replace(/[.+^${}()|[\]\\?]/g, '\\$&')
     }
-  }
-  return new RegExp(`^${re}$`, 'i').test(v)
+    return new RegExp(`^${body}$`, 'i')
+  })
+  return re.test(v)
 }
 
 /** 域名后缀匹配：*.example.com 匹配 a.b.example.com 与 example.com；裸域名只匹配自身与子域 */
