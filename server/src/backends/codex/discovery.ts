@@ -35,7 +35,7 @@ export class DiskDiscoveryError extends Error {}
 /** 同 thread id 去重的单行归并（首见建行、缺 preview 回填、createdAt 取更早）：
  *  resume 续跑在多轨都产生同 id 多行——读盘轨（resume 多文件）与本模块调用方的
  *  live/RPC 汇聚点（fs-scan 按文件出项）共用同一口径，卡片数不随所走轨道翻转 */
-export function mergeRowInto<T extends { id: unknown; preview?: string; createdAt?: number }>(
+export function mergeRowInto<T extends { id?: unknown; preview?: string; createdAt?: number }>(
   byId: Map<string, T>,
   row: T,
 ): void {
