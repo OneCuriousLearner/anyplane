@@ -69,6 +69,14 @@ self.addEventListener('notificationclick', (e) => {
   // 直接审批：action 按钮携带能力 URL，SW 同源 POST 完成裁决
   const actionUrl = e.action === 'allow' ? data.actions?.allow : e.action === 'deny' ? data.actions?.deny : undefined
   if (actionUrl) {
+    // 纵深防线：能力 URL 只应指向本站（approvalPageUrl 对 page 分支已有同款重提取范式）。
+    // payload 虽经端到端加密只能来自本服务端，但若服务端构造 actions 的环节被污染，
+    // 无校验的 fetch 会把 k/r/s 能力 secret 经 URL query 带给第三方源。
+    let sameOrigin = false
+    try {
+      sameOrigin = new URL(actionUrl, self.location.origin).origin === self.location.origin
+    } catch {}
+    if (!sameOrigin) return
     e.waitUntil(
       fetch(actionUrl, { method: 'POST' })
         .then((r) => r.json())
