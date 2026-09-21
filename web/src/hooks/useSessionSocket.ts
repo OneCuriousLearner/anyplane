@@ -14,7 +14,7 @@ import type { NavigateSession } from '../lib/sessionHash'
 import { reconcileApprovals } from '../lib/approvals'
 import { nextId, type Block } from '../lib/blocks'
 import { appendHistoryMsg, flushStrayResults, hitsSeen, rememberKeys, type IngestState } from '../lib/ingest'
-import type { ServerEvent, SessionState } from '@anyplane/protocol'
+import type { BackendCapabilities, ServerEvent, SessionState } from '@anyplane/protocol'
 import { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
 import type { TranscriptIngestApi } from './useTranscriptIngest'
@@ -32,6 +32,8 @@ export function useSessionSocket(opts: {
   sockRef: React.RefObject<SessionSocket | undefined>
   ingestApi: TranscriptIngestApi
   taskApi: TaskBucketsApi
+  /** 会话能力（status 首帧后可知）：tailer === false 的后端重连不重订阅 */
+  capsRef: React.RefObject<BackendCapabilities | undefined>
   /** limit：replay_gap 保载重载时按「已加载数+余量」拉取，避免丢掉用户已翻到的更早页 */
   loadSessionHistory: (opts?: { limit?: number }) => Promise<HistoryResponse>
   onNavigate?: NavigateSession
@@ -45,7 +47,7 @@ export function useSessionSocket(opts: {
   approvals: Approval[]
   setApprovals: React.Dispatch<React.SetStateAction<Approval[]>>
 } {
-  const { session, sockRef, ingestApi, taskApi, loadSessionHistory, onNavigate, onCloseRewind, onQueryResult } = opts
+  const { session, sockRef, ingestApi, taskApi, capsRef, loadSessionHistory, onNavigate, onCloseRewind, onQueryResult } = opts
   const [state, setState] = useState<SessionState>({ spawned: false, busy: false })
   const [connected, setConnected] = useState(false)
   const [approvals, setApprovals] = useState<Approval[]>([])
@@ -405,8 +407,9 @@ export function useSessionSocket(opts: {
         // 审批对齐不在此处清空——status 快照 reconcile（见 status case）只删失效卡，
         // 盲清空会 unmount 仍在 pending 的卡（进行中的选择态丢失，PR #50 review 发现一）
         if (sock.reconnecting) sock.send({ kind: 'attach', fromSeq: sock.replayFrom })
-        // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）
-        if (ingestApi.historyOffsetRef.current != null) {
+        // 重连后服务端的 tailer 已随连接断开被回收，用已知的偏移重新订阅（重放部分由 uuid 去重）。
+        // 已知无 tailer 的后端（codex）不重订阅；未知（status 未达）时按既有行为发送
+        if (ingestApi.historyOffsetRef.current != null && capsRef.current?.tailer !== false) {
           sock.send({ kind: 'tail_subscribe', from: ingestApi.historyOffsetRef.current })
         }
       },
