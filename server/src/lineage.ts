@@ -36,8 +36,16 @@ ${brief}
 
 import { log } from './log'
 
+let lineageFile: string | undefined
+
 function lineagePath(): string {
-  return join(ccDataDir(), 'lineage.json')
+  return (lineageFile ??= join(ccDataDir(), 'lineage.json'))
+}
+
+/** 测试钩子：重定向血缘文件路径（不传恢复默认）。appendLineage 真实落盘，
+ *  主进程测试（如 hub/handoff 编排）绝不能写真实 ~/.anyplane/lineage.json */
+export function setLineageFileForTest(p: string | undefined): void {
+  lineageFile = p
 }
 
 export function appendLineage(rec: LineageRecord): void {
