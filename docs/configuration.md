@@ -125,4 +125,20 @@ approvalRules **不是原生审批系统的替代品**，而是它们之后的�
 
 - spawn 时自动设置 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 以接收权威 busy/idle 信号。
 - 全平台要求 Bun ≥ 1.4.0（服务端启动时强制检查，`ANYPLANE_ALLOW_UNSAFE_BUN=1` 可跳过）。门槛由来：Bun 1.3.x 及更早版本在 Windows 存在监听 socket 被子进程继承的问题（[oven-sh/bun#36936](https://github.com/oven-sh/bun/issues/36936)），修复随 1.4.0 发布；1.3.x 时代已经产生的死 PID 监听通常需要重启一次 Windows 才能释放。
-- `bun run dev` 使用纯 Bun 启动器并等待 server 完成优雅关闭；不要用任务管理器直接结束 server，否则可能绕过 `server.stop(true)` 与 Claude 子进程树清理。
+- `bun run dev` 使用纯 Bun 启动器并等待 server 完成优雅关闭；不要用任务管理器直接结束 server，否则可能绕过 `server.stop(true)` 与 Claude 子进程树清理。开发启动器故意不用 `bun --watch` 和 `bun run --cwd`：Windows watcher 会在异步 SIGINT 清理完成前杀掉 server，多层包装进程会吞 Ctrl+C。
+- Claude 在 Windows 可能是 `.cmd` / `.bat` 或 `.exe`。Bun ≥ 1.4 可直接执行 `.cmd`（内部正确包装，含空格路径安全）。**不要**再手工套 `cmd.exe /d /s /c`——Bun 的 argv 引号渲染会把手工加的引号转义成 `\"`，路径含空格必然断裂。`claudePath` / `ANYPLANE_CLAUDE_PATH` 是权威，不参与 PATH 候选的 `.exe` 偏好竞争。
+
+## 开发与 e2e
+
+脚本清单见根 `package.json`。`bun run verify` 是提交前本地闸（typecheck + lint + test，test 步校验完整 pass/fail 汇总行）。**它不是 CI**：CI 另跑 Windows 矩阵、`e2e-mock`、`build` 与 docker 构建。
+
+真 CLI e2e（`server/scripts/smoke.ts`、`e2e-*.ts`）需服务端已启动，用法与覆盖点写在各脚本头部。`e2e-mock.ts` 自启临时服务端 + mock CLI，是 CI 里唯一不依赖真实 claude/codex 的 e2e。
+
+服务端配了 `authToken` 时，e2e 要带 `ANYPLANE_TOKEN` 才能连 WS 与 REST。
+
+anyplane **不显式传模型**（新会话与 resume 均不带 `--model`）。要让 e2e 走自定义/第三方模型，配 CLI 自己的默认值（均在 home 目录，不进本仓库）：
+
+- Claude：`~/.claude/settings.json` 的 `model`，或服务端进程环境变量 `ANTHROPIC_MODEL`（`childEnv` 会透传）
+- Codex：`~/.codex/config.toml` 的 `model`
+
+唯一例外是 `e2e-ws.ts` 的 `set_model`——那是被测链路本身，不是默认值配置。
