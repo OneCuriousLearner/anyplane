@@ -276,19 +276,24 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     pubTasks()
   }
 
+  /** 单条历史子代理 → 桶字段回填（resetFromHistory 重建与 backfillFromHistory 补建共用）。
+   *  返回是否建成了新桶（调用方据此决定是否重发任务列表）。 */
+  const fillBucketFromSubagent = (s: SubagentHistory): boolean => {
+    const id = (s.toolUseId ?? s.agentId)!
+    const b = taskBucket(id)
+    if (!b) return false // 墓碑命中/已驱逐：历史回填不复活终态任务
+    b.agentId = s.agentId ?? b.agentId
+    b.agentType = s.agentType ?? b.agentType
+    b.description = s.description ?? b.description
+    for (const h of s.messages) appendTaskMsg(b.toolUseId, h)
+    return true
+  }
+
   /** 历史加载的桶重建：清桶（整段重载是新的生命周期，墓碑一并清）→ 回填口径见 selectHistoryBuckets */
   const resetFromHistory = (msgs: ChatMsg[], resp: HistoryResponse) => {
     taskMapRef.current.clear()
     evictedRef.current.clear()
-    for (const s of selectHistoryBuckets(msgs, resp.subagents)) {
-      const id = (s.toolUseId ?? s.agentId)!
-      const b = taskBucket(id)
-      if (!b) continue // 墓碑刚清，理论上必建成；守卫与 backfill 同口径
-      b.agentId = s.agentId ?? b.agentId
-      b.agentType = s.agentType ?? b.agentType
-      b.description = s.description ?? b.description
-      for (const h of s.messages) appendTaskMsg(b.toolUseId, h)
-    }
+    for (const s of selectHistoryBuckets(msgs, resp.subagents)) fillBucketFromSubagent(s)
     pubTasks()
   }
 
@@ -298,13 +303,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     for (const s of selectHistoryBuckets(msgs, subagents)) {
       const id = (s.toolUseId ?? s.agentId)!
       if (taskMapRef.current.has(id)) continue
-      const b = taskBucket(id)
-      if (!b) continue // 已驱逐：历史回填不复活终态任务
-      b.agentId = s.agentId ?? b.agentId
-      b.agentType = s.agentType ?? b.agentType
-      b.description = s.description ?? b.description
-      for (const h of s.messages) appendTaskMsg(b.toolUseId, h)
-      dirty = true
+      if (fillBucketFromSubagent(s)) dirty = true
     }
     if (dirty) pubTasks()
   }

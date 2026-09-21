@@ -106,18 +106,23 @@ export function useSessionSocket(opts: {
             if (typeof ev.state.effort === 'string') ingestApi.setEffort(ev.state.effort)
             // 服务端权威运行任务表水合任务桶（中途接入补建 / 断线丢通知判死）
             taskApi.hydrateTasks(ev.state)
+            // turn 终结（进程退出/权威 idle）后仍未配对的 tool_result 不会再等到调用，
+            // 浮现为孤立提示而非静默丢弃。例外：还有更早历史页未加载时缓冲留着——
+            // 其 tool_use 可能在未加载页里，翻到该页时 prepend 的索引重建会完成配对
+            // （提前浮现会永久钉在尾部）。
+            const flushStrayPending = (): void => {
+              if (ingestApi.historyBeforeRef.current != null) return
+              ingestApi.setMsgs((prev) => {
+                const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
+                flushStrayResults(st)
+                return st.msgs
+              })
+            }
             // 进程已退出时固化/清理未完成的流式草稿，避免半截内容悬挂
             if (ev.state.exited) {
               ingestApi.commitDraft()
               ingestApi.setPhase(undefined)
-              // turn 已死：缓冲的孤儿结果不会再有配对机会，浮现为孤立提示
-              if (ingestApi.historyBeforeRef.current == null) {
-                ingestApi.setMsgs((prev) => {
-                  const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
-                  flushStrayResults(st)
-                  return st.msgs
-                })
-              }
+              flushStrayPending()
             } else if (ev.state.sessionState === 'idle' && !ev.state.busy && !ev.state.waiting) {
               // 自愈：权威 idle 到达时清掉陈旧流式草稿。服务端重启/断线期间 turn 终结时
               // 客户端拿不到终结事件，"生成中"会永远挂着（实测：watch 重载后复现）。
@@ -126,18 +131,9 @@ export function useSessionSocket(opts: {
                 ingestApi.setDraft(null)
                 ingestApi.setPhase(undefined)
               }
-              // turn 已终结：此刻仍未配对的 tool_result 不会再等到它的调用了，
-              // 浮现为孤立提示而非静默丢弃（旧实现直接 clear，用户零反馈）。
               // 与 draft 解耦：常态下 tool_result 先于 message_stop 到达，commitDraft 后
               // draft 为 null——挂在 draft 非空条件里会让孤儿结果永远滞留缓冲。
-              // 例外：还有更早历史页未加载（hasMore）时缓冲留着——其 tool_use 可能在
-              // 未加载页里，翻到该页时 prepend 的索引重建会完成配对（提前浮现会永久钉在尾部）
-              if (ingestApi.historyBeforeRef.current != null) break
-              ingestApi.setMsgs((prev) => {
-                const st: IngestState = { msgs: prev, toolIdx: ingestApi.toolPosRef.current, pending: ingestApi.pendingResultsRef.current }
-                flushStrayResults(st)
-                return st.msgs
-              })
+              flushStrayPending()
             }
             break
           case 'approval_request':

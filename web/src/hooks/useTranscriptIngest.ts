@@ -9,7 +9,7 @@
 
 import { useRef, useState } from 'react'
 import type { HistoryResponse, SubagentHistory } from '@anyplane/protocol'
-import { nextId, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
+import { nextId, parseDraftJsonBuf, toolResultText, type Block, type ChatMsg } from '../lib/blocks'
 import { createStore, useStore, type Store } from '../lib/store'
 import {
   appendHistoryMsg,
@@ -220,10 +220,6 @@ export function useTranscriptIngest(opts: {
     const blocks: Block[] = []
     for (const b of d.blocks) {
       if (b.kind === 'tool') {
-        let input: unknown
-        try {
-          input = b.jsonBuf ? JSON.parse(b.jsonBuf) : undefined
-        } catch {}
         const toolId = b.toolId ?? nextId()
         const held = pendingResultsRef.current.get(toolId)
         if (held) pendingResultsRef.current.delete(toolId)
@@ -231,7 +227,7 @@ export function useTranscriptIngest(opts: {
           kind: 'tool',
           id: toolId,
           name: b.name ?? '?',
-          input,
+          input: parseDraftJsonBuf(b.jsonBuf),
           pending: !held,
           resultText: held?.text,
           resultError: held?.isError,

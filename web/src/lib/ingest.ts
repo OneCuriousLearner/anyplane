@@ -45,8 +45,35 @@ function patched(m: ChatMsg, bi: number, text: string, isError: boolean, keepPen
 }
 
 /**
- * 把 tool_result 配对到已落地的工具卡。O(1) 走 toolIdx，索引失效时回退倒序线性扫描
- * （倒序：结果通常紧跟最近的调用）。返回是否配对成功；msgs 不可变更新。
+ * 定位 tool_useId 对应的块：O(1) 走 toolIdx，索引失效时回退倒序线性扫描
+ * （倒序：结果通常紧跟最近的调用）。accept 进一步约束块状态（如 partial 只配对
+ * 仍 pending 的块）——索引命中或扫描找到但不满足 accept 即放弃，不再继续找。
+ */
+function locateTool(
+  msgs: ChatMsg[],
+  toolIdx: Map<string, ToolPos> | undefined,
+  toolUseId: string,
+  accept?: (b: Extract<Block, { kind: 'tool' }>) => boolean,
+): { mi: number; bi: number; blk: Extract<Block, { kind: 'tool' }> } | undefined {
+  // 注意回退扫描找到同 id 块但不满足 accept 即整体放弃（不再继续往前找同 id 块）——
+  // id 唯一是协议不变量，这个提前退出等价于原 pairToolResultPartialIn 的 break 语义
+  const asTool = (b: Block | undefined): Extract<Block, { kind: 'tool' }> | undefined =>
+    b?.kind === 'tool' && b.id === toolUseId && (accept?.(b) ?? true) ? b : undefined
+  const at = toolIdx?.get(toolUseId)
+  const hit = at ? asTool(msgs[at.mi]?.blocks[at.bi]) : undefined
+  if (at && hit) return { mi: at.mi, bi: at.bi, blk: hit }
+  for (let mi = msgs.length - 1; mi >= 0; mi--) {
+    const bi = msgs[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
+    if (bi < 0) continue
+    const blk = asTool(msgs[mi].blocks[bi])
+    if (blk) return { mi, bi, blk }
+    return undefined
+  }
+  return undefined
+}
+
+/**
+ * 把 tool_result 配对到已落地的工具卡。返回是否配对成功；msgs 不可变更新。
  */
 export function pairToolResultIn(
   msgs: ChatMsg[],
@@ -56,21 +83,11 @@ export function pairToolResultIn(
   isError: boolean,
 ): { msgs: ChatMsg[]; paired: boolean } {
   if (!toolUseId) return { msgs, paired: false }
-  const at = toolIdx?.get(toolUseId)
-  const hit = at ? msgs[at.mi]?.blocks[at.bi] : undefined
-  if (at && hit?.kind === 'tool' && hit.id === toolUseId) {
-    const out = [...msgs]
-    out[at.mi] = patched(out[at.mi], at.bi, text, isError)
-    return { msgs: out, paired: true }
-  }
-  for (let mi = msgs.length - 1; mi >= 0; mi--) {
-    const bi = msgs[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
-    if (bi < 0) continue
-    const out = [...msgs]
-    out[mi] = patched(out[mi], bi, text, isError)
-    return { msgs: out, paired: true }
-  }
-  return { msgs, paired: false }
+  const loc = locateTool(msgs, toolIdx, toolUseId)
+  if (!loc) return { msgs, paired: false }
+  const out = [...msgs]
+  out[loc.mi] = patched(out[loc.mi], loc.bi, text, isError)
+  return { msgs: out, paired: true }
 }
 
 /** 部分结果在卡片上的累积上限（append 模式尾留）：只影响运行中展示，终态全文照常替换 */
@@ -96,23 +113,11 @@ export function pairToolResultPartialIn(
     const joined = (cur ?? '') + text
     return joined.length > PARTIAL_TEXT_CAP ? joined.slice(-PARTIAL_TEXT_CAP) : joined
   }
-  const at = toolIdx?.get(toolUseId)
-  const hit = at ? msgs[at.mi]?.blocks[at.bi] : undefined
-  if (at && hit?.kind === 'tool' && hit.id === toolUseId && hit.pending === true) {
-    const out = [...msgs]
-    out[at.mi] = patched(out[at.mi], at.bi, nextText(hit.resultText), false, true)
-    return { msgs: out, paired: true }
-  }
-  for (let mi = msgs.length - 1; mi >= 0; mi--) {
-    const bi = msgs[mi].blocks.findIndex((b) => b.kind === 'tool' && b.id === toolUseId)
-    if (bi < 0) continue
-    const blk = msgs[mi].blocks[bi]
-    if (blk.kind !== 'tool' || blk.pending !== true) break // 已有终态，部分结果过期
-    const out = [...msgs]
-    out[mi] = patched(out[mi], bi, nextText(blk.kind === 'tool' ? blk.resultText : undefined), false, true)
-    return { msgs: out, paired: true }
-  }
-  return { msgs, paired: false }
+  const loc = locateTool(msgs, toolIdx, toolUseId, (b) => b.pending === true)
+  if (!loc) return { msgs, paired: false }
+  const out = [...msgs]
+  out[loc.mi] = patched(out[loc.mi], loc.bi, nextText(loc.blk.resultText), false, true)
+  return { msgs: out, paired: true }
 }
 
 /** 配对；失败则缓冲等待对应 tool_use 落地。返回是否已配对（调用方可据此做终态兜底） */
