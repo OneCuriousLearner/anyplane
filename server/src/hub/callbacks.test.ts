@@ -9,6 +9,8 @@ import type { CliMessage } from '../backends/claude/streamJson'
 import { claudePort } from '../backends/claude/port'
 import { codexPort } from '../backends/codex/port'
 import { registerBackend } from '../backends/port'
+import { config } from '../config'
+import { summarizeInput } from '../util'
 import { resetInboxSinkForTest, setInboxSink } from './broadcast'
 import { sessionCallbacks } from './callbacks'
 import { getHub, hubs } from './registry'
@@ -37,7 +39,7 @@ function payloads(ws: FakeWs): Array<Record<string, unknown>> {
 }
 
 const extraKeys: string[] = []
-const sessionMap = () => (processManager as unknown as { sessions: Map<string, { key: string }> }).sessions
+const sessionMap = () => (processManager as unknown as { sessions: Map<string, unknown> }).sessions
 
 /** 往 processManager 登记未退出的假句柄（等价 ensure 的登记半段，不 spawn） */
 function injectFakeSession(key: string): { key: string } {
@@ -212,5 +214,133 @@ describe('sessionCallbacks.onExit', () => {
       { type: 'approval_resolved', key: KEY, requestId: 'r1' },
       { type: 'approval_resolved', key: KEY, requestId: 'r2' },
     ])
+  })
+})
+
+describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () => {
+  let savedRules: typeof config.approvalRules
+  beforeEach(() => {
+    savedRules = config.approvalRules
+  })
+  afterEach(() => {
+    config.approvalRules = savedRules
+  })
+
+  /** 往 processManager 登记带审批投递捕获的假句柄（deliverApproval 的接收端） */
+  function injectApprovalSession(): Array<[string, unknown]> {
+    const delivered: Array<[string, unknown]> = []
+    sessionMap().set(KEY, {
+      key: KEY,
+      exited: false,
+      sendApproval: (requestId: string, decision: unknown) => delivered.push([requestId, decision]),
+      notifyExternalGate: () => {},
+    })
+    return delivered
+  }
+
+  test('规则命中 → 不进 pending、不打扰（无 approval_request/inbox），广播 approval_auto 留痕并共用投递半段', () => {
+    const { hub, ws } = freshHub()
+    const delivered = injectApprovalSession()
+    config.approvalRules = [{ match: { tool: 'Bash', command: '^git status$' }, action: 'allow', note: 'git 只读' }]
+
+    const input = { command: 'git status' }
+    sessionCallbacks(hub).onApprovalRequest({ requestId: 'ra1', toolName: 'Bash', input })
+
+    expect(hub.pendingApprovals.size).toBe(0) // 自动裁决不进 pending
+    expect(payloads(ws)).toEqual([
+      {
+        kind: 'approval_auto',
+        requestId: 'ra1',
+        toolName: 'Bash',
+        input,
+        detail: summarizeInput('Bash', input), // 摘要服务端唯一口径算好下发
+        action: 'allow',
+        rule: 'git 只读', // note 优先于 approvalRules[i] 兜底
+      },
+    ])
+    // 与手动裁决共用投递半段：decisionOfRule 的 allow 形状（updatedInput 沿用原始 input）
+    expect(delivered).toEqual([['ra1', { behavior: 'allow', updatedInput: input }]])
+    expect(inbox).toEqual([]) // 不推送不打扰
+  })
+
+  test('规则命中 deny → 拒绝文案带 note，action 留痕为 deny', () => {
+    const { hub, ws } = freshHub()
+    const delivered = injectApprovalSession()
+    config.approvalRules = [{ match: { tool: 'Bash', command: 'rm -rf' }, action: 'deny', note: '禁止删根' }]
+
+    sessionCallbacks(hub).onApprovalRequest({ requestId: 'ra2', toolName: 'Bash', input: { command: 'rm -rf /' } })
+
+    expect(payloads(ws)[0]).toMatchObject({ kind: 'approval_auto', action: 'deny', rule: '禁止删根' })
+    expect(delivered).toEqual([['ra2', { behavior: 'deny', message: '规则拒绝：禁止删根' }]])
+  })
+
+  test('规则未命中 → pending 入表 + approval_request 广播 + inbox approval 带 detail + 状态推送', () => {
+    const { hub, ws } = freshHub()
+    config.approvalRules = [{ match: { tool: 'Write' }, action: 'allow' }] // 不命中 Bash
+
+    const input = { command: 'make deploy' }
+    sessionCallbacks(hub).onApprovalRequest({ requestId: 'ra3', toolName: 'Bash', input })
+
+    expect(hub.pendingApprovals.get('ra3')).toEqual({ requestId: 'ra3', toolName: 'Bash', input })
+    const sent = payloads(ws)
+    expect(sent[0]).toEqual({ kind: 'approval_request', requestId: 'ra3', toolName: 'Bash', input })
+    expect(sent.some((p) => p.kind === 'status')).toBe(true)
+    expect(inbox).toEqual([
+      { type: 'approval', key: KEY, requestId: 'ra3', toolName: 'Bash', input, detail: summarizeInput('Bash', input) },
+    ])
+  })
+
+  test('无规则配置（approvalRules 缺席）→ 全部进 pending', () => {
+    const { hub } = freshHub()
+    config.approvalRules = undefined
+
+    sessionCallbacks(hub).onApprovalRequest({ requestId: 'ra4', toolName: 'Bash', input: { command: 'ls' } })
+    expect(hub.pendingApprovals.has('ra4')).toBe(true)
+  })
+})
+
+describe('sessionCallbacks.onApprovalResolved（上游终结的审批清理）', () => {
+  test('pending 在 → 删除 + 撤卡广播 + inbox + 状态推送', () => {
+    const { hub, ws } = freshHub()
+    hub.pendingApprovals.set('r9', { requestId: 'r9', toolName: 'Bash', input: {} })
+
+    sessionCallbacks(hub).onApprovalResolved('r9')
+
+    expect(hub.pendingApprovals.size).toBe(0)
+    expect(payloads(ws).map((p) => p.kind)).toEqual(['approval_resolved', 'status'])
+    expect(inbox).toEqual([{ type: 'approval_resolved', key: KEY, requestId: 'r9' }])
+  })
+
+  test('pending 不在 → 完全静默（重复办结/竞态是常态，不留痕不推送）', () => {
+    const { hub, ws } = freshHub()
+
+    sessionCallbacks(hub).onApprovalResolved('never-pending')
+
+    expect(ws.sent).toEqual([])
+    expect(inbox).toEqual([])
+  })
+})
+
+describe('sessionCallbacks.onMessage result 与 goal 清除', () => {
+  test('goal 激活期间 result 到达即视为目标完成：清 goal 并推送状态（chip 随之清除）', () => {
+    const { hub, ws } = freshHub()
+    hub.goal = { condition: '跑通测试', since: Date.now() }
+
+    sessionCallbacks(hub).onMessage({ type: 'result', is_error: false })
+
+    expect(hub.goal).toBeUndefined()
+    const sent = payloads(ws)
+    expect(sent[0]).toMatchObject({ kind: 'cli', msg: { type: 'result' } })
+    expect(sent.some((p) => p.kind === 'status' && (p.state as { goal?: unknown }).goal === null)).toBe(true)
+    expect(inbox).toEqual([{ type: 'done', key: KEY, ok: true }])
+  })
+
+  test('无 goal 时 result 不追加状态推送（只有 cli 广播 + done inbox）', () => {
+    const { hub, ws } = freshHub()
+
+    sessionCallbacks(hub).onMessage({ type: 'result', is_error: true })
+
+    expect(payloads(ws).map((p) => p.kind)).toEqual(['cli'])
+    expect(inbox).toEqual([{ type: 'done', key: KEY, ok: false }])
   })
 })
