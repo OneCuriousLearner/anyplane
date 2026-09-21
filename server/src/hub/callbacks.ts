@@ -1,5 +1,5 @@
 // 两个后端共用的会话回调装配：CLI/翻译层消息广播、审批入 Hub 表、状态推动。
-// /clear 重键的三层同步（Hub / 进程 map / 存活 WS 的 data.key）全在这里——少一层即双进程或消息黑洞。
+// /clear 重键的三层同步（Hub / 进程 map / 存活 WS 的 data.key）在 lifecycle.rekeyHub——少一层即双进程或消息黑洞。
 
 import { decisionOfRule, matchApprovalRule } from '../approvalRules'
 import { isInternalUserMessage, type CliMessage } from '../backends/claude/streamJson'
@@ -8,8 +8,7 @@ import { config } from '../config'
 import { log } from '../log'
 import { summarizeInput } from '../util'
 import { broadcast, publishInbox } from './broadcast'
-import { deliverApproval } from './lifecycle'
-import { hubs } from './registry'
+import { deliverApproval, rekeyHub } from './lifecycle'
 import { pushStatus, throttledPushStatus } from './status'
 import type { Hub } from './types'
 
@@ -43,19 +42,11 @@ export function sessionCallbacks(hub: Hub) {
         if (newSid && cwd) {
           const newKey = port.keyForExisting(newSid, cwd)
           const oldKey = hub.key
-          hubs.delete(oldKey)
           hub.goal = undefined // 上下文已清，goal 与待审批随之失效
           hub.pendingApprovals.clear()
           hub.pendingTitleText = undefined // 旧会话的标题素材不带给新会话
-          hub.key = newKey
-          hubs.set(newKey, hub)
-          // 进程 map 同步重键：否则按新 key 查不到进程会再 spawn 一个（双进程同 transcript）
-          port.rekeySession(hub, oldKey, newKey, newSid)
-          // 重键后同步改写存活连接的 data.key：message 路由（getHub(ws.data.key)）依赖它，
-          // 否则旧 key 上的后续消息会新建空 Hub（消息黑洞）
-          for (const ws of hub.clients) {
-            if (!ws.data.inbox) ws.data.key = newKey
-          }
+          // 三层重键（Hub / 进程 map / 存活 WS data.key），实现集中在 lifecycle.rekeyHub
+          rekeyHub(hub, oldKey, newKey, newSid)
           // 已知限制：新 transcript 文件尚未落盘时 handoffSource 无法反查 cwd（进程存活期间无影响，
           // spawnOpts 持有 cwd；空闲回收后若文件仍未写则报"无法解析会话"）
           broadcast(hub, { kind: 'moved', targetKey: newKey, targetSessionId: newSid, reason: 'clear' })

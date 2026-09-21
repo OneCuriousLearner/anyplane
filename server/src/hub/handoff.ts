@@ -6,11 +6,25 @@ import { backendPort, portFor, resolvedSessionKey } from '../backends/port'
 import { appendLineage, seedMessage, type HandoffDetail } from '../lineage'
 import { errorMessage, sanitizePath } from '../util'
 import { broadcast } from './broadcast'
+import { rekeyHub } from './lifecycle'
 import { getHub, hubs } from './registry'
 
 /** 同一 cwd+backend 的接力播种在途集合：并发 POST 复用同一 n|/xn| key，两个播种流程
  *  会进同一会话（keyForNew 是 cwd 的纯函数）。在途期间直接拒绝，避免两份简报互注 */
 const sowing = new Set<string>()
+
+/** 目标 Hub 占用守卫（播种前与简报生成后复查同一口径）：keyForNew 是 cwd 的纯函数，
+ *  目标 Hub 可能与「用户在该目录开的新会话标签页」或「上一次播种超时未重键的残留」共享。
+ *  判定「进行中」必须看存活（sessionId 存在但进程已死且无客户端的 Hub 是回收前的死残留，
+ *  拒绝它等于永久假阳性——没有任何用户动作能清掉它）；死残留清掉会话身份后再复用该 Hub */
+function assertTargetUsable(targetKey: string, message: string): void {
+  const existing = hubs.get(targetKey)
+  if (!existing) return
+  const alive = portFor(targetKey).hasLiveSession(targetKey)
+  if (existing.clients.size > 0 || (existing.sessionId && alive)) throw new Error(message)
+  existing.sessionId = undefined // 死残留身份清掉：否则播种续跑旧会话
+  existing.spawnOpts = undefined // spawnOpts 里可能带着旧 resumeSessionId
+}
 
 /**
  * POST /api/handoff { fromKey, toBackend, detail } → 立即应答；进度事件推到 fromKey 所在 Hub：
@@ -38,20 +52,7 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
       if (!sourceCwd) throw new Error('无法确定源会话目录（thread/read 未返回 cwd）')
       const toPort = backendPort(toBackend)
       targetKey = toPort.keyForNew(sourceCwd)
-      // keyForNew 是 cwd 的纯函数：目标 Hub 可能与「用户在该目录开的新会话标签页」或
-      // 「上一次播种超时未重键的残留」共享——播种会复用其 spawnOpts/sessionId，简报被注进
-      // 无关会话。判定「进行中」必须看存活（sessionId 存在但进程已死且无客户端的 Hub
-      // 是回收前的死残留，拒绝它等于永久假阳性——没有任何用户动作能清掉它）；
-      // 死残留清掉会话身份后再复用该 Hub
-      const existingTarget = hubs.get(targetKey)
-      if (existingTarget) {
-        const alive = portFor(targetKey).hasLiveSession(targetKey)
-        if (existingTarget.clients.size > 0 || (existingTarget.sessionId && alive)) {
-          throw new Error('目标目录已有进行中的新会话：先关闭该标签页或等其完成首轮对话后再接力')
-        }
-        existingTarget.sessionId = undefined // 死残留身份清掉：否则播种续跑旧会话
-        existingTarget.spawnOpts = undefined // spawnOpts 里可能带着旧 resumeSessionId
-      }
+      assertTargetUsable(targetKey, '目标目录已有进行中的新会话：先关闭该标签页或等其完成首轮对话后再接力')
       const sowKey = `${toBackend}|${targetKey}`
       if (sowing.has(sowKey)) throw new Error('同一目录已有接力在进行中，请稍候')
       sowing.add(sowKey)
@@ -66,15 +67,7 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
 
         // 播种前复查：简报生成期间用户可能恰好打开了同目录新会话页——窗口虽小，
         // 复查成本一行，守住「简报不注进无关会话」的底线（存活口径同上：死残留不拦）
-        const raced = hubs.get(targetKey)
-        if (raced) {
-          const racedAlive = portFor(targetKey).hasLiveSession(targetKey)
-          if (raced.clients.size > 0 || (raced.sessionId && racedAlive)) {
-            throw new Error('目标目录已有进行中的新会话：接力取消，请稍后重试')
-          }
-          raced.sessionId = undefined
-          raced.spawnOpts = undefined
-        }
+        assertTargetUsable(targetKey, '目标目录已有进行中的新会话：接力取消，请稍后重试')
 
         // 2. 目标会话播种（服务端直接发送首条消息；启动失败抛错）
         const seed = seedMessage(sourceCwd, fromBackend, brief)
@@ -88,17 +81,11 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
         )
 
         // 播种进程/线程落在 n|/xn| key 上，而 handoff_done 导航走 resolved key：立即三层重键
-        // （Hub / 进程 map / 存活 WS data.key，镜像 callbacks.ts 的 /clear 重键）。不重键的话
+        // （实现集中在 lifecycle.rekeyHub，与 callbacks.ts 的 /clear 重键同一份）。不重键的话
         // 目标页查不到播种进程——live 事件进无客户端的旧 Hub，首条用户消息还会再 spawn
         // 一个进程与播种进程同写一份 transcript。
         if (toResolvedKey && targetSessionId && toResolvedKey !== targetKey) {
-          hubs.delete(targetKey)
-          targetHub.key = toResolvedKey
-          hubs.set(toResolvedKey, targetHub)
-          portFor(toResolvedKey).rekeySession(targetHub, targetKey, toResolvedKey, targetSessionId)
-          for (const ws of targetHub.clients) {
-            if (!ws.data.inbox) ws.data.key = toResolvedKey
-          }
+          rekeyHub(targetHub, targetKey, toResolvedKey, targetSessionId)
         }
 
         // 3. 血缘
