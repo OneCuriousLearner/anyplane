@@ -55,6 +55,9 @@ export interface ThreadItem {
   revisedPrompt?: string | null
   savedPath?: string
   failure?: unknown
+  /** functionCallOutput：function_call 工具名与输出（Responses API 形态；body 是 string 或 content item 数组） */
+  name?: string
+  output?: unknown
 }
 
 /** message_start + content_block_start 开头流（agentMessage 文本 / reasoning 思考共用） */
@@ -115,8 +118,14 @@ export class ThreadTranslator {
             message: { id: `tool-${item.id}`, role: 'assistant', content: [this.toolUseBlock(item)] },
           },
         ]
+      // functionCallOutput 是 function_call 工具的内部输出（模型已消费）——上游 TUI 默认也不渲染
+      // （tui thread_transcript.rs 仅对 delegated task 输出给一行提示），started 无需任何动作
+      case 'functionCallOutput':
+        return []
       // subAgentActivity 只以 item/completed 送达，且不是工具调用，不进主线卡
       default:
+        // 未知 type 留痕后跳过（宽松解析红线：透传胜过丢弃，静默丢弃曾丢过五种类型）
+        log.warn(`[codex] itemStarted 出现未识别 ThreadItem 类型，已跳过`, { itemType: item.type ?? '(缺失)' })
         return []
     }
   }
@@ -146,11 +155,18 @@ export class ThreadTranslator {
           .map((f) => f.text ?? '')
           .filter(Boolean)
           .join('\n')
-        return text ? [systemText(`◎ hook 注入上下文\n${text.slice(0, 1000)}`)] : []
+        return text ? [{ ...systemText(`◎ hook 注入上下文\n${text.slice(0, 1000)}`), uuid: item.id }] : []
       }
       // 查看图片：路径即全部信息，不值一张工具卡
       case 'imageView':
-        return [systemText(`◎ 查看图片：${item.path ?? '?'}`)]
+        return [{ ...systemText(`◎ 查看图片：${item.path ?? '?'}`), uuid: item.id }]
+      // functionCallOutput：上游 TUI 默认不渲染（模型已消费的内部输出）；
+      // 唯一例外是 delegated task 的委派回显（create_thread/send_message_to_thread 的
+      // codex_delegation 载荷）——主线给一行提示，否则跨线程委派在抄本里无痕
+      case 'functionCallOutput': {
+        const delegated = delegatedTaskNotice(item)
+        return delegated ? [{ ...systemText(delegated), uuid: item.id }] : []
+      }
       case 'plan':
         return [
           {
@@ -161,9 +177,9 @@ export class ThreadTranslator {
       case 'contextCompaction':
         return [{ type: 'system', subtype: 'compact_boundary' }]
       case 'enteredReviewMode':
-        return [systemText(`进入代码审查：${item.review ?? ''}`)]
+        return [{ ...systemText(`进入代码审查：${item.review ?? ''}`), uuid: item.id }]
       case 'exitedReviewMode':
-        return [systemText(`审查完成\n${item.review ?? ''}`)]
+        return [{ ...systemText(`审查完成\n${item.review ?? ''}`), uuid: item.id }]
       // 子代理生命周期 → claude task_started/task_notification 形状（前端侧栏零分叉）。
       // 桶键统一用子线程 id（agentThreadId）：collab 与 subAgentActivity 两条事件线天然归并。
       // collab 同时补主线 tool_result，与 itemStarted 的 tool_use 配成一张卡
@@ -257,17 +273,25 @@ export class ThreadTranslator {
     const side = (msg: CliMessage): CliMessage => ({ parent_tool_use_id: childThreadId, ...msg })
     switch (item.type) {
       case 'userMessage': {
-        const text = userInputBlocks(item.content)
+        // 块口径与 history 的 userInputBlocks 对齐：text + 可展示图片都保留（此前 filter text
+        // 把图片整块丢掉，live 桶与终态拉取合并后同一条消息的块构成漂移）
+        const blocks = userInputBlocks(item.content)
+        const text = blocks
           .filter((b) => b.kind === 'text')
           .map((b) => b.text ?? '')
           .join('\n')
           .trim()
-        return text
+        const content: unknown[] = []
+        for (const b of blocks) {
+          if (b.kind === 'text') content.push({ type: 'text', text: b.text ?? '' })
+          else if (b.kind === 'image' && b.src) content.push({ type: 'image', url: b.src })
+        }
+        return text || content.length > 0
           ? [
               side({
                 type: 'user',
                 uuid: opts?.firstUserTurnId ?? item.id,
-                message: { role: 'user', content: [{ type: 'text', text }] },
+                message: { role: 'user', content },
               }),
             ]
           : []
@@ -321,6 +345,8 @@ export class ThreadTranslator {
       }
       // subAgentActivity 是生命周期事件（runtime 另行翻译为 task_*），不进桶转录
       case 'subAgentActivity':
+      // functionCallOutput 是 function_call 内部输出，主线与历史都不渲染（上游 TUI 同口径）
+      case 'functionCallOutput':
       // hookPrompt/imageView/compact/review 等在主线是系统提示，桶转录里有意不进
       case 'hookPrompt':
       case 'imageView':
@@ -381,6 +407,9 @@ function toolResultFromItem(item: ThreadItem): { text: string; isError: boolean 
       const isError = item.status === 'failed' || !!item.error
       return { text: item.error ? JSON.stringify(item.error) : stringifyResult(item.result), isError }
     }
+    case 'collabAgentToolCall':
+      // live 主线卡（itemCompleted → collabToolResultMsg）与历史卡（pushToolPair）共用同一结果口径
+      return collabToolResultFromItem(item)
     case 'dynamicToolCall': {
       // contentItems 是多模态数组（inputText/inputImage/inputAudio）：取文本，其余标注类型
       const text = (item.contentItems ?? [])
@@ -677,10 +706,35 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
       case 'contextCompaction':
         out.push({ uuid, role: 'system', subtype: 'compact_boundary', blocks: [] })
         break
+      // collab 工具调用主线出卡：与 live（itemStarted 建 tool_use 卡 + itemCompleted 的
+      // collabToolResultMsg 按 item.id 配对）同形——id 口径必须也是 item.id，否则刷新后
+      // 配对错开；侧栏桶键（receiverThreadId）仍由 live 生命周期事件驱动，历史不下发
+      case 'collabAgentToolCall':
+        pushToolPair(
+          out,
+          uuid,
+          { kind: 'tool_use', id: item.id, name: 'Collab', input: { tool: item.tool ?? '?', prompt: item.prompt ?? '' } },
+          item,
+        )
+        break
+      // reviewMode 进出与 live（systemText 留痕）同形——历史缺这两条时审查的发生与结论静默消失
+      case 'enteredReviewMode':
+        out.push({ uuid, role: 'system', blocks: [{ kind: 'text', text: `进入代码审查：${item.review ?? ''}` }] })
+        break
+      case 'exitedReviewMode':
+        out.push({ uuid, role: 'system', blocks: [{ kind: 'text', text: `审查完成\n${item.review ?? ''}` }] })
+        break
+      // functionCallOutput：默认不渲染（模型已消费的内部输出，上游 TUI 同口径）；
+      // delegated task 回显除外——与 live 的 itemCompleted 同一条提示
+      case 'functionCallOutput': {
+        const delegated = delegatedTaskNotice(item)
+        if (delegated) out.push({ uuid, role: 'system', blocks: [{ kind: 'text', text: delegated }] })
+        break
+      }
       default:
-        // collabAgentToolCall/subAgentActivity 走侧栏桶，主线不渲染（有意为之）；
+        // subAgentActivity 是纯生命周期事件（无内容可渲染），主线 live 同样不进，跳过不算丢；
         // 其余未知类型留痕，便于发现协议新增项
-        if (item.type && item.type !== 'collabAgentToolCall' && item.type !== 'subAgentActivity') {
+        if (item.type && item.type !== 'subAgentActivity') {
           log.warn('[codex] 历史里出现未识别的 ThreadItem 类型，已跳过', { itemType: item.type })
         }
         break
@@ -689,9 +743,50 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
   return out
 }
 
+/** functionCallOutput 的 output 载荷（FunctionCallOutputBody）→ 纯文本：
+ *  string 原样；content item 数组只取 inputText（其余类型标注），与上游 to_text 同口径 */
+function functionCallOutputText(output: unknown): string {
+  if (typeof output === 'string') return output
+  if (!Array.isArray(output)) return ''
+  return output
+    .map((c) =>
+      c?.type === 'inputText' || c?.type === 'input_text'
+        ? String(c.text ?? '')
+        : c?.type === 'inputImage' || c?.type === 'input_image'
+          ? '（图片）'
+          : c?.type === 'inputAudio' || c?.type === 'input_audio'
+            ? '（音频）'
+            : '',
+    )
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** delegated task 回显（上游 tui dynamic_tools.rs parse_delegated_tool_output 同款判定）：
+ *  codex_tui/codex_app 命名空间的 create_thread/send_message_to_thread 输出以
+ *  <codex_delegation> 载荷携带来源线程与委派 prompt——返回一行主线提示，其余返回 undefined */
+function delegatedTaskNotice(item: ThreadItem): string | undefined {
+  if (!['codex_tui', 'codex_app'].includes(item.namespace ?? '') || !['create_thread', 'send_message_to_thread'].includes(item.name ?? '')) {
+    return undefined
+  }
+  const text = functionCallOutputText(item.output)
+  const prefix = '<codex_delegation>\n  <source_thread_id>'
+  const mid = '</source_thread_id>\n  <input>'
+  const suffix = '</input>\n</codex_delegation>'
+  if (!text.startsWith(prefix)) return undefined
+  const rest = text.slice(prefix.length)
+  const endSource = rest.indexOf(mid)
+  if (endSource < 0) return undefined
+  const tail = rest.slice(endSource + mid.length)
+  if (!tail.endsWith(suffix)) return undefined
+  const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+  const source = unesc(rest.slice(0, endSource))
+  const prompt = unesc(tail.slice(0, -suffix.length))
+  return `⇶ 已委派任务给线程 ${source.slice(0, 8)}\n${prompt.slice(0, 500)}`
+}
+
 /** userMessage content → 历史块；localImage 在 uploads 目录内时给可展示 URL，其余降级占位 */
-function userInputBlocks(content: unknown): HistoryBlock[] {
-  if (!Array.isArray(content)) return []
+function userInputBlocks(content: unknown): HistoryBlock[] {  if (!Array.isArray(content)) return []
   const texts: string[] = []
   const images: HistoryBlock[] = []
   for (const c of content as Array<Record<string, unknown>>) {
