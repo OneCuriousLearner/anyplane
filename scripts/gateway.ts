@@ -527,6 +527,21 @@ const fileCfg = loadAnyplaneConfigFile() as FileCfg
 const cfg = loadCfg(fileCfg)
 const token = process.env.ANYPLANE_TOKEN || fileCfg.authToken
 
+/** 上游鉴权生效探测：token「存在」于本进程 env/配置 ≠ 上游 server 进程在强制它
+ * （配置漂移：token 后补进配置/env 时，仍在运行的旧 server 进程按启动时的无 token 配置放行一切，
+ * 而本网关剥 Origin/改 Host，上游无 token 时的 Origin/Host 防线在网关之后整体失效）。
+ * 探测 prodTarget 即覆盖两种模式：vite dev(:5173) 的 /api 经 proxy 同样落 7480。 */
+async function probeUpstreamAuth(target: string): Promise<'enforced' | 'open' | 'unreachable'> {
+  try {
+    // 无凭据 GET /api/sessions：token 模式 isAuthorized 一票否决 → 401；
+    // 无 token 回环模式 originAllowed 缺失放行（脚本 fetch 无 Origin）→ 200。
+    const r = await fetch(`${target}/api/sessions`, { signal: AbortSignal.timeout(1500), redirect: 'manual' })
+    return r.status === 401 ? 'enforced' : 'open'
+  } catch {
+    return 'unreachable'
+  }
+}
+
 if (!token && !cfg.insecure) {
   console.error('[gateway] 拒绝启动：把 :5173/:7480 暴露到 80/443 等于把本机 CLI 会话暴露到网络。')
   console.error('[gateway] 请在 anyplane.config.json 配置 authToken，或显式传入 --insecure / ANYPLANE_GATEWAY_INSECURE=1。')
@@ -534,6 +549,18 @@ if (!token && !cfg.insecure) {
 }
 if (!token && cfg.insecure) {
   console.warn('[gateway] 警告：--insecure，80/443 上的 anyplane 无鉴权。仅限授信内网。')
+}
+if (token && !cfg.insecure) {
+  const probe = await probeUpstreamAuth(cfg.prodTarget)
+  if (probe === 'open') {
+    console.error(`[gateway] 拒绝启动：上游 ${cfg.prodTarget} 未在强制 authToken（无凭据 GET /api/sessions 未返回 401）。`)
+    console.error('[gateway] 常见原因：token 是后补进配置/env 的，server 进程仍按旧配置运行。请重启服务端后重试，或显式 --insecure。')
+    process.exit(1)
+  }
+  if (probe === 'unreachable') {
+    // 上游后启是既有宽容语义（502 提示页）：只警告不拒绝，但鉴权未经验证这一事实必须留痕
+    console.warn(`[gateway] 警告：上游 ${cfg.prodTarget} 暂不可达，鉴权是否生效未经验证；若服务端以无 token 配置运行，本网关将无鉴权转发。`)
+  }
 }
 
 const tls = await ensureCerts(cfg)

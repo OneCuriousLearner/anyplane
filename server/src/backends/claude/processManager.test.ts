@@ -511,3 +511,28 @@ describe('ClaudeSession learnContextWindow（换档竞态与失败重试）', ()
     expect(session.contextUsage).toBeUndefined()
   })
 })
+
+describe('spawn argv 注入闸', () => {
+  // '-' 前缀的值会被 commander 解析成独立 flag（数组 spawn 不防 flag 注入），必须在 spawn 前拒绝
+  const callbacks = { onMessage: () => {}, onApprovalRequest: () => {}, onExit: () => {} }
+
+  test('model/effort/sessionName/permissionMode/resume 值以 - 开头一律拒绝', () => {
+    const cases: Array<Record<string, string>> = [
+      { model: '--append-system-prompt' },
+      { effort: '--dangerously-skip-permissions' },
+      { sessionName: '-x' },
+      { permissionMode: '--evil' },
+      { resumeSessionId: '--resume-session-at' },
+      { resumeSessionAt: '-1' },
+    ]
+    for (const extra of cases) {
+      const s = new ClaudeSession('test-argv-guard', { cwd: process.cwd(), ...extra }, callbacks)
+      expect(() => s.spawn()).toThrow(/不得以 '-' 开头/)
+    }
+  })
+
+  test('正常值不因闸误判（cwd 校验在闸之后，借它区分穿透）', () => {
+    const s = new ClaudeSession('test-argv-guard-ok', { cwd: '/no/such/dir', model: 'sonnet', effort: 'high' }, callbacks)
+    expect(() => s.spawn()).toThrow(/项目目录不存在/)
+  })
+})

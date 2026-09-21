@@ -338,6 +338,23 @@ export class ClaudeSession {
 
   spawn(): void {
     if (this.proc && !this.exited) return
+    // CLI flag 注入闸：这些值来自客户端 WS 消息（set_model/effort、/branch 标题等），
+    // 数组形式 spawn 虽无 shell 拼接，但以 '-' 开头的值仍会被 commander 解析成独立
+    // flag（触达 prompt 输入到不了的面，如 --append-system-prompt）。正常模型名/effort/
+    // sessionId/标题没有以 '-' 开头的合法形态，直接拒绝。
+    const flagValues: Array<[string, string | undefined]> = [
+      ['--model', this.opts.model],
+      ['--effort', this.opts.effort],
+      ['-n', this.opts.sessionName],
+      ['--permission-mode', this.opts.permissionMode],
+      ['--resume', this.opts.resumeSessionId ?? this.opts.forkFromSessionId],
+      ['--resume-session-at', this.opts.resumeSessionAt],
+    ]
+    for (const [flag, v] of flagValues) {
+      if (v !== undefined && v.startsWith('-')) {
+        throw new Error(`spawn 参数非法：${flag} 的值不得以 '-' 开头`)
+      }
+    }
     if (!existsSync(this.opts.cwd)) {
       throw new Error(`项目目录不存在: ${this.opts.cwd}`)
     }

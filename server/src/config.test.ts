@@ -64,6 +64,22 @@ describe('loadAnyplaneConfigFile', () => {
     const { home, cwd } = seedDirs({})
     expect(runInSubprocess(loadScript, home, { cwd })).toEqual({})
   })
+
+  // falsy authToken 会让 isAuthorized 整体放行（静默退化为无鉴权），必须启动即失败
+  test('falsy authToken（空串/null/false）→ fail fast 并指明字段', () => {
+    for (const bad of ['', null, false]) {
+      const { home, cwd } = seedDirs({ home: JSON.stringify({ authToken: bad }) })
+      const res = Bun.spawnSync({
+        cmd: [process.execPath, '-e', loadScript],
+        env: { ...process.env, HOME: home, USERPROFILE: home },
+        cwd,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      expect(res.exitCode).not.toBe(0)
+      expect(res.stderr.toString()).toContain('authToken')
+    }
+  })
 })
 
 const configScript = `import { config, defaultPermissionMode } from ${JSON.stringify(CONFIG_URL)};

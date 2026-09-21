@@ -111,6 +111,11 @@ export function loadAnyplaneConfigFile(): Record<string, unknown> {
           throw new Error(`${p}: ${(e as Error).message}`)
         }
       }
+      // authToken 同为安全敏感配置：空串/null/false 等 falsy 值会让 isAuthorized 整体放行，
+      // 用户误以为已加锁——必须启动即失败，而不是静默退化为无鉴权。
+      if (raw.authToken !== undefined && (typeof raw.authToken !== 'string' || raw.authToken === '')) {
+        throw new Error(`${p}: authToken 必须是非空字符串（确需无鉴权请删除该字段，仅限回环使用）`)
+      }
       return raw
     }
   }

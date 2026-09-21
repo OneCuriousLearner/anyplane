@@ -143,3 +143,41 @@ describe('sw.js 非审批通知不受降级影响', () => {
     expect(shown[0]!.opts.body).toBe('anyplane｜git status')
   })
 })
+
+describe('sw.js 直接审批的同源闸', () => {
+  /** stub 全局 fetch 捕获 action POST 的 URL 列表 */
+  function captureFetches(): string[] {
+    const urls: string[] = []
+    globalThis.fetch = (async (input: unknown) => {
+      urls.push(typeof input === 'string' ? input : (input as Request).url)
+      return new Response('{"ok":true}', { status: 200 })
+    }) as unknown as typeof fetch
+    return urls
+  }
+
+  function click(data: unknown, action: string) {
+    const { handlers } = loadSw(2)
+    const waits: Promise<unknown>[] = []
+    handlers.notificationclick!({
+      notification: { data, close: () => {} },
+      action,
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    })
+    return waits
+  }
+
+  test('同源能力 URL 照常 POST（回归：闸不误伤）', async () => {
+    const urls = captureFetches()
+    const waits = click({ actions: ACTIONS }, 'allow')
+    await Promise.all(waits)
+    expect(urls).toEqual([ACTIONS.allow])
+  })
+
+  test('第三方源的 actionUrl 被拒绝：不发出 fetch，能力 secret 不出网', async () => {
+    const urls = captureFetches()
+    const evil = { allow: 'https://evil.example.com/api/approval-action?k=x&r=y&d=allow&s=stolen' }
+    const waits = click({ actions: evil }, 'allow')
+    await Promise.all(waits)
+    expect(urls).toEqual([])
+  })
+})

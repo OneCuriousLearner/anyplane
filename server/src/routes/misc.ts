@@ -126,7 +126,9 @@ export async function handleMiscRoutes(
       headers: { 'content-type': mime, 'cache-control': 'public, max-age=31536000, immutable' },
     })
   }
-  const histMatch = url.pathname.match(/^\/api\/history\/([^/]+)\/([^/]+)$/)
+  // slug/sessionId 会拼进 ~/.claude/projects/ 路径——形状闸与 splitExistingKey 同口径
+  //（当前经 URL 归一化已不可穿越，此闸是纵深：挡住未来不经 URL 规范化的新调用路径）
+  const histMatch = url.pathname.match(/^\/api\/history\/([a-zA-Z0-9-]+)\/([a-zA-Z0-9-]+)$/)
   if (histMatch && req.method === 'GET') {
     const [, slug, sessionId] = histMatch
     // fileBytes = 本次实际读取的字节数，前端拿它作为 tailer 的起始偏移；
@@ -150,7 +152,8 @@ export async function handleMiscRoutes(
     )
   }
   // codex 历史：thread/read includeTurns（只读），无 tailer 偏移概念
-  const codexHistMatch = url.pathname.match(/^\/api\/codex\/history\/([^/]+)$/)
+  // threadId（UUID）会拼进 reasoning 侧车文件路径，同款形状闸（[a-zA-Z0-9-]）
+  const codexHistMatch = url.pathname.match(/^\/api\/codex\/history\/([a-zA-Z0-9-]+)$/)
   if (codexHistMatch && req.method === 'GET') {
     try {
       return json(await backendPort('codex').readHistory(codexHistMatch[1]))

@@ -116,6 +116,10 @@ export interface RunDeps {
   exists(p: string): boolean
   /** 本地服务可达性预检 */
   serverUp(port: number): Promise<boolean>
+  /** 上游鉴权生效探测：无凭据 GET /api/sessions 的状态码（401=强制 token；null=不可达）。
+   *  token「存在」于本进程 env/配置 ≠ 上游 server 进程在强制它（配置漂移：token 后补进
+   *  配置/env 时，旧 server 进程仍按启动时的无 token 配置运行）。公网暴露前必须验生效。 */
+  apiStatus(port: number): Promise<number | null>
   /** caddy 配置落盘目录（~/.anyplane/caddy，0700） */
   stateDir(): string
   writeFile(path: string, content: string): Promise<unknown>
@@ -159,6 +163,18 @@ export async function run(argv: string[], deps: RunDeps): Promise<number> {
   // 隧道起了才发现本地服务没跑是最常见的白忙一场
   if (!(await deps.serverUp(port))) {
     return fail(`127.0.0.1:${port} 无响应——AnyPlane 服务端未在运行。请先启动（bunx anyplane / bun run start）。`)
+  }
+  // token「存在」于本进程 ≠ 上游 server 进程在强制它：token 若是后补进配置/env 的，
+  // 仍在运行的旧 server 进程按启动时的无 token 配置放行一切——把隧道绑上去等于裸奔。
+  // 绑定公网入口前必须探测上游真实鉴权状态（验生效，而非验存在）。
+  const status = await deps.apiStatus(port)
+  if (status !== 401) {
+    return fail(
+      status === null
+        ? `127.0.0.1:${port} 的 /api 无响应——服务在运行但 API 探测失败，拒绝绑定公网入口。`
+        : `上游服务端未在强制 authToken（无凭据 GET /api/sessions 返回 ${status} 而非 401）。\n` +
+            '常见原因：token 是后补进配置/env 的，而 server 进程仍按旧配置运行。请重启 AnyPlane 服务端后重试。',
+    )
   }
 
   const whichOrFail = (bin: string, installHint: string): string | number => {
