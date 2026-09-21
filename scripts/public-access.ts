@@ -32,6 +32,19 @@ const deps: RunDeps = {
       return false
     }
   },
+  // 无凭据探测：fetch 不带 Origin → 无 token 模式 originAllowed 缺失放行、返回 200；
+  // token 模式 isAuthorized 一票否决返回 401。redirect manual 防尾随跳转到登录页误读为 200。
+  apiStatus: async (port) => {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+        signal: AbortSignal.timeout(3000),
+        redirect: 'manual',
+      })
+      return r.status
+    } catch {
+      return null
+    }
+  },
   stateDir: () => ensurePrivateDir(join(homedir(), '.anyplane', 'caddy')),
   writeFile: (path, content) => Bun.write(path, content),
   foreground: async (cmd) => {

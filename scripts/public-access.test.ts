@@ -5,10 +5,17 @@ import { run, type RunDeps } from './public-access-lib'
 // （评审发现：旧 spawn 集成测试只隔离了 HOME，仓库根 anyplane.config.json 会穿透 token 门槛）。
 
 function makeDeps(overrides: Partial<RunDeps> = {}): RunDeps & {
-  calls: { which: string[]; spawnSync: string[][]; foreground: string[][]; writeFile: string[]; serverUp: number[] }
+  calls: { which: string[]; spawnSync: string[][]; foreground: string[][]; writeFile: string[]; serverUp: number[]; apiStatus: number[] }
   logs: { out: string[]; err: string[] }
 } {
-  const calls = { which: [] as string[], spawnSync: [] as string[][], foreground: [] as string[][], writeFile: [] as string[], serverUp: [] as number[] }
+  const calls = {
+    which: [] as string[],
+    spawnSync: [] as string[][],
+    foreground: [] as string[][],
+    writeFile: [] as string[],
+    serverUp: [] as number[],
+    apiStatus: [] as number[],
+  }
   const logs = { out: [] as string[], err: [] as string[] }
   return {
     calls,
@@ -24,6 +31,10 @@ function makeDeps(overrides: Partial<RunDeps> = {}): RunDeps & {
     serverUp: async (port) => {
       calls.serverUp.push(port)
       return true
+    },
+    apiStatus: async (port) => {
+      calls.apiStatus.push(port)
+      return 401
     },
     stateDir: () => '/tmp/fake-home/.anyplane/caddy',
     writeFile: async (path, content) => {
@@ -61,6 +72,27 @@ describe('run() 安全红线：未配 token 一律拒绝', () => {
     const deps = makeDeps({ env: { ANYPLANE_TOKEN: 'x'.repeat(32) } })
     await run(['funnel'], deps)
     expect(deps.calls.serverUp).toEqual([7480])
+    expect(deps.calls.apiStatus).toEqual([7480])
+  })
+})
+
+describe('run() 验生效：上游未强制 token 一律拒绝', () => {
+  test('探测返回 200（旧 server 进程仍按无 token 配置运行）→ 拒绝且无任何副作用', async () => {
+    const deps = makeDeps({ env: { ANYPLANE_TOKEN: 't' }, apiStatus: async () => 200 })
+    const code = await run(['cf-quick'], deps)
+    expect(code).toBe(1)
+    expect(deps.logs.err.join('\n')).toContain('未在强制 authToken')
+    expect(deps.logs.err.join('\n')).toContain('重启')
+    expect(deps.calls.foreground).toEqual([])
+    expect(deps.calls.spawnSync).toEqual([])
+  })
+
+  test('探测不可达（API 异常）→ 拒绝绑定公网入口', async () => {
+    const deps = makeDeps({ env: { ANYPLANE_TOKEN: 't' }, apiStatus: async () => null })
+    const code = await run(['funnel'], deps)
+    expect(code).toBe(1)
+    expect(deps.logs.err.join('\n')).toContain('无响应')
+    expect(deps.calls.spawnSync).toEqual([])
   })
 })
 
