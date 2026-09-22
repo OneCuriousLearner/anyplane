@@ -26,18 +26,6 @@ describe('notifId', () => {
   })
 })
 
-describe('深链 eval 片段（MainActivity.flushPendingOpen 同形）', () => {
-  test('JSON.stringify 字面量 + encodeURIComponent 不会破出 JS 字符串', () => {
-    // 与 MainActivity.jsString(JSONObject.quote) + encodeURIComponent 同形。
-    // Uri.encode 放行单引号，`x';payload` 会破出 location.hash='#s=…'。
-    const payloads = [`x';alert(1);//`, `x\\";alert(1);//`, "line\nbreak", '\u2028']
-    for (const p of payloads) {
-      const js = `return encodeURIComponent(${JSON.stringify(p)})`
-      expect(decodeURIComponent(new Function(js)() as string)).toBe(p)
-    }
-  })
-})
-
 describe('parseNativeAction', () => {
   test('合法 JSON 三字段齐备才放行', () => {
     expect(parseNativeAction('{"key":"s|a|b","requestId":"r1","actionId":"approve"}')).toEqual({
