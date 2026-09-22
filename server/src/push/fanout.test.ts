@@ -55,7 +55,7 @@ describe('sessionNameOf：显示名多级回退', () => {
 
   test('x| key：Hub.nameCwd 命中取 basename；无 Hub 无句柄落 key 截断', () => {
     const key = track('x|thread-with-a-long-id-0123456789abcdef')
-    expect(sessionNameOf(key)).toBe(key.slice(0, 18))
+    expect(sessionNameOf(key)).toBe('x|thread-with-a-lo')
     const hub = getHub(key)
     hub.nameCwd = '/work/repo'
     expect(sessionNameOf(key)).toBe('repo')
