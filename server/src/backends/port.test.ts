@@ -85,6 +85,8 @@ describe('isCodexKey', () => {
     expect(isCodexKey('s|slug|sid')).toBe(false)
     expect(isCodexKey('n|%2Ftmp')).toBe(false)
     expect(isCodexKey('b|%2Ftmp|src')).toBe(false)
+    // xn| 以 x 开头但不以 x| 开头：钉死是 startsWith('x|') 而非 startsWith('x')
+    expect(isCodexKey('x')).toBe(false)
   })
 })
 
