@@ -47,23 +47,14 @@ describe('cliSidechainToHistory', () => {
     const h = cliSidechainToHistory({ type: 'user', uuid: 'u1', message: { content: '你好' }, timestamp: 't' })
     expect(h).toEqual({ uuid: 'u1', role: 'user', blocks: [{ kind: 'text', text: '你好' }], timestamp: 't' })
   })
-  test('块映射与 discovery 同形：text/thinking/tool_use/tool_result', () => {
+  test('assistant 侧链：role 由 type 透传，块映射委托 cliContentToHistoryBlocks', () => {
+    // 块映射本身的夹具对拍在 contentBlocks.lockstep.ts（web ↔ server 同形），这里只钉接线与 role 透传
     const h = cliSidechainToHistory({
       type: 'assistant',
       uuid: 'a1',
-      message: {
-        content: [
-          { type: 'thinking', thinking: '想一想' },
-          { type: 'text', text: '答' },
-          { type: 'tool_use', name: 'Bash', id: 'tu1', input: { command: 'ls' } },
-          { type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'ok' }], is_error: false },
-          { type: 'text', text: '   ' }, // 空白 text 不落块
-        ],
-      },
+      message: { content: [{ type: 'text', text: '答' }] },
     })
     expect(h?.role).toBe('assistant')
-    expect(h?.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool_use', 'tool_result'])
-    const tr = h?.blocks[3]
-    expect(tr?.kind === 'tool_result' && tr.id).toBe('tu1')
+    expect(h?.blocks).toEqual([{ kind: 'text', text: '答' }])
   })
 })

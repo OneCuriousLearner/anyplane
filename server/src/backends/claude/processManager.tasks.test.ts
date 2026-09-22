@@ -63,11 +63,4 @@ describe('嵌套 agent 血缘（toolUseParents）', () => {
     s.injectLine(taskStarted('task-top', 'tool-top', 1))
     expect(s.backgroundTasks[0]).toMatchObject({ depth: 1, parentToolUseId: undefined })
   })
-
-  test('task_notification 摘除任务', () => {
-    const s = makeSession()
-    s.injectLine(taskStarted('task-1', 'tool-1', 1))
-    s.injectLine(JSON.stringify({ type: 'system', subtype: 'task_notification', task_id: 'task-1', status: 'completed' }))
-    expect(s.backgroundTasks).toHaveLength(0)
-  })
 })

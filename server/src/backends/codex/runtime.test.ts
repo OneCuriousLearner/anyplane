@@ -50,7 +50,7 @@ describe('CodexRuntime app-server 闲置回收', () => {
     expect(killed).toBe(0)
   })
 
-  test('dispose 最后一个会话句柄自动进入回收倒计时；期间再来新会话则取消', async () => {
+  test('dispose 最后句柄后进入回收倒计时；回调触发时复查 sessions.size，已有新会话则跳过 kill', async () => {
     const rt = new CodexRuntime()
     let killed = 0
     withFakeRpc(rt, () => killed++)
@@ -60,10 +60,12 @@ describe('CodexRuntime app-server 闲置回收', () => {
       onExit: () => {},
       onStatusChange: () => {},
     })
-    // dispose 时 sessions 仍非空？不——dispose 先删键再调度，所以倒计时已启动
+    // dispose 先删键再以默认 10min 延迟调度回收——测试等不了默认延迟，
+    // 以短延迟重设同一计时器（schedule 开头会 cancel 既有），模拟倒计时临近触发
     rt.dispose('xn|%2Ftmp')
-    await new Promise((r) => setTimeout(r, 10))
-    // 倒计时进行中来了新会话：ensure 不直接取消（取消在 ensureRpc），但回收条件复查 sessions.size
+    rt.scheduleRpcIdleShutdownIfIdle(30)
+    // 倒计时进行中来了新会话：ensure 不直接取消计时器（取消在 ensureRpc），
+    // 回调里的 sessions.size 复查是最后防线——删掉它本用例即红
     rt.ensure('xn|%2Ftmp2', { cwd: '/tmp' }, {
       onMessage: () => {},
       onApprovalRequest: () => {},
@@ -72,5 +74,6 @@ describe('CodexRuntime app-server 闲置回收', () => {
     })
     await new Promise((r) => setTimeout(r, 80))
     expect(killed).toBe(0)
+    expect(rt.peekRpc()).toBeDefined()
   })
 })
