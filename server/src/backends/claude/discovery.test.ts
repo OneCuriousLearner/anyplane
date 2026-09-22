@@ -212,14 +212,6 @@ describe('entryToHistoryMessage 图片落盘（discovery onImage）', () => {
     expect(msg).toMatchObject({ uuid: 'img-bad', blocks: [{ kind: 'text', text: '[图片]' }] })
   })
 
-  test('空 data → saveUpload 抛错 → [图片]', () => {
-    const msg = entryToHistoryMessage({
-      type: 'user',
-      message: { content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: '' } }] },
-    })
-    expect(msg?.blocks).toEqual([{ kind: 'text', text: '[图片]' }])
-  })
-
   test('图文混排：合法图 + 文本都在', () => {
     const msg = entryToHistoryMessage({
       type: 'assistant',

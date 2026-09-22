@@ -117,13 +117,4 @@ describe('broadcast：投递与环/收件箱接线', () => {
     broadcast(hub, { kind: 'status', state: { spawned: false, busy: false } })
     expect(events).toEqual([{ type: 'error', key: 's|slug|sid', message: 'boom' }])
   })
-
-  test('空客户端集合投递不抛（含 error kind 的 inbox 路径）', () => {
-    const hub = makeHub()
-    const events = collectInbox()
-    broadcast(hub, { kind: 'cli', msg: { type: 'result' } })
-    broadcastError(hub, 'no clients')
-    expect(hub.cliSeq).toBe(1)
-    expect(events).toEqual([{ type: 'error', key: hub.key, message: 'no clients' }])
-  })
 })

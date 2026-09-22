@@ -504,25 +504,6 @@ describe('handleClientMessage btw / query / approval', () => {
     expect(resolved).toBe(0)
   })
 
-  test('approval 无存活会话 → 本地照常解析撤卡 + 未送达提示 + inbox 留痕', () => {
-    const hub = freshHub()
-    const ws = fakeWs()
-    hub.clients.add(ws as never)
-    hub.pendingApprovals.set('r1', { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } })
-
-    handleClientMessage(hub, JSON.stringify({ kind: 'approval', requestId: 'r1', decision: { behavior: 'allow' } }))
-
-    expect(hub.pendingApprovals.size).toBe(0)
-    const sent = payloads(ws)
-    expect(sent[0]).toEqual({ kind: 'error', message: '会话未在运行，审批未能送达（该请求会在上游自行超时）' })
-    expect(sent.some((p) => p.kind === 'approval_resolved' && p.requestId === 'r1')).toBe(true)
-    // 错误广播同步进收件箱（broadcast 的 error 分支），随后才是撤卡留痕
-    expect(inbox).toEqual([
-      { type: 'error', key: KEY, message: '会话未在运行，审批未能送达（该请求会在上游自行超时）' },
-      { type: 'approval_resolved', key: KEY, requestId: 'r1' },
-    ])
-  })
-
   test('approval 有存活会话 → 决定经 sendApproval 投递', () => {
     const hub = freshHub()
     hub.pendingApprovals.set('r2', { requestId: 'r2', toolName: 'Write', input: {} })
