@@ -8,17 +8,19 @@ describe('statusLineOf 早退链（优先级即源码顺序）', () => {
   test('未连接最先', () => {
     expect(statusLineOf({ ...baseState, busy: true }, { connected: false, waiting: true, phase: 'requesting' })).toBe('连接中…')
   })
-  test('phase 优先于 waiting/busy', () => {
+  test('compacting 保持最优先；waiting 压过 requesting phase（等审批不再是「请求中」）', () => {
     expect(statusLineOf({ ...baseState, busy: true }, { connected: true, waiting: true, phase: 'compacting' })).toBe('压缩上下文…')
-    // 未知 phase 原样透传
+    expect(statusLineOf(baseState, { connected: true, waiting: true, phase: 'requesting' })).toBe('等待审批')
+    // 未知 phase 原样透传（无 waiting/后台任务时仍由 phase 兜底）
     expect(statusLineOf(baseState, { connected: true, waiting: false, phase: 'whatever' })).toBe('whatever…')
+  })
+  test('activeTaskCount 压过 requesting phase 与 busy（后台任务活着时「工作中」才是真相）', () => {
+    expect(statusLineOf({ ...baseState, busy: true, activeTaskCount: 2 }, { connected: true, waiting: false, phase: 'requesting' })).toBe('2 个后台任务运行中')
+    expect(statusLineOf({ ...baseState, busy: true, activeTaskCount: 2 }, { connected: true, waiting: false })).toBe('2 个后台任务运行中')
   })
   test('waiting 区分 tailing', () => {
     expect(statusLineOf(baseState, { connected: true, waiting: true })).toBe('等待审批')
     expect(statusLineOf({ ...baseState, tailing: true }, { connected: true, waiting: true })).toBe('外部会话等待操作')
-  })
-  test('activeTaskCount 优先于 busy', () => {
-    expect(statusLineOf({ ...baseState, busy: true, activeTaskCount: 2 }, { connected: true, waiting: false })).toBe('2 个后台任务运行中')
   })
   test('busy 区分 tailing', () => {
     expect(statusLineOf({ ...baseState, busy: true }, { connected: true, waiting: false })).toBe('工作中')

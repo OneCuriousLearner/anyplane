@@ -252,6 +252,9 @@ export function toolDetail(name: string, input: unknown): string {
       return [i.file_path ? `# ${String(i.file_path)}` : '', String(i.content ?? '')].filter(Boolean).join('\n\n')
     case 'Agent':
       return String(i.prompt ?? JSON.stringify(input, null, 2))
+    case 'Permissions':
+      // codex 的 permissions 审批：权限请求正文比 JSON 更可读
+      return Array.isArray(i.permissions) ? i.permissions.map((p) => `- ${String(p)}`).join('\n') : JSON.stringify(input, null, 2)
     default:
       return JSON.stringify(input, null, 2) ?? ''
   }

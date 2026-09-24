@@ -111,6 +111,10 @@ describe('toolDetail（折叠区的完整内容）', () => {
   test('未知工具回退格式化 JSON', () => {
     expect(toolDetail('mcp:foo', { a: 1 })).toBe('{\n  "a": 1\n}')
   })
+  test('Permissions（codex 权限审批）逐行列出权限项；非数组回退 JSON', () => {
+    expect(toolDetail('Permissions', { permissions: ['fs.write', 'net.read'] })).toBe('- fs.write\n- net.read')
+    expect(toolDetail('Permissions', { reason: 'x' })).toBe('{\n  "reason": "x"\n}')
+  })
 })
 
 describe('toolResultText / stripAnsi / fmtTokens', () => {

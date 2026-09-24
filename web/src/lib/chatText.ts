@@ -36,16 +36,20 @@ const PHASE_LABEL: Record<string, string> = {
 }
 
 /** 输入行上方的会话状态文案：早退链，优先级即源码顺序。
+ *  compacting 最优先（压缩期间审批/后台状态照旧压着，但用户最该知道的是在压缩）；
+ *  waiting 压过其余 phase——等审批时 CLI 往往仍停在 requesting，「请求中…」会让人
+ *  以为模型还在想；activeTaskCount 同理压过 phase（后台任务活着时「工作中」才是真相）。
  *  spawned 为真时不再看 exited/tailing（保持原嵌套三元的求值顺序）。 */
 export function statusLineOf(
   state: SessionState,
   opts: { connected: boolean; phase?: string; waiting: boolean },
 ): string {
   if (!opts.connected) return '连接中…'
-  if (opts.phase) return `${PHASE_LABEL[opts.phase] ?? opts.phase}…`
+  if (opts.phase === 'compacting') return '压缩上下文…'
   if (opts.waiting) return state.tailing ? '外部会话等待操作' : '等待审批'
   const activeTaskCount = state.activeTaskCount ?? 0
   if (activeTaskCount > 0) return `${activeTaskCount} 个后台任务运行中`
+  if (opts.phase) return `${PHASE_LABEL[opts.phase] ?? opts.phase}…`
   if (state.busy) return state.tailing ? '外部会话工作中' : '工作中'
   if (state.spawned) return state.sessionState === 'idle' ? 'CLI 空闲' : 'CLI 运行中'
   if (state.exited) return '进程已退出'

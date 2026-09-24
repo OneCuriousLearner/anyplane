@@ -66,6 +66,13 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
  * 快照 + 客户端 reconcile 收敛（useSessionSocket status case；13.4 批次 A 已做）。
  */
 export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
+  // 「本会话允许这个工具」：allow + rememberTool 时把 toolName 记入 Hub 内存放行集。
+  // 只在 WS 裁决路径生效（REST 核 resolveApprovalRest 只接受 allow/deny 字面量——
+  // 审批规则语义绝不进推送能力 URL 的红线不变）
+  const pending = hub.pendingApprovals.get(requestId)
+  if (pending && decision.behavior === 'allow' && decision.rememberTool === true) {
+    ;(hub.sessionAllowTools ??= new Set()).add(pending.toolName)
+  }
   const had = hub.pendingApprovals.delete(requestId)
   if (had) deliverApproval(hub, requestId, decision)
   broadcast(hub, { kind: 'approval_resolved', requestId })
