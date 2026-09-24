@@ -36,7 +36,9 @@ export interface ThreadMetaContext {
 
 /** 定位线程的 rollout 文件并尾扫最后一条 compacted 记录的摘要（payload.message）。
  *  上游历史投影丢 payload（只置 saw_compaction），这是摘要的唯一数据源。
- *  尽力而为：找不到/读不到返回 undefined（调用方静默降级，不影响历史本体）。 */
+ *  尽力而为：找不到/读不到返回 undefined（调用方静默降级，不影响历史本体）。
+ *  分块向上翻倍回扫（512KB → 4 倍递增 → 全文件）：两次 compact 之间写了大量内容时
+ *  固定尾窗会漏掉最新记录（review 轮）——翻到找到或读完为止 */
 export async function readCompactedSummary(home: string, threadId: string): Promise<string | undefined> {
   try {
     const glob = new Glob(`sessions/**/rollout-*${threadId}.jsonl`)
@@ -47,9 +49,15 @@ export async function readCompactedSummary(home: string, threadId: string): Prom
     }
     if (!rel) return undefined
     const f = Bun.file(join(home, rel))
-    const TAIL = 512 * 1024
-    const text = await f.slice(Math.max(0, f.size - TAIL), f.size).text()
-    return extractCompactedFromRolloutTail(text)
+    const size = f.size
+    let window_ = 512 * 1024
+    for (;;) {
+      // 窗口左缘的截断行本轮被 extractor 跳过，下一轮 4 倍窗口完整覆盖它
+      const text = await f.slice(Math.max(0, size - window_), size).text()
+      const found = extractCompactedFromRolloutTail(text)
+      if (found || window_ >= size) return found
+      window_ = Math.min(window_ * 4, size)
+    }
   } catch {
     return undefined
   }

@@ -464,20 +464,42 @@ export function useTranscriptIngest(opts: {
         // wire 上是 snake_case compact_metadata（SDK 正本 sdk.d.ts / 官方文档镜像）；
         // 上游根本没有 post_tokens——只取 preTokens，post 留 undefined（下一条
         // assistant usage 到达后上下文环形自愈，不在这里猜）。
-        // summary：codex 侧从 rollout 尾扫带来的压缩摘要（claude 无此字段）
+        // codex 分两帧：先裸分隔线（时序位置正确），摘要扫盘后补发同 uuid 的补丁帧——按 id 合并
         const raw = (rec.compact_metadata ?? rec.compactMetadata ?? {}) as {
           trigger?: string
           pre_tokens?: number
           preTokens?: number
           summary?: string
         }
-        pushMsg({
-          id: nextId(),
-          role: 'system',
-          systemKind: 'divider',
-          compactMeta: { trigger: raw.trigger, preTokens: raw.pre_tokens ?? raw.preTokens, summary: raw.summary },
-          blocks: [],
-        })
+        const meta = {
+          trigger: raw.trigger,
+          preTokens: raw.pre_tokens ?? raw.preTokens,
+          summary: raw.summary,
+        }
+        const id = typeof rec.uuid === 'string' ? `cb:${rec.uuid}` : undefined
+        if (id) {
+          const existing = messagesStore.get().find((m) => m.id === id)
+          if (existing) {
+            // 补丁帧：只补新到的字段（summary 后至），不冲掉已有的 preTokens 等
+            setMsgs((prev) =>
+              prev.map((m) =>
+                m.id === id
+                  ? {
+                      ...m,
+                      compactMeta: {
+                        trigger: meta.trigger ?? m.compactMeta?.trigger,
+                        preTokens: meta.preTokens ?? m.compactMeta?.preTokens,
+                        postTokens: m.compactMeta?.postTokens,
+                        summary: meta.summary ?? m.compactMeta?.summary,
+                      },
+                    }
+                  : m,
+              ),
+            )
+            break
+          }
+        }
+        pushMsg({ id: id ?? nextId(), role: 'system', systemKind: 'divider', compactMeta: meta, blocks: [] })
         break
       }
     }
