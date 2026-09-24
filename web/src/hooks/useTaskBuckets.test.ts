@@ -2,7 +2,24 @@
 import { describe, expect, test } from 'bun:test'
 import type { SubagentHistory } from '@anyplane/protocol'
 import type { ChatMsg } from '../lib/blocks'
-import { selectHistoryBuckets } from './useTaskBuckets'
+import { isBackgroundRunningResult, selectHistoryBuckets } from './useTaskBuckets'
+
+describe('isBackgroundRunningResult：后台运行声明不算终态（上游三变体同构）', () => {
+  test('run_in_background / 手动 backgrounded / 超预算自动后台都识别', () => {
+    expect(isBackgroundRunningResult('Command running in background with ID: b1. Output is being written to: /tmp/o')).toBe(true)
+    expect(isBackgroundRunningResult('Command was manually backgrounded by user with ID: b2. Output is being written to: /tmp/o')).toBe(true)
+    expect(
+      isBackgroundRunningResult(
+        'Command exceeded the assistant-mode blocking budget (10s) and was moved to the background with ID: b3. It is still running — you will be notified when it completes.',
+      ),
+    ).toBe(true)
+  })
+  test('正常完成的输出不误判（含 background 字样但无 ID 声明）', () => {
+    expect(isBackgroundRunningResult('still-going')).toBe(false)
+    expect(isBackgroundRunningResult('background job finished, exit 0')).toBe(false)
+    expect(isBackgroundRunningResult('')).toBe(false)
+  })
+})
 
 const agentMsg = (id: string, pending: boolean | undefined): ChatMsg => ({
   id: `m-${id}`,

@@ -14,6 +14,15 @@ import { appendHistoryMsg, mergeTerminalHistoryState, type IngestState, type Pen
 import type { SessionState } from '@anyplane/protocol'
 import type { TaskFeed } from '../components/TasksPanel'
 
+/** 后台运行声明识别（纯函数便于单测）：上游 BashTool/PowerShellTool 的三种后台变体
+ *  文案同构（claude-code v2.1.88 快照 BashTool.tsx:605-621 / PowerShellTool.tsx:423-427）：
+ *  run_in_background / 手动 backgrounded / 超预算自动后台，都含「background…with ID:」。
+ *  这类 tool_result 不是终态——进程还在跑（sleep 45 实测卡片误标「已完成」、停止按钮消失）。
+ *  vendor 文案依赖的实测记录见 docs/research/2026-09-21-claude-headless-pitfalls.md */
+export function isBackgroundRunningResult(text: string): boolean {
+  return /\bbackground(?:ed)?\b[^.]*\bwith ID: /.test(text)
+}
+
 /** 历史桶回填的选择口径（resetFromHistory 用；纯函数便于单测）：
  *  只为「调用在已加载历史窗口内、且主线 tool_result 缺失（未配对终态）」的 subagent 建桶。
  *  两条排除：已完成的（pending === false）不建——老会话重进复活一堆历史卡 30s 后齐消失
@@ -143,6 +152,14 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
   const settleBucketFromResult = (toolUseId: string | undefined, text: string, isError: boolean) => {
     const b = toolUseId ? taskMapRef.current.get(toolUseId) : undefined
     if (!b || b.status !== 'running') return
+    // 后台 bash/powershell 的立即返回不是终态：进程仍在跑。标完成会挂 30s 驱逐倒计时，
+    // 迟到的 task_notification 还会被墓碑丢弃——进程活着时卡片必须留 running（停止按钮在）。
+    // 文案摘要照常收下（「Command running in background with ID: …」本身就是有效信息）
+    if (!isError && isBackgroundRunningResult(text)) {
+      if (!b.summary && text) b.summary = text.slice(0, 500)
+      pubTasks()
+      return
+    }
     markTerminal(b, isError ? 'error' : 'done')
     if (!b.summary && text) b.summary = text.slice(0, 500)
     pubTasks()
