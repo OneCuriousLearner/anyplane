@@ -4,8 +4,10 @@
 // 覆盖点（13.2 遗留：不需要真实模型调用的链路以 mock CLI 搬进 CI）：
 // 1. WS 全链路：REST 建会话 → attach 懒启动 → user 消息 → init/assistant/result 流 + status 翻转
 //    （顺带断言 capabilities 随 status 下发——13.3 的能力声明面）
+// 1b. 懒启动升键：首个 init 拿到真实 sessionId 即广播 moved(reason=spawned) 重键 n|→s|，
+//    后续新连接用升键后的 key（真实客户端跟 moved 导航的同形动作）
 // 2. 审批链路：can_use_tool → approval_request → WS 裁决 → approval_resolved + turn 收尾
-// 3. /clear 三层重键：conversation_reset → moved 事件 → 新 key attach 复用同进程
+// 3. /clear 三层重键：conversation_reset → moved(reason=clear) 事件 → 新 key attach 复用同进程
 // 4. 断线重连补发：fromSeq 游标 → 环内事件单播补放（只认 replay:true 副本）
 // 5. 断线错过 resolved（research §6.4）：裁决时离线方的重连重放集不含已裁决审批
 //    （服务端 pending 唯一权威；客户端 replace 对齐见 useSessionSocket 的 attach 清空）
@@ -171,6 +173,12 @@ async function main(): Promise<void> {
   c1.send({ kind: 'user', text: 'hello' })
   const initEv = await c1.waitFor((ev) => ev.kind === 'cli' && (ev.msg as { subtype?: string })?.subtype === 'init')
   note((initEv.msg as { session_id?: string })?.session_id === 'mock-sess-1', '首个 turn 收到 init（mock sessionId）')
+  // 懒启动升键：首个 init 拿到真实 sessionId 即重键 n|→s| 并广播 moved(reason=spawned)。
+  // 真实客户端跟 moved 导航（replace），后续新连接必须用升键后的 key——
+  // c1 这条存活连接的 ws.data.key 已由三层重键第三层改写，可继续收发。
+  const spawnedMove = await c1.waitFor((ev) => ev.kind === 'moved' && ev.reason === 'spawned')
+  const key1 = String(spawnedMove.targetKey ?? '')
+  note(key1.startsWith('s|') && key1 !== key, '首个 init 升键 moved：n|→s|（reason=spawned）', key1)
   await c1.waitFor((ev) => ev.kind === 'cli' && (ev.msg as { type?: string })?.type === 'assistant')
   await c1.waitFor((ev) => ev.kind === 'cli' && (ev.msg as { type?: string })?.type === 'result')
   note(true, '首个 turn 完成：assistant + result 到达')
@@ -212,7 +220,7 @@ async function main(): Promise<void> {
   const lastSeq = Math.max(0, ...c1.log.filter((ev) => ev.kind === 'cli').map((ev) => Number(ev.seq ?? 0)))
   c1.ws.close()
   await Bun.sleep(300) // 等服务端 wsClose 走完（Hub 因会话句柄存活而保留）
-  const c2 = client(key)
+  const c2 = client(key1)
   await c2.open()
   c2.send({ kind: 'user', text: 'replay-marker' })
   await Bun.sleep(500) // mock turn 同步完成：init/assistant/result 全入环
@@ -226,9 +234,9 @@ async function main(): Promise<void> {
 
   // 5. /clear 三层重键
   c2.send({ kind: 'user', text: '/clear' })
-  const moved = await c2.waitFor((ev) => ev.kind === 'moved')
+  const moved = await c2.waitFor((ev) => ev.kind === 'moved' && ev.reason === 'clear')
   const newKey = String(moved.targetKey ?? '')
-  note(newKey.startsWith('s|') && newKey !== key, '/clear 触发 moved：重键到 s|<slug>|<newSid>', newKey)
+  note(newKey.startsWith('s|') && newKey !== key1, '/clear 触发 moved：重键到 s|<slug>|<newSid>', newKey)
   const c3 = client(newKey)
   await c3.open()
   c3.send({ kind: 'attach' })
