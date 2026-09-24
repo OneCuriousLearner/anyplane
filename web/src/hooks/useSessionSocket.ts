@@ -348,10 +348,11 @@ export function useSessionSocket(opts: {
             })
             if (h.uuid) rememberKeys(ingestApi.seenIdsRef.current, [h.uuid])
             // 尾到的主线 tool_result 给已存在桶补终态——外部会话（tailer 路径）没有
-            // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐
+            // task_notification，这是它唯一的终态信号；与历史回填同规则：终态挂 30s 驱逐。
+            // tailer:true——此路径没有通知兜底，后台声明也按终态收（宁可误终态不留僵尸卡）
             for (const blk of h.blocks) {
               if (blk.kind !== 'tool_result' || !blk.id) continue
-              taskApi.settleBucketFromResult(blk.id, blk.text ?? '', blk.isError === true)
+              taskApi.settleBucketFromResult(blk.id, blk.text ?? '', blk.isError === true, { tailer: true })
             }
             break
           }

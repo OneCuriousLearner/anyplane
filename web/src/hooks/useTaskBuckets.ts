@@ -15,12 +15,20 @@ import type { SessionState } from '@anyplane/protocol'
 import type { TaskFeed } from '../components/TasksPanel'
 
 /** 后台运行声明识别（纯函数便于单测）：上游 BashTool/PowerShellTool 的三种后台变体
- *  文案同构（claude-code v2.1.88 快照 BashTool.tsx:605-621 / PowerShellTool.tsx:423-427）：
- *  run_in_background / 手动 backgrounded / 超预算自动后台，都含「background…with ID:」。
+ *  文案同构（claude-code v2.1.88 快照 BashTool.tsx:605-621 / PowerShellTool.tsx:423-427），
+ *  逐字匹配三句模板（不用宽正则——agent 汇报里一句「还在后台跑 with ID: xxx」
+ *  不能把别人的终态吞掉）：
+ *  run_in_background / 手动 backgrounded / 超预算自动后台。
  *  这类 tool_result 不是终态——进程还在跑（sleep 45 实测卡片误标「已完成」、停止按钮消失）。
  *  vendor 文案依赖的实测记录见 docs/research/2026-09-21-claude-headless-pitfalls.md */
+const BACKGROUND_DECLARATION_TEMPLATES = [
+  'Command running in background with ID: ',
+  'Command was manually backgrounded by user with ID: ',
+  'moved to the background with ID: ',
+]
+
 export function isBackgroundRunningResult(text: string): boolean {
-  return /\bbackground(?:ed)?\b[^.]*\bwith ID: /.test(text)
+  return BACKGROUND_DECLARATION_TEMPLATES.some((t) => text.includes(t))
 }
 
 /** 历史桶回填的选择口径（resetFromHistory 用；纯函数便于单测）：
@@ -66,8 +74,8 @@ const PANEL_GRACE_MS = 30_000
 export interface TaskBucketsApi {
   /** sidechain 落桶；无 parent_tool_use_id 时返回 false（调用方按主线处理） */
   appendSidechain(rec: Record<string, unknown>): boolean
-  /** 主线 tool_result 给运行中桶补终态 */
-  settleBucketFromResult(toolUseId: string | undefined, text: string, isError: boolean): void
+  /** 主线 tool_result 给运行中桶补终态；tailer:true = 外部会话路径（无 task_notification，后台声明也按终态收） */
+  settleBucketFromResult(toolUseId: string | undefined, text: string, isError: boolean, opts?: { tailer?: boolean }): void
   /** 服务端权威 activeTasks 水合 */
   hydrateTasks(st: SessionState): void
   taskStarted(rec: Record<string, unknown>): void
@@ -148,14 +156,22 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
   }
 
   /** 主线 tool_result 给运行中桶补终态：task_notification 未到的兜底，
-   *  也是外部会话（tailer 路径，无 task_notification）唯一的终态信号。 */
-  const settleBucketFromResult = (toolUseId: string | undefined, text: string, isError: boolean) => {
+   *  也是外部会话（tailer 路径，无 task_notification）唯一的终态信号。
+   *  tailer 路径传 { tailer: true }——那边永远没有 task_notification、没有 activeTasks
+   *  兜底，后台声明也按终态收（历史回填为主，宁可误终态不可留僵尸卡）。 */
+  const settleBucketFromResult = (
+    toolUseId: string | undefined,
+    text: string,
+    isError: boolean,
+    opts?: { tailer?: boolean },
+  ) => {
     const b = toolUseId ? taskMapRef.current.get(toolUseId) : undefined
     if (!b || b.status !== 'running') return
     // 后台 bash/powershell 的立即返回不是终态：进程仍在跑。标完成会挂 30s 驱逐倒计时，
     // 迟到的 task_notification 还会被墓碑丢弃——进程活着时卡片必须留 running（停止按钮在）。
-    // 文案摘要照常收下（「Command running in background with ID: …」本身就是有效信息）
-    if (!isError && isBackgroundRunningResult(text)) {
+    // 两道收窄（review 轮）：只认 shell 任务桶（agent 汇报文本提到后台 ID 不误吞别人终态）、
+    // 只认三句精确模板（宽正则会误中引用句式）；文案摘要照常收下
+    if (!opts?.tailer && !isError && b.kind === 'local_bash' && isBackgroundRunningResult(text)) {
       if (!b.summary && text) b.summary = text.slice(0, 500)
       pubTasks()
       return

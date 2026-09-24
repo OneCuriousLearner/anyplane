@@ -14,9 +14,11 @@ describe('isBackgroundRunningResult：后台运行声明不算终态（上游三
       ),
     ).toBe(true)
   })
-  test('正常完成的输出不误判（含 background 字样但无 ID 声明）', () => {
+  test('正常完成的输出不误判（含 background 字样但非模板句）', () => {
     expect(isBackgroundRunningResult('still-going')).toBe(false)
     expect(isBackgroundRunningResult('background job finished, exit 0')).toBe(false)
+    // review 轮误报场景：agent 汇报里提到「还在后台跑 with ID: xxx」不是声明模板句
+    expect(isBackgroundRunningResult('tests passed; coverage is still generating in the background with ID: b4')).toBe(false)
     expect(isBackgroundRunningResult('')).toBe(false)
   })
 })
