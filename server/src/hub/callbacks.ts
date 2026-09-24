@@ -168,6 +168,9 @@ export function sessionCallbacks(hub: Hub) {
         }
         hub.pendingApprovals.clear()
       }
+      // 「本会话允许」同样随进程死亡失效：Hub 因客户端存活而保留，不清的话
+      // 下一条消息重 spawn 的新会话会继承旧放行集（违背「重开会话失效」语义）
+      hub.sessionAllowTools = undefined
       pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
     },
   }

@@ -271,10 +271,13 @@ describe('sessionCallbacks.onExit', () => {
     const { hub, ws } = freshHub()
     hub.pendingApprovals.set('r1', { requestId: 'r1', toolName: 'Bash', input: {} })
     hub.pendingApprovals.set('r2', { requestId: 'r2', toolName: 'Write', input: { file_path: '/tmp/x' } })
+    hub.sessionAllowTools = new Set(['Bash'])
 
     sessionCallbacks(hub).onExit(17)
 
     expect(hub.pendingApprovals.size).toBe(0)
+    // 「本会话允许」随进程死亡失效：Hub 因客户端存活而保留，不清则重 spawn 的新会话继承旧放行集
+    expect(hub.sessionAllowTools).toBeUndefined()
     const sent = payloads(ws)
     expect(sent.slice(0, 2)).toEqual([
       { kind: 'approval_resolved', requestId: 'r1' },
@@ -383,6 +386,8 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     expect(hub.pendingApprovals.has('rm1')).toBe(true)
     resolveApproval(hub, 'rm1', { behavior: 'allow', updatedInput: { file_path: '/a.ts' }, rememberTool: true })
     expect(hub.sessionAllowTools?.has('Edit')).toBe(true)
+    // rememberTool 是 Hub 内部语义：投递上游的裁决必须剥掉（claude control_response 全量透传）
+    expect(delivered[0]).toEqual(['rm1', { behavior: 'allow', updatedInput: { file_path: '/a.ts' } }])
 
     // 同工具后续请求：与规则路径同形留痕（approval_auto），共用投递半段
     ws.sent.length = 0

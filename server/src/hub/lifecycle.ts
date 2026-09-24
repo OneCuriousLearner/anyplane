@@ -46,7 +46,14 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
   const s = port.sessionOf(hub.key)
   if (s && !s.exited) {
     try {
-      s.sendApproval(requestId, decision)
+      // rememberTool 是 Hub 内存放行集的内部语义，投递上游前剥掉——
+      // claude 的 control_response 把整个 decision 透传给 CLI（未知字段容忍度未验证，
+      // 被拒绝会让工具调用挂到上游超时）；codex 侧 mapApprovalDecision 本就会归约
+      const wire: ApprovalDecision =
+        decision.behavior === 'allow'
+          ? { behavior: 'allow', updatedInput: decision.updatedInput }
+          : decision
+      s.sendApproval(requestId, wire)
     } catch (e) {
       broadcastError(hub, `审批回复失败: ${errorMessage(e)}`)
     }
