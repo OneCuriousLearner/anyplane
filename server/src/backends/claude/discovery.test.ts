@@ -5,10 +5,12 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { config } from '../../config'
-import { entryToHistoryMessage, isSelectableRewindTarget, readHistory } from './discovery'
+import { entryToHistoryMessage, extractMeta, isSelectableRewindTarget, readHistory } from './discovery'
 
 const SLUG = 'D--test-rewind-filter'
 const SID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+/** 含 headless compact 摘要行的第二个夹具会话 */
+const SID2 = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 
 let dir = ''
 let savedConfigDir = ''
@@ -42,6 +44,21 @@ beforeAll(() => {
       line({ type: 'user', uuid: 'u-text-2', message: { role: 'user', content: '第二条真实提问' } }),
     ].join('\n'),
   )
+  // 第二个夹具：压缩摘要行居中——之前的消息逻辑上已不在上下文，不可回滚
+  writeFileSync(
+    join(projectDir, `${SID2}.jsonl`),
+    [
+      line({ type: 'user', uuid: 'pre-1', message: { role: 'user', content: '压缩前的提问' } }),
+      line({
+        type: 'user',
+        uuid: 'cs-mid',
+        isCompactSummary: true,
+        isVisibleInTranscriptOnly: true,
+        message: { role: 'user', content: 'This session is being continued…\n\nSummary:\n1. 前文要点' },
+      }),
+      line({ type: 'user', uuid: 'post-1', message: { role: 'user', content: '压缩后的提问' } }),
+    ].join('\n'),
+  )
 })
 
 afterAll(() => {
@@ -63,6 +80,28 @@ describe('readHistory rewind 目标过滤', () => {
     expect(byUuid.get('u-local-cmd')?.rewindable).toBe(false)
     // isMeta 消息被 isInternalUserMessage 直接滤出抄本，根本不应出现
     expect(byUuid.has('u-meta')).toBe(false)
+  })
+
+  test('isCompactSummary 行是 headless 压缩边界：之前不可回滚，之后可；摘要行落 system 折叠行不进 rewind 面板', () => {
+    const { messages } = readHistory(SLUG, SID2)
+    const byUuid = new Map(messages.map((m) => [m.uuid, m]))
+
+    // 边界之前（压缩前的提问）逻辑上已不在上下文——不可回滚（走查实测此前全可选）
+    expect(byUuid.get('pre-1')?.rewindable).toBe(false)
+    // 边界之后的真实提问可回滚
+    expect(byUuid.get('post-1')?.rewindable).toBe(true)
+    // 摘要行转成 system/compact_summary（不是 user 消息，天然不进 rewind 面板与主抄本气泡）
+    expect(byUuid.get('cs-mid')).toMatchObject({ role: 'system', subtype: 'compact_summary' })
+  })
+
+  test('extractMeta：isCompactSummary 的英文模板 prompt 不当标题/预览', () => {
+    // 直调 extractMeta：listSessions 会连带 daemonAgents 的 CLI 子进程（CI 无 claude 可执行文件）
+    const meta = extractMeta(join(dir, 'projects', SLUG, `${SID2}.jsonl`))
+    // 标题/预览来自真实提问，绝不是内部模板（小文件无尾扫，lastPrompt 恒 undefined——
+    // 泄漏场景是大文件尾扫把摘要行当 lastPrompt，这里钉的是「永不含模板」）
+    expect(meta.title ?? '').not.toContain('This session is being continued')
+    expect(meta.lastPrompt ?? '').not.toContain('This session is being continued')
+    expect(meta.title).toBe('压缩前的提问') // 首条真实提问兜底
   })
 })
 
@@ -109,6 +148,23 @@ describe('entryToHistoryMessage（readHistory 与 tailer 共用的单条解析�
       compact_metadata: { pre_tokens: 90, post_tokens: 30 },
     })
     expect(snake).toMatchObject({ compactMeta: { preTokens: 90, postTokens: 30 } })
+  })
+
+  test('isCompactSummary 用户消息 → system compact_summary 折叠摘要行（headless 压缩边界载体）', () => {
+    const msg = entryToHistoryMessage({
+      type: 'user',
+      uuid: 'cs1',
+      isCompactSummary: true,
+      isVisibleInTranscriptOnly: true,
+      timestamp: '2026-09-24T00:00:00Z',
+      message: { role: 'user', content: 'This session is being continued…\n\nSummary:\n1. 要点' },
+    })
+    expect(msg).toMatchObject({
+      role: 'system',
+      subtype: 'compact_summary',
+      uuid: 'cs1',
+      blocks: [{ kind: 'text', text: expect.stringContaining('Summary') }],
+    })
   })
 
   test('sidechain / 非对话类型 / 内部 user 消息 → null（不进主抄本）', () => {

@@ -461,8 +461,21 @@ export function useTranscriptIngest(opts: {
       }
       case 'compact_boundary': {
         if (replay) break
-        const meta = (rec.compactMetadata ?? {}) as { preTokens?: number; postTokens?: number }
-        pushMsg({ id: nextId(), role: 'system', systemKind: 'divider', compactMeta: meta, blocks: [] })
+        // wire 上是 snake_case compact_metadata（SDK 正本 sdk.d.ts / 官方文档镜像）；
+        // 上游根本没有 post_tokens——只取 preTokens，post 留 undefined（下一条
+        // assistant usage 到达后上下文环形自愈，不在这里猜）
+        const raw = (rec.compact_metadata ?? rec.compactMetadata ?? {}) as {
+          trigger?: string
+          pre_tokens?: number
+          preTokens?: number
+        }
+        pushMsg({
+          id: nextId(),
+          role: 'system',
+          systemKind: 'divider',
+          compactMeta: { trigger: raw.trigger, preTokens: raw.pre_tokens ?? raw.preTokens },
+          blocks: [],
+        })
         break
       }
     }

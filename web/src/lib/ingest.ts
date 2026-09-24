@@ -175,7 +175,8 @@ export function prependHistoryMsgs(state: IngestState, hs: HistoryMessage[]): vo
 
 /**
  * 历史/tail 的单条归并：把 HistoryMessage 翻成 ChatMsg 落进 state。
- * compact_boundary 渲染为分隔线；isMeta 不进主抄本。
+ * compact_boundary 渲染为分隔线；compact_summary（headless 的压缩边界载体）
+ * 落折叠摘要行；isMeta 不进主抄本。
  */
 export function appendHistoryMsg(state: IngestState, h: HistoryMessage): void {
   if (h.isMeta) return
@@ -186,6 +187,16 @@ export function appendHistoryMsg(state: IngestState, h: HistoryMessage): void {
       systemKind: 'divider',
       compactMeta: h.compactMeta,
       blocks: [],
+    })
+    return
+  }
+  if (h.role === 'system' && h.subtype === 'compact_summary') {
+    pushIngestMsg(state, {
+      id: h.uuid ?? nextId(),
+      role: 'system',
+      systemKind: 'compactSummary',
+      blocks: h.blocks.map((b) => ({ kind: 'text' as const, text: b.text ?? '' })),
+      timestamp: h.timestamp,
     })
     return
   }

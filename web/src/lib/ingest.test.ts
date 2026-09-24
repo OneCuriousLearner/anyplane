@@ -127,6 +127,23 @@ describe('ingest：tool_use ↔ tool_result 配对', () => {
     expect(s.msgs).toHaveLength(1)
     expect(s.msgs[0]).toMatchObject({ systemKind: 'divider', compactMeta: { preTokens: 100, postTokens: 20 } })
   })
+
+  test('compact_summary 落折叠摘要行（全文携带，渲染层折叠）', () => {
+    const s = createIngestState()
+    appendHistoryMsg(s, {
+      uuid: 'cs-1',
+      role: 'system',
+      subtype: 'compact_summary',
+      blocks: [{ kind: 'text', text: 'This session is being continued… Summary: 要点' }],
+    })
+    expect(s.msgs).toHaveLength(1)
+    expect(s.msgs[0]).toMatchObject({
+      id: 'cs-1',
+      role: 'system',
+      systemKind: 'compactSummary',
+      blocks: [{ kind: 'text', text: expect.stringContaining('要点') }],
+    })
+  })
 })
 
 describe('prependHistoryMsgs：历史翻页 prepend', () => {

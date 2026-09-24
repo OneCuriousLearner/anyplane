@@ -115,18 +115,39 @@ export const MessageView = memo(function MessageView(props: { msg: ChatMsg; comp
 
   if (msg.role === 'system') {
     if (msg.systemKind === 'divider') {
+      // compactMeta 文案：上游 wire 只有 pre_tokens（无 post_tokens）——post 未知时
+      // 不渲染「?」猜数，如实标「压缩前」；两侧都有才用 X→Y
+      const cm = msg.compactMeta
+      const compactLabel = cm
+        ? cm.preTokens != null && cm.postTokens != null
+          ? `上下文已压缩 ${fmtTokens(cm.preTokens)}→${fmtTokens(cm.postTokens)}`
+          : cm.preTokens != null
+            ? `上下文已压缩（压缩前 ${fmtTokens(cm.preTokens)}）`
+            : '上下文已压缩'
+        : undefined
       return (
         <div className="my-3 flex items-center gap-3 text-faint">
           <div className="h-px flex-1 bg-line" />
           <span className="font-mono text-[10px] tracking-widest uppercase">
-            {msg.compactMeta
-              ? `上下文已压缩 ${fmtTokens(msg.compactMeta.preTokens)}→${fmtTokens(msg.compactMeta.postTokens)}`
-              : msg.blocks[0]?.kind === 'text'
-                ? msg.blocks[0].text
-                : ''}
+            {compactLabel ?? (msg.blocks[0]?.kind === 'text' ? msg.blocks[0].text : '')}
           </span>
           <div className="h-px flex-1 bg-line" />
         </div>
+      )
+    }
+    // headless /compact 的边界载体（isCompactSummary 用户消息转来）：
+    // 折叠成一行，点开看摘要全文（英文模板 prompt 全文携带在 blocks 里）
+    if (msg.systemKind === 'compactSummary') {
+      return (
+        <details className="group my-3 px-7 font-mono text-[11px] text-faint">
+          <summary className="cursor-pointer select-none list-none">
+            <span className="group-open:hidden">▸ 已压缩上下文 · 查看摘要</span>
+            <span className="hidden group-open:inline">▾ 已压缩上下文 · 收起摘要</span>
+          </summary>
+          <pre className="mt-2 max-h-64 overflow-auto rounded-[10px] bg-surface px-3 py-2 whitespace-pre-wrap leading-relaxed text-muted">
+            {msg.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('\n')}
+          </pre>
+        </details>
       )
     }
     const err = msg.systemKind === 'error'
