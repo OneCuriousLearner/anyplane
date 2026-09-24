@@ -115,7 +115,6 @@ function textOfContent(content: unknown, sep: string): string {
   return ''
 }
 
-/** 从 jsonl 提取标题/首条提示/cwd。只读前 64KB + 末 64KB，避免大文件全量解析 */
 /** 不该成为标题/预览的用户消息前缀（extractMeta 用，startsWith 口径）：
  *  命令回显（command-name/command-message/command-args）、本地命令输出、
  *  后台通知等系统注入文本——走查实测这些漏进列表预览（整段交接简报、<task-notification> 等）。
@@ -133,6 +132,7 @@ const NON_PREVIEW_PREFIXES = [
   '<teammate-message>',
 ]
 
+/** 从 jsonl 提取标题/首条提示/cwd。只读前 64KB + 末 64KB，避免大文件全量解析 */
 function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?: string } {
   let head: string
   let tail = ''

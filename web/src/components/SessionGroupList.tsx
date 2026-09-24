@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SessionInfo } from '@anyplane/protocol'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
@@ -23,12 +23,17 @@ export function SessionGroupList(props: {
 
   // 当前选中行滚进视口（深链还原/通知点回来时行可能在视口外）。
   // 只滚最近的滚动容器（侧栏），block:'nearest' 已在视口内时不动。
-  // 行不在窗口内（未渲染）时静默跳过——窗口化与折叠都会让它缺席
+  // 每个 key 只滚成功一次：① 行还没渲染（列表 fetch 与深链还原竞态、组折叠）就等
+  // 数据/折叠态变化重试；② 成功后不再滚——轮询刷新不能把用户手动滚走的位置拽回来
+  const scrolledForKeyRef = useRef<string | undefined>(undefined)
   useEffect(() => {
-    if (!props.selectedKey) return
-    const el = document.querySelector(`[data-session-key="${CSS.escape(props.selectedKey)}"]`)
-    el?.scrollIntoView({ block: 'nearest' })
-  }, [props.selectedKey])
+    const key = props.selectedKey
+    if (!key || scrolledForKeyRef.current === key) return
+    const el = document.querySelector(`[data-session-key="${CSS.escape(key)}"]`)
+    if (!el) return
+    el.scrollIntoView({ block: 'nearest' })
+    scrolledForKeyRef.current = key
+  }, [props.selectedKey, props.groups, props.collapsed])
 
   return (
     <>
