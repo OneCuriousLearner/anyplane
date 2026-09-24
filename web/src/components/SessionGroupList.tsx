@@ -1,8 +1,13 @@
+import { useEffect, useState } from 'react'
 import type { SessionInfo } from '@anyplane/protocol'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
 import { BranchIcon, dirBasename, STATUS_META, timeAgo } from './listChrome'
 import type { SessionMenuAnchor } from './SessionRowMenu'
+
+/** 每组默认渲染条数（走查问题 1：187 条全铺开时首屏全是旧会话）；
+ *  等待审批与当前选中的行始终渲染（钉在组顶），不受窗口限制 */
+const GROUP_PAGE = 5
 
 export function SessionGroupList(props: {
   groups: Map<string, { list: SessionInfo[]; branch?: string; worktreeOf?: string }>
@@ -13,10 +18,28 @@ export function SessionGroupList(props: {
   menuKey: string | null
   onMenu: (anchor: SessionMenuAnchor | null) => void
 }) {
+  // 每组已展开条数（默认 GROUP_PAGE，「查看更多」每次 +GROUP_PAGE）
+  const [shown, setShown] = useState<Record<string, number>>({})
+
+  // 当前选中行滚进视口（深链还原/通知点回来时行可能在视口外）。
+  // 只滚最近的滚动容器（侧栏），block:'nearest' 已在视口内时不动。
+  // 行不在窗口内（未渲染）时静默跳过——窗口化与折叠都会让它缺席
+  useEffect(() => {
+    if (!props.selectedKey) return
+    const el = document.querySelector(`[data-session-key="${CSS.escape(props.selectedKey)}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [props.selectedKey])
+
   return (
     <>
       {[...props.groups.entries()].map(([cwd, group]) => {
         const folded = props.collapsed.has(cwd)
+        // 钉顶行：等待审批（需要我）+ 当前选中（我在哪）——即使落在窗口外也留在组顶
+        const pinned = group.list.filter((s) => s.managed.waiting || s.key === props.selectedKey)
+        const pinnedKeys = new Set(pinned.map((s) => s.key))
+        const rest = group.list.filter((s) => !pinnedKeys.has(s.key))
+        const visible = [...pinned, ...rest.slice(0, shown[cwd] ?? GROUP_PAGE)]
+        const remaining = group.list.length - visible.length
         return (
           <div key={cwd}>
             <button
@@ -54,14 +77,19 @@ export function SessionGroupList(props: {
               )}
             </button>
             {!folded &&
-              group.list.map((s) => {
+              visible.map((s) => {
                 const stKey = s.managed.waiting ? 'waiting' : s.managed.busy ? 'busy' : s.managed.spawned ? 'idle' : s.status
                 const st = STATUS_META[stKey] ?? STATUS_META.offline
                 const active = props.selectedKey === s.key
                 const busyRow = stKey === 'busy'
+                // 主标题兜底：无 title 时用首条消息预览（codex 线程恒无 title，前 8 位 id 不可读）；
+                // 已被提升为主标题的 lastPrompt 不再在副标题重复
+                const displayTitle = s.title ?? s.lastPrompt ?? s.sessionId.slice(0, 8)
+                const subPrompt = s.title ? s.lastPrompt : undefined
                 return (
                   <div
                     key={s.key}
+                    data-session-key={s.key}
                     className={`group relative mx-1 mb-0.5 w-[calc(100%-0.5rem)] rounded-[14px] transition-colors ${
                       busyRow ? 'wave-surface bg-surface' : 'hover:bg-surface'
                     } ${active ? 'bg-surface2' : ''}`}
@@ -73,14 +101,14 @@ export function SessionGroupList(props: {
                     >
                       <div className="flex items-center gap-2.5 pr-[22px]">
                         <span className={`h-2 w-2 shrink-0 rounded-full ${st.cls}`} />
-                        <span className="truncate text-[15px] font-semibold">{s.title ?? s.sessionId.slice(0, 8)}</span>
+                        <span className="truncate text-[15px] font-semibold">{displayTitle}</span>
                         <span className="ml-auto shrink-0 font-mono text-[11px] text-faint">{timeAgo(s.mtime)}</span>
                       </div>
                       <div className="mt-1 flex items-center gap-1.5 pl-[18px] text-[12px]">
                         <span className={`shrink-0 font-medium ${stKey === 'waiting' ? 'text-accent' : 'text-muted'}`}>
                           {st.label}
                         </span>
-                        {s.lastPrompt && <span className="truncate font-mono text-[11px] text-faint">{s.lastPrompt}</span>}
+                        {subPrompt && <span className="truncate font-mono text-[11px] text-faint">{subPrompt}</span>}
                       </div>
                     </button>
                     <button
@@ -102,6 +130,15 @@ export function SessionGroupList(props: {
                   </div>
                 )
               })}
+            {!folded && remaining > 0 && (
+              <button
+                type="button"
+                className="mx-1 mb-1 block w-[calc(100%-0.5rem)] rounded-[10px] py-1.5 text-center font-mono text-[11px] text-faint hover:bg-surface hover:text-muted"
+                onClick={() => setShown((prev) => ({ ...prev, [cwd]: (prev[cwd] ?? GROUP_PAGE) + GROUP_PAGE }))}
+              >
+                查看更多（还剩 {remaining} 条）
+              </button>
+            )}
           </div>
         )
       })}

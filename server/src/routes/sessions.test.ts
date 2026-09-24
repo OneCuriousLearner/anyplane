@@ -26,7 +26,7 @@ function deps(overrides: Partial<SessionRouteDeps>): SessionRouteDeps {
 }
 
 describe('GET /api/sessions', () => {
-  test('返回数组形状并合并 Codex 与 Claude，Codex 排在前面', async () => {
+  test('返回数组形状并合并 Codex 与 Claude，全局按 mtime 降序（不再按后端分段）', async () => {
     const response = await handleSessionRoutes(
       request('GET'),
       new URL('http://localhost/api/sessions'),
@@ -69,6 +69,7 @@ describe('GET /api/sessions', () => {
     const rows = (await response!.json()) as Record<string, unknown>[]
     expect(Array.isArray(rows)).toBe(true)
     expect(rows).toHaveLength(2)
+    // mtime 200（codex）> 100（claude）：codex 行在前是排序结果，不再是拼接顺序
     expect(rows[0]).toMatchObject({
       sessionId: 'thread-1',
       backend: 'codex',
@@ -88,6 +89,34 @@ describe('GET /api/sessions', () => {
       live: { pid: 123 },
       managed: { sessionId: 's|-repo-claude|session-1' },
     })
+  })
+
+  test('Claude 行更新（mtime 更大）时排在 Codex 之前', async () => {
+    const response = await handleSessionRoutes(
+      request('GET'),
+      new URL('http://localhost/api/sessions'),
+      deps({
+        listCodexSessions: async () => [
+          { backend: 'codex', key: 'x|old', id: 'old', cwd: '/repo/x', mtime: 50, status: 'idle' },
+        ],
+        listSessions: () => [
+          {
+            backend: 'claude',
+            key: 's|-repo-c|new',
+            id: 'new',
+            cwd: '/repo/c',
+            slug: '-repo-c',
+            mtime: 300,
+            sizeBytes: 1,
+            status: 'idle',
+          },
+        ],
+        readGitInfo: () => undefined,
+        statusOf: () => ({ spawned: false, busy: false }),
+      }),
+    )
+    const rows = (await response!.json()) as Array<{ key: string }>
+    expect(rows.map((r) => r.key)).toEqual(['s|-repo-c|new', 'x|old'])
   })
 
   test('Codex 先失败、Claude 仍在跑时仍返回 Claude 列表', async () => {
