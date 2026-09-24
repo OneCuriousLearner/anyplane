@@ -8,6 +8,7 @@ import { errorMessage } from '../../util'
 import { config } from '../../config'
 import { RpcError } from './rpc'
 import { appendReasoning } from './reasoningStore'
+import { readCompactedSummary } from './history'
 import { join } from 'node:path'
 import { Glob } from 'bun'
 import {
@@ -410,6 +411,12 @@ export class CodexSession {
         // collab 子线程注册（父子事件链转发的路由表，0.148 实测子线程事件推到父连接）：
         // 最早的注册点是 subAgentActivity started（子线程首批事件紧随其后到达）
         this.registerSpawnedChildren(item as { type?: string }, 1)
+        // /compact 完成：上游 ThreadItem 只有 {type,id}（协议投影丢 payload），完整摘要只在
+        // rollout 的 compacted 记录里——扫出来随分隔线一起发（读不到就发裸分隔线，与旧行为一致）
+        if (itemType === 'contextCompaction') {
+          void this.emitCompactBoundaryWithSummary(itemId)
+          break
+        }
         for (const m of t?.itemCompleted(item as never) ?? []) this.emit(m)
         break
       }
@@ -808,6 +815,23 @@ export class CodexSession {
 
   private emit(msg: CliMessage): void {
     this.cb.onMessage(msg)
+  }
+
+  /** /compact 完成（contextCompaction item）：rollout 尾扫 compacted 摘要随分隔线发出。
+   *  本地文件读是 ms 级；异步 emit 可能被紧随的消息赶超，无碍（分隔线语义不依赖紧邻）。 */
+  private async emitCompactBoundaryWithSummary(itemId?: string): Promise<void> {
+    let summary: string | undefined
+    if (this.threadId) {
+      try {
+        summary = await readCompactedSummary(this.runtime.home, this.threadId)
+      } catch {}
+    }
+    this.emit({
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: itemId,
+      ...(summary ? { compact_metadata: { summary } } : {}),
+    } as CliMessage)
   }
 
   private emitError(text: string): void {

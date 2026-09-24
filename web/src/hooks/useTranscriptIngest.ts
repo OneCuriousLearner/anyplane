@@ -463,17 +463,19 @@ export function useTranscriptIngest(opts: {
         if (replay) break
         // wire 上是 snake_case compact_metadata（SDK 正本 sdk.d.ts / 官方文档镜像）；
         // 上游根本没有 post_tokens——只取 preTokens，post 留 undefined（下一条
-        // assistant usage 到达后上下文环形自愈，不在这里猜）
+        // assistant usage 到达后上下文环形自愈，不在这里猜）。
+        // summary：codex 侧从 rollout 尾扫带来的压缩摘要（claude 无此字段）
         const raw = (rec.compact_metadata ?? rec.compactMetadata ?? {}) as {
           trigger?: string
           pre_tokens?: number
           preTokens?: number
+          summary?: string
         }
         pushMsg({
           id: nextId(),
           role: 'system',
           systemKind: 'divider',
-          compactMeta: { trigger: raw.trigger, preTokens: raw.pre_tokens ?? raw.preTokens },
+          compactMeta: { trigger: raw.trigger, preTokens: raw.pre_tokens ?? raw.preTokens, summary: raw.summary },
           blocks: [],
         })
         break

@@ -1,6 +1,22 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RpcError } from './rpc'
 import { CodexRuntime } from './runtime'
+
+/** 临时 CODEX_HOME（rollout 夹具用），用后还原 */
+let savedCodexHome: string | undefined
+let tmpHome = ''
+afterEach(() => {
+  if (savedCodexHome === undefined) delete process.env.CODEX_HOME
+  else process.env.CODEX_HOME = savedCodexHome
+  savedCodexHome = undefined
+  if (tmpHome) {
+    rmSync(tmpHome, { recursive: true, force: true })
+    tmpHome = ''
+  }
+})
 
 describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => {
   /** rpcRequest 打桩：按 method 路由到录制表，返回 canned 应答 */
@@ -148,6 +164,38 @@ describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => 
       },
     })
     await expect(runtime.readHistory('th-permafail')).rejects.toThrow('-32601')
+  })
+
+  test('compact_boundary 历史消息挂上 rollout 尾扫的摘要（compactMeta.summary）', async () => {
+    // 上游历史投影对 compacted 只置标志丢 payload——摘要唯一数据源是 rollout 行本身
+    savedCodexHome = process.env.CODEX_HOME
+    tmpHome = mkdtempSync(join(tmpdir(), 'anyplane-codex-home-'))
+    const sessionDir = join(tmpHome, 'sessions', '2026', '09', '24')
+    mkdirSync(sessionDir, { recursive: true })
+    writeFileSync(
+      join(sessionDir, 'rollout-2026-09-24T00-00-00-th-compact.jsonl'),
+      [
+        JSON.stringify({ type: 'response_item', payload: { type: 'message' } }),
+        JSON.stringify({ type: 'compacted', payload: { message: '摘要：前半程做了 X' } }),
+      ].join('\n'),
+    )
+    process.env.CODEX_HOME = tmpHome
+
+    const { runtime } = stubRpc({
+      'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
+      'thread/turns/list': () => ({ data: [{ id: 'turn-1', startedAt: 100, completedAt: 150 }], nextCursor: null }),
+      'thread/items/list': () => ({
+        data: [
+          { turnId: 'turn-1', item: { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '开始' }] } },
+          { turnId: 'turn-1', item: { id: 'x1', type: 'contextCompaction' } },
+          { turnId: 'turn-1', item: { id: 'a1', type: 'agentMessage', text: '完成' } },
+        ],
+        nextCursor: null,
+      }),
+    })
+    const msgs = await runtime.readHistory('th-compact')
+    const divider = msgs.find((m) => m.subtype === 'compact_boundary')
+    expect(divider?.compactMeta?.summary).toBe('摘要：前半程做了 X')
   })
 })
 

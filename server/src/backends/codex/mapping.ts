@@ -88,6 +88,28 @@ export function extractTokenCountFromRolloutTail(text: string): RolloutTokenCoun
   return undefined
 }
 
+/** 从 rollout 文本尾部倒序找最后一条 type:"compacted" 记录，返回 payload.message（压缩摘要）。
+ *  上游历史投影只置 saw_compaction 标志、丢 payload（thread_history.rs），摘要在 AnyPlane 侧
+ *  的唯一数据源就是 rollout 行本身（2026-09-24 实测形状：payload.message 为完整交接摘要）。
+ *  与 extractTokenCountFromRolloutTail 同款的尾扫先例。 */
+export function extractCompactedFromRolloutTail(text: string): string | undefined {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line || !line.includes('compacted')) continue
+    let rec: { type?: string; payload?: { message?: unknown } }
+    try {
+      rec = JSON.parse(line) as typeof rec
+    } catch {
+      continue // 尾块首行可能被截断，跳过
+    }
+    if (rec.type !== 'compacted') continue
+    const msg = rec.payload?.message
+    if (typeof msg === 'string' && msg.trim()) return msg
+  }
+  return undefined
+}
+
 /** 侧车回插消息的 uuid：itemId（0.148+ 落盘）优先——与 live 流 committed 思考块同 id，
  *  前端 seen 去重后重连补发/终态拉取不叠加；旧数据回退 rs-<ts>-<i> 合成 id */
 export function reasoningSidecarUuid(entry: { ts: number; itemId?: string }, index: number): string {

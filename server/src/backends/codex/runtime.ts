@@ -347,7 +347,7 @@ export class CodexRuntime {
   }
 
   private historyCtx() {
-    return { sessions: this.sessions.values(), cache: this.threadMetaCache }
+    return { sessions: this.sessions.values(), cache: this.threadMetaCache, home: this.home }
   }
 
   /** 分页拉取：cursor 翻页直到无 nextCursor 或达到 limitPages */

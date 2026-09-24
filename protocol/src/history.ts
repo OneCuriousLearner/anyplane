@@ -22,8 +22,9 @@ export interface HistoryMessage {
   /** system 消息的子类型（如 compact_boundary） */
   subtype?: string
   blocks: HistoryBlock[]
-  /** compact_boundary 的元数据 */
-  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number }
+  /** compact_boundary 的元数据；summary 是压缩摘要全文（codex 从 rollout compacted 记录尾扫，
+   *  claude headless 走 compact_summary 消息而非此字段），前端折叠展示 */
+  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number; summary?: string }
   timestamp?: string
   isMeta?: boolean
   /** 是否可作为 rewind 目标（compact 边界之前的消息在逻辑上已不存在，无法回滚到） */

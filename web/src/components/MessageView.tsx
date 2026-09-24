@@ -116,7 +116,8 @@ export const MessageView = memo(function MessageView(props: { msg: ChatMsg; comp
   if (msg.role === 'system') {
     if (msg.systemKind === 'divider') {
       // compactMeta 文案：上游 wire 只有 pre_tokens（无 post_tokens）——post 未知时
-      // 不渲染「?」猜数，如实标「压缩前」；两侧都有才用 X→Y
+      // 不渲染「?」猜数，如实标「压缩前」；两侧都有才用 X→Y。
+      // codex 的分隔线带 summary（rollout 尾扫的压缩摘要）：分隔线照旧，摘要可展开
       const cm = msg.compactMeta
       const compactLabel = cm
         ? cm.preTokens != null && cm.postTokens != null
@@ -126,12 +127,25 @@ export const MessageView = memo(function MessageView(props: { msg: ChatMsg; comp
             : '上下文已压缩'
         : undefined
       return (
-        <div className="my-3 flex items-center gap-3 text-faint">
-          <div className="h-px flex-1 bg-line" />
-          <span className="font-mono text-[10px] tracking-widest uppercase">
-            {compactLabel ?? (msg.blocks[0]?.kind === 'text' ? msg.blocks[0].text : '')}
-          </span>
-          <div className="h-px flex-1 bg-line" />
+        <div className="my-3">
+          <div className="flex items-center gap-3 text-faint">
+            <div className="h-px flex-1 bg-line" />
+            <span className="font-mono text-[10px] tracking-widest uppercase">
+              {compactLabel ?? (msg.blocks[0]?.kind === 'text' ? msg.blocks[0].text : '')}
+            </span>
+            <div className="h-px flex-1 bg-line" />
+          </div>
+          {cm?.summary && (
+            <details className="group mt-1.5 px-7 font-mono text-[11px] text-faint">
+              <summary className="cursor-pointer select-none list-none">
+                <span className="group-open:hidden">▸ 已压缩上下文 · 查看摘要</span>
+                <span className="hidden group-open:inline">▾ 已压缩上下文 · 收起摘要</span>
+              </summary>
+              <pre className="mt-2 max-h-64 overflow-auto rounded-[10px] bg-surface px-3 py-2 whitespace-pre-wrap leading-relaxed text-muted">
+                {cm.summary}
+              </pre>
+            </details>
+          )}
         </div>
       )
     }
