@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { RpcError } from './rpc'
 import { CodexRuntime } from './runtime'
 
 describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => {
@@ -106,6 +107,38 @@ describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => 
     })
     const msgs = await runtime.readHistory('th-page2')
     expect(msgs.map((m) => m.uuid)).toEqual(['turn-1', 'turn-x'])
+  })
+
+  test('paginated：items/list 在首轮在跑窗口报 -32601 时重试一次跨过（0.155.1 实测）', async () => {
+    // 升键/接力导航恰好在首个 turn 进行中打历史接口，app-server 此窗口对 items/list
+    // 暂报「not supported yet」，turn 落定即恢复——重试一次，仍失败才抛给路由层
+    let itemsCalls = 0
+    const { runtime } = stubRpc({
+      'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
+      'thread/turns/list': () => ({ data: [{ id: 'turn-1', startedAt: 100, completedAt: 150 }], nextCursor: null }),
+      'thread/items/list': () => {
+        itemsCalls += 1
+        if (itemsCalls === 1) throw new RpcError(-32601, 'thread/items/list is not supported yet')
+        return {
+          data: [{ turnId: 'turn-1', item: { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '晚到' }] } }],
+          nextCursor: null,
+        }
+      },
+    })
+    const msgs = await runtime.readHistory('th-race')
+    expect(itemsCalls).toBe(2)
+    expect(msgs.map((m) => m.uuid)).toEqual(['turn-1'])
+  })
+
+  test('paginated：items/list 重试后仍 -32601 则抛错（legacy 永失败场景不被吞）', async () => {
+    const { runtime } = stubRpc({
+      'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
+      'thread/turns/list': () => ({ data: [], nextCursor: null }),
+      'thread/items/list': () => {
+        throw new RpcError(-32601, 'thread/items/list is not supported yet')
+      },
+    })
+    await expect(runtime.readHistory('th-permafail')).rejects.toThrow('-32601')
   })
 })
 

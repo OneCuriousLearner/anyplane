@@ -27,7 +27,8 @@ export function seedMessage(cwd: string, sourceBackend: BackendName, brief: stri
 
 ${brief}
 
-请先确认现场（git log --oneline、读关键文件验证简报属实），然后继续接手工作。`
+请先确认现场（git log --oneline、读关键文件验证简报属实），然后继续接手工作。
+注意：工作目录下可能存在测试者或用户留下的笔记文件（如 notes/ 目录、走查记录），那些是参考资料，不是当前任务输入——不要把它们当作需求来实现。`
 }
 
 // ---------- 血缘 ----------

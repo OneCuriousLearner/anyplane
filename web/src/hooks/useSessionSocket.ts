@@ -14,6 +14,7 @@ import type { NavigateSession } from '../lib/sessionHash'
 import { reconcileApprovals } from '../lib/approvals'
 import { nextId, type Block } from '../lib/blocks'
 import { appendHistoryMsg, flushStrayResults, hitsSeen, rememberKeys, type IngestState } from '../lib/ingest'
+import { isCodexKey } from '../lib/key'
 import type { BackendCapabilities, ServerEvent, SessionState } from '@anyplane/protocol'
 import { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
@@ -355,16 +356,17 @@ export function useSessionSocket(opts: {
             break
           }
           case 'moved': {
-            // /clear 对话重置：进程已换新 sessionId 续跑，Hub 重键完毕——跳到新会话页
-            //（旧 transcript 在磁盘原样保留，列表页可见）。旧 key 已作废，replace 不留历史。
+            // 会话 key 迁移：/clear 重置（reason=clear）或懒启动/懒分叉拿到真实 id 升键
+            //（reason=spawned，n|→s|、xn|→x|、b|→s|）。旧 key 已作废，replace 不留历史。
             const parts = ev.targetKey.split('|')
+            const codex = isCodexKey(ev.targetKey)
             onNavigate?.(
               makeSessionInfo({
                 key: ev.targetKey,
-                slug: parts[1] ?? session.slug,
+                slug: codex ? 'codex' : (parts[1] ?? session.slug),
                 sessionId: ev.targetSessionId ?? 'new',
                 cwd: session.cwd,
-                backend: 'claude',
+                backend: codex ? 'codex' : 'claude',
                 managed: { spawned: true, busy: false, clients: 0 },
               }),
               { replace: true },

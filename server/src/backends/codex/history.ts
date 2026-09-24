@@ -4,6 +4,7 @@ import { log } from '../../log'
 import type { HistoryMessage } from '@anyplane/protocol'
 import { readReasoning } from './reasoningStore'
 import { reasoningSidecarUuid } from './mapping'
+import { RpcError } from './rpc'
 import { itemsToHistory, type ThreadItem } from './translate'
 
 export type RpcRequestFn = (method: string, params?: unknown, timeoutMs?: number) => Promise<unknown>
@@ -196,8 +197,18 @@ export async function readHistoryForThread(
 ): Promise<HistoryMessage[]> {
   // historyMode 走 threadMeta 缓存（同线程重复打开/回滚判定不再各付一次 thread/read）
   const mode = (await threadMeta(rpcRequest, threadId, ctx)).historyMode
-  const turns = mode === 'paginated' ? await readPaginatedTurns(rpcRequest, threadId) : await readLegacyTurns(rpcRequest, threadId)
-  return turnsToHistory(threadId, turns)
+  if (mode !== 'paginated') return turnsToHistory(threadId, await readLegacyTurns(rpcRequest, threadId))
+  // 0.155.1 实测：paginated 线程首个 turn 在跑期间 items/list 暂报 -32601「not supported yet」，
+  // turn 落定即恢复。升键/接力导航恰好在这个窗口打历史接口——重试一次跨过窗口；
+  // 仍失败则抛给路由层（500 + {error}，前端显示真实文案而非 TypeError）
+  try {
+    return turnsToHistory(threadId, await readPaginatedTurns(rpcRequest, threadId))
+  } catch (e) {
+    if (!(e instanceof RpcError && e.code === -32601)) throw e
+    log.warn('[codex] items/list 暂不可用（首轮在跑？），1.5s 后重试一次', { threadId })
+    await new Promise((r) => setTimeout(r, 1500))
+    return turnsToHistory(threadId, await readPaginatedTurns(rpcRequest, threadId))
+  }
 }
 
 /** 原地回滚（paginated 线程）：thread/revert 用 beforeTurnId 之前的持久历史替换现状——

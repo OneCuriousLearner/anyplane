@@ -48,6 +48,8 @@ function loadCollapsed(): Set<string> {
 export function SessionList(props: {
   selectedKey?: string
   onSelect: (s: SessionInfo) => void
+  /** 轮询发现选中行的更新字段（AI 标题/改名）时上报，由 App 合并回选中快照 */
+  onSyncSelected?: (s: SessionInfo) => void
 }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -218,12 +220,22 @@ export function SessionList(props: {
    *  超时兜底必须有：裸 fetch 无 AbortSignal，挂死的响应（TCP 不返回）会让守卫
    *  卡死、轮询与手动刷新全部静默停摆——race 超时即可复位（底层 fetch 随它去） */
   const refreshingRef = useRef(false)
+  /** 选中项同步的 ref 桥：10s interval 闭包捕获的是首轮 props，key 与回调都要读最新 */
+  const syncRef = useRef<{ key?: string; cb?: (s: SessionInfo) => void }>({})
+  syncRef.current = { key: props.selectedKey, cb: props.onSyncSelected }
   const refresh = () => {
     if (refreshingRef.current) return
     refreshingRef.current = true
     const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('refresh timeout')), 15_000))
     Promise.race([fetchSessions(), timeout])
-      .then(setSessions)
+      .then((list) => {
+        setSessions(list)
+        // 选中行的标题变化（AI 标题落盘 / /rename）借轮询写回顶栏——
+        // selected 是点进去那一刻的快照，不同步的话标题永远定格
+        const { key, cb } = syncRef.current
+        const cur = key ? list.find((s) => s.key === key) : undefined
+        if (cur && cb) cb(cur)
+      })
       .catch(() => {}) // 401 由 App 令牌门接管；超时下一轮重试
       .finally(() => {
         refreshingRef.current = false

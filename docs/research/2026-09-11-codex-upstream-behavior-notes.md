@@ -49,6 +49,10 @@
   rollout 时代的老线程经当前二进制读取同样缺，说明是重建/持久化路径而非单线程数据问题）；
   `turns/list` 对 legacy 可用但内嵌 items 只有 user/agentMessage，`items/list` 对 legacy 报 -32601
   ——**legacy 线程只能继续走 `thread/read includeTurns` 的残缺现状，借不了分页 API 补齐**。
+- **paginated 线程首个 turn 在跑期间 `items/list` 暂报 -32601「not supported yet」，turn 落定即恢复**
+  （2026-09-24，0.155.1 实测）：新建线程/接力播种的导航恰好在这个窗口打历史接口。
+  与 legacy 的永久性 -32601 同码不同义——区分只能靠「线程确为 paginated 且首轮在跑」的语境，
+  AnyPlane 侧的处置是 paginated 轨道上重试一次（`history.ts readHistoryForThread`）。
 
 ## 回滚与分叉（0.155.1 实测）
 

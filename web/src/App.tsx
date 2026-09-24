@@ -86,6 +86,15 @@ export default function App() {
     else if (!replace) sessionPushesRef.current += 1
   }
 
+  /** 列表轮询写回：同 key 且标题变了才合并（纯 setSelected——不动 hash，不动历史帧）。
+   *  selected 是点进去那一刻的快照；AI 标题落盘与 /rename 只反映在下一轮列表轮询里，
+   *  不合并的话顶栏标题永远定格（走查问题 2） */
+  const syncSelected = (s: SessionInfo) => {
+    setSelected((prev) =>
+      prev && prev.key === s.key && prev.title !== s.title ? { ...prev, title: s.title } : prev,
+    )
+  }
+
   const backToList = () => {
     const n = sessionPushesRef.current
     if (n > 0) {
@@ -210,7 +219,7 @@ export default function App() {
       {import.meta.env.DEV && <ModeBadge />}
       {/* 移动端：选中后隐藏列表；桌面端：双栏常显，右缘可拖宽 */}
       <div className={`relative h-full bg-surface/40 ${selected ? 'hidden md:block' : 'block'}`}>
-        <SessionList selectedKey={selected?.key} onSelect={(s) => selectSession(s)} />
+        <SessionList selectedKey={selected?.key} onSelect={(s) => selectSession(s)} onSyncSelected={syncSelected} />
         {/* biome-ignore lint/a11y/useSemanticElements: 可拖拽分隔条需要 aria-valuenow/min/max，原生 <hr> 不支持——这是 ARIA 窗口分隔条模式的标准写法 */}
         <div
           role="separator"

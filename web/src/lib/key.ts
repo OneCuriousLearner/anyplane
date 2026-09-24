@@ -23,6 +23,8 @@ export function slugOf(cwd: string): string {
 }
 
 /** key 不在会话列表时（b| 分支 / 刚归档 / 深链直达）按 key 自身编码构造最小 SessionInfo。
+ *  n|/xn|（懒启动）也要兜底：懒启动窗口内刷新页面，列表里还查不到这条 key——
+ *  返回 null 会被 restoreFromHash 清掉 hash 丢回列表页。
  *  编码段损坏（非法 % 转义）时返回 null，不让深链解析炸掉整个导航 */
 export function sessionFromKey(key: string): SessionInfo | null {
   try {
@@ -37,6 +39,18 @@ export function sessionFromKey(key: string): SessionInfo | null {
     if (parts[0] === 'b' && parts.length === 3) {
       const cwd = decodeURIComponent(parts[1])
       return { key, slug: slugOf(cwd), sessionId: parts[2], cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+    }
+    // 懒启动占位：sessionId 尚无（'new' 哨兵与 startNew/handoff_done 同口径）；
+    // spawn 后服务端广播 moved 升键，本兜底只为刷新/深链不断链
+    if (parts[0] === 'n' && parts.length === 2) {
+      const cwd = decodeURIComponent(parts[1])
+      if (!cwd) return null // 空 cwd 是损坏形状，还原出来也 spawn 不了
+      return { key, slug: slugOf(cwd), sessionId: 'new', cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+    }
+    if (parts[0] === 'xn' && parts.length === 2) {
+      const cwd = decodeURIComponent(parts[1])
+      if (!cwd) return null
+      return { key, slug: 'codex', sessionId: 'new', cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'codex', managed }
     }
     return null
   } catch {

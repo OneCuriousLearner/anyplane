@@ -84,8 +84,10 @@ export function runHandoff(fromKey: string, toBackend: BackendName, detail: Hand
         // （实现集中在 lifecycle.rekeyHub，与 callbacks.ts 的 /clear 重键同一份）。不重键的话
         // 目标页查不到播种进程——live 事件进无客户端的旧 Hub，首条用户消息还会再 spawn
         // 一个进程与播种进程同写一份 transcript。
-        if (toResolvedKey && targetSessionId && toResolvedKey !== targetKey) {
-          rekeyHub(targetHub, targetKey, toResolvedKey, targetSessionId)
+        // 幂等：播种期间的 init 通常已被 callbacks 的通用升键分支抢先重键过——
+        // 比对当前 hub.key（而非捕获的旧 targetKey），已升键就不再重复三层迁移
+        if (toResolvedKey && targetSessionId && toResolvedKey !== targetHub.key) {
+          rekeyHub(targetHub, targetHub.key, toResolvedKey, targetSessionId)
         }
 
         // 3. 血缘

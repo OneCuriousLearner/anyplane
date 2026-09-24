@@ -58,7 +58,8 @@ export type ServerEvent =
   | { kind: 'tail_reset' }
   /** 重连补发有缺口：断线太久，服务端环形缓冲已挤掉起点，客户端需重载历史补全 */
   | { kind: 'replay_gap'; fromSeq: number }
-  /** /clear 等触发的对话重置：进程以新 sessionId 续跑，Hub 已重键——前端应导航到新会话页 */
+  /** 会话 key 迁移：/clear 对话重置（reason='clear'）或懒启动/懒分叉拿到真实 id 升键
+   * （reason='spawned'，n|→s|、xn|→x|、b|→s|）。Hub 已重键——前端应导航到新会话页 */
   | { kind: 'moved'; targetKey: string; targetSessionId?: string; reason?: string }
   | { kind: 'error'; message: string }
 
