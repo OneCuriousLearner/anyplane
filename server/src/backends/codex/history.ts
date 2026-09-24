@@ -3,7 +3,7 @@
 import { log } from '../../log'
 import type { HistoryMessage } from '@anyplane/protocol'
 import { readReasoning } from './reasoningStore'
-import { extractCompactedFromRolloutTail, reasoningSidecarUuid } from './mapping'
+import { extractCompactedFromRolloutTail, reasoningSidecarUuid, type CompactedRecord } from './mapping'
 import { RpcError } from './rpc'
 import { itemsToHistory, type ThreadItem } from './translate'
 import { Glob } from 'bun'
@@ -34,12 +34,13 @@ export interface ThreadMetaContext {
   home?: string
 }
 
-/** 定位线程的 rollout 文件并尾扫最后一条 compacted 记录的摘要（payload.message）。
+/** 定位线程的 rollout 文件并尾扫最后一条 compacted 记录（含 ordinal 身份，补丁帧的
+ *  「本次记录落盘没有」靠 ordinal 判，不靠摘要文本比对）。
  *  上游历史投影丢 payload（只置 saw_compaction），这是摘要的唯一数据源。
  *  尽力而为：找不到/读不到返回 undefined（调用方静默降级，不影响历史本体）。
  *  分块向上翻倍回扫（512KB → 4 倍递增 → 全文件）：两次 compact 之间写了大量内容时
  *  固定尾窗会漏掉最新记录（review 轮）——翻到找到或读完为止 */
-export async function readCompactedSummary(home: string, threadId: string): Promise<string | undefined> {
+export async function readLastCompacted(home: string, threadId: string): Promise<CompactedRecord | undefined> {
   try {
     const glob = new Glob(`sessions/**/rollout-*${threadId}.jsonl`)
     let rel: string | undefined
@@ -234,12 +235,12 @@ export async function readHistoryForThread(
     // compact 摘要在 rollout 的 compacted 记录里（上游历史投影丢 payload）——
     // 尾扫补到最后一条分隔线上；找不到/读不到静默跳过
     if (ctx.home && msgs.some((m) => m.subtype === 'compact_boundary')) {
-      const summary = await readCompactedSummary(ctx.home, threadId)
-      if (summary) {
+      const rec = await readLastCompacted(ctx.home, threadId)
+      if (rec) {
         // ts lib 目标无 findLastIndex：倒序手扫
         for (let i = msgs.length - 1; i >= 0; i--) {
           if (msgs[i].subtype === 'compact_boundary') {
-            msgs[i] = { ...msgs[i], compactMeta: { ...msgs[i].compactMeta, summary } }
+            msgs[i] = { ...msgs[i], compactMeta: { ...msgs[i].compactMeta, summary: rec.message } }
             break
           }
         }

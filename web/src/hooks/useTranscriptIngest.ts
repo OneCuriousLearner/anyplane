@@ -464,7 +464,9 @@ export function useTranscriptIngest(opts: {
         // wire 上是 snake_case compact_metadata（SDK 正本 sdk.d.ts / 官方文档镜像）；
         // 上游根本没有 post_tokens——只取 preTokens，post 留 undefined（下一条
         // assistant usage 到达后上下文环形自愈，不在这里猜）。
-        // codex 分两帧：先裸分隔线（时序位置正确），摘要扫盘后补发同 uuid 的补丁帧——按 id 合并
+        // codex 分两帧：先裸分隔线（时序位置正确），摘要扫盘后补发同 uuid 的补丁帧——按 id 合并；
+        // id 用裸 uuid（与历史水合 appendHistoryMsg 的 h.uuid 同口径）：重载后分隔线的 id 就是
+        // 裸 uuid，补丁帧迟到仍能合并；加前缀会让重载后的分隔线合并不到、底部多出一条错位线
         const raw = (rec.compact_metadata ?? rec.compactMetadata ?? {}) as {
           trigger?: string
           pre_tokens?: number
@@ -476,7 +478,10 @@ export function useTranscriptIngest(opts: {
           preTokens: raw.pre_tokens ?? raw.preTokens,
           summary: raw.summary,
         }
-        const id = typeof rec.uuid === 'string' ? `cb:${rec.uuid}` : undefined
+        // codex 分两帧：先裸分隔线（时序位置正确），摘要扫盘后补发同 uuid 的补丁帧——按 id 合并。
+        // id 用裸 uuid（与历史水合 appendHistoryMsg 的 h.uuid 同口径）：重载后分隔线的 id 就是
+        // 裸 uuid，补丁帧迟到仍能合并；加前缀会让重载后的分隔线合并不到、底部多出一条错位线
+        const id = typeof rec.uuid === 'string' ? rec.uuid : undefined
         if (id) {
           const existing = messagesStore.get().find((m) => m.id === id)
           if (existing) {

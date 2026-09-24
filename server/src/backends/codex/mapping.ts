@@ -88,16 +88,25 @@ export function extractTokenCountFromRolloutTail(text: string): RolloutTokenCoun
   return undefined
 }
 
-/** 从 rollout 文本尾部倒序找最后一条 type:"compacted" 记录，返回 payload.message（压缩摘要）。
+/** rollout 尾部回扫出的 compacted 记录：message 是压缩摘要全文；ordinal 是 rollout 内
+ *  单调递增的序号——补丁帧的身份判据（「这次 compact 的记录落盘没有」靠它，不是靠
+ *  摘要文本比对——文本同款会短路重试并把旧摘要贴错分隔线，review 轮发现） */
+export interface CompactedRecord {
+  message: string
+  ordinal?: number
+  timestamp?: string
+}
+
+/** 从 rollout 文本尾部倒序找最后一条 type:"compacted" 记录。
  *  上游历史投影只置 saw_compaction 标志、丢 payload（thread_history.rs），摘要在 AnyPlane 侧
  *  的唯一数据源就是 rollout 行本身（2026-09-24 实测形状：payload.message 为完整交接摘要）。
  *  与 extractTokenCountFromRolloutTail 同款的尾扫先例。 */
-export function extractCompactedFromRolloutTail(text: string): string | undefined {
+export function extractCompactedFromRolloutTail(text: string): CompactedRecord | undefined {
   const lines = text.split('\n')
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim()
     if (!line || !line.includes('compacted')) continue
-    let rec: { type?: string; payload?: { message?: unknown } }
+    let rec: { type?: string; ordinal?: unknown; timestamp?: unknown; payload?: { message?: unknown } }
     try {
       rec = JSON.parse(line) as typeof rec
     } catch {
@@ -105,7 +114,13 @@ export function extractCompactedFromRolloutTail(text: string): string | undefine
     }
     if (rec.type !== 'compacted') continue
     const msg = rec.payload?.message
-    if (typeof msg === 'string' && msg.trim()) return msg
+    if (typeof msg === 'string' && msg.trim()) {
+      return {
+        message: msg,
+        ordinal: typeof rec.ordinal === 'number' ? rec.ordinal : undefined,
+        timestamp: typeof rec.timestamp === 'string' ? rec.timestamp : undefined,
+      }
+    }
   }
   return undefined
 }
