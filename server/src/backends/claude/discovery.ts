@@ -132,8 +132,9 @@ const NON_PREVIEW_PREFIXES = [
   '<teammate-message>',
 ]
 
-/** 从 jsonl 提取标题/首条提示/cwd。只读前 64KB + 末 64KB，避免大文件全量解析 */
-function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?: string } {
+/** 从 jsonl 提取标题/首条提示/cwd。只读前 64KB + 末 64KB，避免大文件全量解析。
+ *  导出仅供单测直调（listSessions 会连带 daemonAgents 的 CLI 子进程，CI 无 claude 可执行文件） */
+export function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?: string } {
   let head: string
   let tail = ''
   try {

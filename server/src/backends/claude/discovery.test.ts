@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { config } from '../../config'
-import { entryToHistoryMessage, isSelectableRewindTarget, listSessions, readHistory } from './discovery'
+import { entryToHistoryMessage, extractMeta, isSelectableRewindTarget, readHistory } from './discovery'
 
 const SLUG = 'D--test-rewind-filter'
 const SID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
@@ -94,14 +94,14 @@ describe('readHistory rewind 目标过滤', () => {
     expect(byUuid.get('cs-mid')).toMatchObject({ role: 'system', subtype: 'compact_summary' })
   })
 
-  test('extractMeta（经 listSessions）：isCompactSummary 的英文模板 prompt 不当标题/预览', () => {
-    const row = listSessions().find((s) => s.sessionId === SID2)
-    expect(row).toBeDefined()
+  test('extractMeta：isCompactSummary 的英文模板 prompt 不当标题/预览', () => {
+    // 直调 extractMeta：listSessions 会连带 daemonAgents 的 CLI 子进程（CI 无 claude 可执行文件）
+    const meta = extractMeta(join(dir, 'projects', SLUG, `${SID2}.jsonl`))
     // 标题/预览来自真实提问，绝不是内部模板（小文件无尾扫，lastPrompt 恒 undefined——
     // 泄漏场景是大文件尾扫把摘要行当 lastPrompt，这里钉的是「永不含模板」）
-    expect(row?.title).not.toContain('This session is being continued')
-    expect(row?.lastPrompt ?? '').not.toContain('This session is being continued')
-    expect(row?.title).toBe('压缩前的提问') // 首条真实提问兜底
+    expect(meta.title ?? '').not.toContain('This session is being continued')
+    expect(meta.lastPrompt ?? '').not.toContain('This session is being continued')
+    expect(meta.title).toBe('压缩前的提问') // 首条真实提问兜底
   })
 })
 
