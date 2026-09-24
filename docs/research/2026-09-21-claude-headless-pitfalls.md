@@ -35,3 +35,13 @@
 - AI 标题必须「首条真实 user 消息 × 首个 init」双条件，只挂一路会漏。
 - 前端在权威 idle 且不存在合法草稿时自清陈旧草稿，否则服务端重启/断线后
   「生成中」永挂。
+
+## 后台 bash/powershell 的 tool_result 文案（v2.1.88 快照源码 + 2026-09-24 实测）
+
+`run_in_background` / 手动 backgrounded / 超预算自动后台三种路径的 tool_result
+正文同构（BashTool.tsx:605-621、PowerShellTool.tsx:423-427），都含
+「background…with ID: <shell_id>」声明且 `is_error` 为 false——它不是终态信号，
+进程仍在跑。实测（sleep 45）：该 tool_result 到达时进程还剩约 30s，输出文件为空；
+终态由稍后的 `task_notification` 带来。AnyPlane 侧据此在 `settleBucketFromResult`
+跳过终态判定（`useTaskBuckets.ts isBackgroundRunningResult`）——vendor 文案依赖，
+上游改措辞时这里会退回「误标完成」的旧行为，需重钉正则。
