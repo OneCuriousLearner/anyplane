@@ -85,12 +85,16 @@ export async function fetchHistory(
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const qs = q.size > 0 ? `?${q}` : ''
   const r = await apiFetch(`/api/history/${slug}/${sessionId}${qs}`)
+  // 历史应答必须查 ok：codex 路由把 RPC 异常包成 500 + {error} JSON（misc.ts），
+  // 不查会被调用方当成 HistoryResponse 继续解（接力竞态实测炸出 w.messages is not iterable）
+  if (!r.ok) throw await apiError(r)
   return r.json()
 }
 
 /** codex 线程历史（thread/read includeTurns）；fileBytes 恒 0（无 tailer） */
 export async function fetchCodexHistory(threadId: string): Promise<HistoryResponse> {
   const r = await apiFetch(`/api/codex/history/${threadId}`)
+  if (!r.ok) throw await apiError(r)
   return r.json()
 }
 
