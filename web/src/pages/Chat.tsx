@@ -29,7 +29,7 @@ import { Transcript } from '../components/Transcript'
 import { TasksPanel } from '../components/TasksPanel'
 import { ClaudeStar } from '../components/ClaudeStar'
 import { CodexMark } from '../components/CodexMark'
-import { buildTranscriptRows, nextId, rewindPreview, usageSummary, type Block } from '../lib/blocks'
+import { buildTranscriptRows, fmtTokens, nextId, rewindPreview, usageSummary, type Block } from '../lib/blocks'
 import { statusLineOf } from '../lib/chatText'
 import { capabilitiesOf, QUERY_LABELS } from '../lib/capabilities'
 import { createStore, useStore } from '../lib/store'
@@ -309,6 +309,23 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     sockRef.current?.send({ kind: 'update_env', variables: { CLAUDE_CODE_EFFORT_LEVEL: e } })
   }
 
+  /** 本地回显 + WS 发送一条用户消息（send 与 /plan 拦截共用；顺带清空输入框与待发图片） */
+  const sendUserMessage = (text: string) => {
+    const echoBlocks: Block[] = [
+      ...pendingImages.map((img) => ({ kind: 'image' as const, src: imgPreviewSrc(img) })),
+      ...(text ? [{ kind: 'text' as const, text }] : []),
+    ]
+    ingestApi.pushMsg({ id: nextId(), role: 'user', blocks: echoBlocks })
+    sockRef.current?.send({
+      kind: 'user',
+      text,
+      ...(busy ? { sendMode } : {}),
+      ...(pendingImages.length > 0 ? { attachments: pendingImages } : {}),
+    })
+    setInput('')
+    setPendingImages([])
+  }
+
   /** 斜杠拦截动作的副作用执行器（拦截表本身已数据化下沉 lib/slashIntercept.ts，含判例注释） */
   const runSlashAction = (a: SlashAction) => {
     const sock = sockRef.current
@@ -332,13 +349,21 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         sock?.send({ kind: 'control', subtype: 'compact' })
         return
       case 'context': {
-        // codex 无 get_context_usage 对应物；用状态里的累计 token 用量顶一句
-        const u = state.usage
-        ingestApi.pushSystem(
-          u
-            ? `◈ 线程累计：in ${u.inputTokens} / out ${u.outputTokens}${u.reasoningTokens ? ` / reasoning ${u.reasoningTokens}` : ''}（窗口占用明细请开「详情」）`
-            : '◈ 暂无用量数据（先跑一轮）',
-        )
+        // codex 无 get_context_usage 对应物：用 status 里的窗口占用（state.context）与
+        // 累计用量（usageSummary 含 cache）顶一句；没有明细查询能力的后端不提「详情」
+        const ctx = state.context
+        const acc = usageSummary(state.usage)
+        const parts: string[] = []
+        if (ctx && ctx.windowSize > 0) {
+          parts.push(`窗口占用 ${fmtTokens(ctx.usedTokens)} / ${fmtTokens(ctx.windowSize)}（${Math.round((ctx.usedTokens / ctx.windowSize) * 100)}%）`)
+        }
+        if (acc) parts.push(`累计 ${acc}`)
+        if (parts.length === 0) {
+          ingestApi.pushSystem('◈ 暂无用量数据（先跑一轮）')
+          return
+        }
+        const detailHint = caps?.queries.includes('get_context_usage') ? '；占用明细请开「详情」' : ''
+        ingestApi.pushSystem(`◈ ${parts.join('；')}${detailHint}`)
         return
       }
       case 'goal':
@@ -371,6 +396,17 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
         }
         return
       }
+      case 'plan': {
+        // 官方肌肉记忆：/plan [任务] = 进计划模式 + 任务作为下一条用户消息。
+        // 顺序敏感：control 先于 user 上送（同一 WS 保序；未 spawn 时 mode 已缓存进 spawnOpts）
+        handleSetMode('plan')
+        ingestApi.pushSystem('◎ 已切换到 plan 模式（只读规划，不写文件）。退出：输入区胶囊改回其他模式')
+        if (a.text) sendUserMessage(a.text)
+        return
+      }
+      case 'permHint':
+        ingestApi.pushSystem('权限模式在输入区胶囊里改（点输入框下方的模式档位，如 default / plan / 工作区）')
+        return
     }
   }
 
@@ -388,19 +424,7 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
       return
     }
 
-    const echoBlocks: Block[] = [
-      ...pendingImages.map((img) => ({ kind: 'image' as const, src: imgPreviewSrc(img) })),
-      ...(text ? [{ kind: 'text' as const, text }] : []),
-    ]
-    ingestApi.pushMsg({ id: nextId(), role: 'user', blocks: echoBlocks })
-    sock.send({
-      kind: 'user',
-      text,
-      ...(busy ? { sendMode } : {}),
-      ...(pendingImages.length > 0 ? { attachments: pendingImages } : {}),
-    })
-    setInput('')
-    setPendingImages([])
+    sendUserMessage(text)
   }
 
   // rewindPreview 会对每条用户消息跑正则解析，只有选择器打开时才计算

@@ -66,6 +66,21 @@ describe('interceptSlash codex 专属（claude 透传）', () => {
   })
 })
 
+describe('interceptSlash /plan 与 /permissions（headless TUI 命令的接管）', () => {
+  test('/plan 仅 claude：模式切换 + 后续文字透传为任务', () => {
+    expect(interceptSlash('/plan', claude)).toEqual({ type: 'plan', text: undefined })
+    expect(interceptSlash('/plan 重构登录模块', claude)).toEqual({ type: 'plan', text: '重构登录模块' })
+    expect(interceptSlash('/plan', codex)).toBeNull() // codex 协作式 /plan 与权限档不同轴，不映射
+    expect(interceptSlash('/planx', claude)).toBeNull() // 词边界
+  })
+  test('/permissions 与官方别名 /allowed-tools 两后端通拦', () => {
+    expect(interceptSlash('/permissions', claude)).toEqual({ type: 'permHint' })
+    expect(interceptSlash('/permissions', codex)).toEqual({ type: 'permHint' })
+    expect(interceptSlash('/allowed-tools', claude)).toEqual({ type: 'permHint' })
+    expect(interceptSlash('/permissions all', claude)).toBeNull() // 带参不命中（官方 TUI 也无参形态以外语义）
+  })
+})
+
 describe('FALLBACK_COMMANDS ↔ 拦截表不变式', () => {
   // 分区必须盖住 FALLBACK 全集：新增面板命令必须选边，不许静默透传。
   const ALWAYS = ['rewind', 'btw', 'branch'] as const

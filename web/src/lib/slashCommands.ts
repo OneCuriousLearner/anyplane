@@ -33,13 +33,30 @@ export interface SlashEntry {
   desc?: string
 }
 
+/** headless 下静默无效/打不开的 TUI 弹窗命令（审计 B 类快照，含指向 B 类的别名；
+ *  清单出处 docs/audits/2026-08-slash-commands.md「claude 内建命令 headless 分类」）。
+ *  面板过滤掉——列出来也只会发一轮空转或立刻报不可用（走查实测 /status 即如此）。
+ *  已接管的命令不进此表：btw/fork/rewind/branch/exit/quit 走 slashIntercept 拦截，
+ *  plan/permissions 同。审计的「……」是开放集：上游新增 TUI 命令时往这里补 */
+export const HEADLESS_TUI_COMMANDS: ReadonlySet<string> = new Set([
+  'add-dir', 'background', 'bg', 'bug', 'share', 'cd', 'chrome', 'color', 'desktop', 'app',
+  'diff', 'feedback', 'focus', 'help', 'hooks', 'ide', 'login', 'logout', 'memory', 'mcp',
+  'plugin', 'privacy-settings', 'remote-control', 'rc', 'resume', 'continue', 'sandbox',
+  'schedule', 'routines', 'skills', 'stats', 'usage', 'status', 'statusline', 'stop',
+  'tasks', 'bashes', 'teleport', 'tp', 'theme', 'tui', 'upgrade', 'workflows',
+])
+
 /**
  * 合并面板清单：自有命令置顶（描述以 COMMAND_DESC 为准），
- * CLI 清单（initialize 握手或 init 消息报告）去掉与自有同名项后按原序追加。
+ * CLI 清单（initialize 握手或 init 消息报告）去掉与自有同名项后按原序追加；
+ * B 类 TUI 命令（headless 打不开）整体过滤。
  */
 export function mergeSlashCommands(cliCommands: SlashEntry[]): SlashEntry[] {
   const custom = FALLBACK_COMMANDS.map((n) => ({ name: n, desc: COMMAND_DESC[n] }))
-  return [...custom, ...cliCommands.filter((c) => !FALLBACK_COMMANDS.includes(c.name))]
+  return [
+    ...custom,
+    ...cliCommands.filter((c) => !FALLBACK_COMMANDS.includes(c.name) && !HEADLESS_TUI_COMMANDS.has(c.name)),
+  ]
 }
 
 /** 前缀过滤：输入 '/b' 命中 btw/branch；非斜杠输入或已进入参数区（含空格）不出提示 */

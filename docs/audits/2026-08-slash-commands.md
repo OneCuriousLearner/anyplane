@@ -62,6 +62,10 @@
 
 ## 遗留注意事项
 
+- **B 类已在面板过滤（2026-09-24）**：`web/src/lib/slashCommands.ts` 的 `HEADLESS_TUI_COMMANDS`
+  是 B 类清单的运行时事实源（本表保持叙事与上游出处）；`mergeSlashCommands` 过滤它们，
+  不变式单测（∩ FALLBACK = ∅、不被 interceptSlash 命中）钉在 `slashCommands.test.ts`。
+  上游新增 TUI 命令时两边同步：这里记判定依据，代码集里补名字。
 - claude `/clear` 透传后 UI 靠 `moved` 事件跳新会话页；新 transcript 未落盘前 parseKey 无法反查 cwd（进程存活期无影响）。
 - claude `/goal` 需要 CLI ≥2.1.139；旧版会回 `Unknown skill`，chip 状态会误置（低频，暂不防）。
 - codex 无命令清单 API：新增 codex 命令支持 = 前端拦截表 + runtime sendControl 映射，两处同步加。

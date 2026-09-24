@@ -160,6 +160,7 @@ export function StatusPill(props: {
                   onClick={() => {
                     props.onSetMode(m)
                     setSub(null)
+                    setOpen(false) // 选中即收整块面板（此前只收子列表，面板还盖在输入区上）
                   }}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${mm.dot}`} />
@@ -203,6 +204,7 @@ export function StatusPill(props: {
                   onClick={() => {
                     props.onSetModel(m)
                     setSub(null)
+                    setOpen(false) // 选中即收整块面板
                   }}
                 >
                   <span className="font-mono text-xs text-ink">[{resolveModel(m).label}]</span>
@@ -216,7 +218,12 @@ export function StatusPill(props: {
           </div>
         )}
 
-        <EffortSlider levels={levels} value={effort} onChange={props.onSetEffort} />
+        {/* 选中即收整块面板：pointerUp 冒泡代表一次指针交互完成（pointer capture
+            只改 target 不改冒泡路径）；键盘步进（←→ 每键一次 onChange）不收，
+            否则第一键就卸载掉持有焦点的滑条 */}
+        <div onPointerUp={() => { setSub(null); setOpen(false) }}>
+          <EffortSlider levels={levels} value={effort} onChange={props.onSetEffort} />
+        </div>
       </div>,
       document.body,
     )
