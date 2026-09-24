@@ -170,6 +170,9 @@ export function isInitMessage(m: CliMessage): boolean {
 export function isInternalUserMessage(m: CliMessage): boolean {
   if (m.type !== 'user') return false
   if (m.isMeta === true || m.isSynthetic === true) return true
+  // headless /compact 的摘要载体：完整英文模板 prompt，不是用户输入。
+  // live wire 上游通常映射成 isSynthetic 被上面拦住；不置的版本/路径在此兜底
+  if ((m as { isCompactSummary?: unknown }).isCompactSummary === true) return true
 
   const origin = m.origin
   if (origin && typeof origin === 'object' && (origin as { kind?: unknown }).kind === 'task-notification') return true

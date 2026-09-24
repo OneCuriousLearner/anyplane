@@ -180,9 +180,9 @@ export interface ChatMsg {
   /** 历史 JSONL 的时间；实时消息未必带此字段。 */
   timestamp?: string
   /** system 消息的展示变体 */
-  systemKind?: 'info' | 'error' | 'divider'
-  /** compact_boundary 元数据 */
-  compactMeta?: { preTokens?: number; postTokens?: number }
+  systemKind?: 'info' | 'error' | 'divider' | 'compactSummary'
+  /** compact_boundary 元数据（与 protocol HistoryMessage.compactMeta 同形） */
+  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number }
   /** 侧问卡片：问题文本；存在即按侧问样式渲染 */
   btw?: string
   /** 侧问回答进行中（未收到 btw_result） */

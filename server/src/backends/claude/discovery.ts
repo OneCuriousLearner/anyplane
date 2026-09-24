@@ -179,8 +179,9 @@ function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?:
       } else if (type === 'user') {
         const content = (obj.message as { content?: unknown } | undefined)?.content
         const clean = textOfContent(content, ' ').trim()
-        // 跳过 tool_result / isMeta / 系统注入与命令回显等不该当标题/预览的消息
-        if (clean && !obj.isMeta && !NON_PREVIEW_PREFIXES.some((p) => clean.startsWith(p))) {
+        // 跳过 tool_result / isMeta / 系统注入与命令回显等不该当标题/预览的消息；
+        // isCompactSummary 是 headless /compact 的英文模板 prompt，同样不该当预览
+        if (clean && !obj.isMeta && obj.isCompactSummary !== true && !NON_PREVIEW_PREFIXES.some((p) => clean.startsWith(p))) {
           if (!firstPrompt && !isTail) firstPrompt = clean.slice(0, 120)
           if (isTail) lastPrompt = clean.slice(0, 120)
         }
@@ -400,6 +401,19 @@ export function entryToHistoryMessage(
       timestamp: obj.timestamp as string | undefined,
     }
   }
+  // headless /compact 的边界载体：isCompactSummary 用户消息（完整英文模板 prompt）。
+  // 不能当普通用户消息渲染（走查实测完整出现在主抄本）——转成 system 折叠摘要行，
+  // 全文携带由前端折叠展示；live 路径由 isInternalUserMessage 拦住（isSynthetic/isMeta 兜底）
+  if (type === 'user' && obj.isCompactSummary === true) {
+    const text = textOfContent((obj.message as { content?: unknown } | undefined)?.content, '\n').trim()
+    return {
+      uuid: obj.uuid as string | undefined,
+      role: 'system',
+      subtype: 'compact_summary',
+      blocks: [{ kind: 'text', text }],
+      timestamp: obj.timestamp as string | undefined,
+    }
+  }
   if (type !== 'user' && type !== 'assistant') return null
   if (isInternalUserMessage(obj as CliMessage)) return null
   // 子代理内部消息不进主对话抄本（侧链文件解析时由 allowSidechain 放行）
@@ -488,6 +502,9 @@ function parseTranscript(raw: Buffer): ParsedTranscript {
       continue
     }
     if (obj.type === 'system' && obj.subtype === 'compact_boundary') lastBoundaryLine = li
+    // headless /compact 不落 compact_boundary，只落 isCompactSummary 用户消息
+    //（走查实测）——它就是 headless 的压缩边界：之前的消息内容已不在上下文里，不可回滚
+    if (obj.isCompactSummary === true) lastBoundaryLine = li
     if (obj.isSidechain) {
       const m = entryToHistoryMessage(obj, { allowSidechain: true })
       const k = (obj.parentToolUseId as string | undefined) ?? '?'
