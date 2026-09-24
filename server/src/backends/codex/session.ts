@@ -8,7 +8,7 @@ import { errorMessage } from '../../util'
 import { config } from '../../config'
 import { RpcError } from './rpc'
 import { appendReasoning } from './reasoningStore'
-import { readCompactedSummary } from './history'
+import { readLastCompacted } from './history'
 import { join } from 'node:path'
 import { Glob } from 'bun'
 import {
@@ -225,6 +225,7 @@ export class CodexSession {
     this.translator = new ThreadTranslator()
     this.runtime.registerThread(this.threadId!, this)
     if (this.opts.effort) this.turnOverrides.effort = this.opts.effort
+    this.scanCompactFloor() // compact 摘要补丁帧的身份地板（ms 级本地读，fire-and-forget）
     this.cb.onMessage({ type: 'system', subtype: 'init', session_id: this.threadId, model: this.opts.model })
     // resume 水合：0.153 起 paginated 线程的 thread/resume 自动补发 tokenUsage（实测；
     // 源码 thread_processor.rs：paginated_resume 即触发，excludeTurns 廉价路径仅对 legacy 跳过）。
@@ -820,31 +821,52 @@ export class CodexSession {
     this.cb.onMessage(msg)
   }
 
-  /** 本次会话已挂过分隔线的摘要（patchCompactSummary 写入）：扫到同款摘要说明
-   *  本次 compact 的新记录还没落盘（rollout 里最新的仍是上一次）——等同没找到，走重试 */
-  private lastAttachedCompactSummary?: string
+  /** compact 摘要的身份地板（rollout 记录按 ordinal 单调递增）：会话启动时记当前盘上
+   *  最新 compacted 的 ordinal，补丁帧只接受超地板的记录——防「重启后第一次 /compact
+   *  把上一进程时代的摘要贴到本次分隔线」（review 轮发现：文本比对是实例内存，重启即失效）。
+   *  lastAttachedCompactOrdinal 跟随补丁帧抬升，同进程内第二次 compact 也受守 */
+  private compactFloorOrdinal?: number
+  private compactFloorReady?: Promise<void>
+  private lastAttachedCompactOrdinal?: number
 
-  /** /compact 的摘要补丁帧：rollout 尾扫 compacted 记录，扫到就以同 uuid 补发
+  /** 启动（start/resume 完成后）扫一次地板：本地文件读 ms 级，远早于任何 compact 完成 */
+  private scanCompactFloor(): void {
+    const tid = this.threadId
+    if (!tid) return
+    this.compactFloorReady = (async () => {
+      try {
+        const rec = await readLastCompacted(this.runtime.home, tid)
+        // 线程仍为本线程才落（start/resume 竞态防御）；无记录地板为 0
+        if (this.threadId === tid) this.compactFloorOrdinal = rec?.ordinal ?? 0
+      } catch {}
+    })()
+  }
+
+  /** /compact 的摘要补丁帧：rollout 尾扫 compacted 记录，ordinal 超地板才以同 uuid 补发
    *  compact_metadata.summary（前端按 id 合并进已发的分隔线）。
-   *  扫盘与 rollout 落盘有竞态（OS 写缓冲/杀软索引）：没找到、或找到的还是上一次
-   *  挂过的那条（本次记录尚未落盘），800ms 后补一枪。itemId 缺席时补丁帧无法合并，跳过。 */
+   *  新记录落盘有竞态（OS 写缓冲/杀软索引）：ordinal 不超地板 = 本次记录还没写盘，
+   *  800ms 一枪至多 5 枪；仍不到就放弃（裸分隔线保留，摘要随下次历史重载出现）。
+   *  itemId 缺席时补丁帧无法合并，跳过。ordinal 字段缺席（上游降级）时退化为直接接受。 */
   private async patchCompactSummary(itemId?: string): Promise<void> {
     if (!this.threadId || !itemId) return
     try {
-      let summary = await readCompactedSummary(this.runtime.home, this.threadId)
-      if (!summary || summary === this.lastAttachedCompactSummary) {
-        await new Promise((r) => setTimeout(r, 800))
+      await this.compactFloorReady // 地板扫描是 ms 级本地读；等它比让守卫失效强
+      const floor = Math.max(this.compactFloorOrdinal ?? 0, this.lastAttachedCompactOrdinal ?? 0)
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const rec = await readLastCompacted(this.runtime.home, this.threadId)
         if (this.exited) return
-        summary = await readCompactedSummary(this.runtime.home, this.threadId)
+        if (rec && (rec.ordinal == null || rec.ordinal > floor)) {
+          this.lastAttachedCompactOrdinal = rec.ordinal
+          this.emit({
+            type: 'system',
+            subtype: 'compact_boundary',
+            uuid: itemId,
+            compact_metadata: { summary: rec.message },
+          } as CliMessage)
+          return
+        }
+        await new Promise((r) => setTimeout(r, 800))
       }
-      if (!summary || summary === this.lastAttachedCompactSummary || this.exited) return
-      this.lastAttachedCompactSummary = summary
-      this.emit({
-        type: 'system',
-        subtype: 'compact_boundary',
-        uuid: itemId,
-        compact_metadata: { summary },
-      } as CliMessage)
     } catch {
       // 尽力而为：分隔线已在，摘要缺席无碍
     }

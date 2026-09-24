@@ -202,7 +202,7 @@ describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => 
     // 追加写文件，rollout 行是按行 JSON——最新 compacted 行可能被 512KB 尾窗
     // 从行中间截断（片段不含行首的 "type":"compacted"，被 extractor 跳过）；
     // 翻倍回扫必须继续到完整覆盖它，而不是把上一次的旧摘要贴上去
-    const { readCompactedSummary } = await import('./history')
+    const { readLastCompacted } = await import('./history')
     savedCodexHome = process.env.CODEX_HOME
     tmpHome = mkdtempSync(join(tmpdir(), 'anyplane-codex-home-'))
     const sessionDir = join(tmpHome, 'sessions', '2026', '09', '25')
@@ -211,13 +211,14 @@ describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => 
     writeFileSync(
       join(sessionDir, 'rollout-2026-09-25T00-00-00-th-big.jsonl'),
       [
-        JSON.stringify({ type: 'compacted', payload: { message: '旧摘要' } }),
-        JSON.stringify({ type: 'compacted', payload: { message: '新摘要' } }),
+        JSON.stringify({ type: 'compacted', ordinal: 10, payload: { message: '旧摘要' } }),
+        JSON.stringify({ type: 'compacted', ordinal: 20, payload: { message: '新摘要' } }),
         // 大内容写在最新 compact 之后：512KB 尾窗全落在 padding 里，必须翻倍回扫
         bigPadding,
       ].join('\n'),
     )
-    expect(await readCompactedSummary(tmpHome, 'th-big')).toBe('新摘要')
+    const rec = await readLastCompacted(tmpHome, 'th-big')
+    expect(rec).toMatchObject({ message: '新摘要', ordinal: 20 })
   })
 })
 
