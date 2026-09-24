@@ -115,7 +115,10 @@ export async function handleSessionRoutes(
         codexResult.reason instanceof Error ? codexResult.reason.message : codexResult.reason,
       )
     }
-    return json([...codexRows, ...claudeRows])
+    // 合并后按 mtime 全局降序：此前 [...codexRows, ...claudeRows] 拼接让列表分组顺序
+    // 变成「先 Codex 目录后 Claude 目录」，刚建的会话沉在视口外（走查问题 1）。
+    // 各后端内部已按 mtime 排好，这里只做一次合并排序（~200 行量级，成本可忽略）
+    return json([...codexRows, ...claudeRows].sort((a, b) => b.mtime - a.mtime))
   }
   if (url.pathname === '/api/sessions' && req.method === 'POST') {
     const body = await readJsonBody<{ cwd?: string; backend?: string }>(req)

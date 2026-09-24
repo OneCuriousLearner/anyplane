@@ -115,6 +115,23 @@ function textOfContent(content: unknown, sep: string): string {
   return ''
 }
 
+/** 不该成为标题/预览的用户消息前缀（extractMeta 用，startsWith 口径）：
+ *  命令回显（command-name/command-message/command-args）、本地命令输出、
+ *  后台通知等系统注入文本——走查实测这些漏进列表预览（整段交接简报、<task-notification> 等）。
+ *  与 isSelectableRewindTarget 的 INTERNAL_TEXT_TAGS（includes 口径）语义不同、
+ *  刻意分开两份：回显有 checkpoint 可选中回滚，但不该当标题。改动时两边互看一眼。 */
+const NON_PREVIEW_PREFIXES = [
+  '<command-name',
+  '<command-message',
+  '<command-args',
+  '<local-command',
+  '<bash-stdout>',
+  '<bash-stderr>',
+  '<task-notification>',
+  '<tick>',
+  '<teammate-message>',
+]
+
 /** 从 jsonl 提取标题/首条提示/cwd。只读前 64KB + 末 64KB，避免大文件全量解析 */
 function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?: string } {
   let head: string
@@ -162,8 +179,8 @@ function extractMeta(path: string): { title?: string; lastPrompt?: string; cwd?:
       } else if (type === 'user') {
         const content = (obj.message as { content?: unknown } | undefined)?.content
         const clean = textOfContent(content, ' ').trim()
-        // 跳过 tool_result / isMeta / 斜杠命令回显等系统注入消息
-        if (clean && !obj.isMeta && !clean.startsWith('<local-command') && !clean.startsWith('<command-name')) {
+        // 跳过 tool_result / isMeta / 系统注入与命令回显等不该当标题/预览的消息
+        if (clean && !obj.isMeta && !NON_PREVIEW_PREFIXES.some((p) => clean.startsWith(p))) {
           if (!firstPrompt && !isTail) firstPrompt = clean.slice(0, 120)
           if (isTail) lastPrompt = clean.slice(0, 120)
         }
