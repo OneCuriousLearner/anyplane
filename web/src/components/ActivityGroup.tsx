@@ -42,12 +42,18 @@ const Thinking = memo(function Thinking(props: {
   )
 })
 
-/** items 逐项浅比较（key/block 引用/streaming）：消息不可变更新纪律保证未变的块
+/** items 逐项浅比较（key/block 引用/streaming/latestTurn）：消息不可变更新纪律保证未变的块
  *  保持引用不变，因此逐项比引用即可挡掉未变 activity 组的重渲染。 */
 function sameItems(a: ActivityItem[], b: ActivityItem[]): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) {
-    if (a[i]!.key !== b[i]!.key || a[i]!.block !== b[i]!.block || a[i]!.streaming !== b[i]!.streaming) return false
+    if (
+      a[i]!.key !== b[i]!.key ||
+      a[i]!.block !== b[i]!.block ||
+      a[i]!.streaming !== b[i]!.streaming ||
+      a[i]!.latestTurn !== b[i]!.latestTurn
+    )
+      return false
   }
   return true
 }
@@ -75,7 +81,7 @@ export const ActivityGroup = memo(
               {item.block.kind === 'thinking' ? (
                 <Thinking text={item.block.text} streaming={item.streaming} embedded />
               ) : (
-                <ToolCard tool={item.block} streaming={item.streaming} embedded />
+                <ToolCard tool={item.block} streaming={item.streaming} defaultOpen={item.latestTurn} embedded />
               )}
             </div>
           ))}

@@ -100,14 +100,16 @@ export function RewindPicker(props: {
               </button>
             ) : (
             <div className="grid grid-cols-2 gap-2">
+              {/* 次要按钮与主按钮同一套字色（text-ink），只用填充区分主次——
+                  text-muted 叠 bg-surface2 再罩 bg-black/70 遮罩，对比度掉到像禁用（走查问题 6） */}
               <button type="button"
-                className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-muted hover:text-ink"
+                className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-ink hover:bg-surface"
                 onClick={() => props.onRewindFiles(t.uuid)}
               >
                 仅回滚文件
               </button>
               <button type="button"
-                className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-muted hover:text-ink"
+                className="rounded-full bg-surface2 py-1.5 font-mono text-[11px] text-ink hover:bg-surface"
                 onClick={() => props.onRewindConversation(t.uuid)}
               >
                 仅回滚对话
