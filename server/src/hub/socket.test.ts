@@ -13,7 +13,7 @@ import { initBackendPorts, registerBackend } from '../backends/port'
 import { addInboxClient, inboxSnapshot, removeInboxClient } from '../push/inbox'
 import { broadcast, broadcastError, resetInboxChannelForTest, resetInboxSinkForTest, setInboxChannel, setInboxSink } from './broadcast'
 import { rewindBusy } from './lifecycle'
-import { getHub, hubs } from './registry'
+import { getHub, hubs, noteRekeyTombstone, resetTombstonesForTest, resolveKeyTombstone } from './registry'
 import { wsClose, wsMessage, wsOpen } from './socket'
 import { pushStatus } from './status'
 import type { InboxEvent } from '@anyplane/protocol'
@@ -92,6 +92,7 @@ beforeEach(() => {
 afterEach(() => {
   resetInboxSinkForTest()
   resetInboxChannelForTest()
+  resetTombstonesForTest()
   for (const ws of liveSockets.splice(0)) {
     if (ws.data.keepalive) clearInterval(ws.data.keepalive)
   }
@@ -181,6 +182,36 @@ describe('wsOpen：会话频道', () => {
     expect(f.slice(1)).toEqual([
       { kind: 'approval_request', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } },
     ])
+  })
+
+  test('旧 key 有 rekey 墓碑：wsOpen 改写 data.key 并补发 moved(reason=tombstone)，旧 key 不建 Hub', () => {
+    // 升键/重键后迟到的连接（stale 深链、断线重连、系统恢复的标签页）仍攥着旧 key——
+    // 没有重定向的话旧 key 上建空 Hub，首条消息懒 spawn 出重复会话
+    const oldKey = track('n|%2Ftmp%2Fsocket-tomb-old')
+    const newKey = track('s|-tmp-socket-tomb-old|sid-1')
+    noteRekeyTombstone(oldKey, newKey)
+    const ws = sessionWs(oldKey)
+    liveSockets.push(ws)
+    wsOpen(ws as never)
+
+    expect(ws.data.key).toBe(newKey)
+    const f = frames(ws)
+    expect(f[0]).toMatchObject({ kind: 'moved', targetKey: newKey, reason: 'tombstone' })
+    expect(hubs.has(oldKey)).toBe(false)
+    expect(hubs.has(newKey)).toBe(true)
+    expect(getHub(newKey).clients.has(ws as never)).toBe(true)
+    expect(f.some((x) => x.kind === 'status')).toBe(true)
+  })
+
+  test('墓碑链逐级解析到终点（/clear 叠加：n|→s|A→s|B）；无墓碑原样返回', () => {
+    const a = track('n|%2Ftmp%2Fchain')
+    const b = track('s|-tmp-chain|sid-a')
+    const c = track('s|-tmp-chain|sid-b')
+    noteRekeyTombstone(a, b)
+    noteRekeyTombstone(b, c)
+    expect(resolveKeyTombstone(a)).toBe(c)
+    expect(resolveKeyTombstone(b)).toBe(c)
+    expect(resolveKeyTombstone(c)).toBe(c)
   })
 })
 

@@ -109,31 +109,40 @@ describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => 
     expect(msgs.map((m) => m.uuid)).toEqual(['turn-1', 'turn-x'])
   })
 
-  test('paginated：items/list 在首轮在跑窗口报 -32601 时重试一次跨过（0.155.1 实测）', async () => {
-    // 升键/接力导航恰好在首个 turn 进行中打历史接口，app-server 此窗口对 items/list
-    // 暂报「not supported yet」，turn 落定即恢复——重试一次，仍失败才抛给路由层
-    let itemsCalls = 0
+  test('paginated：items/list 在首轮窗口（无已完成 turn）报 -32601 时返回空历史（0.155.1 实测）', async () => {
+    // 升键/接力导航恰好在首个 turn 进行中打历史接口——此窗口 items/list 报
+    // 「not supported yet」；空历史是诚实答案（在跑 turn 由 live 流覆盖）
     const { runtime } = stubRpc({
       'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
-      'thread/turns/list': () => ({ data: [{ id: 'turn-1', startedAt: 100, completedAt: 150 }], nextCursor: null }),
+      'thread/turns/list': () => ({ data: [{ id: 'turn-1', startedAt: 100, completedAt: null }], nextCursor: null }),
       'thread/items/list': () => {
-        itemsCalls += 1
-        if (itemsCalls === 1) throw new RpcError(-32601, 'thread/items/list is not supported yet')
-        return {
-          data: [{ turnId: 'turn-1', item: { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '晚到' }] } }],
-          nextCursor: null,
-        }
+        throw new RpcError(-32601, 'thread/items/list is not supported yet')
       },
     })
     const msgs = await runtime.readHistory('th-race')
-    expect(itemsCalls).toBe(2)
-    expect(msgs.map((m) => m.uuid)).toEqual(['turn-1'])
+    expect(msgs).toEqual([])
   })
 
-  test('paginated：items/list 重试后仍 -32601 则抛错（legacy 永失败场景不被吞）', async () => {
+  test('paginated：首轮窗口 -32603（rollout 空）且探测也失败时返回空历史', async () => {
+    // 首轮在跑时 thread/read/turns/list 同样暂不可用（rollout 未写出元数据）——
+    // 与 -32601 同窗口不同码，空历史都是诚实答案
     const { runtime } = stubRpc({
       'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
-      'thread/turns/list': () => ({ data: [], nextCursor: null }),
+      'thread/turns/list': () => {
+        throw new RpcError(-32603, 'failed to read session metadata: rollout is empty')
+      },
+      'thread/items/list': () => {
+        throw new RpcError(-32603, 'failed to read session metadata: rollout is empty')
+      },
+    })
+    const msgs = await runtime.readHistory('th-empty-rollout')
+    expect(msgs).toEqual([])
+  })
+
+  test('paginated：已有完成 turn 仍 -32601 则抛错（legacy 误判/预期外场景不被吞）', async () => {
+    const { runtime } = stubRpc({
+      'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
+      'thread/turns/list': () => ({ data: [{ id: 'turn-1', startedAt: 100, completedAt: 150 }], nextCursor: null }),
       'thread/items/list': () => {
         throw new RpcError(-32601, 'thread/items/list is not supported yet')
       },

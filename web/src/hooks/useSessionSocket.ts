@@ -14,7 +14,7 @@ import type { NavigateSession } from '../lib/sessionHash'
 import { reconcileApprovals } from '../lib/approvals'
 import { nextId, type Block } from '../lib/blocks'
 import { appendHistoryMsg, flushStrayResults, hitsSeen, rememberKeys, type IngestState } from '../lib/ingest'
-import { isCodexKey } from '../lib/key'
+import { isCodexKey, sessionFromKey } from '../lib/key'
 import type { BackendCapabilities, ServerEvent, SessionState } from '@anyplane/protocol'
 import { SessionSocket } from '../lib/ws'
 import type { TaskBucketsApi } from './useTaskBuckets'
@@ -356,15 +356,16 @@ export function useSessionSocket(opts: {
             break
           }
           case 'moved': {
-            // 会话 key 迁移：/clear 重置（reason=clear）或懒启动/懒分叉拿到真实 id 升键
-            //（reason=spawned，n|→s|、xn|→x|、b|→s|）。旧 key 已作废，replace 不留历史。
+            // 会话 key 迁移：/clear 重置（reason=clear）、懒启动/懒分叉升键（reason=spawned）、
+            // 旧 key 墓碑重定向（reason=tombstone）。旧 key 已作废，replace 不留历史。
             const parts = ev.targetKey.split('|')
             const codex = isCodexKey(ev.targetKey)
             onNavigate?.(
               makeSessionInfo({
                 key: ev.targetKey,
                 slug: codex ? 'codex' : (parts[1] ?? session.slug),
-                sessionId: ev.targetSessionId ?? 'new',
+                // 墓碑重定向不带 targetSessionId——从目标 key 自身解析（s| 三段 / x| 两段）
+                sessionId: ev.targetSessionId ?? sessionFromKey(ev.targetKey)?.sessionId ?? 'new',
                 cwd: session.cwd,
                 backend: codex ? 'codex' : 'claude',
                 managed: { spawned: true, busy: false, clients: 0 },
