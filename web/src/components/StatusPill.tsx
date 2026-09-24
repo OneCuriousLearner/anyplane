@@ -218,11 +218,12 @@ export function StatusPill(props: {
           </div>
         )}
 
-        <EffortSlider levels={levels} value={effort} onChange={(e) => {
-          props.onSetEffort(e)
-          setSub(null)
-          setOpen(false) // effort 选定（pointerUp/步进终点才触发，拖动中不关）即收整块面板
-        }} />
+        {/* 选中即收整块面板：pointerUp 冒泡代表一次指针交互完成（pointer capture
+            只改 target 不改冒泡路径）；键盘步进（←→ 每键一次 onChange）不收，
+            否则第一键就卸载掉持有焦点的滑条 */}
+        <div onPointerUp={() => { setSub(null); setOpen(false) }}>
+          <EffortSlider levels={levels} value={effort} onChange={props.onSetEffort} />
+        </div>
       </div>,
       document.body,
     )
