@@ -13,6 +13,7 @@ import { config } from '../config'
 import { summarizeInput } from '../util'
 import { resetInboxSinkForTest, setInboxSink } from './broadcast'
 import { sessionCallbacks } from './callbacks'
+import { resolveApproval } from './lifecycle'
 import { getHub, hubs } from './registry'
 import type { InboxEvent } from '@anyplane/protocol'
 import type { Hub } from './types'
@@ -270,10 +271,13 @@ describe('sessionCallbacks.onExit', () => {
     const { hub, ws } = freshHub()
     hub.pendingApprovals.set('r1', { requestId: 'r1', toolName: 'Bash', input: {} })
     hub.pendingApprovals.set('r2', { requestId: 'r2', toolName: 'Write', input: { file_path: '/tmp/x' } })
+    hub.sessionAllowTools = new Set(['Bash'])
 
     sessionCallbacks(hub).onExit(17)
 
     expect(hub.pendingApprovals.size).toBe(0)
+    // 「本会话允许」随进程死亡失效：Hub 因客户端存活而保留，不清则重 spawn 的新会话继承旧放行集
+    expect(hub.sessionAllowTools).toBeUndefined()
     const sent = payloads(ws)
     expect(sent.slice(0, 2)).toEqual([
       { kind: 'approval_resolved', requestId: 'r1' },
@@ -369,6 +373,55 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
 
     sessionCallbacks(hub).onApprovalRequest({ requestId: 'ra4', toolName: 'Bash', input: { command: 'ls' } })
     expect(hub.pendingApprovals.has('ra4')).toBe(true)
+  })
+
+  test('rememberTool 裁决后：同工具后续请求走 approval_auto（本会话允许），不进 pending 不推送', () => {
+    const { hub, ws } = freshHub()
+    const delivered = injectApprovalSession()
+    config.approvalRules = undefined
+    const cb = sessionCallbacks(hub)
+
+    // 首次请求进 pending，WS 裁决 allow + rememberTool → 写入 Hub 内存放行集
+    cb.onApprovalRequest({ requestId: 'rm1', toolName: 'Edit', input: { file_path: '/a.ts' } })
+    expect(hub.pendingApprovals.has('rm1')).toBe(true)
+    resolveApproval(hub, 'rm1', { behavior: 'allow', updatedInput: { file_path: '/a.ts' }, rememberTool: true })
+    expect(hub.sessionAllowTools?.has('Edit')).toBe(true)
+    // rememberTool 是 Hub 内部语义：投递上游的裁决必须剥掉（claude control_response 全量透传）
+    expect(delivered[0]).toEqual(['rm1', { behavior: 'allow', updatedInput: { file_path: '/a.ts' } }])
+
+    // 同工具后续请求：与规则路径同形留痕（approval_auto），共用投递半段
+    ws.sent.length = 0
+    inbox.length = 0
+    cb.onApprovalRequest({ requestId: 'rm2', toolName: 'Edit', input: { file_path: '/b.ts' } })
+    expect(hub.pendingApprovals.has('rm2')).toBe(false)
+    expect(payloads(ws)[0]).toMatchObject({
+      kind: 'approval_auto',
+      requestId: 'rm2',
+      toolName: 'Edit',
+      action: 'allow',
+      rule: '本会话允许',
+    })
+    expect(delivered[1]).toEqual(['rm2', { behavior: 'allow', updatedInput: { file_path: '/b.ts' } }])
+    expect(inbox).toEqual([]) // 自动放行不打扰
+
+    // 不同工具不放行
+    cb.onApprovalRequest({ requestId: 'rm3', toolName: 'Bash', input: { command: 'ls' } })
+    expect(hub.pendingApprovals.has('rm3')).toBe(true)
+  })
+
+  test('/clear 重键后「本会话允许」放行集失效（sessionId 已换）', () => {
+    const oldKey = 'n|%2Ftmp%2Fclear-allowset'
+    const { hub } = hubAt(oldKey)
+    injectFakeSession(oldKey)
+    hub.sessionAllowTools = new Set(['Edit'])
+    const cb = sessionCallbacks(hub)
+    cb.onMessage({ type: 'conversation_reset' } as CliMessage)
+    cb.onMessage({ type: 'system', subtype: 'init', session_id: 'sid-fresh' } as CliMessage)
+
+    const newKey = 's|-tmp-clear-allowset|sid-fresh'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey) // 重键已发生
+    expect(hub.sessionAllowTools).toBeUndefined()
   })
 })
 

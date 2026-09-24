@@ -8,6 +8,7 @@ import {
   type AskUserQuestionSelections,
   withAskUserQuestionAnswers,
 } from '../lib/askUserQuestion'
+import { toolDetail } from '../lib/blocks'
 
 export function ApprovalCard(props: {
   approval: { requestId: string; toolName: string; input: unknown }
@@ -17,7 +18,12 @@ export function ApprovalCard(props: {
   const askUserQuestion = approval.toolName === 'AskUserQuestion' ? parseAskUserQuestionInput(approval.input) : null
   if (askUserQuestion) return <AskUserQuestionCard input={askUserQuestion} onDecision={onDecision} />
 
-  const inputStr = JSON.stringify(approval.input, null, 2) ?? ''
+  // codex 审批的 input.reason 是上游给出的中文解释，单独突出；
+  // 正文复用工具卡的 toolDetail 口径（Edit 收旧/新两段、Bash 取 command），不再是 JSON 直出
+  const rawInput = (approval.input ?? {}) as Record<string, unknown>
+  const reason = typeof rawInput.reason === 'string' ? rawInput.reason : undefined
+  const detailInput = reason ? { ...rawInput, reason: undefined } : approval.input
+  const detail = toolDetail(approval.toolName, detailInput)
 
   return (
     <div className="my-3 rounded-[14px] bg-accent/10 p-3.5">
@@ -28,8 +34,9 @@ export function ApprovalCard(props: {
         </span>
         <span className="ml-auto font-mono text-[10px] text-faint">等待你的裁决</span>
       </div>
-      <pre className="mt-2.5 max-h-48 overflow-auto rounded-[10px] bg-bg/50 px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">
-        {inputStr.length > 2000 ? inputStr.slice(0, 2000) + '\n…（截断）' : inputStr}
+      {reason && <p className="mt-2 text-[13px] leading-relaxed text-ink">{reason}</p>}
+      <pre className="mt-2.5 max-h-48 overflow-auto rounded-[10px] bg-bg/50 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted">
+        {detail.length > 4000 ? detail.slice(0, 4000) + '\n…（截断）' : detail}
       </pre>
       <div className="mt-3 flex gap-2">
         <button type="button"
@@ -40,6 +47,16 @@ export function ApprovalCard(props: {
           }}
         >
           ✓ 允许
+        </button>
+        <button type="button"
+          title="本次裁决后，同会话内这个工具的后续请求自动放行（重开会话失效）"
+          className="flex-1 rounded-full bg-surface2 py-2 text-sm text-ink hover:bg-surface"
+          onClick={() => {
+            const input = approval.input as Record<string, unknown> | undefined
+            onDecision({ behavior: 'allow', updatedInput: input, rememberTool: true })
+          }}
+        >
+          本会话允许
         </button>
         <button type="button"
           className="flex-1 rounded-full py-2 text-sm text-accent hover:bg-accent/10"

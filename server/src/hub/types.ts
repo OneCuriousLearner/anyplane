@@ -33,6 +33,10 @@ export interface Hub {
   key: string
   clients: Set<ServerWebSocket<WSData>>
   pendingApprovals: Map<string, PendingApproval>
+  /** 「本会话允许这个工具」的内存放行集（WS 裁决 rememberTool 写入）：
+   *  命中走 approval_auto 同形留痕；绝不进推送能力 URL/REST 核；
+   *  /clear 重键（callbacks）清空——sessionId 换了放行集即失效 */
+  sessionAllowTools?: Set<string>
 
   // ---------- 补发基础设施（懒初始化，非状态位） ----------
   /** 下行 cli 事件的单调序号（重连补发用，见 cliReplay.ts） */

@@ -44,6 +44,7 @@ export function sessionCallbacks(hub: Hub) {
           const oldKey = hub.key
           hub.goal = undefined // 上下文已清，goal 与待审批随之失效
           hub.pendingApprovals.clear()
+          hub.sessionAllowTools = undefined // sessionId 已换，「本会话允许」放行集随之失效
           hub.pendingTitleText = undefined // 旧会话的标题素材不带给新会话
           // 三层重键（Hub / 进程 map / 存活 WS data.key），实现集中在 lifecycle.rekeyHub
           rekeyHub(hub, oldKey, newKey, newSid)
@@ -112,6 +113,22 @@ export function sessionCallbacks(hub: Hub) {
         deliverApproval(hub, req.requestId, decisionOfRule(auto.rule, req.input))
         return
       }
+      // 「本会话允许」内存放行集：WS 裁决 rememberTool 写入，与规则路径同形留痕
+      //（approval_auto 广播 + deliver 半段）；只放行不拒绝，/clear 重键即失效
+      if (hub.sessionAllowTools?.has(req.toolName)) {
+        log.info(`[approval] ${hub.key} 本会话放行 ${req.toolName}`)
+        broadcast(hub, {
+          kind: 'approval_auto',
+          requestId: req.requestId,
+          toolName: req.toolName,
+          input: req.input,
+          detail: summarizeInput(req.toolName, req.input),
+          action: 'allow',
+          rule: '本会话允许',
+        })
+        deliverApproval(hub, req.requestId, { behavior: 'allow', updatedInput: req.input })
+        return
+      }
       hub.pendingApprovals.set(req.requestId, req)
       broadcast(hub, {
         kind: 'approval_request',
@@ -151,6 +168,9 @@ export function sessionCallbacks(hub: Hub) {
         }
         hub.pendingApprovals.clear()
       }
+      // 「本会话允许」同样随进程死亡失效：Hub 因客户端存活而保留，不清的话
+      // 下一条消息重 spawn 的新会话会继承旧放行集（违背「重开会话失效」语义）
+      hub.sessionAllowTools = undefined
       pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
     },
   }

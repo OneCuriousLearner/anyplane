@@ -46,7 +46,14 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
   const s = port.sessionOf(hub.key)
   if (s && !s.exited) {
     try {
-      s.sendApproval(requestId, decision)
+      // rememberTool 是 Hub 内存放行集的内部语义，投递上游前剥掉——
+      // claude 的 control_response 把整个 decision 透传给 CLI（未知字段容忍度未验证，
+      // 被拒绝会让工具调用挂到上游超时）；codex 侧 mapApprovalDecision 本就会归约
+      const wire: ApprovalDecision =
+        decision.behavior === 'allow'
+          ? { behavior: 'allow', updatedInput: decision.updatedInput }
+          : decision
+      s.sendApproval(requestId, wire)
     } catch (e) {
       broadcastError(hub, `审批回复失败: ${errorMessage(e)}`)
     }
@@ -66,6 +73,13 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
  * 快照 + 客户端 reconcile 收敛（useSessionSocket status case；13.4 批次 A 已做）。
  */
 export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
+  // 「本会话允许这个工具」：allow + rememberTool 时把 toolName 记入 Hub 内存放行集。
+  // 只在 WS 裁决路径生效（REST 核 resolveApprovalRest 只接受 allow/deny 字面量——
+  // 审批规则语义绝不进推送能力 URL 的红线不变）
+  const pending = hub.pendingApprovals.get(requestId)
+  if (pending && decision.behavior === 'allow' && decision.rememberTool === true) {
+    ;(hub.sessionAllowTools ??= new Set()).add(pending.toolName)
+  }
   const had = hub.pendingApprovals.delete(requestId)
   if (had) deliverApproval(hub, requestId, decision)
   broadcast(hub, { kind: 'approval_resolved', requestId })
