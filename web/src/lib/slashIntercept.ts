@@ -30,6 +30,12 @@ export type SlashAction =
   | { type: 'rename'; name?: string }
   /** codex /new 与 /clear 同为 thread/start 新线程：导航到 xn| 新会话页（懒启动） */
   | { type: 'newThread' }
+  /** claude /plan [任务]：拦截为「权限模式设为 plan」+ 后续文字作为下一条用户消息。
+   *  codex 协作式 /plan 与权限档不同轴（审计），不映射不拦截 */
+  | { type: 'plan'; text?: string }
+  /** /permissions（及别名 /allowed-tools）：两后端都拦成系统提示——
+   *  headless 打不开 TUI 权限页，引导去输入区胶囊改模式 */
+  | { type: 'permHint' }
 
 interface InterceptRule {
   match: (t: string, isCodex: boolean) => boolean
@@ -87,6 +93,18 @@ const INTERCEPT_TABLE: InterceptRule[] = [
     // codex /new 与 /clear 同为 thread/start 新线程：导航到 xn| 新会话页（懒启动）
     match: (t, isCodex) => isCodex && (t === '/new' || t === '/clear'),
     action: () => ({ type: 'newThread' }),
+  },
+  {
+    // /plan 肌肉记忆 = 进计划模式写任务：claude 拦截成「权限模式设为 plan」+ 后续文字作为
+    // 下一条用户消息（headless 内建 /plan 是打不开的 TUI）。codex 协作式 /plan 不映射。
+    match: (t, isCodex) => !isCodex && /^\/plan(\s|$)/.test(t),
+    action: (t) => ({ type: 'plan', text: t.slice(5).trim() || undefined }),
+  },
+  {
+    // /permissions 在 headless 是打不开的 TUI 权限页：拦成系统提示，引导去输入区胶囊。
+    // 两后端同拦（codex 胶囊也有档位）；/allowed-tools 是官方别名（审计别名表）
+    match: (t) => t === '/permissions' || t === '/allowed-tools',
+    action: () => ({ type: 'permHint' }),
   },
 ]
 

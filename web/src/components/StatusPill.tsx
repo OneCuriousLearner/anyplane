@@ -160,6 +160,7 @@ export function StatusPill(props: {
                   onClick={() => {
                     props.onSetMode(m)
                     setSub(null)
+                    setOpen(false) // 选中即收整块面板（此前只收子列表，面板还盖在输入区上）
                   }}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${mm.dot}`} />
@@ -203,6 +204,7 @@ export function StatusPill(props: {
                   onClick={() => {
                     props.onSetModel(m)
                     setSub(null)
+                    setOpen(false) // 选中即收整块面板
                   }}
                 >
                   <span className="font-mono text-xs text-ink">[{resolveModel(m).label}]</span>
@@ -216,7 +218,11 @@ export function StatusPill(props: {
           </div>
         )}
 
-        <EffortSlider levels={levels} value={effort} onChange={props.onSetEffort} />
+        <EffortSlider levels={levels} value={effort} onChange={(e) => {
+          props.onSetEffort(e)
+          setSub(null)
+          setOpen(false) // effort 选定（pointerUp/步进终点才触发，拖动中不关）即收整块面板
+        }} />
       </div>,
       document.body,
     )

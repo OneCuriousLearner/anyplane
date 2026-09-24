@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { COMMAND_DESC, FALLBACK_COMMANDS, filterSlashHints, mergeSlashCommands } from './slashCommands'
+import { COMMAND_DESC, FALLBACK_COMMANDS, HEADLESS_TUI_COMMANDS, filterSlashHints, mergeSlashCommands } from './slashCommands'
+import { interceptSlash } from './slashIntercept'
 
 describe('mergeSlashCommands', () => {
   test('自有命令置顶，顺序即 FALLBACK 顺序', () => {
@@ -37,6 +38,33 @@ describe('mergeSlashCommands', () => {
 
   test('不变式：每个自有命令都有中文描述', () => {
     for (const n of FALLBACK_COMMANDS) expect(COMMAND_DESC[n]).toBeTruthy()
+  })
+
+  test('B 类 TUI 命令被过滤，C 类技能保留', () => {
+    const merged = mergeSlashCommands([
+      { name: 'status', desc: 'TUI status page' }, // B 类：headless 打不开
+      { name: 'permissions', desc: 'TUI permissions' }, // 已被拦截接管（不进过滤集），保留
+      { name: 'plan', desc: 'plan mode' }, // 同上
+      { name: 'deep-research', desc: 'skill' }, // C 类技能：保留
+      { name: 'init', desc: 'skill' },
+    ])
+    const names = merged.map((e) => e.name)
+    expect(names).not.toContain('status')
+    expect(names).toContain('permissions')
+    expect(names).toContain('plan')
+    expect(names).toContain('deep-research')
+    expect(names).toContain('init')
+  })
+
+  test('不变式：过滤集 ∩ 自有命令 = ∅（已接管的命令不许进过滤表）', () => {
+    for (const n of FALLBACK_COMMANDS) expect(HEADLESS_TUI_COMMANDS.has(n)).toBe(false)
+  })
+
+  test('不变式：过滤集内每条都不被拦截表命中（两条防线不重叠， drift 时相互作证）', () => {
+    for (const n of HEADLESS_TUI_COMMANDS) {
+      expect(interceptSlash(`/${n}`, { isCodex: false })).toBeNull()
+      expect(interceptSlash(`/${n}`, { isCodex: true })).toBeNull()
+    }
   })
 })
 
