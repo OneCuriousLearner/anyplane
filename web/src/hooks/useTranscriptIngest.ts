@@ -148,6 +148,9 @@ export function useTranscriptIngest(opts: {
 
   /** 历史响应落到消息列表 + 从读取位置续订 tail（初次加载与 tail_reset/replay_gap 重载共用） */
   const applyHistory = (resp: HistoryResponse) => {
+    // 纵深防御：api 层已拦非 2xx，这里再挡 200 但形状不符的应答——
+    // 静默 return 会让人面对空白抄本无提示，抛错走调用方 catch 显示真实文案
+    if (!Array.isArray(resp?.messages)) throw new Error('历史响应缺少 messages 字段')
     historyOffsetRef.current = resp.fileBytes
     historyBeforeRef.current = resp.nextBefore
     setHasMoreHistory(resp.hasMore === true)

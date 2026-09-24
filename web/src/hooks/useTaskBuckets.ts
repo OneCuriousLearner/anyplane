@@ -161,6 +161,7 @@ export function useTaskBuckets(opts: { isCodex: boolean }): {
     fetchCodexHistory(b.agentId)
       .then((resp) => {
         if (taskMapRef.current.get(b.toolUseId) !== b) return // 已驱逐，不复活
+        if (!Array.isArray(resp?.messages)) return // 形状不符宁可缺转录，不可炸掉桶
         const r = mergeTerminalHistoryState(b.messages, resp.messages)
         if (r) {
           b.messages = r.state.msgs

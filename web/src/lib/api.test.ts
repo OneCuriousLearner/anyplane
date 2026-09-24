@@ -11,6 +11,8 @@ import {
   apiFetch,
   AuthRequiredError,
   errorMessage,
+  fetchCodexHistory,
+  fetchHistory,
   makeSessionInfo,
   postJson,
   resolveModel,
@@ -179,5 +181,29 @@ describe('postJson：method/headers/body 组装', () => {
     expect(init?.method).toBe('POST')
     expect(init?.headers).toMatchObject({ 'content-type': 'application/json' })
     expect(init?.body).toBe(JSON.stringify({ key: 's|a|b' }))
+  })
+})
+
+describe('fetchHistory/fetchCodexHistory：非 2xx 必须抛错（接力竞态回归钉板）', () => {
+  // 背景：codex 历史路由把 RPC 异常包成 500 + {error} JSON；不查 ok 会让 {error}
+  // 被当成 HistoryResponse 解，applyHistory 迭代 undefined 炸出 w.messages is not iterable
+  test('200 正常返回解析后的 HistoryResponse', async () => {
+    nextResponse = new Response(JSON.stringify({ messages: [], fileBytes: 0 }), { status: 200 })
+    const resp = await fetchCodexHistory('th-1')
+    expect(resp.messages).toEqual([])
+    expect(resp.fileBytes).toBe(0)
+  })
+
+  test('500 + {error}：抛出服务端错误文案而非返回 {error} 形状', async () => {
+    // 注意 Response body 只能消费一次，两次调用各换一份新应答
+    nextResponse = new Response(JSON.stringify({ error: 'thread not found' }), { status: 500 })
+    await expect(fetchCodexHistory('th-x')).rejects.toThrow('thread not found')
+    nextResponse = new Response(JSON.stringify({ error: 'thread not found' }), { status: 500 })
+    await expect(fetchHistory('slug', 'sid')).rejects.toThrow('thread not found')
+  })
+
+  test('500 非 JSON 应答（网关错误页）：回退 HTTP 状态码', async () => {
+    nextResponse = new Response('<html>bad gateway</html>', { status: 502 })
+    await expect(fetchCodexHistory('th-x')).rejects.toThrow('HTTP 502')
   })
 })
