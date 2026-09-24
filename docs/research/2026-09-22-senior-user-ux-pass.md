@@ -190,6 +190,105 @@ Claude Code 的权限对话框是「看 diff → 允许一次 / 本项目不再�
 
 ## 仍没覆盖
 
-- 推送、锁屏按钮、真正走完的接力、分叉落盘、`/compact` 压缩质量。
+- 推送、锁屏按钮、一键审批 GET 确认页。
 - 没有在 `anyplane` 仓库目录里开会话。临时目录上的文件改动没有提交，也没有推远程。
 - 界面只有简体中文是 README 已写明的限制。斜杠描述、`/status` 失败文案、胶囊里的 `default(manual)` 仍是英文。
+- 手机视口 390×844 下接力链 / 审批卡 / 目标芯片的展示。
+- 接力链断开（源会话被回收后再点接力）的容错。
+
+~~推送、锁屏按钮、真正走完的接力、分叉落盘、`/compact` 压缩质量~~ → 2026-09-24 第三轮已覆盖，见下。
+
+---
+
+## 第三轮：补覆盖（2026-09-24）
+
+仍在本地沙盒 `D:\Coder\Agents\anyplane-e2e-sandbox` 实测，桌面 1440×900，桌面 Chrome。本轮把「仍没覆盖」里除推送与 `anyplane` 仓库会话外的项都走了一遍。**没有推送任何内容到远程仓库**，所有文件改动留在本地未 commit。
+
+### 12. `/branch` 在懒启动 `n|` 会话上落盘成双，列表里留死条目
+
+在 `n|<目录>`（懒启动，未 spawn）会话里发 `/branch`：
+
+- URL 跳到 `b|<目录>|<forkSessionId>`。侧栏分组计数从 1 → 2。
+- 磁盘 `~/.claude/projects/<slug>/` 出现两个 jsonl：
+  - `6c69a82d-…`：fork 时 CLI 写出的孤立 fork（headless `/branch` 的「不切换」产物），从此不再更新。
+  - `6737090d-…`：真正的接力主线（fork 后继续写）。
+- 手动通过 URL 打开 `s|...|6737090d` 时，顶栏一度是「外部会话 · 实时跟踪中」（tail 分支），直到再发一条消息才回「CLI 空闲」。
+- 资深用户看到侧栏两条会以为是「两条并行分支」，实际 `b|` 那条是尸体。
+
+**背景：** 问题 2 的「rekey 缺失」的连带后果。`/branch` 拦下后 AnyPlane 自己做了切换，但没有把「原会话已消失」这件事告诉列表；headless `/branch` 的孤立 fork 文件也没被清理或合并。
+
+**推荐：** `/branch` 完成后广播一次 `moved`，reason 区分「分叉落盘」；同时把孤立的 `b|` 中间产物从列表过滤掉，或在主线上 inline 提示「已分叉到 <新 key>」。
+
+### 13. Claude `/compact` 在 headless 下界面看不到压缩比，也没有分隔线
+
+在上下文 24.3k / 1.0M（2%）时 `/compact`：
+
+- 顶栏「压缩上下文…」持续 38s。
+- 聊天气泡出现 `上下文已压缩 ?→?` + `Compacted` + `─ 本轮 38s · 0 tok`。**前后 token 都是 `?`**；页脚累计 token 没涨；「上下文占用 2%（24.3k / 1.0M tok）」按钮数字也没变。
+- 磁盘 jsonl 里**没有 `compact_boundary` 条目**。只有一条 `isCompactSummary: true` 的 user 消息（英文 prompt「This session is being continued from a previous conversation…」）。
+- 分隔线没出现。原文档「`compact_boundary` 渲染为分隔线」是按交互模式写的；headless 下这条类型根本不写进 jsonl。
+- **`isCompactSummary: true` 的英文 prompt 完整渲染在主抄本里，没折叠**。它不在 `<system-reminder>`/isMeta 过滤范围内，把内部摘要 prompt 当成普通用户消息展示了。
+- `/rewind` 面板里 compact 之前的用户消息（含 compact summary 那条「（无可显示的用户文本）」）都还能选，没看到「compact 边界之前不能 rewind」的禁用提示。
+
+**推荐：** ① compact summary 识别 `isCompactSummary` 折叠成「已压缩上下文 · 查看摘要」一行；② 「上下文已压缩 ?→?」的前后 token 用同一条 assistant usage 计算；③ 如果 headless 下确实不写 `compact_boundary`，分隔线改用「isCompactSummary 消息出现」作为信号。
+
+### 14. Codex `/compact`：有真实摘要写进 jsonl，但界面什么都没显示
+
+接力过来的 Codex 会话（`x|01a0d297-…`，token 已 ↑3.8M）发 `/compact`：
+
+- 16s 后结束。聊天气泡出现 `上下文已压缩 ?→?` + `─ 本轮 16s · 0 tok`，**没有「Compacted」标签，没有摘要气泡**。
+- token 页脚从 ↑3.8M ↓54.2k 涨到 ↑3.9M ↓57.6k——**compact 本身烧了 0.1M token**，但界面一行都没显示这段开销的去向。
+- 磁盘 jsonl 里看到一条 `type: "compacted"`，`payload.message` 是**完整的中文交接摘要**（含「现场事实」「已确立的关键决策」「已落地的文件」等小节），质量足够让下一个 agent 接续工作。
+- 紧接着在 compact 后发一条「接力摘要里的『现场事实』第一条说的是什么？」，模型正确引用摘要内容回答——证明摘要确实传给了后续调用，**只是前端没展示**。
+
+**推荐：** Codex 的 `compacted` 事件也生成一个折叠的「已压缩上下文 · 查看摘要」气泡，内容取 `payload.message` 前 N 字符。当前接口事件里没有这条，需要在适配器里把 `compacted` 暴露出来。
+
+### 15. Codex 接力后顶部报 `w.messages is not iterable`，之后正常工作
+
+Claude `s|...|6737090d` → 「更多 → ⇄ 接力给 Codex」：
+
+- 接力链 UI 正确：`⇄ 接力链: Claude 16:46 → Codex 16:46`，可互跳。
+- URL 自动跳到 `x|01a0d297-…`（接力目标的真实 thread id）——这正是问题 2 推荐的 rekey 行为，**Codex 侧接力已经做到了**，Claude 侧的 `/branch` 和首条消息后没做。
+- **Codex 会话页面顶部出现一行 `⚠ 加载历史失败: TypeError: w.messages is not iterable`**。之后 Codex 继续正常工作，但这行报错在界面上留着。
+- 疑似 ephemeral fork 刚 spawn 时历史 API 形状未就绪，或 Codex 历史结构与 Claude 不一致时 ingest 没兜底。
+
+**推荐：** 定位 `w.messages is not iterable` 抛出处（大概率在 ingest / 历史水合路径），对「Codex 新线程尚无 messages」做防御；如果接力链目标会话还在 spawn 中，先渲染骨架屏而不是历史接口。
+
+### 16. Codex 审批带中文 `reason` 字段，但 UI 没突出
+
+Codex 接力工作期间，删除 `branch-probe.txt` 的 PowerShell 触发了审批。审批卡正文：
+
+```json
+{
+  "command": "\"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\" -Command \"Remove-Item -LiteralPath \\\"...\\\" -Force; Test-Path \\\"...\\\"\"",
+  "cwd": "D:\\Coder\\Agents\\anyplane-e2e-sandbox",
+  "reason": "清理上个 agent 留下的探针文件 branch-probe.txt（内容为 fork-test-v2），避免混进首次 commit。是否允许在沙盒内删除该文件？"
+}
+```
+
+- `reason` 是 Codex 给出的中文化解释，比 Claude 侧的纯参数更有信息量。
+- 但审批卡只把整段 `JSON.stringify` 展示，`reason` 没单独突出，且 PowerShell 嵌套转义（`\\\"…\\\\…\\\"`）让 command 几乎不可读。
+- 顶栏仍是「等待审批」（与 Claude 侧一致，问题 3 复现）。
+
+**推荐：** 审批卡先取 `input.reason`（若有）放在标题下方一行，再把 input 走 `toolDetail` 的格式化；PowerShell 嵌套命令可以只做第一层 unescape 或截断展示。
+
+### 17. 接力目标工作目录与我的笔记目录相同，Codex 把走查笔记当需求写进了 README
+
+接力简报默认目标是「在 <cwd> 继续工作」。我的笔记写在 `<cwd>/notes/`。结果 Codex 接力过来后读到笔记，**主动把走查发现写进 `README.md` 当回归断言**（包括「接力后不得出现 ⚠ 加载历史失败…」等）。
+
+最终落地文件（未 commit，纯本地）：`.gitignore`、`AGENTS.md`、`README.md`、`package.json`、`tsconfig.json`、`scripts/preflight.ts`、`tests/smoke.test.ts`、`tests/support/{env,browser,app}.ts`、`.tmp/commit-msg.txt`。
+
+**推荐：** 接力简报里明确「`<cwd>/notes/` 下的内容是参考笔记，不是当前任务」；或者在简报模板里加一段「工作目录里可能存在测试者留下的笔记文件，请不要把它们当作当前任务输入」。
+
+### 18. Codex 侧栏条目仍只有线程 id 前 8 位，没有 AI 标题
+
+接力出来的 Codex 会话在侧栏显示为 `01a0d297 2s 工作中 …`。AI 标题在 Claude 侧是写进列表的（「README.md 目录用途」那次），Codex 侧一直没出现。
+
+**背景：** 问题 1 末尾已经提过 Codex 新线程没有 `title` 只有 `lastPrompt`。本轮接力场景再确认：接力完成后这条 Codex 线程仍未获得 AI 标题。
+
+## 仍没覆盖（更新）
+
+- 推送、锁屏按钮、一键审批 GET 确认页。
+- 在 `D:\Coder\Agents\anyplane` 仓库目录里开会话。
+- 手机视口 390×844 下接力链 / 审批卡 / 目标芯片的展示。
+- 接力链断开（源会话被回收后再点接力）的容错。
