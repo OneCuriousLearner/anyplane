@@ -187,6 +187,18 @@ export function Composer(props: {
     }
   }
 
+  /** 粘贴图片：截图进对话的习惯是粘贴不是先存盘（走查问题 5）。
+   *  只接受图片（clipboardData.files 过滤 image/*），复用 pickImages 的读图段；
+   *  文本粘贴不受影响（clipboardData.files 为空时什么都不做） */
+  const onPaste = (e: React.ClipboardEvent) => {
+    const files = e.clipboardData?.files
+    if (!files || files.length === 0) return
+    const hasImage = Array.from(files).some((f) => f.type.startsWith('image/'))
+    if (!hasImage) return
+    e.preventDefault() // 有图片时阻止默认（图片文件的默认粘贴无意义）
+    pickImages(files)
+  }
+
   // codex 模型目录派生（model/list）：模型/effort 档位/默认值
   const codexDefaultModel = codexModels?.find((m) => m.isDefault) ?? codexModels?.[0]
   const codexModelId = stateModel ?? codexDefaultModel?.id
@@ -298,12 +310,13 @@ export function Composer(props: {
             ref={inputRef}
             className="max-h-[200px] min-h-[1.5rem] w-full resize-none overflow-hidden bg-transparent px-1 text-[15px] leading-snug text-ink outline-none placeholder:text-faint"
             rows={1}
-            placeholder={busy ? '工作中…' : 'ᕕ( ◠ڼ◠ )ᕗ'}
+            placeholder={busy ? '工作中…' : '输入消息（/ 唤起命令，可直接粘贴图片）'}
             value={input}
             onChange={(e) => {
               onInputChange(e.target.value)
               setSlashIdx(0)
             }}
+            onPaste={onPaste}
             onKeyDown={(e) => {
               // 斜杠命令面板打开时的键盘导航
               if (slashHints.length > 0) {

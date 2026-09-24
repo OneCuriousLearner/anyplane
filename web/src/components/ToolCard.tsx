@@ -2,19 +2,23 @@ import { memo, useState } from 'react'
 import { toolDetail, toolSummary, type ToolBlock } from '../lib/blocks'
 
 /** 工具调用卡片：一行 trace（图标+名称+摘要+结果状态），点击展开参数与结果。
- *  streaming（codex 命令输出部分结果流入中）时默认展开；开合是派生值而非 effect——
- *  用户点过就以用户为准（流式中收起不被顶开，终态时展开不被收回），从未点过则跟随 streaming。
+ *  streaming（codex 命令输出部分结果流入中）或 latestTurn（最新一轮，还没被下一条
+ *  用户消息盖住——走查问题 7：模型说错了要当场核对它读到的原文）时默认展开；
+ *  开合是派生值而非 effect——用户点过就以用户为准（流式中收起不被顶开，终态时
+ *  展开不被收回，新一轮盖上后未点过的旧卡收回）。
  *  memo：抄本每次 render 重建全部行；tool 块遵循不可变更新纪律（内容变必换新对象），
  *  默认浅比较即可挡掉未变卡片。 */
 export const ToolCard = memo(function ToolCard(props: {
   tool: ToolBlock
   streaming?: boolean
+  /** 最新一轮的工具卡默认展开（blocks.ts buildTranscriptRows 的 latestTurn 标记） */
+  defaultOpen?: boolean
   className?: string
   embedded?: boolean
 }) {
   const { tool } = props
   const [userChoice, setUserChoice] = useState<boolean | null>(null)
-  const open = userChoice ?? Boolean(props.streaming)
+  const open = userChoice ?? Boolean(props.streaming || props.defaultOpen)
   const summary = toolSummary(tool.name, tool.input)
 
   return (

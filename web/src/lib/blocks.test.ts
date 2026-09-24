@@ -250,3 +250,39 @@ describe('buildTranscriptRows streaming 标记（codex 部分结果驱动卡片�
     expect(act.items.map((it) => it.streaming ?? false)).toEqual([true, false, false])
   })
 })
+
+describe('buildTranscriptRows latestTurn 标记（最新一轮工具卡默认展开）', () => {
+  const tool = (id: string): ChatMsg['blocks'][number] => ({ kind: 'tool', id, name: 'Read', input: {} })
+  const user = (id: string): ChatMsg => ({ id, role: 'user', blocks: [{ kind: 'text', text: '问' }] })
+  const asst = (id: string, blocks: ChatMsg['blocks']): ChatMsg => ({ id, role: 'assistant', blocks })
+
+  const latestFlags = (rows: ReturnType<typeof buildTranscriptRows>) =>
+    rows.flatMap((r) => (r.type === 'activity' ? r.items.map((it) => it.latestTurn ?? false) : []))
+
+  test('最后一条 user 之后的 assistant 工具卡标 latestTurn，更早轮次不标', () => {
+    const rows = buildTranscriptRows([
+      asst('a1', [tool('t-old')]),
+      user('u1'),
+      asst('a2', [tool('t-new')]),
+    ])
+    expect(latestFlags(rows)).toEqual([false, true])
+  })
+
+  test('全是有历史（无 user 边界）→ 都不标；草稿恒在最新一轮', () => {
+    const onlyAssistant = buildTranscriptRows([asst('a1', [tool('t1')])])
+    expect(latestFlags(onlyAssistant)).toEqual([false])
+    const withDraft = buildTranscriptRows([asst('a1', [tool('t1')])], {
+      blocks: [{ idx: 0, kind: 'tool', text: '', name: 'Bash', toolId: 'td' }],
+    })
+    expect(latestFlags(withDraft)).toEqual([false, true])
+  })
+
+  test('system 消息（分隔线/系统行）也是边界——compact 后的新一轮才标', () => {
+    const rows = buildTranscriptRows([
+      asst('a1', [tool('t-pre')]),
+      { id: 'd1', role: 'system', systemKind: 'divider', blocks: [] },
+      asst('a2', [tool('t-post')]),
+    ])
+    expect(latestFlags(rows)).toEqual([false, true])
+  })
+})
