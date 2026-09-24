@@ -54,13 +54,29 @@ describe('sessionFromKey', () => {
     })
   })
 
+  test('n|/xn| 懒启动占位 → 深链兜底（懒窗口内刷新不丢回列表）', () => {
+    // 懒启动窗口内列表还查不到这条 key；sessionId 未有，用 'new' 哨兵（与 startNew 同口径）
+    expect(sessionFromKey('n|%2Fsrv%2Fproj')).toMatchObject({
+      cwd: '/srv/proj',
+      slug: '-srv-proj',
+      sessionId: 'new',
+      backend: 'claude',
+    })
+    expect(sessionFromKey('xn|%2Fsrv%2Fproj')).toMatchObject({
+      cwd: '/srv/proj',
+      slug: 'codex',
+      sessionId: 'new',
+      backend: 'codex',
+    })
+  })
+
   test('非法形状与损坏编码 → null', () => {
-    expect(sessionFromKey('n|%2Ftmp')).toBeNull() // 新会话没有历史可兜底
-    expect(sessionFromKey('xn|%2Ftmp')).toBeNull()
     expect(sessionFromKey('s|only-two')).toBeNull()
     expect(sessionFromKey('x|a|b')).toBeNull()
+    expect(sessionFromKey('n|')).toBeNull()
     expect(sessionFromKey('whatever')).toBeNull()
     expect(sessionFromKey('')).toBeNull()
     expect(sessionFromKey('b|%E4%B8|sid')).toBeNull() // 截断的百分号编码
+    expect(sessionFromKey('n|%E4%B8')).toBeNull()
   })
 })

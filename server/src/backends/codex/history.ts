@@ -4,6 +4,7 @@ import { log } from '../../log'
 import type { HistoryMessage } from '@anyplane/protocol'
 import { readReasoning } from './reasoningStore'
 import { reasoningSidecarUuid } from './mapping'
+import { RpcError } from './rpc'
 import { itemsToHistory, type ThreadItem } from './translate'
 
 export type RpcRequestFn = (method: string, params?: unknown, timeoutMs?: number) => Promise<unknown>
@@ -196,8 +197,26 @@ export async function readHistoryForThread(
 ): Promise<HistoryMessage[]> {
   // historyMode 走 threadMeta 缓存（同线程重复打开/回滚判定不再各付一次 thread/read）
   const mode = (await threadMeta(rpcRequest, threadId, ctx)).historyMode
-  const turns = mode === 'paginated' ? await readPaginatedTurns(rpcRequest, threadId) : await readLegacyTurns(rpcRequest, threadId)
-  return turnsToHistory(threadId, turns)
+  if (mode !== 'paginated') return turnsToHistory(threadId, await readLegacyTurns(rpcRequest, threadId))
+  // 0.155.1 实测：「尚无已完成 turn」的首轮窗口里，items/list 报 -32601「not supported yet」，
+  // thread/read / turns/list 也可能报 -32603「rollout is empty」——rollout 还没写出任何元数据。
+  // 有 completedAt 的 turn 存在后全部恢复（第二轮在跑也正常）。
+  // 此时空历史就是诚实答案——唯一进行中的内容由 live 流覆盖（升键/接力导航正落在这个窗口）。
+  // 探测到已有完成 turn 仍报错属预期外（如 legacy 误判 paginated），照抛给路由层 500。
+  try {
+    return turnsToHistory(threadId, await readPaginatedTurns(rpcRequest, threadId))
+  } catch (e) {
+    if (!(e instanceof RpcError && (e.code === -32601 || e.code === -32603))) throw e
+    let probe: Array<{ completedAt?: number | null }> | undefined
+    try {
+      probe = await listTurnsMeta(rpcRequest, threadId)
+    } catch {
+      probe = undefined // 探测本身也失败 = 仍在首轮窗口（rollout 空），按空历史处理
+    }
+    if (probe?.some((t) => t.completedAt != null)) throw e
+    log.warn('[codex] 首轮窗口历史暂不可读，返回空（live 流覆盖在跑 turn）', { threadId })
+    return []
+  }
 }
 
 /** 原地回滚（paginated 线程）：thread/revert 用 beforeTurnId 之前的持久历史替换现状——

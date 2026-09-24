@@ -6,7 +6,7 @@ import { log } from '../log'
 import { errorMessage } from '../util'
 import { inboxChannel, replayApprovals, sendTo } from './broadcast'
 import { handleClientMessage } from './messages'
-import { getHub, hubs } from './registry'
+import { getHub, hubs, resolveKeyTombstone } from './registry'
 import { statusOf } from './status'
 import type { WSData, WSDataInbox } from './types'
 
@@ -32,6 +32,14 @@ export function wsOpen(ws: ServerWebSocket<WSData>): void {
     return
   }
   startKeepalive(ws)
+  // rekey 墓碑重定向：连接攥着的是升键/重键前的旧 key（stale 深链、断线重连、
+  // 系统恢复的标签页）——改写 data.key 到新 Hub 并补发 moved 让前端导航，
+  // 否则旧 key 上会建出空 Hub，首条消息懒 spawn 出重复会话
+  const resolved = resolveKeyTombstone(ws.data.key)
+  if (resolved !== ws.data.key) {
+    ws.data.key = resolved
+    sendTo(ws, { kind: 'moved', targetKey: resolved, reason: 'tombstone' })
+  }
   const hub = getHub(ws.data.key)
   hub.clients.add(ws)
   portFor(ws.data.key).sessionOf(ws.data.key)?.attachClient()

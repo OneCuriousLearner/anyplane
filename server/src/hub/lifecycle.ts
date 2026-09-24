@@ -4,7 +4,7 @@ import { portFor } from '../backends/port'
 import type { ApprovalDecision } from '@anyplane/protocol'
 import { errorMessage } from '../util'
 import { broadcast, broadcastError, publishInbox } from './broadcast'
-import { hubs } from './registry'
+import { hubs, noteRekeyTombstone } from './registry'
 import { pushStatus } from './status'
 import type { Hub } from './types'
 
@@ -26,6 +26,9 @@ export function rekeyHub(hub: Hub, oldKey: string, newKey: string, newSessionId:
   hubs.delete(oldKey)
   hub.key = newKey
   hubs.set(newKey, hub)
+  // 旧 key 留墓碑：wsOpen 把迟到的连接重定向过来（stale 深链/断线重连场景），
+  // 否则旧 key 上会建出空 Hub，首条消息再 spawn 一条进程同写 cwd
+  noteRekeyTombstone(oldKey, newKey)
   portFor(newKey).rekeySession(hub, oldKey, newKey, newSessionId)
   for (const ws of hub.clients) {
     if (!ws.data.inbox) ws.data.key = newKey

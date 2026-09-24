@@ -192,6 +192,79 @@ describe('sessionCallbacks.conversation_reset', () => {
   })
 })
 
+describe('sessionCallbacks.init 通用升键（n|/xn|/b| 拿到真实 id 即重键）', () => {
+  test('claude n| 首个 init 升键 s|：三层同步 + moved(reason=spawned)', () => {
+    const oldKey = 'n|%2Ftmp%2Flazy-cwd'
+    const { hub, ws } = hubAt(oldKey)
+    const fake = injectFakeSession(oldKey)
+    sessionCallbacks(hub).onMessage({ type: 'system', subtype: 'init', session_id: 'sid-lazy' } as CliMessage)
+
+    const newKey = 's|-tmp-lazy-cwd|sid-lazy'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(hub.sessionId).toBe('sid-lazy')
+    expect(ws.data.key).toBe(newKey)
+    expect(hubs.get(oldKey)).toBeUndefined()
+    expect(hubs.get(newKey)).toBe(hub)
+    expect(sessionMap().has(oldKey)).toBe(false)
+    expect(sessionMap().get(newKey)).toBe(fake)
+    const moved = payloads(ws).filter((p) => p.kind === 'moved')
+    expect(moved).toEqual([{ kind: 'moved', targetKey: newKey, targetSessionId: 'sid-lazy', reason: 'spawned' }])
+  })
+
+  test('codex xn| 合成 init 升键 x|（cwd 不参与 key）', () => {
+    const oldKey = 'xn|%2Ftmp%2Fx-cwd'
+    const { hub, ws } = hubAt(oldKey)
+    sessionCallbacks(hub).onMessage({ type: 'system', subtype: 'init', session_id: 'th-1' } as CliMessage)
+
+    const newKey = 'x|th-1'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(ws.data.key).toBe(newKey)
+    expect(payloads(ws).some((p) => p.kind === 'moved' && p.targetKey === newKey && p.reason === 'spawned')).toBe(true)
+  })
+
+  test('claude b| 懒分叉首个 init 升键到分叉自身 s|（cwd 取 key 内嵌段）', () => {
+    const oldKey = 'b|%2Ftmp%2Ffork-cwd|source-sid'
+    const { hub, ws } = hubAt(oldKey)
+    const fake = injectFakeSession(oldKey)
+    sessionCallbacks(hub).onMessage({ type: 'system', subtype: 'init', session_id: 'fork-sid' } as CliMessage)
+
+    const newKey = 's|-tmp-fork-cwd|fork-sid'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    expect(sessionMap().get(newKey)).toBe(fake)
+    expect(payloads(ws).some((p) => p.kind === 'moved' && p.targetKey === newKey)).toBe(true)
+  })
+
+  test('existing key（s|/x|）的 init 不升键、不发 moved', () => {
+    const { hub, ws } = hubAt('s|-tmp|sid-1')
+    sessionCallbacks(hub).onMessage({ type: 'system', subtype: 'init', session_id: 'sid-1' } as CliMessage)
+    expect(hub.key).toBe('s|-tmp|sid-1')
+    expect(payloads(ws).some((p) => p.kind === 'moved')).toBe(false)
+
+    const cx = hubAt('x|th-9')
+    sessionCallbacks(cx.hub).onMessage({ type: 'system', subtype: 'init', session_id: 'th-9' } as CliMessage)
+    expect(cx.hub.key).toBe('x|th-9')
+    expect(payloads(cx.ws).some((p) => p.kind === 'moved')).toBe(false)
+  })
+
+  test('/clear 重键后通用分支不重复升键：moved 只有一条且 reason=clear', () => {
+    const oldKey = 'n|%2Ftmp%2Fclear-once'
+    const { hub, ws } = hubAt(oldKey)
+    injectFakeSession(oldKey)
+    const cb = sessionCallbacks(hub)
+    cb.onMessage({ type: 'conversation_reset' } as CliMessage)
+    cb.onMessage({ type: 'system', subtype: 'init', session_id: 'sid-once' } as CliMessage)
+
+    const newKey = 's|-tmp-clear-once|sid-once'
+    extraKeys.push(newKey)
+    expect(hub.key).toBe(newKey)
+    const moved = payloads(ws).filter((p) => p.kind === 'moved')
+    expect(moved).toEqual([{ kind: 'moved', targetKey: newKey, targetSessionId: 'sid-once', reason: 'clear' }])
+  })
+})
+
 describe('sessionCallbacks.onExit', () => {
   test('清空死审批，逐条撤卡并发布 inbox，最后推送退出状态', () => {
     const { hub, ws } = freshHub()

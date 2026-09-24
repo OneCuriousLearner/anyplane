@@ -3,7 +3,7 @@
 
 import { decisionOfRule, matchApprovalRule } from '../approvalRules'
 import { isInternalUserMessage, type CliMessage } from '../backends/claude/streamJson'
-import { portFor } from '../backends/port'
+import { describeKey, portFor } from '../backends/port'
 import { config } from '../config'
 import { log } from '../log'
 import { summarizeInput } from '../util'
@@ -55,7 +55,26 @@ export function sessionCallbacks(hub: Hub) {
       }
       // 每个 init 都更新会话身份（首次 spawn 与 /clear 重键共用；rekey 分支不落 return，会走到这里）
       if (msg.type === 'system' && msg.subtype === 'init') {
-        hub.sessionId = String(msg.session_id ?? '') || undefined
+        const sid = String(msg.session_id ?? '') || undefined
+        // 懒启动/懒分叉拿到真实 id 就升键（n|→s|、xn|→x|、b|→s|）：不重键的话 Hub 继续叫 n|，
+        // 磁盘转录被 discovery 发现成 s|，刷新/深链/列表点回会 tail 分裂出「外部会话」，
+        // 顶栏标题也永远写不回。claude 真 init 与 codex 合成 init（session.ts 线程启动后）
+        // 都经此分支；existing key（s|/x| resume）与 /clear 刚重键完的新 key 自然跳过。
+        const port = portFor(hub.key)
+        const desc = describeKey(hub.key)
+        if (sid && desc && desc.kind !== 'existing') {
+          // cwd 优先级与 /clear 分支一致：spawnOpts（用户显式选择）> key 内嵌 > 反查
+          const cwd = hub.spawnOpts?.cwd ?? desc.cwd ?? port.handoffSource(hub.key).cwd
+          const newKey = cwd ? port.keyForExisting(sid, cwd) : undefined
+          if (newKey && newKey !== hub.key) {
+            const oldKey = hub.key
+            // 三层重键（Hub / 进程 map / 存活 WS data.key），实现集中在 lifecycle.rekeyHub
+            rekeyHub(hub, oldKey, newKey, sid)
+            broadcast(hub, { kind: 'moved', targetKey: newKey, targetSessionId: sid, reason: 'spawned' })
+            pushStatus(hub)
+          }
+        }
+        hub.sessionId = sid
         portFor(hub.key).maybeGenerateTitle?.(hub) // 首条消息可能已记账在等 sessionId（claude-only 能力，?. 守护）
       }
       broadcast(hub, { kind: 'cli', msg })

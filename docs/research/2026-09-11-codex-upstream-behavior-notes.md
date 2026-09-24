@@ -49,6 +49,13 @@
   rollout 时代的老线程经当前二进制读取同样缺，说明是重建/持久化路径而非单线程数据问题）；
   `turns/list` 对 legacy 可用但内嵌 items 只有 user/agentMessage，`items/list` 对 legacy 报 -32601
   ——**legacy 线程只能继续走 `thread/read includeTurns` 的残缺现状，借不了分页 API 补齐**。
+- **paginated 线程「尚无已完成 turn」的首轮窗口历史暂不可读**：`items/list` 报 -32601
+  「not supported yet」，`thread/read`/`turns/list` 也可能报 -32603「rollout is empty」
+  （rollout 尚未写出元数据）。有 completedAt 的 turn 存在后全部恢复，第二轮在跑也正常
+  （2026-09-24，0.155.1 实测：首轮在跑五连探全失败，第二轮在跑五连探全 200）。
+  新建线程/接力播种的导航恰好落在这个窗口打历史接口。AnyPlane 侧的处置：窗口内返回
+  空历史（唯一在跑内容由 live 流覆盖）；探测到已有完成 turn 仍报错则照抛
+  （`history.ts readHistoryForThread`）。
 
 ## 回滚与分叉（0.155.1 实测）
 
