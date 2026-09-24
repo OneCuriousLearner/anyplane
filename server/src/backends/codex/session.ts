@@ -820,19 +820,25 @@ export class CodexSession {
     this.cb.onMessage(msg)
   }
 
+  /** 本次会话已挂过分隔线的摘要（patchCompactSummary 写入）：扫到同款摘要说明
+   *  本次 compact 的新记录还没落盘（rollout 里最新的仍是上一次）——等同没找到，走重试 */
+  private lastAttachedCompactSummary?: string
+
   /** /compact 的摘要补丁帧：rollout 尾扫 compacted 记录，扫到就以同 uuid 补发
    *  compact_metadata.summary（前端按 id 合并进已发的分隔线）。
-   *  扫盘与 rollout 落盘有竞态（OS 写缓冲/杀软索引），空跑一次 800ms 后补一枪。 */
+   *  扫盘与 rollout 落盘有竞态（OS 写缓冲/杀软索引）：没找到、或找到的还是上一次
+   *  挂过的那条（本次记录尚未落盘），800ms 后补一枪。itemId 缺席时补丁帧无法合并，跳过。 */
   private async patchCompactSummary(itemId?: string): Promise<void> {
-    if (!this.threadId) return
+    if (!this.threadId || !itemId) return
     try {
       let summary = await readCompactedSummary(this.runtime.home, this.threadId)
-      if (!summary) {
+      if (!summary || summary === this.lastAttachedCompactSummary) {
         await new Promise((r) => setTimeout(r, 800))
         if (this.exited) return
         summary = await readCompactedSummary(this.runtime.home, this.threadId)
       }
-      if (!summary || this.exited) return
+      if (!summary || summary === this.lastAttachedCompactSummary || this.exited) return
+      this.lastAttachedCompactSummary = summary
       this.emit({
         type: 'system',
         subtype: 'compact_boundary',
