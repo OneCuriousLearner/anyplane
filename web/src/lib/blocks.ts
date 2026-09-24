@@ -181,8 +181,8 @@ export interface ChatMsg {
   timestamp?: string
   /** system 消息的展示变体 */
   systemKind?: 'info' | 'error' | 'divider' | 'compactSummary'
-  /** compact_boundary 元数据（与 protocol HistoryMessage.compactMeta 同形） */
-  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number }
+  /** compact_boundary 元数据（与 protocol HistoryMessage.compactMeta 同形；summary 是 codex 压缩摘要） */
+  compactMeta?: { trigger?: string; preTokens?: number; postTokens?: number; summary?: string }
   /** 侧问卡片：问题文本；存在即按侧问样式渲染 */
   btw?: string
   /** 侧问回答进行中（未收到 btw_result） */

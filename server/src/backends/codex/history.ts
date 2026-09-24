@@ -3,9 +3,11 @@
 import { log } from '../../log'
 import type { HistoryMessage } from '@anyplane/protocol'
 import { readReasoning } from './reasoningStore'
-import { reasoningSidecarUuid } from './mapping'
+import { extractCompactedFromRolloutTail, reasoningSidecarUuid } from './mapping'
 import { RpcError } from './rpc'
 import { itemsToHistory, type ThreadItem } from './translate'
+import { Glob } from 'bun'
+import { join } from 'node:path'
 
 export type RpcRequestFn = (method: string, params?: unknown, timeoutMs?: number) => Promise<unknown>
 
@@ -28,6 +30,37 @@ interface ThreadMetaSession {
 export interface ThreadMetaContext {
   sessions: Iterable<ThreadMetaSession>
   cache: Map<string, { historyMode?: string; cwd?: string }>
+  /** codex home（rollout 扫描用）：缺失时 compact 摘要挂载静默跳过 */
+  home?: string
+}
+
+/** 定位线程的 rollout 文件并尾扫最后一条 compacted 记录的摘要（payload.message）。
+ *  上游历史投影丢 payload（只置 saw_compaction），这是摘要的唯一数据源。
+ *  尽力而为：找不到/读不到返回 undefined（调用方静默降级，不影响历史本体）。
+ *  分块向上翻倍回扫（512KB → 4 倍递增 → 全文件）：两次 compact 之间写了大量内容时
+ *  固定尾窗会漏掉最新记录（review 轮）——翻到找到或读完为止 */
+export async function readCompactedSummary(home: string, threadId: string): Promise<string | undefined> {
+  try {
+    const glob = new Glob(`sessions/**/rollout-*${threadId}.jsonl`)
+    let rel: string | undefined
+    for await (const p of glob.scan({ cwd: home, onlyFiles: true })) {
+      rel = p
+      break // threadId 全局唯一，首个命中即所求
+    }
+    if (!rel) return undefined
+    const f = Bun.file(join(home, rel))
+    const size = f.size
+    let window_ = 512 * 1024
+    for (;;) {
+      // 窗口左缘的截断行本轮被 extractor 跳过，下一轮 4 倍窗口完整覆盖它
+      const text = await f.slice(Math.max(0, size - window_), size).text()
+      const found = extractCompactedFromRolloutTail(text)
+      if (found || window_ >= size) return found
+      window_ = Math.min(window_ * 4, size)
+    }
+  } catch {
+    return undefined
+  }
 }
 
 /** 线程元数据（historyMode/cwd 都是创建即固定的量）单缓存：readHistory 与 runtime 的
@@ -197,14 +230,31 @@ export async function readHistoryForThread(
 ): Promise<HistoryMessage[]> {
   // historyMode 走 threadMeta 缓存（同线程重复打开/回滚判定不再各付一次 thread/read）
   const mode = (await threadMeta(rpcRequest, threadId, ctx)).historyMode
-  if (mode !== 'paginated') return turnsToHistory(threadId, await readLegacyTurns(rpcRequest, threadId))
+  const finish = async (msgs: HistoryMessage[]): Promise<HistoryMessage[]> => {
+    // compact 摘要在 rollout 的 compacted 记录里（上游历史投影丢 payload）——
+    // 尾扫补到最后一条分隔线上；找不到/读不到静默跳过
+    if (ctx.home && msgs.some((m) => m.subtype === 'compact_boundary')) {
+      const summary = await readCompactedSummary(ctx.home, threadId)
+      if (summary) {
+        // ts lib 目标无 findLastIndex：倒序手扫
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].subtype === 'compact_boundary') {
+            msgs[i] = { ...msgs[i], compactMeta: { ...msgs[i].compactMeta, summary } }
+            break
+          }
+        }
+      }
+    }
+    return msgs
+  }
+  if (mode !== 'paginated') return finish(turnsToHistory(threadId, await readLegacyTurns(rpcRequest, threadId)))
   // 0.155.1 实测：「尚无已完成 turn」的首轮窗口里，items/list 报 -32601「not supported yet」，
   // thread/read / turns/list 也可能报 -32603「rollout is empty」——rollout 还没写出任何元数据。
   // 有 completedAt 的 turn 存在后全部恢复（第二轮在跑也正常）。
   // 此时空历史就是诚实答案——唯一进行中的内容由 live 流覆盖（升键/接力导航正落在这个窗口）。
   // 探测到已有完成 turn 仍报错属预期外（如 legacy 误判 paginated），照抛给路由层 500。
   try {
-    return turnsToHistory(threadId, await readPaginatedTurns(rpcRequest, threadId))
+    return finish(turnsToHistory(threadId, await readPaginatedTurns(rpcRequest, threadId)))
   } catch (e) {
     if (!(e instanceof RpcError && (e.code === -32601 || e.code === -32603))) throw e
     let probe: Array<{ completedAt?: number | null }> | undefined

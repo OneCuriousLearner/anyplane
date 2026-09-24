@@ -3,6 +3,7 @@
 // turn/start 用 camelCase sandboxPolicy 对象）是本文件锁定的重点。
 import { describe, expect, test } from 'bun:test'
 import {
+  extractCompactedFromRolloutTail,
   extractTokenCountFromRolloutTail,
   mapApprovalDecision,
   mapPermissionMode,
@@ -82,6 +83,27 @@ describe('extractTokenCountFromRolloutTail（resume 水合）', () => {
     expect(got?.last.totalTokens).toBe(14589)
     expect(got?.modelContextWindow).toBeUndefined()
     expect(extractTokenCountFromRolloutTail(other)).toBeUndefined()
+  })
+})
+
+describe('extractCompactedFromRolloutTail（/compact 摘要水合）', () => {
+  // 2026-09-24 实测形状：{ timestamp, ordinal, type:'compacted', payload:{ message, … } }
+  const compacted = (message: string) =>
+    JSON.stringify({ timestamp: 't', ordinal: 1, type: 'compacted', payload: { message, retained_context: {} } })
+
+  test('取尾部最后一条 compacted 的 payload.message；截断行/非 compacted 行跳过', () => {
+    const other = JSON.stringify({ type: 'response_item', payload: { type: 'message' } })
+    const truncated = '{"type":"compacted","payload":{"mes'
+    const text = [compacted('旧摘要'), other, truncated, compacted('新摘要')].join('\n')
+    expect(extractCompactedFromRolloutTail(text)).toBe('新摘要')
+    expect(extractCompactedFromRolloutTail(other)).toBeUndefined()
+    expect(extractCompactedFromRolloutTail('')).toBeUndefined()
+  })
+
+  test('compacted 但 message 非字符串/空串 → 跳过', () => {
+    const bad = JSON.stringify({ type: 'compacted', payload: { message: 42 } })
+    const empty = compacted('  ')
+    expect(extractCompactedFromRolloutTail([bad, empty].join('\n'))).toBeUndefined()
   })
 })
 

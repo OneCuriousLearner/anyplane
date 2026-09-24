@@ -8,6 +8,7 @@ import { errorMessage } from '../../util'
 import { config } from '../../config'
 import { RpcError } from './rpc'
 import { appendReasoning } from './reasoningStore'
+import { readCompactedSummary } from './history'
 import { join } from 'node:path'
 import { Glob } from 'bun'
 import {
@@ -410,6 +411,15 @@ export class CodexSession {
         // collab 子线程注册（父子事件链转发的路由表，0.148 实测子线程事件推到父连接）：
         // 最早的注册点是 subAgentActivity started（子线程首批事件紧随其后到达）
         this.registerSpawnedChildren(item as { type?: string }, 1)
+        // /compact 完成：上游 ThreadItem 只有 {type,id}（协议投影丢 payload），完整摘要只在
+        // rollout 的 compacted 记录里。分隔线立即发——它的全部价值是时序位置（异步发会落到
+        // 紧随消息之后）；摘要扫盘随后以同 uuid 补丁帧合并（前端按 id 合并，见
+        // useTranscriptIngest compact_boundary）。读不到摘要分隔线也不缺（与旧行为一致）
+        if (itemType === 'contextCompaction') {
+          this.emit({ type: 'system', subtype: 'compact_boundary', uuid: itemId } as CliMessage)
+          void this.patchCompactSummary(itemId)
+          break
+        }
         for (const m of t?.itemCompleted(item as never) ?? []) this.emit(m)
         break
       }
@@ -808,6 +818,30 @@ export class CodexSession {
 
   private emit(msg: CliMessage): void {
     this.cb.onMessage(msg)
+  }
+
+  /** /compact 的摘要补丁帧：rollout 尾扫 compacted 记录，扫到就以同 uuid 补发
+   *  compact_metadata.summary（前端按 id 合并进已发的分隔线）。
+   *  扫盘与 rollout 落盘有竞态（OS 写缓冲/杀软索引），空跑一次 800ms 后补一枪。 */
+  private async patchCompactSummary(itemId?: string): Promise<void> {
+    if (!this.threadId) return
+    try {
+      let summary = await readCompactedSummary(this.runtime.home, this.threadId)
+      if (!summary) {
+        await new Promise((r) => setTimeout(r, 800))
+        if (this.exited) return
+        summary = await readCompactedSummary(this.runtime.home, this.threadId)
+      }
+      if (!summary || this.exited) return
+      this.emit({
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: itemId,
+        compact_metadata: { summary },
+      } as CliMessage)
+    } catch {
+      // 尽力而为：分隔线已在，摘要缺席无碍
+    }
   }
 
   private emitError(text: string): void {
