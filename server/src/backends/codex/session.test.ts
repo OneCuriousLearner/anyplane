@@ -265,6 +265,21 @@ describe('thread/reverted 通知', () => {
   })
 })
 
+describe('thread/name/updated 通知（改名回声）', () => {
+  test('有名 → 广播 thread_renamed 系统消息（前端就地更新标题）', () => {
+    const { session, msgs } = makeSession()
+    session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '新名字' })
+    expect(msgs).toEqual([{ type: 'system', subtype: 'thread_renamed', text: '新名字' }])
+  })
+
+  test('空名/缺字段（上游复位）→ 跳过不广播', () => {
+    const { session, msgs } = makeSession()
+    session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '  ' })
+    session.handleNotification('thread/name/updated', { threadId: 't-1' })
+    expect(msgs).toEqual([])
+  })
+})
+
 describe('error 通知（willRetry 口径对齐上游 ErrorNotification）', () => {
   test('willRetry:true 是 transient：只留痕系统提示，不发 result、不翻 idle', () => {
     const { session, msgs } = makeSession()

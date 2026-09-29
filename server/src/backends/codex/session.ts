@@ -394,6 +394,14 @@ export class CodexSession {
         this.emit({ type: 'system', subtype: 'thread_reverted' })
         break
       }
+      case 'thread/name/updated': {
+        // 改名回声：AnyPlane /rename、外部客户端（TUI/desktop）与将来的 AI 标题写回
+        //（E4）都经此通知到达。此前落 default 静默丢弃——attached 会话只能等列表轮询
+        // 才看见新名（09-25 探索记录）。广播给前端就地更新标题；空名（上游复位）跳过。
+        const name = typeof params.threadName === 'string' ? params.threadName.trim() : ''
+        if (name) this.emit({ type: 'system', subtype: 'thread_renamed', text: name })
+        break
+      }
       case 'item/started': {
         const item = params.item as Params
         if ((item as { type?: string }).type === 'userMessage') break // 用户消息本地已回显

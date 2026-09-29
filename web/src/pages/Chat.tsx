@@ -41,7 +41,13 @@ import { useTranscriptIngest } from '../hooks/useTranscriptIngest'
 import { useSessionSocket, type QueryResultEvent } from '../hooks/useSessionSocket'
 import { useTranscriptScroll } from '../hooks/useTranscriptScroll'
 
-export function Chat(props: { session: SessionInfo; onBack: () => void; onNavigate?: NavigateSession }) {
+export function Chat(props: {
+  session: SessionInfo
+  onBack: () => void
+  onNavigate?: NavigateSession
+  /** codex 改名回声（thread/name/updated）：顶栏标题就地更新，不等列表轮询 */
+  onTitleChange?: (title: string) => void
+}) {
   const { session } = props
   const isCodex = isCodexKey(session.key)
   const isExisting = isExistingKey(session.key)
@@ -77,6 +83,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
   const scrollRef = useRef<HTMLDivElement>(null)
   /** 会话能力 ref（status 首帧后由渲染体同步）：tailer 门控走能力声明而非 isCodex 硬编码 */
   const capsRef = useRef<BackendCapabilities | undefined>(undefined)
+  /** 本端 /rename 乐观留痕（时间+名字）：codex 改名回声按「同名且 30s 内」去重——
+   *  不同名的回声是另一笔改名（外部客户端），行照出；同名超时（断线重连补放）也不重复 */
+  const localRenameRef = useRef<{ at: number; name: string }>({ at: 0, name: '' })
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
   // 桶状态与辅助群已下沉 hooks/useTaskBuckets.ts（F3）：api 为每渲染重建的普通对象——
@@ -234,6 +243,8 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
     onNavigate: props.onNavigate,
     onCloseRewind: () => setShowRewind(false),
     onQueryResult,
+    onTitleChange: props.onTitleChange,
+    localRenameRef,
   })
 
   /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
@@ -380,6 +391,9 @@ export function Chat(props: { session: SessionInfo; onBack: () => void; onNaviga
           ingestApi.pushSystem('用法：/rename <新名字>')
           return
         }
+        // codex 侧上游随后会广播 thread/name/updated 回声（D3）：记下本端乐观留痕的名字与时刻，
+        // 回声按「同名且 30s 内」去重（只更新标题、不再重复一行）；不同名即外部改名，行照出
+        localRenameRef.current = { at: Date.now(), name: a.name }
         sock?.send({ kind: 'control', subtype: 'rename', extra: { name: a.name } })
         ingestApi.pushSystem(`✎ 重命名线程为「${a.name}」`)
         return

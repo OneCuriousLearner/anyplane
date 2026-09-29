@@ -88,10 +88,15 @@ export default function App() {
 
   /** 列表轮询写回：同 key 且标题变了才合并（纯 setSelected——不动 hash，不动历史帧）。
    *  selected 是点进去那一刻的快照；AI 标题落盘与 /rename 只反映在下一轮列表轮询里，
-   *  不合并的话顶栏标题永远定格（走查问题 2） */
+   *  不合并的话顶栏标题永远定格（走查问题 2）。
+   *  改名回声（thread_renamed → onTitleChange）已把标题即时推新时，12s 内拒绝轮询合并——
+   *  在途的旧轮询响应会把顶栏闪回旧名（review 轮）；下一轮轮询读到新名自然收敛 */
+  const lastEchoTitleAtRef = useRef(0)
   const syncSelected = (s: SessionInfo) => {
     setSelected((prev) =>
-      prev && prev.key === s.key && prev.title !== s.title ? { ...prev, title: s.title } : prev,
+      prev && prev.key === s.key && prev.title !== s.title && Date.now() - lastEchoTitleAtRef.current > 12_000
+        ? { ...prev, title: s.title }
+        : prev,
     )
   }
 
@@ -245,6 +250,10 @@ export default function App() {
             session={selected}
             onBack={backToList}
             onNavigate={(s, opts) => selectSession(s, { replace: opts?.replace ?? false })}
+            onTitleChange={(title) => {
+              lastEchoTitleAtRef.current = Date.now()
+              setSelected((prev) => (prev ? { ...prev, title } : prev))
+            }}
           />
         ) : (
           <div className="hidden h-full flex-col items-center justify-center gap-3 text-faint md:flex">

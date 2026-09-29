@@ -106,6 +106,46 @@ describe('extractCompactedFromRolloutTail（/compact 摘要水合）', () => {
     expect(extractCompactedFromRolloutTail([bad, empty].join('\n'))).toBeUndefined()
     expect(extractCompactedFromRolloutTail(compacted('无序号'))?.ordinal).toBeUndefined()
   })
+
+  // wrapper 话术在 0.155.1 与 0.158.0 实测一致（英文前缀）；摘要标题随线程语言漂移
+  const WRAPPER =
+    'Another language model started to solve this problem and produced a summary of its thinking process. ' +
+    'You also have access to the state of the tools that were used by that language model. ' +
+    'Use this to build on the work that has already been done and avoid duplicating work. ' +
+    'Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:'
+
+  test('剥上游 wrapper：英文线程 # 标题（09-27 实测形状）', () => {
+    const rec = extractCompactedFromRolloutTail(compacted(`${WRAPPER}\n# Handoff Summary\n\n- did X`, 9))
+    expect(rec).toEqual({ message: '# Handoff Summary\n\n- did X', ordinal: 9, timestamp: 't' })
+  })
+
+  test('剥上游 wrapper：中文线程 ## 交接摘要 标题（0.158.0 实测形状）', () => {
+    const rec = extractCompactedFromRolloutTail(compacted(`${WRAPPER}\n## 交接摘要\n\n**当前状态**\n- 无进展`, 3))
+    expect(rec?.message).toBe('## 交接摘要\n\n**当前状态**\n- 无进展')
+  })
+
+  test('无 wrapper（直接标题/纯散文开头）→ 原样保留，绝不误切正文', () => {
+    expect(extractCompactedFromRolloutTail(compacted('# 直接标题\n正文'))?.message).toBe('# 直接标题\n正文')
+    expect(extractCompactedFromRolloutTail(compacted('本次压缩前的重点是散文开头，没有标题'))?.message).toBe(
+      '本次压缩前的重点是散文开头，没有标题',
+    )
+  })
+
+  test('wrapper 模板完整时连退化摘要也剥（0.158.0 实测：空会话压缩的摘要只有一词、无标题）', () => {
+    expect(extractCompactedFromRolloutTail(compacted(`${WRAPPER}\n就绪`))?.message).toBe('就绪')
+  })
+
+  test('裸 wrapper（模板后零正文）是无效记录：跳过继续扫，不产生空摘要补丁（review 轮）', () => {
+    const bare = compacted(WRAPPER, 20)
+    const good = compacted(`${WRAPPER}\n## 交接摘要\n正文`, 10)
+    expect(extractCompactedFromRolloutTail([good, bare].join('\n'))?.message).toBe('## 交接摘要\n正文')
+    expect(extractCompactedFromRolloutTail(bare)).toBeUndefined()
+  })
+
+  test('是 wrapper 前缀但收尾句漂移（模板不完整）→ 原样返回（宁露 wrapper 不切空）', () => {
+    const reworded = WRAPPER.replace('assist with your own analysis:', 'help your analysis:')
+    expect(extractCompactedFromRolloutTail(compacted(`${reworded}\n# T\nx`))?.message).toBe(`${reworded}\n# T\nx`)
+  })
 })
 
 describe('reasoningSidecarUuid（侧车回插去重锚点）', () => {
