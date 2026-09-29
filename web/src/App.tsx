@@ -245,6 +245,7 @@ export default function App() {
             session={selected}
             onBack={backToList}
             onNavigate={(s, opts) => selectSession(s, { replace: opts?.replace ?? false })}
+            onTitleChange={(title) => setSelected((prev) => (prev ? { ...prev, title } : prev))}
           />
         ) : (
           <div className="hidden h-full flex-col items-center justify-center gap-3 text-faint md:flex">

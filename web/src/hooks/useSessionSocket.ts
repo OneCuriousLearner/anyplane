@@ -42,13 +42,17 @@ export function useSessionSocket(opts: {
   onCloseRewind: () => void
   /** query_result 详情域分发（MCP 动作应答辨认 + 结构化面板），实现在组合层 */
   onQueryResult: (ev: QueryResultEvent) => void
+  /** codex thread/name/updated（改名回声）到达时更新顶栏标题——不等下一轮列表轮询 */
+  onTitleChange?: (title: string) => void
+  /** 本端 /rename 乐观留痕时间戳：5s 窗口内的回声是同一改名的重复，只更新标题不再留行 */
+  localRenameAtRef?: React.RefObject<number>
 }): {
   state: SessionState
   connected: boolean
   approvals: Approval[]
   setApprovals: React.Dispatch<React.SetStateAction<Approval[]>>
 } {
-  const { session, sockRef, ingestApi, taskApi, capsRef, loadSessionHistory, onNavigate, onCloseRewind, onQueryResult } = opts
+  const { session, sockRef, ingestApi, taskApi, capsRef, loadSessionHistory, onNavigate, onCloseRewind, onQueryResult, onTitleChange, localRenameAtRef } = opts
   const [state, setState] = useState<SessionState>({ spawned: false, busy: false })
   const [connected, setConnected] = useState(false)
   const [approvals, setApprovals] = useState<Approval[]>([])
@@ -327,6 +331,20 @@ export function useSessionSocket(opts: {
             if (ev.msg?.type === 'system' && ev.msg?.subtype === 'thread_reverted') {
               if (Date.now() - lastRevertedAtRef.current > 5000) {
                 reloadTranscript('↻ 对话已回滚，重新载入')
+              }
+              break
+            }
+            // codex thread/name/updated（AnyPlane /rename、外部客户端与 AI 标题写回的回声）：
+            // 顶栏标题就地更新 + 抄本留痕——此前这类通知被服务端静默丢弃，
+            // 改名要等下一轮列表轮询才可见。本端刚发过 /rename 的 5s 窗口内，
+            // 这条回声与 ✎ 乐观行是同一改名：标题照更，行不再重复
+            if (ev.msg?.type === 'system' && ev.msg?.subtype === 'thread_renamed') {
+              const name = typeof ev.msg.text === 'string' ? ev.msg.text.trim() : ''
+              if (name) {
+                onTitleChange?.(name)
+                if (Date.now() - (localRenameAtRef?.current ?? 0) > 5000) {
+                  ingestApi.pushSystem(`会话已更名为「${name}」`)
+                }
               }
               break
             }
