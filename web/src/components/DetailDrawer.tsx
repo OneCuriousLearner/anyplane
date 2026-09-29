@@ -2,7 +2,8 @@
 // F2 从 pages/Chat.tsx 逐字切出——纯展示组件；查询由 onRunQuery 回调发回组合层
 //（query_result 应答在 Chat 的 WS 分发里落到 detailContent/mcpServers/contextData/settingsData）。
 
-import type { TierModelName } from '@anyplane/protocol'
+import { useEffect } from 'react'
+import type { SessionState, TierModelName } from '@anyplane/protocol'
 import { resolveModel } from '../lib/api'
 import { QUERY_LABELS } from '../lib/capabilities'
 import { fmtTokens } from '../lib/blocks'
@@ -46,6 +47,9 @@ export function DetailDrawer(props: {
   modelNames: Record<string, TierModelName> | null
   onRunQuery: (query: string, title: string) => void
   onClose: () => void
+  /** 无 get_context_usage 能力的后端（codex）的静态用量区数据源（status 快照，不走 query 通道） */
+  stateContext?: SessionState['context']
+  stateUsage?: SessionState['usage']
 }) {
   const {
     detailTitle,
@@ -59,11 +63,23 @@ export function DetailDrawer(props: {
     modelNames,
     onRunQuery,
     onClose,
+    stateContext,
+    stateUsage,
   } = props
   // MCP 管理动作（重连/启停）按能力白名单渲染，不以 vendor 硬编码（能力差异唯一权威
   // 是适配器 capabilities 声明；结构化数据 mcpServers/contextData/settingsData 本身已按
   // 应答形状分发——codex 应答形状天然落空，无需 isCodex 兜底表）
   const mcpActions = queries.includes('mcp_reconnect')
+
+  // Escape 关闭（浮层统一交互：PopupPanel 同款；此前只能点 ✕，走查问题 7）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
     <div className="px-3 py-2">
       <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px]">
@@ -84,11 +100,35 @@ export function DetailDrawer(props: {
           ✕
         </button>
       </div>
+      {/* 无 get_context_usage 的后端（codex）的静态用量区：status 快照数字，不走 query 通道
+       *  （第三轮问题 9 的推荐落法：没有明细能力时不要提详情，放已经有的数字） */}
+      {!contextData && stateContext && (
+        <div className="mb-1.5 rounded-[14px] bg-surface p-2.5">
+          <div className="flex items-baseline justify-between font-mono text-[11px] text-ink">
+            <span>
+              {fmtTokens(stateContext.usedTokens)} / {fmtTokens(stateContext.windowSize)} tok ·{' '}
+              {((stateContext.usedTokens / Math.max(1, stateContext.windowSize)) * 100).toFixed(1)}%
+            </span>
+            {stateUsage && (
+              <span className="text-[10px] text-faint">
+                tok ↑{fmtTokens(stateUsage.inputTokens)} ↓{fmtTokens(stateUsage.outputTokens)} · cache{' '}
+                {fmtTokens(stateUsage.cacheReadTokens)}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 h-1 overflow-hidden rounded-full bg-surface2">
+            <div
+              className="h-full bg-ink/60"
+              style={{ width: `${Math.min(100, (stateContext.usedTokens / Math.max(1, stateContext.windowSize)) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
       {detailTitle === 'MCP 状态' && mcpServers ? (
         /* claude MCP 管理面板：状态 + 重连/启停（toggle 持久化到 settings，与 TUI 同语义） */
         <div className="max-h-56 overflow-auto rounded-[14px] bg-surface p-2.5">
           {mcpServers.length === 0 && (
-            <div className="py-1 font-mono text-[10px] text-faint">无 MCP 服务器（在 claude 配置里添加后出现）</div>
+            <div className="py-1 font-mono text-[10px] text-faint">无 MCP 服务器（在 CLI 配置里添加后出现）</div>
           )}
           {mcpServers.map((srv) => {
             const meta =

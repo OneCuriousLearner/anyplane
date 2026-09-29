@@ -151,12 +151,24 @@ export function SessionList(props: {
       localStorage.setItem(NOTIFY_KEY, '0')
       return
     }
-    if ('Notification' in window && Notification.permission === 'default') {
-      await Notification.requestPermission()
+    if (!('Notification' in window)) {
+      showToast('当前浏览器不支持桌面通知')
+      return
     }
-    const granted = !('Notification' in window) || Notification.permission === 'granted'
-    setNotify(granted)
-    localStorage.setItem(NOTIFY_KEY, granted ? '1' : '0')
+    // 权限被拒/挂起都要给人话反馈——静默停在「关」会以为开关坏了（走查问题 7）
+    if (Notification.permission === 'denied') {
+      showToast('浏览器拒绝了通知权限，请到地址栏站点设置开启')
+      return
+    }
+    if (Notification.permission === 'default') {
+      const result = await Notification.requestPermission().catch(() => 'denied' as const)
+      if (result !== 'granted') {
+        showToast('通知权限未开启（浏览器弹窗中被拒或关闭），可到地址栏站点设置修改')
+        return
+      }
+    }
+    setNotify(true)
+    localStorage.setItem(NOTIFY_KEY, '1')
   }
 
   // 挂载时读取推送订阅现状与 webhook 通道数
@@ -340,7 +352,12 @@ export function SessionList(props: {
           <IconBtn
             title={view === 'archived' ? '返回会话列表' : '回收站'}
             active={view === 'archived'}
-            onClick={() => setView((v) => (v === 'active' ? 'archived' : 'active'))}
+            onClick={() => {
+              // 视图切换即收浮层（浮层统一纪律：此前切到回收站通知菜单还浮着，走查问题 7）
+              setNotifyMenuOpen(false)
+              setThemeMenuOpen(false)
+              setView((v) => (v === 'active' ? 'archived' : 'active'))
+            }}
           >
             <TrashIcon className="h-4 w-4" />
           </IconBtn>

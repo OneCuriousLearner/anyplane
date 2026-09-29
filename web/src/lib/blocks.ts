@@ -221,13 +221,35 @@ export function toolResultText(rc: unknown): string {
   return ''
 }
 
+/** 剥 PowerShell 包装壳：codex 的 Bash 命令常是 `"C:\…\pwsh.exe" -Command "<内层>"`，
+ *  标题里三层转义不可读（走查问题 16 复发）。剥壳 + unescape 一层；不匹配时原样返回。
+ *  展示层专用——服务端 translate/审批规则匹配都保持原始串（规则口径不与展示混淆）。 */
+export function cleanShellCommand(raw: string): string {
+  let cmd = raw.trim()
+  const m = /^["']?(?:[A-Za-z]:[\\/][^"']*[\\/])?(?:pwsh|powershell)(?:\.exe)?["']?\s+(?:-[A-Za-z]+\s+)*-Command\s+/i.exec(cmd)
+  if (m) {
+    cmd = cmd.slice(m[0].length).trim()
+    // 内层整体常被一层引号包住：成对剥掉
+    if ((cmd.startsWith('"') && cmd.endsWith('"')) || (cmd.startsWith("'") && cmd.endsWith("'"))) {
+      cmd = cmd.slice(1, -1)
+    }
+    // unescape 一层：\\" → "、\\\\ → \\（ PowerShell 包装层的手工转义）
+    cmd = cmd.replace(/\\(["'\\])/g, '$1')
+  }
+  return cmd
+}
+
 /** 工具卡片的一行摘要（参照官方 userFacingName/getToolUseSummary 的取舍） */
 export function toolSummary(name: string, input: unknown): string {
   const i = (input ?? {}) as Record<string, unknown>
   const s = (v: unknown, n = 120) => (typeof v === 'string' ? (v.length > n ? v.slice(0, n) + '…' : v) : '')
   switch (name) {
-    case 'Bash':
-      return s(i.description) || s(i.command)
+    case 'Bash': {
+      // codex 的 commandExecution 没有描述句：剥壳后的命令首行兜底（60 字），可扫
+      if (i.description) return s(i.description)
+      const cmd = typeof i.command === 'string' ? cleanShellCommand(i.command) : ''
+      return s(cmd.split('\n')[0], 60)
+    }
     case 'Read':
     case 'Edit':
     case 'Write':
@@ -242,6 +264,10 @@ export function toolSummary(name: string, input: unknown): string {
       return s(i.url)
     case 'Agent':
       return s(i.description)
+    case 'AskUserQuestion': {
+      const n = Array.isArray(i.questions) ? i.questions.length : 0
+      return n > 0 ? `询问用户：${n} 个问题` : '询问用户'
+    }
     default: {
       const j = JSON.stringify(input ?? {})
       return j.length > 120 ? j.slice(0, 120) + '…' : j
@@ -253,8 +279,11 @@ export function toolSummary(name: string, input: unknown): string {
 export function toolDetail(name: string, input: unknown): string {
   const i = (input ?? {}) as Record<string, unknown>
   switch (name) {
-    case 'Bash':
-      return String(i.command ?? JSON.stringify(input, null, 2))
+    case 'Bash': {
+      // 剥壳后的完整命令（审批卡同路径复用本函数：PowerShell 嵌套转义一层可读，走查问题 16）
+      const cmd = typeof i.command === 'string' ? cleanShellCommand(i.command) : JSON.stringify(input, null, 2)
+      return i.cwd ? `${cmd}\n\n# cwd: ${String(i.cwd)}` : cmd
+    }
     case 'Edit':
       return [
         i.file_path ? `# ${String(i.file_path)}` : '',
@@ -270,6 +299,21 @@ export function toolDetail(name: string, input: unknown): string {
     case 'Permissions':
       // codex 的 permissions 审批：权限请求正文比 JSON 更可读
       return Array.isArray(i.permissions) ? i.permissions.map((p) => `- ${String(p)}`).join('\n') : JSON.stringify(input, null, 2)
+    case 'AskUserQuestion': {
+      // 问题与选项的纯文本版：结构化卡在审批区渲染，这里不再直出原始 JSON（卡片去重，走查实录 36）
+      if (!Array.isArray(i.questions)) return JSON.stringify(input, null, 2) ?? ''
+      return (i.questions as Array<Record<string, unknown>>)
+        .map((q, qi) => {
+          const head = `Q${qi + 1}. ${String(q.question ?? '')}`
+          const opts = Array.isArray(q.options)
+            ? (q.options as Array<Record<string, unknown>>)
+                .map((o) => `  - ${String(o.label ?? '')}${o.description ? `：${String(o.description)}` : ''}`)
+                .join('\n')
+            : ''
+          return opts ? `${head}\n${opts}` : head
+        })
+        .join('\n\n')
+    }
     default:
       return JSON.stringify(input, null, 2) ?? ''
   }

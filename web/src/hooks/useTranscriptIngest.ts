@@ -456,7 +456,11 @@ export function useTranscriptIngest(opts: {
       case 'task_notification': {
         const summary = typeof rec.summary === 'string' ? rec.summary : ''
         taskApi.taskNotification(rec)
-        if (!replay) pushSystem(`⚙ 后台任务完成${summary ? `：${summary.slice(0, 200)}` : ''}`)
+        // 文案区分终态：跑完/被我停了/失败（此前一律「完成」，停止按钮的效果看起来
+        // 和正常结束没有区别，走查并发轮实录 37）
+        const verb =
+          rec.status === 'stopped' ? '已停止' : rec.status === 'failed' ? '失败' : '完成'
+        if (!replay) pushSystem(`⚙ 后台任务${verb}${summary ? `：${summary.slice(0, 200)}` : ''}`)
         break
       }
       case 'compact_boundary': {

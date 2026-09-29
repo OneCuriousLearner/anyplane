@@ -93,11 +93,41 @@ describe('toolSummary（一行摘要的字段取舍）', () => {
     expect(toolSummary('mcp:foo', { a: 1 })).toBe('{"a":1}')
     expect(toolSummary('mcp:foo', { big: 'y'.repeat(200) }).length).toBe(121)
   })
+
+  test('codex Bash（无 description）：剥 pwsh 壳的命令首行兜底，截 60 字', () => {
+    const wrapped = '"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe" -Command "Remove-Item -LiteralPath \\"D:\\\\proj\\\\tmp.txt\\" -Force"'
+    expect(toolSummary('Bash', { command: wrapped })).toBe('Remove-Item -LiteralPath "D:\\proj\\tmp.txt" -Force')
+    const long = 'x'.repeat(100)
+    expect(toolSummary('Bash', { command: long })).toBe('x'.repeat(60) + '…')
+    // 多行命令只取首行
+    expect(toolSummary('Bash', { command: 'echo one\necho two' })).toBe('echo one')
+  })
+
+  test('AskUserQuestion 摘要给问题数而非 JSON 直出', () => {
+    expect(toolSummary('AskUserQuestion', { questions: [{ question: 'q1' }, { question: 'q2' }] })).toBe('询问用户：2 个问题')
+    expect(toolSummary('AskUserQuestion', {})).toBe('询问用户')
+  })
 })
 
 describe('toolDetail（折叠区的完整内容）', () => {
   test('Bash 给命令本体', () => {
     expect(toolDetail('Bash', { command: 'git status' })).toBe('git status')
+  })
+  test('Bash（codex）：剥 pwsh 壳 + cwd 附行（审批卡同路径，嵌套转义一层可读）', () => {
+    const wrapped = '"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe" -Command "Get-ChildItem \\"D:\\\\proj\\""'
+    expect(toolDetail('Bash', { command: wrapped, cwd: 'D:\\proj' })).toBe('Get-ChildItem "D:\\proj"\n\n# cwd: D:\\proj')
+  })
+  test('AskUserQuestion 给问题与选项纯文本，不直出原始 JSON（卡片去重）', () => {
+    const input = {
+      questions: [
+        { question: '索引格式选哪个？', options: [{ label: 'JSON' }, { label: 'CSV', description: '便于表格' }] },
+        { question: '要提交吗？', options: [{ label: '提交' }] },
+      ],
+    }
+    expect(toolDetail('AskUserQuestion', input)).toBe(
+      'Q1. 索引格式选哪个？\n  - JSON\n  - CSV：便于表格\n\nQ2. 要提交吗？\n  - 提交',
+    )
+    expect(toolDetail('AskUserQuestion', { answer: 42 })).toBe('{\n  "answer": 42\n}')
   })
   test('Edit 拼 文件 + 旧/新 对照', () => {
     expect(toolDetail('Edit', { file_path: '/a.ts', old_string: 'old', new_string: 'new' })).toBe(
