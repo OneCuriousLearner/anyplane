@@ -12,6 +12,7 @@ import {
   restoreSession,
 } from '../lib/api'
 import { inboxSubscribe } from '../lib/inboxBus'
+import { normPathKey, orderGroupsForTriage } from '../lib/groupTriage'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
@@ -286,18 +287,24 @@ export function SessionList(props: {
       .catch((err) => showToast(String(err)))
   }
 
-  // 按项目目录分组（cwd 缺失时回退 slug）；分组时顺带记录该组的 git 分支与 worktree 归属
+  // 按项目目录分组（cwd 缺失时回退 slug）：分组键是「worktreeOf ?? cwd」——worktree 会话
+  // 落进主仓库组（09-27 专项推荐，决策 B3）；归属侧车让已删 worktree 的归属不丢。
+  // 组间顺序：有 waiting 的组整体浮前（组间再按各自 max mtime，「需要我」压过「正在输出」）
   const groups = useMemo(() => {
     const m = new Map<string, { list: SessionInfo[]; branch?: string; worktreeOf?: string }>()
     for (const s of sessions) {
-      const g = s.cwd ?? s.slug
+      const g = normPathKey(s.worktreeOf ?? s.cwd ?? s.slug)
       let e = m.get(g)
       if (!e) m.set(g, (e = { list: [] }))
       e.list.push(s)
-      e.branch ??= s.gitBranch
-      e.worktreeOf ??= s.worktreeOf
+      // 组头分支：主仓库行（cwd === 组键）的分支优先；worktree 行的分支不进组头
+      //（组头徽章让位给子节，窄栏不再被挤没，决策 B3 推荐）
+      if (normPathKey(s.cwd ?? '') === g) e.branch ??= s.gitBranch
     }
-    return m
+    const ordered = orderGroupsForTriage([...m.entries()].map(([k, e]) => [k, e.list] as [string, SessionInfo[]]))
+    const out = new Map<string, { list: SessionInfo[]; branch?: string; worktreeOf?: string }>()
+    for (const [k, list] of ordered) out.set(k, { ...m.get(k)!, list })
+    return out
   }, [sessions])
 
   const startNew = async (cwd: string, backend: BackendName) => {
