@@ -147,7 +147,7 @@ PR-3 (A1-3) ─→ PR-4 (A4-6) ─→ PR-5 (C3) ─→ PR-6 (B) ─→ PR-7 (C1+
 | PR-1 | fix/drift-codex-158-baseline | ✅ CI 全绿，待用户 code-review | #86 | msys2 矩阵探针（仍崩）；fork excludeTurns 探针（仍强制）；接力双向 PASS；/review+/rename PASS；/compact UI PASS；SW 注册 DevTools 复核；issue #84/#85 已关 |
 | PR-2 | fix/codex-name-updated-and-compact-wrapper | ✅ review 轮 CI 复绿，待用户合入 | #87 | D2 三路径剥离实测；D3 本端去重+外部回声+顶栏即时更新实测；review 四条低危全修并复验（finding-1 场景实测通过）；上游 name/set 广播探针 |
 | PR-3 | fix/composer-hit-and-approval | ✅ review 轮 CI 复绿，待用户合入 | #88 | A1 双视口穿透探针+真实点击裁决落盘；A2 中断撤卡/双标签自愈/死 id 反馈行；A3 插队点击入轮回复+排队点击入队；review 三条全修并复验（steer 拆轮清审批实测、ensure 转发堵漏）；撤回调研进 research |
-| PR-4 | fix/ux-small-batch | ✅ 待 CI / 用户 review | 待开 | A4-1 回收站标题行实测；A4-2 静态用量区/MCP人话/Escape实测；A4-3 菜单即收实测；A4-4 denied toast（mock permission）实测；A4-5 API 层零系统目录；A4-6「已停止」文案实测；A5 codex 卡标题命令化实测；A6 /branch 单文件+可 resume 验证（无需代码） |
+| PR-4 | fix/ux-small-batch | ✅ 待 CI / 用户 review | #89 | A4-1 回收站标题行实测；A4-2 静态用量区/MCP人话/Escape实测；A4-3 菜单即收实测；A4-4 denied toast（mock permission）实测；A4-5 API 层零系统目录；A4-6「已停止」文案实测；A5 codex 卡标题命令化实测；A6 /branch 单文件+可 resume 验证（无需代码） |
 | PR-5 | feat/pending-approval-pin | ⬜ | | |
 | PR-6 | feat/list-triage-and-worktree-merge | ⬜ | | |
 | PR-7 | fix/approval-semantics | ⬜ | | |
