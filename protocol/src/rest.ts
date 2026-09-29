@@ -21,8 +21,11 @@ export interface SessionInfo {
   backend: BackendName
   /** 项目目录的 git 分支（非仓库为空） */
   gitBranch?: string
-  /** cwd 本身是 git worktree 时：主仓库根目录路径（列表标注用；非 worktree 缺席） */
+  /** cwd 本身是 git worktree 时：主仓库根目录路径（列表标注用；非 worktree 缺席。
+   *  目录已删时由服务端归属侧车兜底——分组归属不随目录消失） */
   worktreeOf?: string
+  /** 项目目录当前是否存在：false = 已删（列表行标墓碑态；缺席 = 存在/未知） */
+  dirExists?: boolean
   key: string
   /** 会话实时状态（statusOf 全集；离线会话为派生缺省值） */
   managed: SessionState

@@ -7,7 +7,9 @@ import type { SessionSummary } from '../backends/types'
 import { type GitInfo, readGitInfo } from '../fsbrowse'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
+import { existsSync } from 'node:fs'
 import { json, readJsonBody } from './http'
+import { noteWorktree, worktreeOwnerOf } from '../worktreeOwners'
 
 /** RouteResult → HTTP 响应（状态码逐字保留） */
 function routeResultJson(r: RouteResult): Response {
@@ -26,6 +28,18 @@ function gitInfoOfCached(cwd: string | undefined, read: typeof readGitInfo): Git
   const info = read(cwd) // 普通仓库与 worktree 都支持
   gitInfoCache.set(cwd, { info, at: Date.now() })
   return info
+}
+
+/** 行的 worktree 归属与目录存活信号：实时读盘优先，已删目录回落归属侧车（09-27 专项
+ *  缺口 3——目录一删 worktreeOf 归零、会话退化裸组）。发现 worktreeOf 时顺带记侧车；
+ *  dirExists 只在明确不存在时置 false（缺席 = 存在/未知，省载荷）。两后端行共用 */
+function enrichGitFields(cwd: string | undefined, git: GitInfo | undefined): { worktreeOf?: string; dirExists?: boolean } {
+  if (!cwd) return {}
+  if (git?.worktreeOf) noteWorktree(cwd, git.worktreeOf)
+  return {
+    worktreeOf: git?.worktreeOf ?? worktreeOwnerOf(cwd),
+    ...(existsSync(cwd) ? {} : { dirExists: false as const }),
+  }
 }
 
 export interface SessionRouteDeps {
@@ -79,7 +93,7 @@ export async function handleSessionRoutes(
         live: s.live,
         backend: 'claude' as const,
         gitBranch: git?.branch,
-        worktreeOf: git?.worktreeOf,
+        ...enrichGitFields(s.cwd, git),
         key: s.key,
         // listSessions 已扫过 pid 文件，复用其结果，不为每行再扫一次（null = 已知不在线）
         managed: deps.statusOf(
@@ -104,7 +118,7 @@ export async function handleSessionRoutes(
           status: t.status,
           backend: 'codex' as const,
           gitBranch: git?.branch,
-          worktreeOf: git?.worktreeOf,
+          ...enrichGitFields(t.cwd, git),
           key: t.key,
           managed: deps.statusOf(t.key),
         }

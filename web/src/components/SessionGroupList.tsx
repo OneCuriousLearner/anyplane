@@ -3,6 +3,7 @@ import type { SessionInfo } from '@anyplane/protocol'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
 import { BranchIcon, dirBasename, STATUS_META, timeAgo } from './listChrome'
+import { rowStatusOf, segmentRowsByCwd } from '../lib/groupTriage'
 import type { SessionMenuAnchor } from './SessionRowMenu'
 
 /** 每组默认渲染条数（走查问题 1：187 条全铺开时首屏全是旧会话）；
@@ -43,8 +44,88 @@ export function SessionGroupList(props: {
         const pinned = group.list.filter((s) => s.managed.waiting || s.key === props.selectedKey)
         const pinnedKeys = new Set(pinned.map((s) => s.key))
         const rest = group.list.filter((s) => !pinnedKeys.has(s.key))
-        const visible = [...pinned, ...rest.slice(0, shown[cwd] ?? GROUP_PAGE)]
-        const remaining = group.list.length - visible.length
+        // 合并组分段：主目录条目 → 各 worktree 子节（纯展示序；窗口按会话行数计、子节头随段附显）
+        const segments = segmentRowsByCwd(cwd, rest)
+        type Item =
+          | { type: 'header'; cwd: string; branch?: string }
+          | { type: 'row'; s: SessionInfo }
+        const budget0 = shown[cwd] ?? GROUP_PAGE
+        const items: Item[] = []
+        let budget = budget0
+        let rowsShown = 0
+        for (const seg of segments) {
+          let headerPushed = false
+          for (const s of seg.rows) {
+            if (budget <= 0) break
+            if (seg.cwd && !headerPushed) {
+              items.push({ type: 'header', cwd: seg.cwd, branch: seg.branch })
+              headerPushed = true
+            }
+            items.push({ type: 'row', s })
+            budget--
+            rowsShown++
+          }
+          if (budget <= 0) break
+        }
+        const remaining = rest.length - rowsShown
+        /** 行渲染器：钉顶行与分段行共用（同一视觉与交互） */
+        const renderRow = (s: SessionInfo) => {
+          const st = rowStatusOf(s)
+          const active = props.selectedKey === s.key
+          const busyRow = st.key === 'busy'
+          // 主标题兜底：无 title 时用首条消息预览（codex 线程恒无 title，前 8 位 id 不可读）；
+          // 已被提升为主标题的 lastPrompt 不再在副标题重复
+          const displayTitle = s.title ?? s.lastPrompt ?? s.sessionId.slice(0, 8)
+          const subPrompt = s.title ? s.lastPrompt : undefined
+          return (
+            <div
+              key={s.key}
+              data-session-key={s.key}
+              className={`group relative mx-1 mb-0.5 w-[calc(100%-0.5rem)] rounded-[14px] transition-colors ${
+                busyRow ? 'wave-surface bg-surface' : 'hover:bg-surface'
+              } ${active ? 'bg-surface2' : ''}`}
+            >
+              <button
+                type="button"
+                onClick={() => props.onSelect(s)}
+                className="block w-full cursor-pointer rounded-[14px] px-3 py-2.5 text-left"
+              >
+                <div className="flex items-center gap-2.5 pr-[22px]">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${st.cls}`} />
+                  <span className="truncate text-[15px] font-semibold">{displayTitle}</span>
+                  <span className="ml-auto shrink-0 font-mono text-[11px] text-faint">{timeAgo(s.mtime)}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-1.5 pl-[18px] text-[12px]">
+                  <span className={`shrink-0 font-medium ${st.key === 'waiting' ? 'text-accent' : 'text-muted'}`}>
+                    {st.label}
+                  </span>
+                  {s.dirExists === false && (
+                    <span className="shrink-0 rounded-sm border border-line px-1 font-mono text-[10px] text-faint">
+                      目录已不存在
+                    </span>
+                  )}
+                  {subPrompt && <span className="truncate font-mono text-[11px] text-faint">{subPrompt}</span>}
+                </div>
+              </button>
+              <button
+                type="button"
+                className="absolute right-3 top-2.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-full transition-colors hover:bg-surface2"
+                title="更多操作"
+                aria-label={`会话操作：${s.title ?? s.sessionId.slice(0, 8)}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  props.onMenu(props.menuKey === s.key ? null : { session: s, anchor: e.currentTarget })
+                }}
+              >
+                {s.backend === 'codex' ? (
+                  <CodexMark size={15} static />
+                ) : (
+                  <ClaudeMark className="h-[15px] w-[15px]" />
+                )}
+              </button>
+            </div>
+          )
+        }
         return (
           <div key={cwd}>
             <button
@@ -65,75 +146,33 @@ export function SessionGroupList(props: {
                 {dirBasename(cwd)}
               </span>
               <span className="shrink-0 font-mono text-[11px] font-normal text-faint">{group.list.length}</span>
-              {(group.branch || group.worktreeOf) && (
+              {/* 组头只留主仓库分支（worktree 身份移到子节头）——窄栏下组名不再被徽章挤没 */}
+              {group.branch && (
                 <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[11px] font-normal text-faint">
-                  {group.worktreeOf && (
-                    <span className="rounded-sm border border-line px-1 text-[10px]" title={`worktree of ${group.worktreeOf}`}>
-                      wt·{dirBasename(group.worktreeOf)}
-                    </span>
-                  )}
-                  {group.branch && (
-                    <>
-                      <BranchIcon className="h-3 w-3" />
-                      {group.branch}
-                    </>
-                  )}
+                  <BranchIcon className="h-3 w-3" />
+                  {group.branch}
                 </span>
               )}
             </button>
+            {!folded && pinned.map(renderRow)}
             {!folded &&
-              visible.map((s) => {
-                const stKey = s.managed.waiting ? 'waiting' : s.managed.busy ? 'busy' : s.managed.spawned ? 'idle' : s.status
-                const st = STATUS_META[stKey] ?? STATUS_META.offline
-                const active = props.selectedKey === s.key
-                const busyRow = stKey === 'busy'
-                // 主标题兜底：无 title 时用首条消息预览（codex 线程恒无 title，前 8 位 id 不可读）；
-                // 已被提升为主标题的 lastPrompt 不再在副标题重复
-                const displayTitle = s.title ?? s.lastPrompt ?? s.sessionId.slice(0, 8)
-                const subPrompt = s.title ? s.lastPrompt : undefined
-                return (
-                  <div
-                    key={s.key}
-                    data-session-key={s.key}
-                    className={`group relative mx-1 mb-0.5 w-[calc(100%-0.5rem)] rounded-[14px] transition-colors ${
-                      busyRow ? 'wave-surface bg-surface' : 'hover:bg-surface'
-                    } ${active ? 'bg-surface2' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => props.onSelect(s)}
-                      className="block w-full cursor-pointer rounded-[14px] px-3 py-2.5 text-left"
+              items.map((item) => {
+                if (item.type === 'header') {
+                  // worktree 子节头：目录名 + 分支（身份信息的落点，非 sticky）
+                  return (
+                    <div
+                      key={`wt-${item.cwd}`}
+                      className="mx-1 mt-2 flex items-center gap-1.5 px-3 pb-0.5 font-mono text-[10px] text-faint"
+                      title={item.cwd}
                     >
-                      <div className="flex items-center gap-2.5 pr-[22px]">
-                        <span className={`h-2 w-2 shrink-0 rounded-full ${st.cls}`} />
-                        <span className="truncate text-[15px] font-semibold">{displayTitle}</span>
-                        <span className="ml-auto shrink-0 font-mono text-[11px] text-faint">{timeAgo(s.mtime)}</span>
-                      </div>
-                      <div className="mt-1 flex items-center gap-1.5 pl-[18px] text-[12px]">
-                        <span className={`shrink-0 font-medium ${stKey === 'waiting' ? 'text-accent' : 'text-muted'}`}>
-                          {st.label}
-                        </span>
-                        {subPrompt && <span className="truncate font-mono text-[11px] text-faint">{subPrompt}</span>}
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      className="absolute right-3 top-2.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center overflow-hidden rounded-full transition-colors hover:bg-surface2"
-                      title="更多操作"
-                      aria-label={`会话操作：${s.title ?? s.sessionId.slice(0, 8)}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        props.onMenu(props.menuKey === s.key ? null : { session: s, anchor: e.currentTarget })
-                      }}
-                    >
-                      {s.backend === 'codex' ? (
-                        <CodexMark size={15} static />
-                      ) : (
-                        <ClaudeMark className="h-[15px] w-[15px]" />
-                      )}
-                    </button>
-                  </div>
-                )
+                      <span className="truncate">
+                        wt·{dirBasename(item.cwd)}
+                        {item.branch ? ` · ${item.branch}` : ''}
+                      </span>
+                    </div>
+                  )
+                }
+                return renderRow(item.s)
               })}
             {!folded && remaining > 0 && (
               <button
