@@ -470,7 +470,9 @@ export function Chat(props: {
     scrollRef,
     rowCount: transcriptRows.length,
     resetKey: session.key,
-    followDeps: [messages, approvals, draft],
+    // approvals 不再影响抄本内容（pending 审批卡吸附到输入区上方悬浮槽位，不进抄本流），
+    // 跟随求值只对真正的抄本增量触发
+    followDeps: [messages, draft],
     streaming: Boolean(draft),
     onReachTop: isCodex ? undefined : () => loadEarlierRef.current(),
   })
@@ -507,14 +509,6 @@ export function Chat(props: {
             </button>
           )}
           <Transcript rows={visibleRows} draft={draft} />
-
-          {approvals.map((a) => (
-            <ApprovalCard
-              key={a.requestId}
-              approval={a}
-              onDecision={(decision) => sockRef.current?.send({ kind: 'approval', requestId: a.requestId, decision })}
-            />
-          ))}
 
           {/* 底部 100px 空位上方：后端徽标（忙碌旋转 / 空闲可点彩蛋） */}
           <div className="mt-4 ml-[10px] flex items-center gap-2.5">
@@ -622,8 +616,21 @@ export function Chat(props: {
         />
       )}
 
-      {/* 输入区：悬浮磨砂圆角块；模型胶囊 / 图片 / 发送全收进块内 */}
+      {/* 输入区：悬浮磨砂圆角块；模型胶囊 / 图片 / 发送全收进块内。
+       *  pending 审批卡经 topSlot 吸附在输入卡正上方（官方权限对话框同款模态）：
+       *  进会话即见、任意滚动位置可点，不再埋在抄本流里（09-27 走查问题 1 的中期方案） */}
       <Composer
+        topSlot={
+          approvals.length > 0
+            ? approvals.map((a) => (
+                <ApprovalCard
+                  key={a.requestId}
+                  approval={a}
+                  onDecision={(decision) => sockRef.current?.send({ kind: 'approval', requestId: a.requestId, decision })}
+                />
+              ))
+            : undefined
+        }
         core={{
           input,
           onInputChange: setInput,
