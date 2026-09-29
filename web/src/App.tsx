@@ -86,18 +86,26 @@ export default function App() {
     else if (!replace) sessionPushesRef.current += 1
   }
 
-  /** 列表轮询写回：同 key 且标题变了才合并（纯 setSelected——不动 hash，不动历史帧）。
+  /** 列表轮询写回：同 key 且标题/dirExists 变了才合并（纯 setSelected——不动 hash，不动历史帧）。
    *  selected 是点进去那一刻的快照；AI 标题落盘与 /rename 只反映在下一轮列表轮询里，
    *  不合并的话顶栏标题永远定格（走查问题 2）。
-   *  改名回声（thread_renamed → onTitleChange）已把标题即时推新时，12s 内拒绝轮询合并——
-   *  在途的旧轮询响应会把顶栏闪回旧名（review 轮）；下一轮轮询读到新名自然收敛 */
+   *  dirExists 同此理：会话页停留期间目录被删/恢复（另一终端 git worktree remove/add），
+   *  墓碑态要随轮询开合（review 轮）；改名回声（thread_renamed → onTitleChange）把标题
+   *  即时推新时，12s 内拒绝轮询合并——在途的旧轮询响应会把顶栏闪回旧名（review 轮）；
+   *  下一轮轮询读到新名自然收敛 */
   const lastEchoTitleAtRef = useRef(0)
   const syncSelected = (s: SessionInfo) => {
-    setSelected((prev) =>
-      prev && prev.key === s.key && prev.title !== s.title && Date.now() - lastEchoTitleAtRef.current > 12_000
-        ? { ...prev, title: s.title }
-        : prev,
-    )
+    setSelected((prev) => {
+      if (!prev || prev.key !== s.key) return prev
+      const titleChanged = prev.title !== s.title
+      const dirChanged = prev.dirExists !== s.dirExists
+      if (!titleChanged && !dirChanged) return prev
+      if (titleChanged && Date.now() - lastEchoTitleAtRef.current <= 12_000) {
+        // 标题在回声窗内不并，dirExists 照并（与回声无关）
+        return dirChanged ? { ...prev, dirExists: s.dirExists } : prev
+      }
+      return { ...prev, title: s.title, dirExists: s.dirExists }
+    })
   }
 
   const backToList = () => {

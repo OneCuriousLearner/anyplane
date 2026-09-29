@@ -5,15 +5,19 @@ import type { SessionInfo } from '@anyplane/protocol'
 import { STATUS_META } from '../components/listChrome'
 
 /** 行状态档（B2 决策）：waiting > 主线忙 > N 个后台任务 > 空闲/离线。
- *  注意 busy 的口径：managed.busy 的 getter 把后台任务也算进去（activeTasks>0 → true），
- *  主线其实已空闲——「在后台干活」因此必须用 sessionState==='running/requires_action'
- *  判定主线忙，否则后台任务档永远不出现（实测发现）。codex 无 activeTaskCount，天然不命中 */
+ *  busy 的口径：managed.busy 的 getter 把后台任务也算进去（activeTasks>0 → true），主线其实
+ *  已空闲——所以任务档只在「busy 唯来自任务」（sessionState 非 running/requires_action）时
+ *  顶替 busy 档；组合回滚（pendingControlRequests，CLI 不发 session_state_changed）与不发
+ *  state 事件的旧 CLI（fallbackBusy）也是 busy+idle 态，必须落回「工作中」（review 轮）。
+ *  codex 无 activeTaskCount，天然不命中任务档 */
 export function rowStatusOf(s: SessionInfo): { key: string; cls: string; label: string } {
   if (s.managed.waiting) return { key: 'waiting', ...STATUS_META.waiting }
-  const mainBusy = s.managed.busy && (s.managed.sessionState === 'running' || s.managed.sessionState === 'requires_action')
-  if (mainBusy) return { key: 'busy', ...STATUS_META.busy }
   const tasks = s.managed.activeTaskCount ?? 0
-  if (tasks > 0) return { key: 'tasks', cls: 'bg-ok', label: `${tasks} 个后台任务` }
+  if (s.managed.busy) {
+    const busyIsTaskOnly = s.managed.sessionState !== 'running' && s.managed.sessionState !== 'requires_action' && tasks > 0
+    if (busyIsTaskOnly) return { key: 'tasks', cls: 'bg-ok', label: `${tasks} 个后台任务` }
+    return { key: 'busy', ...STATUS_META.busy }
+  }
   const stKey = s.managed.spawned ? 'idle' : s.status
   const st = STATUS_META[stKey] ?? STATUS_META.offline
   return { key: stKey, ...st }

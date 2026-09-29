@@ -113,6 +113,10 @@ describe('rowStatusOf（B2：后台任务档不被主线空闲淹没）', () => 
     expect(rowStatusOf(statusRow({ busy: true, sessionState: 'running', tasks: 1 })).key).toBe('busy')
   })
 
+  test('busy+idle+零任务的合法态（组合回滚 pendingControlRequests / 旧 CLI fallbackBusy）→「工作中」不落空闲（review 轮）', () => {
+    expect(rowStatusOf(statusRow({ busy: true, sessionState: 'idle', tasks: 0 })).key).toBe('busy')
+  })
+
   test('waiting 最高优先；无任务的 idle/offline 照旧', () => {
     expect(rowStatusOf(statusRow({ waiting: true, busy: true, sessionState: 'requires_action' })).key).toBe('waiting')
     expect(rowStatusOf(statusRow({ busy: false, sessionState: 'idle', tasks: 0 })).key).toBe('idle')

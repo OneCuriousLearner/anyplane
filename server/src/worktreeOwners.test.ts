@@ -1,7 +1,7 @@
 // worktree 归属侧车的持久化行为：record → lookup、跨实例（模拟重启）保持、损坏文件容忍、
 // 主仓库根自身不写、同值不重复写（mtime 不变证明零 IO）。
 
-import { beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +12,10 @@ let dir = ''
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'anyplane-wto-'))
   resetWorktreeOwnersForTest(join(dir, 'owners.json'))
+})
+
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true })
 })
 
 describe('worktreeOwners 侧车', () => {

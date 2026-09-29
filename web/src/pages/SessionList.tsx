@@ -40,7 +40,9 @@ const COLLAPSE_KEY = 'anyplane-collapsed-groups'
 function loadCollapsed(): Set<string> {
   try {
     const raw = JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]') as unknown
-    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [])
+    // 存量键按当前分组键口径归一：worktreeOf/cwd 混合期（PR 前）写下的 Windows 反斜杠
+    // 原始 cwd，不归一会在合并展示上线后静默全部展开一次（review 轮）
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string').map(normPathKey) : [])
   } catch {
     return new Set()
   }

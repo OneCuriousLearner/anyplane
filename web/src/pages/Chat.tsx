@@ -622,23 +622,38 @@ export function Chat(props: {
        *  进会话即见、任意滚动位置可点，不再埋在抄本流里（09-27 走查问题 1 的中期方案） */}
       {session.dirExists === false ? (
         /* 墓碑态：目录已删的会话禁用输入（乐观气泡在这种会话上不落盘、刷新即丢，走查专项
-         *  缺口 3），给出「放入回收站」快捷出口；抄本仍可只读翻阅 */
+         *  缺口 3），给出「放入回收站」快捷出口；抄本仍可只读翻阅。
+         *  进程还活着且正等待审批的会话，审批卡保留在墓碑条上方仍可裁决（review 轮：
+         *  整体替换会把 pending 审批卡一起吞掉，人进得来却裁不了） */
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,var(--sab))] pt-2">
-          <div className="pointer-events-auto mx-auto flex max-w-3xl items-center gap-3 rounded-[14px] bg-surface2/80 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
-            <span className="min-w-0 flex-1 text-[13px] text-muted">
-              项目目录已不存在（{session.cwd}），发送功能已禁用
-            </span>
-            <button
-              type="button"
-              className="shrink-0 rounded-full bg-surface px-3.5 py-1.5 text-[12px] text-ink hover:bg-surface2"
-              onClick={() => {
-                archiveSession(session.key)
-                  .then(() => props.onBack())
-                  .catch((e) => ingestApi.pushSystem(`⚠ 归档失败: ${errorMessage(e)}`, 'error'))
-              }}
-            >
-              放入回收站
-            </button>
+          <div className="mx-auto max-w-3xl">
+            {approvals.length > 0 && (
+              <div className="pointer-events-auto mb-2 flex max-h-[46vh] flex-col gap-2 overflow-y-auto">
+                {approvals.map((a) => (
+                  <ApprovalCard
+                    key={a.requestId}
+                    approval={a}
+                    onDecision={(decision) => sockRef.current?.send({ kind: 'approval', requestId: a.requestId, decision })}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="pointer-events-auto flex items-center gap-3 rounded-[14px] bg-surface2/80 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+              <span className="min-w-0 flex-1 text-[13px] text-muted">
+                项目目录已不存在（{session.cwd}），发送功能已禁用
+              </span>
+              <button
+                type="button"
+                className="shrink-0 rounded-full bg-surface px-3.5 py-1.5 text-[12px] text-ink hover:bg-surface2"
+                onClick={() => {
+                  archiveSession(session.key)
+                    .then(() => props.onBack())
+                    .catch((e) => ingestApi.pushSystem(`⚠ 归档失败: ${errorMessage(e)}`, 'error'))
+                }}
+              >
+                放入回收站
+              </button>
+            </div>
           </div>
         </div>
       ) : (
