@@ -8,7 +8,7 @@ import { config } from '../config'
 import { log } from '../log'
 import { summarizeInput } from '../util'
 import { broadcast, publishInbox } from './broadcast'
-import { deliverApproval, rekeyHub } from './lifecycle'
+import { clearPendingApprovals, deliverApproval, rekeyHub } from './lifecycle'
 import { pushStatus, throttledPushStatus } from './status'
 import type { Hub } from './types'
 
@@ -161,13 +161,7 @@ export function sessionCallbacks(hub: Hub) {
       // 进程已死，待审批随之失效：清表并逐条广播 approval_resolved 让客户端撤卡。
       // 否则重连时 replayApprovals 会把死审批重放成可点击卡片（点击后投递给一个不认识
       // 该 request_id 的新进程），此后任何 status 推送也都因 pending>0 显示 waiting。
-      if (hub.pendingApprovals.size > 0) {
-        for (const requestId of hub.pendingApprovals.keys()) {
-          broadcast(hub, { kind: 'approval_resolved', requestId })
-          publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
-        }
-        hub.pendingApprovals.clear()
-      }
+      clearPendingApprovals(hub)
       // 「本会话允许」同样随进程死亡失效：Hub 因客户端存活而保留，不清的话
       // 下一条消息重 spawn 的新会话会继承旧放行集（违背「重开会话失效」语义）
       hub.sessionAllowTools = undefined

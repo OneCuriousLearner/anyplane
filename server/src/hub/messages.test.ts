@@ -139,6 +139,57 @@ describe('handleClientMessage', () => {
       { kind: 'error', message: '正在恢复文件，请等待回滚完成后再发送消息' },
     ])
   })
+
+  test('interrupt 清空待审批并逐条广播 approval_resolved（僵尸审批卡治本，走查并发轮问题 2）', () => {
+    const hub = freshHub()
+    const ws = fakeWs()
+    hub.clients.add(ws as never)
+    hub.pendingApprovals.set('ap-1', { requestId: 'ap-1', toolName: 'Bash', input: { command: 'ls' } })
+    hub.pendingApprovals.set('ap-2', { requestId: 'ap-2', toolName: 'Edit', input: { file_path: '/tmp/a' } })
+
+    const calls: string[] = []
+    const fakePort = {
+      deliverControl: (_hub: Hub, subtype: string) => {
+        calls.push(subtype)
+      },
+    } as unknown as BackendPort
+    handleClientMessage(hub, JSON.stringify({ kind: 'control', subtype: 'interrupt' }), ws as never, () => fakePort)
+
+    expect(calls).toEqual(['interrupt'])
+    expect(hub.pendingApprovals.size).toBe(0)
+    const sent = payloads(ws)
+    expect(sent.filter((p) => p.kind === 'approval_resolved').map((p) => p.requestId).sort()).toEqual(['ap-1', 'ap-2'])
+    // status 推送随行：客户端按 pendingApprovalIds 快照 reconcile 撤卡
+    expect(sent.some((p) => p.kind === 'status')).toBe(true)
+    expect(inbox.filter((e) => e.type === 'approval_resolved')).toHaveLength(2)
+  })
+
+  test('非 interrupt 的 control 不清待审批（set_model/set_permission_mode 等不动审批态）', () => {
+    const hub = freshHub()
+    const ws = fakeWs()
+    hub.clients.add(ws as never)
+    hub.pendingApprovals.set('ap-1', { requestId: 'ap-1', toolName: 'Bash', input: { command: 'ls' } })
+    const fakePort = { deliverControl: () => {} } as unknown as BackendPort
+    handleClientMessage(hub, JSON.stringify({ kind: 'control', subtype: 'set_model', extra: { model: 'm' } }), ws as never, () => fakePort)
+    expect(hub.pendingApprovals.size).toBe(1)
+    expect(payloads(ws).filter((p) => p.kind === 'approval_resolved')).toEqual([])
+  })
+
+  test('approval 裁决落空（requestId 不在 pending）→ 客户端收到「已处理或已失效」反馈', () => {
+    const hub = freshHub()
+    const ws = fakeWs()
+    hub.clients.add(ws as never)
+    handleClientMessage(
+      hub,
+      JSON.stringify({ kind: 'approval', requestId: 'dead-rid', decision: { behavior: 'allow' } }),
+      ws as never,
+      () => ({}) as BackendPort,
+    )
+    const sent = payloads(ws)
+    // resolveApproval 的幂等清理广播（stale 卡自愈）+ 用户可见反馈
+    expect(sent).toContainEqual({ kind: 'approval_resolved', requestId: 'dead-rid' })
+    expect(sent).toContainEqual({ kind: 'error', message: '该审批已处理或已失效' })
+  })
 })
 
 /** user 发送路径是 fire-and-forget IIFE：轮询等异步臂落定，超时即失败 */
