@@ -41,6 +41,10 @@ codexResponseItemPrefix?: string | null,
  */
 codexResponseHandoffMode?: CodexResponseHandoffMode | null,
 /**
+ * Relays public reasoning summaries as quiet context for realtime V3 delegations. Defaults to false.
+ */
+backendReasoningStatus?: boolean,
+/**
  * Overrides BEM channel prefixes by `analysis`, `commentary`, or `final`.
  * Omitted channels retain their default uppercase bracketed prefixes.
  */
