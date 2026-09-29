@@ -97,6 +97,20 @@ export interface CompactedRecord {
   timestamp?: string
 }
 
+/** 上游 compaction prompt 的固定英文模板（codex-rs 压缩桥接，0.155.1/0.158.0 实测逐字一致）：
+ *  payload.message = 该模板 + 真正摘要（摘要以 markdown 标题起；退化场景也可能只有一个词）。 */
+const COMPACT_WRAPPER_PREFIX = 'Another language model started to solve this problem'
+const COMPACT_WRAPPER_SUFFIX = 'assist with your own analysis:'
+
+/** 剥 compact 摘要的上游 wrapper 话术：message 以已知模板开头才精确切除模板本身，
+ *  其后内容（标题或退化的一词摘要）原样保留。模板首尾任一不匹配（上游改了措辞）则整体
+ *  原样返回——宁露 wrapper 进走查视野，不可误切真实摘要正文。 */
+export function stripCompactWrapper(message: string): string {
+  if (!message.trimStart().startsWith(COMPACT_WRAPPER_PREFIX)) return message
+  const i = message.indexOf(COMPACT_WRAPPER_SUFFIX)
+  return i >= 0 ? message.slice(i + COMPACT_WRAPPER_SUFFIX.length).trimStart() : message
+}
+
 /** 从 rollout 文本尾部倒序找最后一条 type:"compacted" 记录。
  *  上游历史投影只置 saw_compaction 标志、丢 payload（thread_history.rs），摘要在 AnyPlane 侧
  *  的唯一数据源就是 rollout 行本身（2026-09-24 实测形状：payload.message 为完整交接摘要）。
@@ -116,7 +130,7 @@ export function extractCompactedFromRolloutTail(text: string): CompactedRecord |
     const msg = rec.payload?.message
     if (typeof msg === 'string' && msg.trim()) {
       return {
-        message: msg,
+        message: stripCompactWrapper(msg),
         ordinal: typeof rec.ordinal === 'number' ? rec.ordinal : undefined,
         timestamp: typeof rec.timestamp === 'string' ? rec.timestamp : undefined,
       }
