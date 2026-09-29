@@ -135,6 +135,13 @@ describe('extractCompactedFromRolloutTail（/compact 摘要水合）', () => {
     expect(extractCompactedFromRolloutTail(compacted(`${WRAPPER}\n就绪`))?.message).toBe('就绪')
   })
 
+  test('裸 wrapper（模板后零正文）是无效记录：跳过继续扫，不产生空摘要补丁（review 轮）', () => {
+    const bare = compacted(WRAPPER, 20)
+    const good = compacted(`${WRAPPER}\n## 交接摘要\n正文`, 10)
+    expect(extractCompactedFromRolloutTail([good, bare].join('\n'))?.message).toBe('## 交接摘要\n正文')
+    expect(extractCompactedFromRolloutTail(bare)).toBeUndefined()
+  })
+
   test('是 wrapper 前缀但收尾句漂移（模板不完整）→ 原样返回（宁露 wrapper 不切空）', () => {
     const reworded = WRAPPER.replace('assist with your own analysis:', 'help your analysis:')
     expect(extractCompactedFromRolloutTail(compacted(`${reworded}\n# T\nx`))?.message).toBe(`${reworded}\n# T\nx`)

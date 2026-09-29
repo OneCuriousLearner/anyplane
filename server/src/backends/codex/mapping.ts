@@ -129,8 +129,12 @@ export function extractCompactedFromRolloutTail(text: string): CompactedRecord |
     if (rec.type !== 'compacted') continue
     const msg = rec.payload?.message
     if (typeof msg === 'string' && msg.trim()) {
+      const stripped = stripCompactWrapper(msg)
+      // 裸 wrapper（模板后零正文）是上游的退化记录：剥完为空——视为无效记录继续扫，
+      // 让补丁帧回到 ordinal 地板重试语义（review 轮：直接收会立刻贴出空摘要、放弃重试）
+      if (!stripped.trim()) continue
       return {
-        message: stripCompactWrapper(msg),
+        message: stripped,
         ordinal: typeof rec.ordinal === 'number' ? rec.ordinal : undefined,
         timestamp: typeof rec.timestamp === 'string' ? rec.timestamp : undefined,
       }
