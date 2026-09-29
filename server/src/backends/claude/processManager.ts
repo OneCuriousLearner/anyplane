@@ -460,6 +460,9 @@ export class ClaudeSession {
     const priority = sendMode === 'steer' && this.busy ? ('now' as const) : undefined
     // 先写再标 busy，避免 write 失败导致永久 busy
     this.write(userMessage(text, priority, images))
+    // priority 'now' 会拆掉当前轮（注释见上 sendMode 节）：挂在轮上的待审批随轮死亡，
+    // 在写入成功后回调宿主清 pending（写失败时轮还活着，审批不得误杀——review 轮）
+    if (priority) this.cb.onTurnTearingDown?.()
     if (!this.sawStateEvents) {
       this.fallbackBusy = true
       this.cb.onStatusChange?.()
@@ -471,6 +474,9 @@ export class ClaudeSession {
   sendControl(subtype: string, extra: Record<string, unknown> = {}): string {
     const req = controlRequest(subtype as never, extra)
     this.write(req)
+    // interrupt 拆轮：待审批随轮死亡。写入成功才回调——失败（如 EPIPE）时轮与审批都还
+    // 活着，清掉会让用户眼睁睁失去裁决入口、工具调用挂到上游超时（review 轮）
+    if (subtype === 'interrupt') this.cb.onTurnTearingDown?.()
     return req.request_id
   }
 
@@ -831,9 +837,9 @@ class ProcessManager {
     if (existing) this.sessions.delete(key)
 
     const s = new ClaudeSession(key, opts, {
-      onMessage: cb.onMessage,
-      onApprovalRequest: cb.onApprovalRequest,
-      onStatusChange: cb.onStatusChange,
+      // 全量转发再加固 onExit：onTurnTearingDown/onApprovalResolved 这类后加回调，
+      // 显式按key白名单转发会在接口扩展时静默漏掉（steer 拆轮清审批因此从未生效，review 轮实锤）
+      ...cb,
       onExit: (code) => {
         // 防止旧进程的退出事件删掉/污染已重生的新会话
         if (this.sessions.get(key) !== s) return

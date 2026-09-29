@@ -212,10 +212,13 @@ export function Composer(props: {
   }
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,var(--sab))] pt-2">
+    // 悬浮条全宽但不吞点击：strip 本体 pointer-events-none，只有看得见的磨砂面
+    //（斜杠面板 / 输入卡 / 回到底部钮）pointer-events-auto——此前整条 129px 横带
+    //（含透明边区）吞掉审批卡按钮的点击（走查并发轮问题 1）
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,var(--sab))] pt-2">
       <div className="mx-auto max-w-3xl">
         {slashHints.length > 0 && (
-          <div className="mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+          <div className="pointer-events-auto mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
             {/* 完整清单可滚动（CLI initialize 握手报告多少就列多少），自有命令置顶；键盘导航时高亮行跟随滚动 */}
             <div ref={slashScrollRef} className="max-h-60 overflow-y-auto">
               {slashHints.map((c, i) => (
@@ -246,7 +249,7 @@ export function Composer(props: {
           {/* ↓ 与输入块同列、贴在正上方；不放进磨砂块内，否则 backdrop 只能糊到父级内部 */}
           {!atBottom && (
             <button type="button"
-              className="absolute bottom-full right-0 z-40 mb-2 grid h-9 w-9 place-items-center rounded-full bg-surface2/85 text-ink shadow-lg backdrop-blur-xl hover:bg-surface2"
+              className="pointer-events-auto absolute bottom-full right-0 z-40 mb-2 grid h-9 w-9 place-items-center rounded-full bg-surface2/85 text-ink shadow-lg backdrop-blur-xl hover:bg-surface2"
               onClick={onScrollToBottom}
               title="回到底部"
               aria-label="回到底部"
@@ -254,7 +257,7 @@ export function Composer(props: {
               ↓
             </button>
           )}
-          <div className="rounded-[14px] bg-surface2/80 px-3 pb-2 pt-2.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+          <div className="pointer-events-auto rounded-[14px] bg-surface2/80 px-3 pb-2 pt-2.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
           {/* busy 时发送方式：插队（steer，下一边界被模型看到）/ 排队（queue，当前轮结束后） */}
           {busy && (
             <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px]">
@@ -413,17 +416,34 @@ export function Composer(props: {
               </svg>
             </button>
             {busy ? (
-              <button
-                type="button"
-                className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-white transition-opacity hover:opacity-85"
-                onClick={onInterrupt}
-                title="中断当前回合"
-                aria-label="中断当前回合"
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-                  <rect x="5" y="5" width="14" height="14" rx="3" />
-                </svg>
-              </button>
+              <>
+                {/* busy 时也可点发送（插队/排队语义由 sendMode 决定）——此前发送键整个换成中断键，
+                    「插队/排队」只是 radio，选完只能按 Enter 发出，移动端无可见发送路径（走查问题 6） */}
+                <button
+                  type="button"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-ink text-bg transition-opacity hover:opacity-85 disabled:pointer-events-none disabled:opacity-25"
+                  disabled={(!input.trim() && pendingImages.length === 0) || !connected}
+                  onClick={onSend}
+                  title={sendMode === 'steer' ? '发送（插队）' : '发送（排队）'}
+                  aria-label={sendMode === 'steer' ? '发送（插队）' : '发送（排队）'}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                    <path d="M12 19V5" />
+                    <path d="m5 12 7-7 7 7" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-white transition-opacity hover:opacity-85"
+                  onClick={onInterrupt}
+                  title="中断当前回合"
+                  aria-label="中断当前回合"
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                    <rect x="5" y="5" width="14" height="14" rx="3" />
+                  </svg>
+                </button>
+              </>
             ) : (
               <button
                 type="button"

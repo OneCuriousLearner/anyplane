@@ -139,6 +139,40 @@ describe('handleClientMessage', () => {
       { kind: 'error', message: '正在恢复文件，请等待回滚完成后再发送消息' },
     ])
   })
+
+  test('interrupt 委派给 deliverControl（拆轮清审批在 claude 适配器内，见 processManager.test）', () => {
+    const hub = freshHub()
+    const ws = fakeWs()
+    hub.clients.add(ws as never)
+    const calls: string[] = []
+    const fakePort = {
+      deliverControl: (_hub: Hub, subtype: string) => {
+        calls.push(subtype)
+      },
+    } as unknown as BackendPort
+    handleClientMessage(hub, JSON.stringify({ kind: 'control', subtype: 'interrupt' }), ws as never, () => fakePort)
+    expect(calls).toEqual(['interrupt'])
+  })
+
+  test('approval 裁决落空的反馈只给点击者本人；approval_resolved 清理广播仍达全员', () => {
+    const hub = freshHub()
+    const clicker = fakeWs()
+    const peer = fakeWs()
+    hub.clients.add(clicker as never)
+    hub.clients.add(peer as never)
+    handleClientMessage(
+      hub,
+      JSON.stringify({ kind: 'approval', requestId: 'dead-rid', decision: { behavior: 'allow' } }),
+      clicker as never,
+      () => ({}) as BackendPort,
+    )
+    // 点击者：幂等清理广播 + 本人可见反馈；旁观者只收到清理广播——刚裁决成功的
+    // 标签页不该收到名不副实的失败提示（review 轮）
+    expect(payloads(clicker)).toContainEqual({ kind: 'approval_resolved', requestId: 'dead-rid' })
+    expect(payloads(clicker)).toContainEqual({ kind: 'error', message: '该审批已处理或已失效' })
+    expect(payloads(peer)).toContainEqual({ kind: 'approval_resolved', requestId: 'dead-rid' })
+    expect(payloads(peer).filter((p) => p.kind === 'error')).toEqual([])
+  })
 })
 
 /** user 发送路径是 fire-and-forget IIFE：轮询等异步臂落定，超时即失败 */

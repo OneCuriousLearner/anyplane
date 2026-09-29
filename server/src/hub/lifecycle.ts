@@ -88,6 +88,22 @@ export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalD
   return had
 }
 
+/**
+ * 清空 Hub 待审批集并逐条广播 approval_resolved（含 inbox 回声）：
+ * 中断/进程退出等「审批已死但服务端没走正常裁决」的路径共用——不清的话死审批会
+ * 随重连重放成可点击僵尸卡（点击后投递给不认识该 request_id 的对端），
+ * 且此后任何 status 推送都因 pending>0 恒显 waiting。
+ * 调用方负责随后 pushStatus（让客户端按 pendingApprovalIds 快照 reconcile 撤卡）。
+ */
+export function clearPendingApprovals(hub: Hub): void {
+  if (hub.pendingApprovals.size === 0) return
+  for (const requestId of hub.pendingApprovals.keys()) {
+    broadcast(hub, { kind: 'approval_resolved', requestId })
+    publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
+  }
+  hub.pendingApprovals.clear()
+}
+
 /** REST 审批公共核的返回：路由层把 ok:false 映射为对应 HTTP 状态码。 */
 export type RestApprovalResult =
   | { ok: true; toolName: string }

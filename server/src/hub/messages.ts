@@ -123,6 +123,9 @@ export function handleClientMessage(
       if (subtype === 'set_permission_mode' && extra.mode) {
         hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
       }
+      // 中断拆轮的清审批在 claude 适配器内完成（processManager.sendControl 写入成功后
+      // 回调 onTurnTearingDown）——写失败时轮与审批都还活着，不能在此误杀；
+      // codex 经 serverRequest/resolved 回声自愈（review 轮）
       resolvePort(hub.key).deliverControl(hub, subtype, extra)
       break
     }
@@ -194,7 +197,14 @@ export function handleClientMessage(
     }
     case 'approval': {
       const requestId = String(data.requestId)
-      resolveApproval(hub, requestId, data.decision as ApprovalDecision)
+      // requestId 已不在 pending（重复点击/多设备竞态/中断后的僵尸卡点击）：
+      // resolveApproval 内部照发 approval_resolved 幂等清理（stale 卡自愈），
+      // 这里给**点击者本人**一句可见反馈——不能 broadcastError：另一个刚裁决成功的
+      // 标签页会收到一条名不副实的失败提示（review 轮）
+      if (!resolveApproval(hub, requestId, data.decision as ApprovalDecision)) {
+        if (ws) sendTo(ws, { kind: 'error', message: '该审批已处理或已失效' })
+        else broadcastError(hub, '该审批已处理或已失效')
+      }
       break
     }
   }
