@@ -104,6 +104,14 @@ const SYSTEM_DIR_NAMES = new Set(
   ].map((n) => n.toLowerCase()),
 )
 
+/** 黑名单只在盘符/根一层生效：这些名字在根下必是系统目录，但深层完全可能是用户的正常
+ *  项目目录（D:\proj\Recovery 是合理的备份/容灾项目名）——全深度过滤会无声藏掉用户目录
+ *  且无任何提示（review 轮） */
+export function shouldHideDirEntry(target: string, name: string): boolean {
+  const isDriveRoot = /^[A-Za-z]:[\\/]$/.test(target) || target === '/'
+  return isDriveRoot && SYSTEM_DIR_NAMES.has(name.toLowerCase())
+}
+
 export function listDirectories(target: string): DirListResult {
   const home = homedir()
   if (!target) {
@@ -127,8 +135,9 @@ export function listDirectories(target: string): DirListResult {
 
   const entries = dirents
     .filter((d) => {
-      // 系统/伪目录不进列表（$RECYCLE.BIN、Config.Msi 这类在盘符根平铺出来纯干扰，走查实录）
-      if (SYSTEM_DIR_NAMES.has(d.name.toLowerCase())) return false
+      // 系统/伪目录只在盘符根过滤（$RECYCLE.BIN 这类平铺干扰，走查实录）；深层同名是用户的
+      // 正常目录，不藏（review 轮）
+      if (shouldHideDirEntry(target, d.name)) return false
       if (d.isDirectory()) return true
       // 符号链接/junction 指向目录的也算（Dirent 只反映链接自身类型，需 stat 跟随）
       if (d.isSymbolicLink()) {

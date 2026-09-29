@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FsBrowseError, listDirectories, readGitInfo } from './fsbrowse'
+import { FsBrowseError, listDirectories, readGitInfo, shouldHideDirEntry } from './fsbrowse'
 
 let root = ''
 
@@ -135,15 +135,28 @@ describe('listDirectories', () => {
     expect(r.parent).toBe(root)
   })
 
-  test('系统/伪目录黑名单不进列表（$RECYCLE.BIN 这类盘符根平铺干扰项），大小写不敏感', () => {
+  test('系统/伪目录黑名单只在盘符根生效：深层同名是用户正常目录，不藏（review 轮）', () => {
     const dir = join(root, 'sysfilter')
     mkdirSync(join(dir, '$RECYCLE.BIN'), { recursive: true })
     mkdirSync(join(dir, 'Config.Msi'), { recursive: true })
     mkdirSync(join(dir, '360RecycleBin'), { recursive: true })
     mkdirSync(join(dir, 'System Volume Information'), { recursive: true })
+    mkdirSync(join(dir, 'recovery'), { recursive: true })
     mkdirSync(join(dir, 'normal-project'), { recursive: true })
+    // 深层目录：一个都不滤（root 不是盘符根）
     const r = listDirectories(dir)
-    expect(r.entries.map((e) => e.name)).toEqual(['normal-project'])
+    expect(new Set(r.entries.map((e) => e.name))).toEqual(
+      new Set(['$RECYCLE.BIN', '360RecycleBin', 'Config.Msi', 'System Volume Information', 'normal-project', 'recovery']),
+    )
+  })
+
+  test('shouldHideDirEntry 的门：盘符根才滤、大小写不敏感；POSIX 根同理', () => {
+    expect(shouldHideDirEntry('D:\\', '$RECYCLE.BIN')).toBe(true)
+    expect(shouldHideDirEntry('C:/', 'Recovery')).toBe(true)
+    expect(shouldHideDirEntry('/', 'system volume information')).toBe(true)
+    expect(shouldHideDirEntry('D:\\proj', '$RECYCLE.BIN')).toBe(false)
+    expect(shouldHideDirEntry('D:\\proj', 'recovery')).toBe(false)
+    expect(shouldHideDirEntry('D:\\', 'normal-project')).toBe(false)
   })
 
   test('符号链接指向目录也算目录（断链不算）', () => {

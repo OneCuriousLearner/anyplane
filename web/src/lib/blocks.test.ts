@@ -94,13 +94,16 @@ describe('toolSummary（一行摘要的字段取舍）', () => {
     expect(toolSummary('mcp:foo', { big: 'y'.repeat(200) }).length).toBe(121)
   })
 
-  test('codex Bash（无 description）：剥 pwsh 壳的命令首行兜底，截 60 字', () => {
+  test('codex Bash（无 description）：剥 pwsh 壳的命令首个非空行兜底，截 60 字', () => {
     const wrapped = '"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe" -Command "Remove-Item -LiteralPath \\"D:\\\\proj\\\\tmp.txt\\" -Force"'
-    expect(toolSummary('Bash', { command: wrapped })).toBe('Remove-Item -LiteralPath "D:\\proj\\tmp.txt" -Force')
+    // 只还原转义引号；命令本体的有意双反斜杠保留（review 轮：展示不得与实际执行脱节）
+    expect(toolSummary('Bash', { command: wrapped })).toBe('Remove-Item -LiteralPath "D:\\\\proj\\\\tmp.txt" -Force')
+    expect(toolSummary('Bash', { command: 'pwsh -Command "echo \'a\\\\b\'"' })).toBe("echo 'a\\\\b'")
     const long = 'x'.repeat(100)
     expect(toolSummary('Bash', { command: long })).toBe('x'.repeat(60) + '…')
-    // 多行命令只取首行
+    // 多行命令取首个非空行（heredoc/前导空行不产出空标题）
     expect(toolSummary('Bash', { command: 'echo one\necho two' })).toBe('echo one')
+    expect(toolSummary('Bash', { command: '\nset -e\ncargo build' })).toBe('set -e')
   })
 
   test('AskUserQuestion 摘要给问题数而非 JSON 直出', () => {
@@ -113,9 +116,9 @@ describe('toolDetail（折叠区的完整内容）', () => {
   test('Bash 给命令本体', () => {
     expect(toolDetail('Bash', { command: 'git status' })).toBe('git status')
   })
-  test('Bash（codex）：剥 pwsh 壳 + cwd 附行（审批卡同路径，嵌套转义一层可读）', () => {
+  test('Bash（codex）：剥 pwsh 壳 + cwd 附行（审批卡同路径，嵌套引号还原、双反斜杠保留）', () => {
     const wrapped = '"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe" -Command "Get-ChildItem \\"D:\\\\proj\\""'
-    expect(toolDetail('Bash', { command: wrapped, cwd: 'D:\\proj' })).toBe('Get-ChildItem "D:\\proj"\n\n# cwd: D:\\proj')
+    expect(toolDetail('Bash', { command: wrapped, cwd: 'D:\\proj' })).toBe('Get-ChildItem "D:\\\\proj"\n\n# cwd: D:\\proj')
   })
   test('AskUserQuestion 给问题与选项纯文本，不直出原始 JSON（卡片去重）', () => {
     const input = {

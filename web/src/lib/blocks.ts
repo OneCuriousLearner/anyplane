@@ -222,7 +222,8 @@ export function toolResultText(rc: unknown): string {
 }
 
 /** 剥 PowerShell 包装壳：codex 的 Bash 命令常是 `"C:\…\pwsh.exe" -Command "<内层>"`，
- *  标题里三层转义不可读（走查问题 16 复发）。剥壳 + unescape 一层；不匹配时原样返回。
+ *  标题里三层转义不可读（走查问题 16 复发）。只剥壳与成对引号、只还原转义引号——
+ *  内层的有意双反斜杠（正则 \\d、转义路径）原样保留，展示与实际执行不脱节（review 轮）。
  *  展示层专用——服务端 translate/审批规则匹配都保持原始串（规则口径不与展示混淆）。 */
 export function cleanShellCommand(raw: string): string {
   let cmd = raw.trim()
@@ -233,8 +234,8 @@ export function cleanShellCommand(raw: string): string {
     if ((cmd.startsWith('"') && cmd.endsWith('"')) || (cmd.startsWith("'") && cmd.endsWith("'"))) {
       cmd = cmd.slice(1, -1)
     }
-    // unescape 一层：\\" → "、\\\\ → \\（ PowerShell 包装层的手工转义）
-    cmd = cmd.replace(/\\(["'\\])/g, '$1')
+    // 只还原转义引号（\" → "、\' → '）；双反斜杠是命令本体的一部分，不动
+    cmd = cmd.replace(/\\(["'])/g, '$1')
   }
   return cmd
 }
@@ -245,10 +246,11 @@ export function toolSummary(name: string, input: unknown): string {
   const s = (v: unknown, n = 120) => (typeof v === 'string' ? (v.length > n ? v.slice(0, n) + '…' : v) : '')
   switch (name) {
     case 'Bash': {
-      // codex 的 commandExecution 没有描述句：剥壳后的命令首行兜底（60 字），可扫
+      // codex 的 commandExecution 没有描述句：剥壳后的命令首个非空行兜底（60 字），可扫。
+      // heredoc/前导空行的多行脚本不能取 '' 当标题（review 轮）
       if (i.description) return s(i.description)
       const cmd = typeof i.command === 'string' ? cleanShellCommand(i.command) : ''
-      return s(cmd.split('\n')[0], 60)
+      return s(cmd.split('\n').find((l) => l.trim()) ?? '', 60)
     }
     case 'Read':
     case 'Edit':
