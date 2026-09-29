@@ -675,6 +675,8 @@ class ClaudePort implements BackendPort {
         sessionId: t.sessionId,
         slug: t.slug,
         backend: 'claude' as const,
+        title: t.title,
+        lastPrompt: t.lastPrompt,
         trashedAt: t.trashedAt,
         sizeBytes: t.sizeBytes,
       }))

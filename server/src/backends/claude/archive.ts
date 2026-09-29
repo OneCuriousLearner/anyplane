@@ -8,6 +8,7 @@ import { basename, join } from 'node:path'
 import { keyFor } from './backend'
 import { config } from '../../config'
 import { ccDataDir, ensurePrivateDir, transcriptPathOf } from '../../util'
+import { extractMeta } from './discovery'
 
 function trashRoot(): string {
   return ensurePrivateDir(join(ccDataDir(), 'trash', 'claude'))
@@ -42,6 +43,7 @@ export interface TrashEntry {
   trashedAt?: string
   sizeBytes: number
   title?: string
+  lastPrompt?: string
 }
 
 /** claude 会话归档：jsonl + 可能的 subagents 目录一起移入回收站 */
@@ -78,7 +80,8 @@ export function restoreClaudeSession(slug: string, sessionId: string): void {
   if (existsSync(meta)) move(meta, join(destDir, `${sessionId}.meta.json.bak`))
 }
 
-/** 回收站列表（claude 部分） */
+/** 回收站列表（claude 部分）。title/lastPrompt 与主列表同口径（extractMeta 读头部记录）——
+ *  裸 session id 前缀认不出哪条是哪条（走查并发轮问题 7）；回收站条目少，逐条读头部成本可忽略 */
 export function listTrash(): TrashEntry[] {
   const root = trashRoot()
   const out: TrashEntry[] = []
@@ -97,7 +100,14 @@ export function listTrash(): TrashEntry[] {
       try {
         sizeBytes = statSync(p).size
       } catch {}
-      out.push({ key: keyFor(slug, sessionId), slug, sessionId, trashedAt, sizeBytes })
+      let title: string | undefined
+      let lastPrompt: string | undefined
+      try {
+        const meta = extractMeta(p)
+        title = meta.title
+        lastPrompt = meta.lastPrompt
+      } catch {}
+      out.push({ key: keyFor(slug, sessionId), slug, sessionId, trashedAt, sizeBytes, title, lastPrompt })
     }
   }
   return out.sort((a, b) => (b.trashedAt ?? '').localeCompare(a.trashedAt ?? ''))

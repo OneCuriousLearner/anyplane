@@ -65,6 +65,33 @@ describe('archiveClaudeSession / restoreClaudeSession / listTrash', () => {
     expect(entries[0]!.sizeBytes).toBeGreaterThan(0)
   })
 
+  test('回收站列表带 title/lastPrompt（与主列表同口径 extractMeta，裸 id 可认）', () => {
+    // ai-title 记录 → title 直取
+    const SID2 = 'cccccccc-0000-4ddd-8eee-000000000001'
+    mkdirSync(join(configDir, 'projects', SLUG), { recursive: true })
+    writeFileSync(
+      join(configDir, 'projects', SLUG, `${SID2}.jsonl`),
+      [
+        JSON.stringify({ type: 'user', message: { role: 'user', content: '帮我看看这个仓库是干嘛的' } }),
+        JSON.stringify({ type: 'ai-title', aiTitle: '仓库用途探查' }),
+      ].join('\n') + '\n',
+    )
+    archiveClaudeSession(SLUG, SID2)
+    // 无标题记录 → title 回退首条用户消息（head 扫描，小文件即可得）
+    const SID3 = 'cccccccc-0000-4ddd-8eee-000000000002'
+    writeFileSync(
+      join(configDir, 'projects', SLUG, `${SID3}.jsonl`),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: '只回复两个字：收到' } }) + '\n',
+    )
+    archiveClaudeSession(SLUG, SID3)
+
+    const e2 = listTrash().find((x) => x.sessionId === SID2)
+    expect(e2?.title).toBe('仓库用途探查')
+    const e3 = listTrash().find((x) => x.sessionId === SID3)
+    expect(e3?.title).toBe('只回复两个字：收到')
+    // lastPrompt 只在大文件尾块扫描（extractMeta 的 64KB tail 契约），小文件不强求
+  })
+
   test('恢复：移回原位，元信息改名 .bak 保留', () => {
     restoreClaudeSession(SLUG, SID)
 

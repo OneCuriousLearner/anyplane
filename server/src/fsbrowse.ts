@@ -74,8 +74,7 @@ function mapError(e: unknown, target: string): FsBrowseError {
 }
 
 /** 平台根集合：Windows 为可用盘符，POSIX 为 /；均附带 home 快捷项 */
-function roots(home: string): DirEntry[] {
-  const entries: DirEntry[] = []
+function roots(home: string): DirEntry[] {  const entries: DirEntry[] = []
   if (process.platform === 'win32') {
     for (let c = 65; c <= 90; c++) {
       const drive = `${String.fromCharCode(c)}:\\`
@@ -90,6 +89,20 @@ function roots(home: string): DirEntry[] {
   if (home) entries.push({ name: '~', path: home })
   return entries
 }
+
+/** 系统/伪目录黑名单（小写比较）：盘符根平铺出来的回收站与安装器残留，不开会话也不该点开 */
+const SYSTEM_DIR_NAMES = new Set(
+  [
+    '$recycle.bin',
+    'recycler',
+    'config.msi',
+    'system volume information',
+    'deliveryoptimization',
+    '360recyclebin',
+    'recovery',
+    'documents and settings',
+  ].map((n) => n.toLowerCase()),
+)
 
 export function listDirectories(target: string): DirListResult {
   const home = homedir()
@@ -114,6 +127,8 @@ export function listDirectories(target: string): DirListResult {
 
   const entries = dirents
     .filter((d) => {
+      // 系统/伪目录不进列表（$RECYCLE.BIN、Config.Msi 这类在盘符根平铺出来纯干扰，走查实录）
+      if (SYSTEM_DIR_NAMES.has(d.name.toLowerCase())) return false
       if (d.isDirectory()) return true
       // 符号链接/junction 指向目录的也算（Dirent 只反映链接自身类型，需 stat 跟随）
       if (d.isSymbolicLink()) {

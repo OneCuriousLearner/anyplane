@@ -135,6 +135,17 @@ describe('listDirectories', () => {
     expect(r.parent).toBe(root)
   })
 
+  test('系统/伪目录黑名单不进列表（$RECYCLE.BIN 这类盘符根平铺干扰项），大小写不敏感', () => {
+    const dir = join(root, 'sysfilter')
+    mkdirSync(join(dir, '$RECYCLE.BIN'), { recursive: true })
+    mkdirSync(join(dir, 'Config.Msi'), { recursive: true })
+    mkdirSync(join(dir, '360RecycleBin'), { recursive: true })
+    mkdirSync(join(dir, 'System Volume Information'), { recursive: true })
+    mkdirSync(join(dir, 'normal-project'), { recursive: true })
+    const r = listDirectories(dir)
+    expect(r.entries.map((e) => e.name)).toEqual(['normal-project'])
+  })
+
   test('符号链接指向目录也算目录（断链不算）', () => {
     const dir = join(root, 'links')
     const target = join(root, 'listing')

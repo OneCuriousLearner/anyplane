@@ -87,7 +87,7 @@ describe('ThreadTranslator agentMessage 生命周期', () => {
 })
 
 describe('ThreadTranslator 工具项', () => {
-  test('commandExecution → Bash 卡，completed 按 id 配对 tool_result', () => {
+  test('commandExecution → Bash 卡（cwd 独立字段、不带 description——标题回退命令首行），completed 按 id 配对 tool_result', () => {
     const t = new ThreadTranslator()
     const started = t.itemStarted({ id: 'c1', type: 'commandExecution', command: 'ls -la', cwd: '/data' })
     expect(started).toHaveLength(1)
@@ -95,9 +95,11 @@ describe('ThreadTranslator 工具项', () => {
       type: 'assistant',
       message: {
         id: 'tool-c1',
-        content: [{ type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'ls -la', description: 'cwd: /data' } }],
+        content: [{ type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'ls -la', cwd: '/data' } }],
       },
     })
+    // description(cwd) 曾抢占 toolSummary 首选字段，标题恒为「cwd: …」（走查并发轮问题 5）
+    expect(JSON.stringify(started[0])).not.toContain('description')
 
     const completed = t.itemCompleted({ id: 'c1', type: 'commandExecution', status: 'completed', exitCode: 0, aggregatedOutput: 'total 0' })
     expect(completed).toEqual([
