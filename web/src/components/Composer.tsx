@@ -98,6 +98,9 @@ export function Composer(props: {
   claudePill: ComposerClaudePillProps
   codexPill: ComposerCodexPillProps
   ring: ComposerRingProps
+  /** 吸附在输入卡正上方的悬浮槽位（pending 审批/AskUserQuestion 卡从此过——模态语义同官方
+   *  权限对话框：不再埋在抄本流里随滚动飘走，进会话即见、任意滚动位置可点，C3 决策） */
+  topSlot?: React.ReactNode
 }) {
   const {
     input,
@@ -116,6 +119,7 @@ export function Composer(props: {
     slashCommands,
     initSlashCommands,
   } = props.core
+  const { topSlot } = props
   const {
     cfg,
     claudeModel,
@@ -243,6 +247,13 @@ export function Composer(props: {
               {slashHints.length} 个命令 · ↑↓ 移动 · Tab 补全
               {input.trim() === '/' && ' · 继续输入可过滤'}
             </div>
+          </div>
+        )}
+        {/* 悬浮槽位（pending 审批卡）：吸附在输入卡正上方，长卡（多题 AskUserQuestion）
+         *  限高内滚，不吞视口；槽位自身是可见面（pointer-events-auto），周边横带照旧穿透 */}
+        {topSlot && (
+          <div className="pointer-events-auto mb-2 flex max-h-[46vh] flex-col gap-2 overflow-y-auto">
+            {topSlot}
           </div>
         )}
         <div className="relative">
