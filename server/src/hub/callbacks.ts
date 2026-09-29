@@ -149,6 +149,13 @@ export function sessionCallbacks(hub: Hub) {
       portFor(hub.key).notifyExternalGate?.(hub.key) // claude-only 能力（外部门禁），?. 守护
     },
     onStatusChange: () => throttledPushStatus(hub),
+    /** 当前轮被拆（claude interrupt 投递成功 / busy 时 steer 插队写入成功）：
+     *  挂在轮上的待审批随轮死亡——清 pending + 广播撤卡 + 推 status 让客户端 reconcile。
+     *  codex 无此路径（interrupt 经 serverRequest/resolved 走 onApprovalResolved 自愈） */
+    onTurnTearingDown: () => {
+      clearPendingApprovals(hub)
+      pushStatus(hub)
+    },
     /** 审批被上游终结（app-server 超时/中断/其他客户端应答，codex serverRequest/resolved）：
      *  同步清掉 Hub 侧 pending，否则死审批会随重连重放、status 恒 waiting。 */
     onApprovalResolved: (requestId: string) => {

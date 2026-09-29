@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { config } from '../../config'
 import { rememberContextWindow, setContextWindowStoreForTest } from './contextWindows'
-import { ClaudeSession, contextWindowOf, extractUsageFromTranscriptTail } from './processManager'
+import { ClaudeSession, contextWindowOf, extractUsageFromTranscriptTail, processManager } from './processManager'
 import { setStoreFileForTest } from './sessionModels'
 
 const originalDetachRecycleMs = config.detachRecycleMs
@@ -46,6 +46,83 @@ describe('ClaudeSession background task lifecycle', () => {
 
     await Bun.sleep(60)
     expect(exits).toEqual([-1])
+  })
+})
+
+describe('ClaudeSession onTurnTearingDown（拆轮清审批回调，review 轮）', () => {
+  function makeSession(cb: { onTurnTearingDown?: () => void }) {
+    const session = new ClaudeSession(`test-teardown-${Math.random().toString(36).slice(2, 8)}`, { cwd: process.cwd() }, {
+      onMessage: () => {},
+      onApprovalRequest: () => {},
+      onExit: () => {},
+      ...cb,
+    })
+    return session
+  }
+
+  test('sendControl(interrupt) 写入成功 → 回调一次（清审批随轮死亡）', () => {
+    let tears = 0
+    const session = makeSession({ onTurnTearingDown: () => tears++ })
+    ;(session as unknown as { write(m: unknown): void }).write = () => {}
+    session.sendControl('interrupt')
+    expect(tears).toBe(1)
+    // 其他控制请求不拆轮
+    session.sendControl('set_model', { model: 'm' })
+    expect(tears).toBe(1)
+  })
+
+  test('sendControl(interrupt) 写入抛错（EPIPE 等）→ 不回调（轮与审批都还活着，不得误杀）', () => {
+    let tears = 0
+    const session = makeSession({ onTurnTearingDown: () => tears++ })
+    ;(session as unknown as { write(m: unknown): void }).write = () => {
+      throw new Error('EPIPE')
+    }
+    expect(() => session.sendControl('interrupt')).toThrow('EPIPE')
+    expect(tears).toBe(0)
+  })
+
+  test('busy 时 steer 插队（priority now 拆轮）→ 写入成功后回调；queue/普通发送不回调', () => {
+    let tears = 0
+    const session = makeSession({ onTurnTearingDown: () => tears++ })
+    const written: Array<{ message?: { priority?: string } }> = []
+    ;(session as unknown as { write(m: { message?: { priority?: string } }): void }).write = (m) => {
+      written.push(m)
+    }
+    // 首条普通发送：fallback busy 建立 busy 态（无 state 事件时）
+    session.sendUserText('第一轮')
+    expect(session.busy).toBe(true)
+    expect(tears).toBe(0)
+
+    // queue：进服务端队列，不拆轮不回调
+    session.sendUserText('排队中', 'queue')
+    expect(tears).toBe(0)
+
+    // steer：priority 'now' 拆轮 → 回调
+    session.sendUserText('插队', 'steer')
+    expect(tears).toBe(1)
+  })
+
+  test('ensure() 全量转发回调（白名单曾静默漏掉 onTurnTearingDown 致 steer 拆轮清审批从未生效）', () => {
+    let tears = 0
+    const key = `test-ensure-forward-${Math.random().toString(36).slice(2, 8)}`
+    // ensure 内部会真 spawn——CI 无 claude 可执行文件，stub 掉（本测试只验回调转发的完整性）
+    const proto = ClaudeSession.prototype as unknown as { spawn: () => void }
+    const origSpawn = proto.spawn
+    proto.spawn = () => {}
+    try {
+      const s = processManager.ensure(key, { cwd: process.cwd() }, {
+        onMessage: () => {},
+        onApprovalRequest: () => {},
+        onExit: () => {},
+        onTurnTearingDown: () => tears++,
+      })
+      ;(s as unknown as { write(m: unknown): void }).write = () => {}
+      s.sendControl('interrupt')
+      expect(tears).toBe(1)
+    } finally {
+      proto.spawn = origSpawn
+      processManager.dispose(key)
+    }
   })
 })
 

@@ -9,7 +9,7 @@ import { errFields, log } from '../log'
 import { MAX_IMAGE_BASE64, isAllowedImageType } from '../uploads'
 import { errorMessage } from '../util'
 import { broadcast, broadcastError, replayApprovals, sendTo } from './broadcast'
-import { clearPendingApprovals, resolveApproval, rewindBusy } from './lifecycle'
+import { resolveApproval, rewindBusy } from './lifecycle'
 import { pushStatus } from './status'
 import type { Hub, WSData } from './types'
 
@@ -123,13 +123,9 @@ export function handleClientMessage(
       if (subtype === 'set_permission_mode' && extra.mode) {
         hub.spawnOpts = { ...hub.spawnOpts, permissionMode: String(extra.mode) }
       }
-      // 中断会拆掉当前轮：挂在轮上的待审批随之死亡（claude 的 can_use_tool 请求随轮终止、
-      // codex 经 serverRequest/resolved 回声自愈）。先清 Hub 表并广播撤卡——否则审批卡
-      // 变僵尸：留在「等待你的裁决」，点击静默无效（走查并发轮问题 2）。
-      if (subtype === 'interrupt') {
-        clearPendingApprovals(hub)
-        pushStatus(hub)
-      }
+      // 中断拆轮的清审批在 claude 适配器内完成（processManager.sendControl 写入成功后
+      // 回调 onTurnTearingDown）——写失败时轮与审批都还活着，不能在此误杀；
+      // codex 经 serverRequest/resolved 回声自愈（review 轮）
       resolvePort(hub.key).deliverControl(hub, subtype, extra)
       break
     }
@@ -203,9 +199,11 @@ export function handleClientMessage(
       const requestId = String(data.requestId)
       // requestId 已不在 pending（重复点击/多设备竞态/中断后的僵尸卡点击）：
       // resolveApproval 内部照发 approval_resolved 幂等清理（stale 卡自愈），
-      // 这里补一句用户可见反馈，否则点了「允许」毫无反应、人会以为界面死了
+      // 这里给**点击者本人**一句可见反馈——不能 broadcastError：另一个刚裁决成功的
+      // 标签页会收到一条名不副实的失败提示（review 轮）
       if (!resolveApproval(hub, requestId, data.decision as ApprovalDecision)) {
-        broadcastError(hub, '该审批已处理或已失效')
+        if (ws) sendTo(ws, { kind: 'error', message: '该审批已处理或已失效' })
+        else broadcastError(hub, '该审批已处理或已失效')
       }
       break
     }

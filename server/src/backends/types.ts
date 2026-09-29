@@ -63,8 +63,13 @@ export interface SessionCallbacks {
   /** 进程退出（仅当前仍登记在管理器中的实例会回调） */
   onExit(code: number): void
   /** 审批被上游终结（如 codex serverRequest/resolved：app-server 超时/中断/他端应答）——
-   *  宿主据此清掉自己维护的 pending 表；claude 无此路径 */
+   *  宿主据此清掉自己维护的 pending 表 */
   onApprovalResolved?(requestId: string): void
+  /** 当前轮即将被拆（claude 的 interrupt 控制请求成功投递，或 busy 时 steer=priority 'now'
+   *  的插队消息成功写入）——挂在轮上的待审批随轮死亡，宿主应清 pending 表并广播撤卡。
+   *  codex 无此路径（其 interrupt 经 serverRequest/resolved 回声走 onApprovalResolved 自愈；
+   *  其 turn/steer 是追加而非拆轮）。只在投递成功后回调——写入失败时轮还活着，审批不得误杀 */
+  onTurnTearingDown?(): void
   /** busy / sessionState 变化时通知宿主广播 status */
   onStatusChange?(): void
 }

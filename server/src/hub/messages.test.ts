@@ -140,13 +140,10 @@ describe('handleClientMessage', () => {
     ])
   })
 
-  test('interrupt 清空待审批并逐条广播 approval_resolved（僵尸审批卡治本，走查并发轮问题 2）', () => {
+  test('interrupt 委派给 deliverControl（拆轮清审批在 claude 适配器内，见 processManager.test）', () => {
     const hub = freshHub()
     const ws = fakeWs()
     hub.clients.add(ws as never)
-    hub.pendingApprovals.set('ap-1', { requestId: 'ap-1', toolName: 'Bash', input: { command: 'ls' } })
-    hub.pendingApprovals.set('ap-2', { requestId: 'ap-2', toolName: 'Edit', input: { file_path: '/tmp/a' } })
-
     const calls: string[] = []
     const fakePort = {
       deliverControl: (_hub: Hub, subtype: string) => {
@@ -154,41 +151,27 @@ describe('handleClientMessage', () => {
       },
     } as unknown as BackendPort
     handleClientMessage(hub, JSON.stringify({ kind: 'control', subtype: 'interrupt' }), ws as never, () => fakePort)
-
     expect(calls).toEqual(['interrupt'])
-    expect(hub.pendingApprovals.size).toBe(0)
-    const sent = payloads(ws)
-    expect(sent.filter((p) => p.kind === 'approval_resolved').map((p) => p.requestId).sort()).toEqual(['ap-1', 'ap-2'])
-    // status 推送随行：客户端按 pendingApprovalIds 快照 reconcile 撤卡
-    expect(sent.some((p) => p.kind === 'status')).toBe(true)
-    expect(inbox.filter((e) => e.type === 'approval_resolved')).toHaveLength(2)
   })
 
-  test('非 interrupt 的 control 不清待审批（set_model/set_permission_mode 等不动审批态）', () => {
+  test('approval 裁决落空的反馈只给点击者本人；approval_resolved 清理广播仍达全员', () => {
     const hub = freshHub()
-    const ws = fakeWs()
-    hub.clients.add(ws as never)
-    hub.pendingApprovals.set('ap-1', { requestId: 'ap-1', toolName: 'Bash', input: { command: 'ls' } })
-    const fakePort = { deliverControl: () => {} } as unknown as BackendPort
-    handleClientMessage(hub, JSON.stringify({ kind: 'control', subtype: 'set_model', extra: { model: 'm' } }), ws as never, () => fakePort)
-    expect(hub.pendingApprovals.size).toBe(1)
-    expect(payloads(ws).filter((p) => p.kind === 'approval_resolved')).toEqual([])
-  })
-
-  test('approval 裁决落空（requestId 不在 pending）→ 客户端收到「已处理或已失效」反馈', () => {
-    const hub = freshHub()
-    const ws = fakeWs()
-    hub.clients.add(ws as never)
+    const clicker = fakeWs()
+    const peer = fakeWs()
+    hub.clients.add(clicker as never)
+    hub.clients.add(peer as never)
     handleClientMessage(
       hub,
       JSON.stringify({ kind: 'approval', requestId: 'dead-rid', decision: { behavior: 'allow' } }),
-      ws as never,
+      clicker as never,
       () => ({}) as BackendPort,
     )
-    const sent = payloads(ws)
-    // resolveApproval 的幂等清理广播（stale 卡自愈）+ 用户可见反馈
-    expect(sent).toContainEqual({ kind: 'approval_resolved', requestId: 'dead-rid' })
-    expect(sent).toContainEqual({ kind: 'error', message: '该审批已处理或已失效' })
+    // 点击者：幂等清理广播 + 本人可见反馈；旁观者只收到清理广播——刚裁决成功的
+    // 标签页不该收到名不副实的失败提示（review 轮）
+    expect(payloads(clicker)).toContainEqual({ kind: 'approval_resolved', requestId: 'dead-rid' })
+    expect(payloads(clicker)).toContainEqual({ kind: 'error', message: '该审批已处理或已失效' })
+    expect(payloads(peer)).toContainEqual({ kind: 'approval_resolved', requestId: 'dead-rid' })
+    expect(payloads(peer).filter((p) => p.kind === 'error')).toEqual([])
   })
 })
 
