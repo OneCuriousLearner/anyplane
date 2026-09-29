@@ -74,8 +74,7 @@ function mapError(e: unknown, target: string): FsBrowseError {
 }
 
 /** 平台根集合：Windows 为可用盘符，POSIX 为 /；均附带 home 快捷项 */
-function roots(home: string): DirEntry[] {
-  const entries: DirEntry[] = []
+function roots(home: string): DirEntry[] {  const entries: DirEntry[] = []
   if (process.platform === 'win32') {
     for (let c = 65; c <= 90; c++) {
       const drive = `${String.fromCharCode(c)}:\\`
@@ -89,6 +88,28 @@ function roots(home: string): DirEntry[] {
   }
   if (home) entries.push({ name: '~', path: home })
   return entries
+}
+
+/** 系统/伪目录黑名单（小写比较）：盘符根平铺出来的回收站与安装器残留，不开会话也不该点开 */
+const SYSTEM_DIR_NAMES = new Set(
+  [
+    '$recycle.bin',
+    'recycler',
+    'config.msi',
+    'system volume information',
+    'deliveryoptimization',
+    '360recyclebin',
+    'recovery',
+    'documents and settings',
+  ].map((n) => n.toLowerCase()),
+)
+
+/** 黑名单只在盘符/根一层生效：这些名字在根下必是系统目录，但深层完全可能是用户的正常
+ *  项目目录（D:\proj\Recovery 是合理的备份/容灾项目名）——全深度过滤会无声藏掉用户目录
+ *  且无任何提示（review 轮） */
+export function shouldHideDirEntry(target: string, name: string): boolean {
+  const isDriveRoot = /^[A-Za-z]:[\\/]$/.test(target) || target === '/'
+  return isDriveRoot && SYSTEM_DIR_NAMES.has(name.toLowerCase())
 }
 
 export function listDirectories(target: string): DirListResult {
@@ -114,6 +135,9 @@ export function listDirectories(target: string): DirListResult {
 
   const entries = dirents
     .filter((d) => {
+      // 系统/伪目录只在盘符根过滤（$RECYCLE.BIN 这类平铺干扰，走查实录）；深层同名是用户的
+      // 正常目录，不藏（review 轮）
+      if (shouldHideDirEntry(target, d.name)) return false
       if (d.isDirectory()) return true
       // 符号链接/junction 指向目录的也算（Dirent 只反映链接自身类型，需 stat 跟随）
       if (d.isSymbolicLink()) {

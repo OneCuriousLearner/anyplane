@@ -165,7 +165,11 @@ export function Chat(props: {
     // <pre>）。codex 应答形状天然不含 mcpServers/categories/applied 字段，判定自然落空，
     // 不再需要 !isCodex 兜底表（能力差异唯一权威是适配器 capabilities 声明）
     const d = ev.ok ? (ev.data as Record<string, unknown>) : undefined
-    setMcpServers(Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : null)
+    // codex mcp_status 的分页信封（{data: []}）：空列表映射到结构化空态（「无 MCP 服务器」人话），
+    // 非空形状未对齐继续落原始 JSON（走查问题 7：裸 {"data": []} 不该直出）
+    setMcpServers(
+      Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : Array.isArray(d?.data) && d.data.length === 0 ? [] : null,
+    )
     setContextData(
       d && Array.isArray(d.categories) && typeof d.totalTokens === 'number'
         ? (d as unknown as ContextDataLite)
@@ -590,6 +594,8 @@ export function Chat(props: {
             modelNames={modelNames}
             onRunQuery={runQuery}
             onClose={() => setDetailOpen(false)}
+            stateContext={state.context}
+            stateUsage={state.usage}
           />
         )}
       </ChatHeader>

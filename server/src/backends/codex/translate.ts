@@ -231,7 +231,9 @@ export class ThreadTranslator {
   private toolUseBlock(item: ThreadItem): Record<string, unknown> {
     switch (item.type) {
       case 'commandExecution':
-        return { type: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command ?? '', description: item.cwd ? `cwd: ${item.cwd}` : undefined } }
+        // description 曾塞 cwd 占位：工具卡标题因此恒为「cwd: …」（命令本体被短路）。
+        // cwd 独立成字段（toolDetail 附行展示），标题回退到剥壳后的命令首行（走查并发轮问题 5）
+        return { type: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command ?? '', cwd: item.cwd } }
       case 'fileChange': {
         const paths = (item.changes ?? []).map((c) => c.path).filter(Boolean)
         return { type: 'tool_use', id: item.id, name: 'Edit', input: { file_path: paths[0] ?? '', paths } }
@@ -656,9 +658,9 @@ export function itemsToHistory(items: ThreadItem[], turnId?: string): HistoryMes
         out.push({ uuid, role: 'assistant', blocks: [{ kind: 'text', text: item.text ?? '' }] })
         break
       case 'commandExecution':
-        // tool_use 有意不用 live 的 toolUseBlock：历史卡摘要应显示命令本身，
-        // live 侧的 description(cwd) 会抢占 toolSummary 的首选字段
-        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command ?? '' } }, item)
+        // live 与历史同形（AGENTS.md 红线）：input 都不带 description（抢占 toolSummary 首选
+        // 字段会让标题恒为「cwd: …」），cwd 独立字段供 toolDetail 附行展示
+        pushToolPair(out, uuid, { kind: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command ?? '', cwd: item.cwd } }, item)
         break
       case 'fileChange': {
         const paths = (item.changes ?? []).map((c) => c.path).filter(Boolean)
