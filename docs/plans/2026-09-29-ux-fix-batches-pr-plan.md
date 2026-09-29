@@ -149,7 +149,7 @@ PR-3 (A1-3) ─→ PR-4 (A4-6) ─→ PR-5 (C3) ─→ PR-6 (B) ─→ PR-7 (C1+
 | PR-3 | fix/composer-hit-and-approval | ✅ review 轮 CI 复绿，待用户合入 | #88 | A1 双视口穿透探针+真实点击裁决落盘；A2 中断撤卡/双标签自愈/死 id 反馈行；A3 插队点击入轮回复+排队点击入队；review 三条全修并复验（steer 拆轮清审批实测、ensure 转发堵漏）；撤回调研进 research |
 | PR-4 | fix/ux-small-batch | ✅ review 轮 CI 复绿，待用户合入 | #89 | A4-1 回收站标题行实测；A4-2 静态用量区/MCP人话/Escape实测；A4-3 菜单即收实测；A4-4 denied toast（mock permission）实测；A4-5 根层过滤保留+深层 recovery 不藏（review 修）；A4-6「已停止」文案实测；A5 codex 卡标题命令化实测；A6 /branch 单文件+可 resume 验证（无需代码） |
 | PR-5 | feat/pending-approval-pin | ✅ CI 全绿，待用户 code-review | #90 | C3 四场景实测：scrollTop=0 卡位不变可点（①③）、reload 进会话卡吸附在输入区上方（②）、裁决后卡消失且 scroll 不跳（④）；AskUserQuestion 吸附+选择提交全流程；手机视口命中可点；横带穿透保持 |
-| PR-6 | feat/list-triage-and-worktree-merge | ✅ review 轮已推（3f5c0fa），待 CI 复绿 | #91 | B1 waiting 组实测浮到第一；B2「1 个后台任务」档实测；B3 单组 22 行+wt 子节三连+窄栏无挤占实测；B3-1 行徽/墓碑条/归档动作全链实测；B3-2 侧车归属+删后保留实证；review 五条全修并复验（墓碑+pending 审批共存可裁决 codex 实测）；排障：路径归一、busy 口径、旧 bundle 测试假象 |
+| PR-6 | feat/list-triage-and-worktree-merge | ✅ review 轮 CI 复绿，待用户合入 | #91 | B1 waiting 组实测浮到第一；B2「1 个后台任务」档实测；B3 单组 22 行+wt 子节三连+窄栏无挤占实测；B3-1 行徽/墓碑条/归档动作全链实测；B3-2 侧车归属+删后保留实证；review 五条全修并复验（墓碑+pending 审批共存可裁决 codex 实测）；排障：路径归一、busy 口径、旧 bundle 测试假象 |
 | PR-7 | fix/approval-semantics | ⬜ | | |
 | PR-8 | feat/worktree-lifecycle | ⬜ | | |
 | PR-9 | feat/diff-summary | ⬜ | | |
