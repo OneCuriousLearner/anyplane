@@ -57,7 +57,12 @@ approvalsReviewer?: ApprovalsReviewer | null, sandbox?: SandboxMode | null,
  * Named profile id for the resumed thread. Cannot be combined with
  * `sandbox`.
  */
-permissions?: string | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null, personality?: Personality | null,
+permissions?: string | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null,
+/**
+ * @deprecated `friendly` and `pragmatic` no longer select a style.
+ * Changing this does not rewrite the thread's existing instructions.
+ */
+personality?: Personality | null,
 /**
  * When true, return only thread metadata and live-resume state without
  * populating `thread.turns`. This is useful when the client plans to call

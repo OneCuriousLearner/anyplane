@@ -16,6 +16,46 @@ CI 周报（`.github/workflows/protocol-drift.yml`，每周一）发现漂移会
    防止将来重新论证）。
 5. 关闭 issue。
 
+## 2026-09-29（issue #84 / #85）
+
+### claude SDK 0.3.274 → 0.3.284：controlSubtypes +1（#85）
+
+新增 `mcp_read_resource`；stdoutTypes / systemSubtypes 无漂移。
+
+- **评估**：与 09-17 的 `get_hooks_listing`/`list_permission_rules` 同族——**客户端 → CLI** 的
+  控制请求 subtype，CLI 不会反向要求 AnyPlane 响应。AnyPlane 不发此请求，现有链路零影响，
+  直接刷基线（control_subtypes 69→70）。
+- **代办（可选 feature，未排期）**：UI 读取 MCP resource 内容，走与 mcp_status 相同的控制通道。
+  价值低，等有用户诉求再做。
+
+### codex 0.155.1 → 0.158.0：51 处 schema 变更；唯一移除项是已废弃类型（#84）
+
+本地 codex 升到 0.158.0 后刷基线（861→873 个类型文件），复跑零漂移。逐项评估：
+
+| 变更 | 评估 | 代办 |
+|---|---|---|
+| `v2/ThreadRollbackParams/Response` **移除** | 已废弃的 `thread/rollback`（类型注释自述 will be removed soon）；AnyPlane 回滚走 `thread/revert`（`history.ts`），**不受影响** | 无 |
+| `v2/ThreadItem` +`mcpAppUi` 字段 | MCP 工具调用的展示信息（additive）；`mcpAppResourceUri` 降级为 legacy 注释。宽松解析透传，不消费 | 无 |
+| `ClientRequest` +`rollout/compress`；`ServerNotification` +`gatewayOAuth/changed` | 新 RPC 族：rollout 压缩、账号 OAuth 网关——与 AnyPlane 控制面无关 | 不接入 |
+| 新类型：GatewayOAuth×4、McpApp×4、ModelAccessPrograms、WorkspaceRouting、AccountRoutingOverride、ToolExposureSurface、McpResourceReadTarget 等 | 账号/应用/路由新能力面，宽松解析，用到再取 | 不接入 |
+| `ThreadStartParams`/`ThreadResumeParams`/`ThreadForkResponse`/`ThreadSettings`/`ConfigRequirements` 等扩字段 | 全部 additive 可空字段，宽松解析 | 无 |
+| **`WindowsSandboxImplementation` = `elevated\|unelevated\|mxc`**（`ConfigRequirements.allowedWindowsSandboxImplementations`） | 0.158.0 起 Windows 沙箱有了可选实现旋钮——疑似 restricted-token 问题的上游应对。**默认行为未变**（见下运行时回归），AnyPlane 不主动设置 | 关注：若上游后续默认切换实现，msys2 结论需重评 |
+
+**运行时回归（0.158.0 实测，`command/exec` 探针 + 真 CLI e2e）**：
+
+1. **msys2 沙箱崩溃未修复**：`command/exec` 直跑 Git for Windows `head.exe` 矩阵——
+   readOnly / workspaceWrite 两档仍 `CreateFileMapping … Win32 error 5`（exit 256），
+   dangerFullAccess 正常。0.155.1「restricted token 杀 msys2」结论在 0.158.0 维持，
+   openai/codex#12000 继续适用，沙盒绕法不变。
+2. **`ephemeral fork` 强制 `excludeTurns` 仍在**：缺省仍报 -32600。`runtime.ts` 恒传
+   `excludeTurns: true` 的写法保持正确、无需变更。
+3. **真 CLI e2e 全绿**：接力双向（claude↔codex，含 ephemeral fork 真实 rollout 路径）PASS；
+   `/review` + `/rename` PASS；`/compact` 经真实 UI 验证（摘要气泡 + 分隔线 + 压缩后
+   token 回落正常）。
+   - 旁证：compact 摘要在 0.158.0 仍带上游 wrapper 话术（"Another language model started…"），
+     且**中文线程的摘要标题是「## 交接摘要」而非「# Handoff Summary」**——后续剥离逻辑
+     应按「首个 markdown 标题」切分，不要匹配固定英文串（已记入体验修复批次 D2）。
+
 ## 2026-09-19
 
 ### codex 0.154.0 → 0.155.1：19 处真实 schema 变更，全部 additive；另有 3 条运行时行为漂移

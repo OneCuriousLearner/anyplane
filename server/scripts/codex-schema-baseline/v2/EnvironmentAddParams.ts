@@ -4,6 +4,11 @@
 
 export type EnvironmentAddParams = { environmentId: string, execServerUrl: string,
 /**
+ * Optional raw bearer token for executor authentication, including reconnects.
+ * Requires a secure transport or a loopback destination.
+ */
+authBearerToken?: string | null,
+/**
  * Optional WebSocket connection timeout. The server default applies when omitted.
  */
 connectTimeoutMs?: number | null, };
