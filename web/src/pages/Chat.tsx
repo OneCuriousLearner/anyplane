@@ -694,6 +694,7 @@ export function Chat(props: {
           onScrollToBottom: jumpToBottom,
           slashCommands: state.slashCommands,
           initSlashCommands: initInfo.slashCommands,
+          sessionKey: session.key,
         }}
         claudePill={{
           cfg,

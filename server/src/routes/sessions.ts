@@ -9,7 +9,8 @@ import { addWorktree, gitAvailable, removeWorktree, statusSummaryOf } from '../g
 import { hubs } from '../hub/registry'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { json, readJsonBody } from './http'
 import { noteWorktree, worktreeOwnerOf } from '../worktreeOwners'
 
@@ -185,20 +186,88 @@ export async function handleSessionRoutes(
     return json({ available: gitAvailable() })
   }
 
-  /** E2 改动摘要：按会话 key 反查 cwd（**不接客户端任意路径**——key 反查是唯一入口，
-   *  与 E3 同红线；/api 鉴权守卫同列表接口）。非 git 目录/git 缺席/git 失败 → available:false，
-   *  前端隐藏「改动」页签。cwd 三级反查：hub.spawnOpts（spawn 过的）→ key 内嵌（n|/xn|/b|）
-   *  → handoffSource（s|/x| 经列表反查——外部会话 tail 态也覆盖） */
+  /** 会话 cwd 反查（E2/E3 共用）：hub.spawnOpts（spawn 过的）→ key 内嵌（n|/xn|/b|）
+   *  → handoffSource（s| claude 经 parseKey 反查）→ **listSessions 行反查**（x| codex 线程——
+   *  列表端点每行都有 cwd，与列表页数据源一致；thread/read 对部分老线程拿不到 cwd，review 轮
+   *  用户实测 codex x| 盲区定位）。key 反查是会话相关文件系统端点的唯一入口——不接任意路径。 */
+  async function cwdOfKey(key: string): Promise<string | undefined> {
+    const sync = hubs.get(key)?.spawnOpts?.cwd ?? describeKey(key)?.cwd ?? deps.portFor(key).handoffSource(key).cwd
+    if (sync) return sync
+    // x| codex（及 s| 反查失败的兜底）：按 key 在列表行里找 cwd
+    try {
+      const rows = await deps.listCodexSessions()
+      const hit = rows.find((r) => r.key === key)
+      if (hit?.cwd) return hit.cwd
+    } catch {
+      // codex 列表失败（未装/未登录）——claude 行兜底
+    }
+    try {
+      const rows = await deps.listSessions()
+      return rows.find((r) => r.key === key)?.cwd
+    } catch {
+      return undefined
+    }
+  }
+
+  /** E2 改动摘要：非 git 目录/git 缺席/git 失败 → available:false，前端隐藏「改动」页签 */
   if (url.pathname === '/api/sessions/git-status' && req.method === 'GET') {
     const key = url.searchParams.get('key') ?? ''
     if (!key) return json({ error: '缺少 key' }, { status: 400 })
     if (!gitAvailable()) return json({ available: false })
-    const hub = hubs.get(key)
-    const cwd = hub?.spawnOpts?.cwd ?? describeKey(key)?.cwd ?? deps.portFor(key).handoffSource(key).cwd
+    const cwd = await cwdOfKey(key)
     if (!cwd) return json({ available: false })
     const summary = statusSummaryOf(cwd)
     if (!summary) return json({ available: false })
     return json({ available: true, cwd, ...summary })
+  }
+
+  /** E3 @ 文件补全：会话 cwd 单层列举 + 前缀过滤。**root 服务端按 key 锁定**——prefix 只允许
+   *  相对名（禁 `../`、绝对路径、盘符），防任意目录探测。文件与目录都出（目录带 / 后缀可续探）；
+   *  隐藏文件（.开头）默认不出（避免 .git/.env 噪音），prefix 以 . 开头才出。 */
+  if (url.pathname === '/api/sessions/fs-complete' && req.method === 'GET') {
+    const key = url.searchParams.get('key') ?? ''
+    if (!key) return json({ error: '缺少 key' }, { status: 400 })
+    const rawPrefix = url.searchParams.get('prefix') ?? ''
+    // 注入闸：禁 ../ 与绝对路径（Windows 盘符/UNC/POSIX 根）——searchParams 已解一次码，
+    // 对「再解码一次」的变体也判（双重编码绕过：..%2F 经一次解码后是字面 ..%2F，闸漏过，
+    // 下游若再解码即成 ../，review 轮自测实锤）
+    const dec = (() => {
+      try {
+        return decodeURIComponent(rawPrefix)
+      } catch {
+        return rawPrefix
+      }
+    })()
+    const isTraversal = (p: string) => /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(p) || /^([A-Za-z]:[\\/]|\\\\|\/)/.test(p)
+    if (isTraversal(rawPrefix) || isTraversal(dec)) {
+      return json({ error: 'prefix 只允许会话目录内的相对前缀' }, { status: 400 })
+    }
+    const cwd = await cwdOfKey(key)
+    if (!cwd) return json({ available: false })
+    try {
+      const norm = rawPrefix.replace(/\\/g, '/')
+      // prefix 可含子目录（src/comp）——列出其所在子目录，按最后一段过滤
+      const slash = norm.lastIndexOf('/')
+      const dirPart = slash >= 0 ? norm.slice(0, slash) : ''
+      const basePart = slash >= 0 ? norm.slice(slash + 1) : norm
+      const target = dirPart ? join(cwd, ...dirPart.split('/')) : cwd
+      const dirents = readdirSync(target, { withFileTypes: true })
+      const showHidden = basePart.startsWith('.')
+      const entries = dirents
+        .filter((d) => (showHidden ? true : !d.name.startsWith('.')))
+        .filter((d) => d.name.toLowerCase().startsWith(basePart.toLowerCase()))
+        .map((d) => ({
+          name: d.name,
+          path: dirPart ? `${dirPart}/${d.name}` : d.name,
+          dir: d.isDirectory(),
+        }))
+        .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+        .slice(0, 50)
+      return json({ available: true, entries })
+    } catch (e) {
+      log.warn(`[api] fs-complete 列举失败 key=${key} cwd=${cwd} prefix=${rawPrefix}:`, e)
+      return json({ available: false })
+    }
   }
 
   /** 创建：`git worktree add` 落盘主仓同级 <repo>-<名>、分支 worktree-<名>，直接开新会话 */

@@ -201,6 +201,22 @@ export async function fetchGitStatus(key: string): Promise<GitStatusResult> {
   return r.json()
 }
 
+// ---------- E3 @ 文件补全 ----------
+
+export interface FsCompleteEntry {
+  name: string
+  path: string
+  dir: boolean
+}
+
+/** 会话 cwd 单层文件列举 + 前缀过滤（服务端 key 锁定，../ 与绝对路径注入被拒） */
+export async function fetchFsComplete(key: string, prefix: string): Promise<FsCompleteEntry[]> {
+  const r = await apiFetch(`/api/sessions/fs-complete?key=${encodeURIComponent(key)}&prefix=${encodeURIComponent(prefix)}`)
+  if (!r.ok) throw await apiError(r)
+  const body = (await r.json()) as { available: boolean; entries?: FsCompleteEntry[] }
+  return body.available ? (body.entries ?? []) : []
+}
+
 /** 模型值 → {显示名, tooltip}：tier 直查（haiku/sonnet/…）→ 按模型 ID 反查（init 报的是解析后 ID，
  *  如 k3[1m]——大小写不敏感，设置里的 ID 写法可能不同）→ 未配置原样显示（降级）。
  *  只需显示名的场景取 .label；StatusPill/DetailDrawer/Composer 共用同一口径，避免同模型多处显示不一致。 */
