@@ -23,13 +23,17 @@ export function summarizeInput(toolName: string, input: unknown): string {
 
 // ---------- cwd 外路径警示（C2） ----------
 
-/** 路径分隔符归一 + Windows 盘符小写（NTFS 不区分大小写，POSIX 盘符形态 /d/ 也归一） */
+/** 路径归一：分隔符统一为 `/`、剥尾斜杠；Windows 另做整体小写（NTFS 不区分大小写——
+ *  模型常发全小写路径，段级大小写敏感会把 cwd 树内路径误报成「之外」）+ 盘符/MSYS 形态归一。
+ *  MSYS 重写（/d/... → d:/...）只在 win32 生效——POSIX 上 `/Users/foo` 会被 mangling 成
+ *  `u:sers/foo`，existsSync 永远找不到 `.git`，家族豁免在非 Windows 静默全灭（review 轮） */
 function normPath(p: string): string {
   let s = p.replace(/\\/g, '/')
-  const drive = /^([A-Za-z]):(?=\/|$)/.exec(s)
-  if (drive) s = drive[1]!.toLowerCase() + s.slice(1)
-  const msys = /^\/([a-zA-Z])(?=\/|$)/.exec(s)
-  if (msys) s = `${msys[1]!.toLowerCase()}:${s.slice(2)}`
+  if (process.platform === 'win32') {
+    const msys = /^\/([a-zA-Z])(?=\/|$)/.exec(s)
+    if (msys) s = `${msys[1]}:${s.slice(2)}`
+    s = s.toLowerCase()
+  }
   return s.replace(/\/+$/, '')
 }
 

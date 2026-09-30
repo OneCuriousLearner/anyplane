@@ -479,6 +479,21 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     const replayed: Array<Record<string, unknown>> = []
     replayApprovals(hub, (p) => replayed.push(p as Record<string, unknown>))
     expect(replayed[0]).toMatchObject({ kind: 'approval_request', requestId: 'oc1', outsidePath: '/somewhere/else/a.ts' })
+
+    // review 轮 finding 3：裁决后警示路径同删（与 pendingApprovals 真同生命周期）
+    resolveApproval(hub, 'oc1', { behavior: 'deny', message: 'x' })
+    expect(hub.outsidePaths?.has('oc1')).toBe(false)
+  })
+
+  test('C2：clearPendingApprovals 同清警示路径（review 轮 finding 3）', () => {
+    const { hub } = freshHub()
+    injectApprovalSession()
+    config.approvalRules = undefined
+    const cb = sessionCallbacks(hub)
+    cb.onApprovalRequest({ requestId: 'oc2', toolName: 'Write', input: { file_path: '/elsewhere/b.ts' } })
+    expect(hub.outsidePaths?.has('oc2')).toBe(true)
+    sessionCallbacks(hub).onApprovalResolved('oc2')
+    expect(hub.outsidePaths?.has('oc2')).toBe(false)
   })
 
   test('C2：cwd 子树内的路径不带 outsidePath（相对/无路径输入同）', () => {

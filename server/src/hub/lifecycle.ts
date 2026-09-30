@@ -89,6 +89,7 @@ export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalD
     }
   }
   const had = hub.pendingApprovals.delete(requestId)
+  hub.outsidePaths?.delete(requestId) // C2 警示路径随裁决同清（与 pendingApprovals 真同生命周期）
   if (had) deliverApproval(hub, requestId, decision)
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
@@ -110,6 +111,7 @@ export function clearPendingApprovals(hub: Hub): void {
     publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   }
   hub.pendingApprovals.clear()
+  hub.outsidePaths?.clear() // C2 警示路径随清空同清
 }
 
 /**
@@ -127,8 +129,8 @@ export function dropSessionAllowTools(hub: Hub, reason: string, opts?: { push?: 
   try {
     portFor(hub.key).sessionOf(hub.key)?.discardAllowTools?.()
   } catch {
-    // 进程层此刻不可达（正在退出）无碍——dispose 已把会话从 map 摘除，
-    // 重生必走 allowlistForRespawn 分支（此时内存态已清，喂回 undefined）
+    // 进程层此刻不可达（正在退出）无碍——进程层集已随 dispose 同步焚毁，
+    // 命中判定查的是进程层（allowsTool），镜像清掉即终局
   }
   log.info(`[ws ${hub.key}] 本会话放行集失效（${reason}）`)
   if (opts?.push) pushStatus(hub)

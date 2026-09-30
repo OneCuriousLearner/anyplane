@@ -104,6 +104,29 @@ describe('outsideCwdPath', () => {
     expect(outsideCwdPath({ file_path: '/etc/passwd' }, '')).toBeUndefined()
   })
 
+  test('POSIX 平台路径不被 MSYS mangling（review 轮 finding 1：/Users 不得变 u:sers）', () => {
+    if (process.platform === 'win32') return // 本用例只护非 Windows
+    const repo = join(root, 'posix repo')
+    const wt = join(root, 'posix repo-wt')
+    mkdirSync(join(repo, '.git', 'worktrees', 'wt'), { recursive: true })
+    mkdirSync(wt, { recursive: true })
+    writeFileSync(join(wt, '.git'), `gitdir: ${join(repo, '.git', 'worktrees', 'wt')}\n`)
+    writeFileSync(join(repo, '.git', 'worktrees', 'wt', 'commondir'), '../..\n')
+    // 家族豁免受守：POSIX 上主仓 ↔ worktree 双向不警示（mangling 会让 .git 探测全灭、双向误报）
+    expect(outsideCwdPath({ file_path: join(wt, 'a.ts') }, repo)).toBeUndefined()
+    expect(outsideCwdPath({ file_path: join(repo, 'a.ts') }, wt)).toBeUndefined()
+  })
+
+  test('win32 段级大小写不敏感（review 轮 finding 2：模型发全小写路径不误报）', () => {
+    if (process.platform !== 'win32') return // 本用例只护 Windows
+    const { main } = makeRepoFamily()
+    // 模型常发全小写路径：真实 cwd 是混合大小写，候选全小写仍属树内
+    expect(outsideCwdPath({ file_path: main.toLowerCase() + '\\sub\\a.ts' }, main)).toBeUndefined()
+    // 家族豁免同样段级不敏感：候选 worktree 路径全小写仍豁免
+    const { worktree } = makeRepoFamily()
+    expect(outsideCwdPath({ file_path: worktree.toLowerCase() + '\\a.ts' }, main)).toBeUndefined()
+  })
+
   test('input.cwd 字段也纳入检测（Bash 类工具携带的工作目录）', () => {
     const { main, other } = makeRepoFamily()
     expect(outsideCwdPath({ command: 'ls', cwd: other }, main)).toBe(other)

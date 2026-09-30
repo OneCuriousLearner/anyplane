@@ -171,6 +171,7 @@ export function sessionCallbacks(hub: Hub) {
      *  同步清掉 Hub 侧 pending，否则死审批会随重连重放、status 恒 waiting。 */
     onApprovalResolved: (requestId: string) => {
       if (!hub.pendingApprovals.delete(requestId)) return
+      hub.outsidePaths?.delete(requestId) // C2 警示路径随终结同清
       broadcast(hub, { kind: 'approval_resolved', requestId })
       publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
       pushStatus(hub)
