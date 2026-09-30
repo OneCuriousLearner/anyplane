@@ -186,11 +186,23 @@ export async function handleSessionRoutes(
     return json({ available: gitAvailable() })
   }
 
-  /** 会话 cwd 三级反查（E2/E3 共用）：hub.spawnOpts（spawn 过的）→ key 内嵌（n|/xn|/b|）
-   *  → handoffSource（s|/x| 经列表反查——外部会话 tail 态也覆盖）。key 反查是会话相关
-   *  文件系统端点的唯一入口——**不接客户端任意路径**（E3 红线） */
-  function cwdOfKey(key: string): string | undefined {
-    return hubs.get(key)?.spawnOpts?.cwd ?? describeKey(key)?.cwd ?? deps.portFor(key).handoffSource(key).cwd
+  /** 会话 cwd 反查（E2/E3 共用）：hub.spawnOpts（spawn 过的）→ key 内嵌（n|/xn|/b|）
+   *  → handoffSource（s| 经列表反查——外部会话 tail 态也覆盖）→ handoffCwdOf（x| codex
+   *  线程 cwd 需 thread/read 惰性解析——同步拿不到的 codex 线程在此兜底，review 轮用户实测）。
+   *  key 反查是会话相关文件系统端点的唯一入口——**不接客户端任意路径**（E3 红线） */
+  async function cwdOfKey(key: string): Promise<string | undefined> {
+    const sync = hubs.get(key)?.spawnOpts?.cwd ?? describeKey(key)?.cwd ?? deps.portFor(key).handoffSource(key).cwd
+    if (sync) return sync
+    // codex x|：handoffSource 同步无 cwd（thread/read 才解析得出），走异步 handoffCwdOf
+    const sourceId = deps.portFor(key).handoffSource(key).sourceId
+    if (sourceId) {
+      try {
+        return await deps.portFor(key).handoffCwdOf(key, sourceId)
+      } catch {
+        return undefined
+      }
+    }
+    return undefined
   }
 
   /** E2 改动摘要：非 git 目录/git 缺席/git 失败 → available:false，前端隐藏「改动」页签 */
@@ -198,7 +210,7 @@ export async function handleSessionRoutes(
     const key = url.searchParams.get('key') ?? ''
     if (!key) return json({ error: '缺少 key' }, { status: 400 })
     if (!gitAvailable()) return json({ available: false })
-    const cwd = cwdOfKey(key)
+    const cwd = await cwdOfKey(key)
     if (!cwd) return json({ available: false })
     const summary = statusSummaryOf(cwd)
     if (!summary) return json({ available: false })
@@ -226,7 +238,7 @@ export async function handleSessionRoutes(
     if (isTraversal(rawPrefix) || isTraversal(dec)) {
       return json({ error: 'prefix 只允许会话目录内的相对前缀' }, { status: 400 })
     }
-    const cwd = cwdOfKey(key)
+    const cwd = await cwdOfKey(key)
     if (!cwd) return json({ available: false })
     try {
       const norm = rawPrefix.replace(/\\/g, '/')

@@ -395,7 +395,7 @@ export function Composer(props: {
             ref={inputRef}
             className="max-h-[200px] min-h-[1.5rem] w-full resize-none overflow-hidden bg-transparent px-1 text-[15px] leading-snug text-ink outline-none placeholder:text-faint"
             rows={1}
-            placeholder={busy ? '工作中…' : '输入消息（Enter 发送 · Shift+Enter 换行 · / 命令 · 可粘贴图片）'}
+            placeholder={busy ? '工作中…' : '输入消息（Enter 发送 · Shift+Enter 换行 · / 命令 · @ 文件 · 粘贴图片）'}
             value={input}
             onChange={(e) => {
               onInputChange(e.target.value)
