@@ -15,6 +15,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Transcript } from './Transcript'
 import { buildTranscriptRows, fmtTokens, type ChatMsg } from '../lib/blocks'
+import { ChangesPanel } from './ChangesPanel'
 
 /** 桶内转录：主抄本的 rows 由 Chat 持有（扩窗判定要真实行数），侧栏桶量小、
  *  自己摊平即可，不必把 rows 一路透传下来 */
@@ -207,54 +208,87 @@ export function flattenTasks(tasks: TaskFeed[]): Array<{ feed: TaskFeed; depth: 
 }
 
 /**
- * 后台任务列表。桌面端是对话列的可收起右边栏（占位、不遮抄本）；
- * 移动端仍全宽 fixed 覆盖（带背板），窄屏挤不出 380px 列。
- * 默认只展示前 VISIBLE_LIMIT 张卡（深度优先序），其余点击「展开」——
- * 大量并行扇出时不至于把面板撑成无尽长列表。
+ * 会话侧拉栏（vscode 式多页签）：「后台任务 / 改动」两页签共存（E2）。
+ * 桌面端是对话列的可收起右边栏（占位、不遮抄本）；移动端仍全宽 fixed 覆盖（带背板）。
+ * 「改动」页签只在 git 可用时显示（非 git 目录会话入口隐藏，与 DirPicker 同律）。
+ * 后台任务默认只展示前 VISIBLE_LIMIT 张卡（深度优先序），其余点击「展开」。
  */
-export function TasksPanel(props: { open: boolean; onClose: () => void; tasks: TaskFeed[]; onStop?: (taskId: string) => void }) {
-  const { open, onClose, tasks, onStop } = props
+export function TasksPanel(props: {
+  open: boolean
+  onClose: () => void
+  tasks: TaskFeed[]
+  onStop?: (taskId: string) => void
+  /** 会话 key（「改动」页签按它反查 cwd；缺席时只出后台任务单页签） */
+  sessionKey?: string
+  /** git 可用性（false 时「改动」页签隐藏） */
+  gitAvailable?: boolean
+}) {
+  const { open, onClose, tasks, onStop, sessionKey, gitAvailable } = props
   const [expanded, setExpanded] = useState(false)
+  const [tab, setTab] = useState<'tasks' | 'changes'>('tasks')
   const flat = useMemo(() => flattenTasks(tasks), [tasks])
   if (!open) return null
   const runningCount = tasks.filter((s) => s.status === 'running').length
   const visible = expanded ? flat : flat.slice(0, VISIBLE_LIMIT)
   const hidden = flat.length - visible.length
+  const showChanges = gitAvailable === true && !!sessionKey
+  const activeTab = showChanges ? tab : 'tasks'
   return (
     <>
       <div className="fixed inset-0 z-[80] bg-bg/60 md:hidden" onClick={onClose} aria-hidden />
       <aside className="fixed inset-y-0 right-0 z-[80] flex h-full min-h-0 w-full flex-col bg-[var(--task-pane)] md:static md:z-auto md:w-[380px] md:shrink-0">
-        <div className="flex items-center gap-2 px-3 py-2.5">
-          <span className="text-sm font-medium">后台任务</span>
-          <span className="font-mono text-[10px] text-faint">
-            {runningCount > 0 ? `${runningCount} 运行中 · ` : ''}共 {tasks.length} 个
-          </span>
+        <div className="flex items-center gap-1 px-3 py-2.5">
+          {showChanges ? (
+            <div className="flex rounded-full bg-surface p-0.5 font-mono text-[11px]">
+              {(['tasks', 'changes'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`rounded-full px-3 py-1 ${activeTab === t ? 'bg-surface2 text-ink' : 'text-faint hover:text-muted'}`}
+                  onClick={() => setTab(t)}
+                >
+                  {t === 'tasks' ? `后台任务${runningCount > 0 ? `（${runningCount}）` : ''}` : '改动'}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <>
+              <span className="text-sm font-medium">后台任务</span>
+              <span className="font-mono text-[10px] text-faint">
+                {runningCount > 0 ? `${runningCount} 运行中 · ` : ''}共 {tasks.length} 个
+              </span>
+            </>
+          )}
           <button
             type="button"
             className="ml-auto grid h-7 w-7 place-items-center rounded-full text-faint transition-colors hover:bg-surface2 hover:text-ink"
             onClick={onClose}
-            aria-label="关闭后台任务面板"
+            aria-label="关闭面板"
           >
             ✕
           </button>
         </div>
-        <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-3 pb-3">
-          {tasks.length === 0 && (
-            <div className="py-8 text-center font-mono text-[11px] text-faint">本会话还没有后台任务活动</div>
-          )}
-          {visible.map(({ feed, depth }) => (
-            <TaskCard key={feed.toolUseId} feed={feed} depth={depth} onStop={onStop} />
-          ))}
-          {flat.length > VISIBLE_LIMIT && (
-            <button
-              type="button"
-              className="rounded-full bg-surface px-3 py-1.5 font-mono text-[11px] text-muted transition-colors hover:bg-surface2 hover:text-ink"
-              onClick={() => setExpanded((v) => !v)}
-            >
-              {expanded ? '收起' : `展开其余 ${hidden} 个…`}
-            </button>
-          )}
-        </div>
+        {activeTab === 'changes' && sessionKey ? (
+          <ChangesPanel sessionKey={sessionKey} />
+        ) : (
+          <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-3 pb-3">
+            {tasks.length === 0 && (
+              <div className="py-8 text-center font-mono text-[11px] text-faint">本会话还没有后台任务活动</div>
+            )}
+            {visible.map(({ feed, depth }) => (
+              <TaskCard key={feed.toolUseId} feed={feed} depth={depth} onStop={onStop} />
+            ))}
+            {flat.length > VISIBLE_LIMIT && (
+              <button
+                type="button"
+                className="rounded-full bg-surface px-3 py-1.5 font-mono text-[11px] text-muted transition-colors hover:bg-surface2 hover:text-ink"
+                onClick={() => setExpanded((v) => !v)}
+              >
+                {expanded ? '收起' : `展开其余 ${hidden} 个…`}
+              </button>
+            )}
+          </div>
+        )}
       </aside>
     </>
   )
