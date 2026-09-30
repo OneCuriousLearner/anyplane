@@ -168,6 +168,8 @@ async function probeCodex(): Promise<BackendStatus> {
 const CACHE_TTL_MS = 60_000
 let cached: BackendsStatus | undefined
 let inflight: Promise<BackendsStatus> | undefined
+/** 服务端进程启动时刻（模块装载即记）：前端「登录提示关闭后到服务端重启再显示」的锚 */
+const serverStartedAt = Date.now()
 
 export type ProbeDeps = { probeClaude: () => Promise<BackendStatus>; probeCodex: () => Promise<BackendStatus> }
 const defaultDeps: ProbeDeps = { probeClaude, probeCodex }
@@ -181,7 +183,7 @@ export async function getBackendsStatus(deps: ProbeDeps = defaultDeps): Promise<
       deps.probeClaude().catch((e) => ({ state: 'unknown', error: String(e) }) as BackendStatus),
       deps.probeCodex().catch((e) => ({ state: 'unknown', error: String(e) }) as BackendStatus),
     ])
-    const result: BackendsStatus = { checkedAt: Date.now(), claude, codex }
+    const result: BackendsStatus = { checkedAt: Date.now(), serverStartedAt, claude, codex }
     cached = result
     return result
   })()

@@ -150,6 +150,7 @@ describe('GET /api/backends/status', () => {
       deps({
         getBackendsStatus: async () => ({
           checkedAt: 1,
+          serverStartedAt: 100,
           claude: { state: 'subscription' },
           codex: { state: 'not-logged-in' },
         }),
@@ -158,6 +159,7 @@ describe('GET /api/backends/status', () => {
     expect(ok?.status).toBe(200)
     expect(await ok!.json()).toEqual({
       checkedAt: 1,
+      serverStartedAt: 100,
       claude: { state: 'subscription' },
       codex: { state: 'not-logged-in' },
     })

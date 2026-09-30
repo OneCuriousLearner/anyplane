@@ -68,15 +68,27 @@ function BackendRow(props: { backend: BackendName; status: BackendStatus }) {
  *
  * 自决可见性：双后端都可用时不占版面（alwaysShow 除外——空列表的首次上手场景）；
  * 数据到达前不渲染，避免「探测中…」占位闪烁与布局跳动。
+ *
+ * 可关闭（右上角 ✕）：关闭后本次服务端运行期间不再出现——以 serverStartedAt 为锚记进
+ * localStorage，重启后锚变化即重新展示（「碍眼」与「错过登录指引」之间的折中）。
  */
+const DISMISS_KEY = 'anyplane:backend-status-dismissed-at'
+
 export function BackendStatusCard(props: { alwaysShow?: boolean }) {
   const [status, setStatus] = useState<BackendsStatus | null>(null)
+  const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
     let alive = true
     const load = () => {
       fetchBackendsStatus()
-        .then((s) => alive && setStatus(s))
+        .then((s) => {
+          if (!alive) return
+          setStatus(s)
+          // 服务端重启（锚变化）则清除关闭记忆，提示重新出现
+          const dismissedAt = Number(localStorage.getItem(DISMISS_KEY) ?? 0)
+          setDismissed(dismissedAt > 0 && dismissedAt === s.serverStartedAt)
+        })
         .catch(() => {}) // 401 由令牌门接管；瞬时失败等下一轮
     }
     load()
@@ -90,11 +102,23 @@ export function BackendStatusCard(props: { alwaysShow?: boolean }) {
     }
   }, [])
 
-  if (!status) return null
+  if (!status || dismissed) return null
   const attention = backendNeedsAttention(status.claude) || backendNeedsAttention(status.codex)
   if (!attention && !props.alwaysShow) return null
   return (
-    <div className="mx-1 mb-2 rounded-[14px] bg-surface px-3 py-1.5">
+    <div className="relative mx-1 mb-2 rounded-[14px] bg-surface px-3 py-1.5">
+      <button
+        type="button"
+        aria-label="关闭登录提示（服务端重启后再次显示）"
+        title="关闭登录提示（服务端重启后再次显示）"
+        className="absolute top-1 right-1.5 rounded-full px-1.5 py-0.5 text-[13px] leading-none text-faint hover:bg-surface2 hover:text-ink"
+        onClick={() => {
+          localStorage.setItem(DISMISS_KEY, String(status.serverStartedAt))
+          setDismissed(true)
+        }}
+      >
+        ✕
+      </button>
       <BackendRow backend="claude" status={status.claude} />
       <div className="border-t border-line" aria-hidden />
       <BackendRow backend="codex" status={status.codex} />
