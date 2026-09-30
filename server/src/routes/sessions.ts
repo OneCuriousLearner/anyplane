@@ -187,22 +187,26 @@ export async function handleSessionRoutes(
   }
 
   /** 会话 cwd 反查（E2/E3 共用）：hub.spawnOpts（spawn 过的）→ key 内嵌（n|/xn|/b|）
-   *  → handoffSource（s| 经列表反查——外部会话 tail 态也覆盖）→ handoffCwdOf（x| codex
-   *  线程 cwd 需 thread/read 惰性解析——同步拿不到的 codex 线程在此兜底，review 轮用户实测）。
-   *  key 反查是会话相关文件系统端点的唯一入口——**不接客户端任意路径**（E3 红线） */
+   *  → handoffSource（s| claude 经 parseKey 反查）→ **listSessions 行反查**（x| codex 线程——
+   *  列表端点每行都有 cwd，与列表页数据源一致；thread/read 对部分老线程拿不到 cwd，review 轮
+   *  用户实测 codex x| 盲区定位）。key 反查是会话相关文件系统端点的唯一入口——不接任意路径。 */
   async function cwdOfKey(key: string): Promise<string | undefined> {
     const sync = hubs.get(key)?.spawnOpts?.cwd ?? describeKey(key)?.cwd ?? deps.portFor(key).handoffSource(key).cwd
     if (sync) return sync
-    // codex x|：handoffSource 同步无 cwd（thread/read 才解析得出），走异步 handoffCwdOf
-    const sourceId = deps.portFor(key).handoffSource(key).sourceId
-    if (sourceId) {
-      try {
-        return await deps.portFor(key).handoffCwdOf(key, sourceId)
-      } catch {
-        return undefined
-      }
+    // x| codex（及 s| 反查失败的兜底）：按 key 在列表行里找 cwd
+    try {
+      const rows = await deps.listCodexSessions()
+      const hit = rows.find((r) => r.key === key)
+      if (hit?.cwd) return hit.cwd
+    } catch {
+      // codex 列表失败（未装/未登录）——claude 行兜底
     }
-    return undefined
+    try {
+      const rows = await deps.listSessions()
+      return rows.find((r) => r.key === key)?.cwd
+    } catch {
+      return undefined
+    }
   }
 
   /** E2 改动摘要：非 git 目录/git 缺席/git 失败 → available:false，前端隐藏「改动」页签 */
@@ -260,7 +264,8 @@ export async function handleSessionRoutes(
         .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
         .slice(0, 50)
       return json({ available: true, entries })
-    } catch {
+    } catch (e) {
+      log.warn(`[api] fs-complete 列举失败 key=${key} cwd=${cwd} prefix=${rawPrefix}:`, e)
       return json({ available: false })
     }
   }
