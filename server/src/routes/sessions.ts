@@ -2,8 +2,9 @@
 // git 信息缓存也在这里（仅列表端点使用）。
 
 import type { ArchivedEntry, CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
-import { backendPort, describeKey, portFor, slugForBackend, type RouteResult } from '../backends/port'
+import { backendPort, portFor, sessionCwdOf, slugForBackend, type RouteResult } from '../backends/port'
 import type { SessionSummary } from '../backends/types'
+import { isAbsolutePath } from '../approvalSummary'
 import { type GitInfo, readGitInfo } from '../fsbrowse'
 import { addWorktree, gitAvailable, removeWorktree, statusSummaryOf } from '../gitworktree'
 import { hubs } from '../hub/registry'
@@ -186,12 +187,12 @@ export async function handleSessionRoutes(
     return json({ available: gitAvailable() })
   }
 
-  /** 会话 cwd 反查（E2/E3 共用）：hub.spawnOpts（spawn 过的）→ key 内嵌（n|/xn|/b|）
-   *  → handoffSource（s| claude 经 parseKey 反查）→ **listSessions 行反查**（x| codex 线程——
+  /** 会话 cwd 反查（E2/E3 共用）：同步链走 port 的 sessionCwdOf（spawnOpts > key 内嵌 >
+   *  handoffSource 反查），本函数只加 **listSessions 行反查**异步兜底（x| codex 线程——
    *  列表端点每行都有 cwd，与列表页数据源一致；thread/read 对部分老线程拿不到 cwd，review 轮
    *  用户实测 codex x| 盲区定位）。key 反查是会话相关文件系统端点的唯一入口——不接任意路径。 */
   async function cwdOfKey(key: string): Promise<string | undefined> {
-    const sync = hubs.get(key)?.spawnOpts?.cwd ?? describeKey(key)?.cwd ?? deps.portFor(key).handoffSource(key).cwd
+    const sync = sessionCwdOf(key, hubs.get(key)?.spawnOpts?.cwd)
     if (sync) return sync
     // x| codex（及 s| 反查失败的兜底）：按 key 在列表行里找 cwd
     try {
@@ -209,11 +210,12 @@ export async function handleSessionRoutes(
     }
   }
 
-  /** E2 改动摘要：非 git 目录/git 缺席/git 失败 → available:false，前端隐藏「改动」页签 */
+  /** E2 改动摘要：非 git 目录/git 缺席/git 失败 → available:false，前端隐藏「改动」页签。
+   *  不做 gitAvailable() 前置探测——statusSummaryOf 的 spawn 失败承载同一判定（git 缺席 =
+   *  非零退出），5s 轮询热路径每次省一次同步 spawn（探测结果在轮询间隔内也不会变） */
   if (url.pathname === '/api/sessions/git-status' && req.method === 'GET') {
     const key = url.searchParams.get('key') ?? ''
     if (!key) return json({ error: '缺少 key' }, { status: 400 })
-    if (!gitAvailable()) return json({ available: false })
     const cwd = await cwdOfKey(key)
     if (!cwd) return json({ available: false })
     const summary = statusSummaryOf(cwd)
@@ -238,7 +240,7 @@ export async function handleSessionRoutes(
         return rawPrefix
       }
     })()
-    const isTraversal = (p: string) => /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(p) || /^([A-Za-z]:[\\/]|\\\\|\/)/.test(p)
+    const isTraversal = (p: string) => /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(p) || isAbsolutePath(p)
     if (isTraversal(rawPrefix) || isTraversal(dec)) {
       return json({ error: 'prefix 只允许会话目录内的相对前缀' }, { status: 400 })
     }
@@ -296,9 +298,8 @@ export async function handleSessionRoutes(
     const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
     const target = norm(cwd)
     const out: string[] = []
-    for (const key of hubs.keys()) {
-      const hub = hubs.get(key)!
-      const hubCwd = hub.spawnOpts?.cwd ?? describeKey(key)?.cwd
+    for (const [key, hub] of hubs) {
+      const hubCwd = sessionCwdOf(key, hub.spawnOpts?.cwd)
       if (hubCwd) {
         const c = norm(hubCwd)
         if (c === target || c.startsWith(`${target}/`)) out.push(key)

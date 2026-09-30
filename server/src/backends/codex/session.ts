@@ -7,10 +7,9 @@ import { saveUpload } from '../../uploads'
 import { errorMessage } from '../../util'
 import { config } from '../../config'
 import { RpcError } from './rpc'
+import { AllowTools } from '../allowTools'
 import { appendReasoning } from './reasoningStore'
-import { readLastCompacted } from './history'
-import { join } from 'node:path'
-import { Glob } from 'bun'
+import { readLastCompacted, locateRollout, scanLastCompacted } from './history'
 import {
   collabAgentMsgs,
   mapThreadStatus,
@@ -260,22 +259,15 @@ export class CodexSession {
     this.cb.onStatusChange?.()
   }
 
-  /** resume 水合：定位本线程的 rollout 文件（home/sessions/<日期目录>/rollout-*<threadId>.jsonl），
+  /** resume 水合：定位本线程的 rollout 文件（locateRollout 唯一定位实现），
    *  尾部回扫最后一条 token_count 播种 lastUsage/totalUsage/modelContextWindow。
    *  尽力而为：找不到/读不到就保持隐藏等首个新 turn；竞态守卫——只填空位，不覆盖 live 值。 */
   private async hydrateContextUsage(): Promise<void> {
     const threadId = this.opts.resumeThreadId
     if (!threadId) return
     try {
-      const home = this.runtime.home
-      const glob = new Glob(`sessions/**/rollout-*${threadId}.jsonl`)
-      let rel: string | undefined
-      for await (const p of glob.scan({ cwd: home, onlyFiles: true })) {
-        rel = p
-        break // threadId 全局唯一，首个命中即所求
-      }
-      if (!rel) return
-      const f = Bun.file(join(home, rel))
+      const f = await locateRollout(this.runtime.home, threadId)
+      if (!f) return
       const TAIL = 512 * 1024
       const text = await f.slice(Math.max(0, f.size - TAIL), f.size).text()
       const found = extractTokenCountFromRolloutTail(text)
@@ -810,7 +802,7 @@ export class CodexSession {
   dispose(): void {
     if (this.exited) return
     this.cancelRecycle()
-    this.allowTools = undefined // C1：放行集随退订同步焚毁（resume 即新会话，必重问）
+    this.allowTools.discard() // C1：放行集随退订同步焚毁（resume 即新会话，必重问）
     this.resetOutputBufs()
     this.childMarkedTurns.clear()
     this.exited = true
@@ -826,7 +818,7 @@ export class CodexSession {
   handleProcessExit(): void {
     if (this.exited) return
     this.exited = true
-    this.allowTools = undefined // C1：app-server 死亡 = 全部会话终结，同步焚毁
+    this.allowTools.discard() // C1：app-server 死亡 = 全部会话终结，同步焚毁
     this.resetOutputBufs()
     this.childMarkedTurns.clear()
     this.runtime.unregisterChildrenOf(this)
@@ -835,19 +827,20 @@ export class CodexSession {
   }
 
   /** 「本会话允许」放行集（进程层权威，C1）：rememberTool 裁决时写入（审批到达时
-   *  句柄必活），dispose/handleProcessExit/discardAllowTools 焚毁。无喂回、无复活 */
-  private allowTools: Set<string> | undefined
+   *  句柄必活），dispose/handleProcessExit/discardAllowTools 焚毁。无喂回、无复活。
+   *  实现见 backends/allowTools.ts */
+  private readonly allowTools = new AllowTools()
 
   rememberAllowTool(toolName: string): void {
-    ;(this.allowTools ??= new Set()).add(toolName)
+    this.allowTools.remember(toolName)
   }
 
   allowsTool(toolName: string): boolean {
-    return this.allowTools?.has(toolName) ?? false
+    return this.allowTools.allows(toolName)
   }
 
   discardAllowTools(): void {
-    this.allowTools = undefined
+    this.allowTools.discard()
   }
 
   // ---------- 内部 ----------
@@ -898,14 +891,17 @@ export class CodexSession {
    *  compact_metadata.summary（前端按 id 合并进已发的分隔线）。
    *  新记录落盘有竞态（OS 写缓冲/杀软索引）：ordinal 不超地板 = 本次记录还没写盘，
    *  800ms 一枪至多 5 枪；仍不到就放弃（裸分隔线保留，摘要随下次历史重载出现）。
+   *  重试只重读切片——同一次 compact 内 rollout 路径固定，locate 在循环外只做一次。
    *  itemId 缺席时补丁帧无法合并，跳过。ordinal 字段缺席（上游降级）时退化为直接接受。 */
   private async patchCompactSummary(itemId?: string): Promise<void> {
     if (!this.threadId || !itemId) return
     try {
       await this.compactFloorReady // 地板扫描是 ms 级本地读；等它比让守卫失效强
       const floor = Math.max(this.compactFloorOrdinal ?? 0, this.lastAttachedCompactOrdinal ?? 0)
+      const f = await locateRollout(this.runtime.home, this.threadId)
+      if (!f) return
       for (let attempt = 0; attempt < 5; attempt++) {
-        const rec = await readLastCompacted(this.runtime.home, this.threadId)
+        const rec = await scanLastCompacted(f)
         if (this.exited) return
         if (rec && (rec.ordinal == null || rec.ordinal > floor)) {
           this.lastAttachedCompactOrdinal = rec.ordinal

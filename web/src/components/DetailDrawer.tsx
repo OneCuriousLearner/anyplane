@@ -2,11 +2,11 @@
 // F2 从 pages/Chat.tsx 逐字切出——纯展示组件；查询由 onRunQuery 回调发回组合层
 //（query_result 应答在 Chat 的 WS 分发里落到 detailContent/mcpServers/contextData/settingsData）。
 
-import { useEffect } from 'react'
 import type { SessionState, TierModelName } from '@anyplane/protocol'
 import { resolveModel } from '../lib/api'
 import { QUERY_LABELS } from '../lib/capabilities'
 import { fmtTokens } from '../lib/blocks'
+import { useEscapeClose } from '../hooks/useEscapeClose'
 
 /** claude mcp_status 应答里的单个服务器（buildMcpServerStatuses 形状） */
 export interface McpServerInfo {
@@ -71,14 +71,8 @@ export function DetailDrawer(props: {
   // 应答形状分发——codex 应答形状天然落空，无需 isCodex 兜底表）
   const mcpActions = queries.includes('mcp_reconnect')
 
-  // Escape 关闭（浮层统一交互：PopupPanel 同款；此前只能点 ✕，走查问题 7）
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  // Escape 关闭（浮层统一交互；此前只能点 ✕，走查问题 7）
+  useEscapeClose(onClose)
 
   return (
     <div className="px-3 py-2">

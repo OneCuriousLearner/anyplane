@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { SessionList } from './pages/SessionList'
 import { Chat } from './pages/Chat'
 import { AnyPlaneMark } from './components/AnyPlaneMark'
@@ -9,6 +9,7 @@ import { fetchSessions } from './lib/api'
 import { setupNativeBridge } from './lib/nativeBridge'
 import { sessionFromKey } from './lib/key'
 import { parseDeepLinkHash, sessionHashUrl, shouldWriteHash } from './lib/sessionHash'
+import { useDragResize } from './hooks/useDragResize'
 
 function deepLinkKey(): string | null {
   return parseDeepLinkHash(location.hash)
@@ -40,20 +41,16 @@ const SIDEBAR_DEFAULT = 300
 const SIDEBAR_MIN = 275
 const SIDEBAR_MAX = 560
 
-function clampSidebar(n: number): number {
-  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(n)))
-}
-
-function loadSidebarWidth(): number {
-  const n = Number(localStorage.getItem(SIDEBAR_KEY))
-  return Number.isFinite(n) ? clampSidebar(n) : SIDEBAR_DEFAULT
-}
-
 export default function App() {
   const [selected, setSelected] = useState<SessionInfo | undefined>()
   const [authNeeded, setAuthNeeded] = useState(false)
-  const [sidebarW, setSidebarW] = useState(loadSidebarWidth)
-  const [resizing, setResizing] = useState(false)
+  const { width: sidebarW, resizing, separatorProps } = useDragResize({
+    storageKey: SIDEBAR_KEY,
+    def: SIDEBAR_DEFAULT,
+    min: SIDEBAR_MIN,
+    max: SIDEBAR_MAX,
+    fromClientX: (x) => x, // 左缘栏：指针横坐标即栏宽
+  })
 
   useEffect(() => onAuthRequired(() => setAuthNeeded(true)), [])
 
@@ -90,21 +87,22 @@ export default function App() {
    *  selected 是点进去那一刻的快照；AI 标题落盘与 /rename 只反映在下一轮列表轮询里，
    *  不合并的话顶栏标题永远定格（走查问题 2）。
    *  dirExists 同此理：会话页停留期间目录被删/恢复（另一终端 git worktree remove/add），
-   *  墓碑态要随轮询开合（review 轮）；改名回声（thread_renamed → onTitleChange）把标题
-   *  即时推新时，12s 内拒绝轮询合并——在途的旧轮询响应会把顶栏闪回旧名（review 轮）；
-   *  下一轮轮询读到新名自然收敛 */
-  const lastEchoTitleAtRef = useRef(0)
+   *  墓碑态要随轮询开合（review 轮）。
+   *  标题合并判据是「相邻两轮轮询快照之间发生变化」而非墙钟窗口（曾为回声后 12s 拒并——
+   *  窗口外的旧快照仍会闪回）：改名回声（thread_renamed → onTitleChange）已把标题推新时，
+   *  在途旧快照与上轮快照相同 = 轮询没观察到变化，不合；外部改名必然体现为快照差异
+   * （改名落盘后才被列表读到），下一轮自然收敛。首轮无快照：只在标题缺失时补并 */
+  const lastPollTitleRef = useRef(new Map<string, string | undefined>())
   const syncSelected = (s: SessionInfo) => {
+    const pollTitle = lastPollTitleRef.current.get(s.key)
+    lastPollTitleRef.current.set(s.key, s.title)
     setSelected((prev) => {
       if (!prev || prev.key !== s.key) return prev
-      const titleChanged = prev.title !== s.title
+      const pollChanged = pollTitle === undefined ? prev.title == null || prev.title === '' : pollTitle !== s.title
+      const titleChanged = pollChanged && prev.title !== s.title
       const dirChanged = prev.dirExists !== s.dirExists
       if (!titleChanged && !dirChanged) return prev
-      if (titleChanged && Date.now() - lastEchoTitleAtRef.current <= 12_000) {
-        // 标题在回声窗内不并，dirExists 照并（与回声无关）
-        return dirChanged ? { ...prev, dirExists: s.dirExists } : prev
-      }
-      return { ...prev, title: s.title, dirExists: s.dirExists }
+      return { ...prev, title: titleChanged ? s.title : prev.title, dirExists: s.dirExists }
     })
   }
 
@@ -160,32 +158,6 @@ export default function App() {
     }
     restoreFromHash(key, setSelected)
   }, [])
-
-  const persistWidth = (w: number) => {
-    const next = clampSidebar(w)
-    setSidebarW(next)
-    localStorage.setItem(SIDEBAR_KEY, String(next))
-  }
-
-  const onResizeDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.currentTarget.setPointerCapture(e.pointerId)
-    setResizing(true)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }
-  const onResizeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-    setSidebarW(clampSidebar(e.clientX))
-  }
-  const onResizeUp = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-    e.currentTarget.releasePointerCapture(e.pointerId)
-    setResizing(false)
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-    persistWidth(e.clientX)
-  }
 
   if (authNeeded) {
     return (
@@ -245,11 +217,7 @@ export default function App() {
           className={`absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none md:block ${
             resizing ? 'bg-muted/50' : 'hover:bg-muted/30'
           }`}
-          onPointerDown={onResizeDown}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeUp}
-          onPointerCancel={onResizeUp}
-          onDoubleClick={() => persistWidth(SIDEBAR_DEFAULT)}
+          {...separatorProps}
         />
       </div>
       <div className={`h-full min-w-0 ${selected ? 'block' : 'hidden md:block'}`}>
@@ -258,10 +226,7 @@ export default function App() {
             session={selected}
             onBack={backToList}
             onNavigate={(s, opts) => selectSession(s, { replace: opts?.replace ?? false })}
-            onTitleChange={(title) => {
-              lastEchoTitleAtRef.current = Date.now()
-              setSelected((prev) => (prev ? { ...prev, title } : prev))
-            }}
+            onTitleChange={(title) => setSelected((prev) => (prev ? { ...prev, title } : prev))}
           />
         ) : (
           <div className="hidden h-full flex-col items-center justify-center gap-3 text-faint md:flex">

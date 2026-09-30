@@ -6,6 +6,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { extractPaths } from './approvalRules'
 
 export function summarizeInput(toolName: string, input: unknown): string {
   const obj = (input ?? {}) as Record<string, unknown>
@@ -37,26 +38,17 @@ function normPath(p: string): string {
   return s.replace(/\/+$/, '')
 }
 
-/** 绝对路径判定：Windows 盘符 / UNC / POSIX 根 */
-function isAbsolutePath(p: string): boolean {
+/** 绝对路径判定：Windows 盘符 / UNC / POSIX 根。注入闸类消费方（routes fs-complete 的
+ *  prefix 闸）同用此正本——正则漂一处即漏一处 */
+export function isAbsolutePath(p: string): boolean {
   return /^([A-Za-z]:[\\/]|\\\\|\/)/.test(p)
 }
 
-/** 收集审批输入里的绝对路径候选（字段集合与 approvalRules.extractPaths 对齐 + input.cwd）。
+/** 收集审批输入里的绝对路径候选（字段清单唯一正本是 approvalRules.extractPaths——
+ *  审批规则与警示同源，上游加带路径字段的工具只改一处；+ includeCwd）。
  *  Bash 的 command 是自由文本不做解析（假阳性比漏报更伤信任）。 */
 function absolutePathsOf(input: unknown): string[] {
-  if (!input || typeof input !== 'object') return []
-  const obj = input as Record<string, unknown>
-  const out: string[] = []
-  const add = (v: unknown) => {
-    if (typeof v === 'string' && isAbsolutePath(v)) out.push(v)
-  }
-  add(obj.file_path)
-  add(obj.path)
-  add(obj.grantRoot)
-  add(obj.cwd)
-  if (Array.isArray(obj.paths)) for (const p of obj.paths) add(p)
-  return [...new Set(out)]
+  return extractPaths(input, { includeCwd: true }).filter(isAbsolutePath)
 }
 
 /** 目录的 git 公共目录（commondir）：普通仓库是自身 .git；worktree 的 .git 是指向文件，

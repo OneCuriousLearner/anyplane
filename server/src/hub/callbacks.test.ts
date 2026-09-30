@@ -271,13 +271,10 @@ describe('sessionCallbacks.onExit', () => {
     const { hub, ws } = freshHub()
     hub.pendingApprovals.set('r1', { requestId: 'r1', toolName: 'Bash', input: {} })
     hub.pendingApprovals.set('r2', { requestId: 'r2', toolName: 'Write', input: { file_path: '/tmp/x' } })
-    hub.sessionAllowTools = new Set(['Bash'])
 
     sessionCallbacks(hub).onExit(17)
 
     expect(hub.pendingApprovals.size).toBe(0)
-    // 「本会话允许」随进程死亡失效：Hub 因客户端存活而保留，不清则重 spawn 的新会话继承旧放行集
-    expect(hub.sessionAllowTools).toBeUndefined()
     const sent = payloads(ws)
     expect(sent.slice(0, 2)).toEqual([
       { kind: 'approval_resolved', requestId: 'r1' },
@@ -386,11 +383,10 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     config.approvalRules = undefined
     const cb = sessionCallbacks(hub)
 
-    // 首次请求进 pending，WS 裁决 allow + rememberTool → 写入 Hub 内存放行集
+    // 首次请求进 pending，WS 裁决 allow + rememberTool → 写入进程层放行集（唯一权威）
     cb.onApprovalRequest({ requestId: 'rm1', toolName: 'Edit', input: { file_path: '/a.ts' } })
     expect(hub.pendingApprovals.has('rm1')).toBe(true)
     resolveApproval(hub, 'rm1', { behavior: 'allow', updatedInput: { file_path: '/a.ts' }, rememberTool: true })
-    expect(hub.sessionAllowTools?.has('Edit')).toBe(true)
     // rememberTool 是 Hub 内部语义：投递上游的裁决必须剥掉（claude control_response 全量透传）
     expect(delivered[0]).toEqual(['rm1', { behavior: 'allow', updatedInput: { file_path: '/a.ts' } }])
 
@@ -414,11 +410,18 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     expect(hub.pendingApprovals.has('rm3')).toBe(true)
   })
 
-  test('/clear 重键后「本会话允许」放行集失效（sessionId 已换）', () => {
+  test('/clear 重键后「本会话允许」放行集失效（sessionId 已换，进程层焚毁）', () => {
     const oldKey = 'n|%2Ftmp%2Fclear-allowset'
     const { hub } = hubAt(oldKey)
-    injectFakeSession(oldKey)
-    hub.sessionAllowTools = new Set(['Edit'])
+    const allowTools = new Set(['Edit'])
+    extraKeys.push(oldKey)
+    sessionMap().set(oldKey, {
+      key: oldKey,
+      exited: false,
+      rememberAllowTool: (t: string) => allowTools.add(t),
+      allowsTool: (t: string) => allowTools.has(t),
+      discardAllowTools: () => allowTools.clear(),
+    })
     const cb = sessionCallbacks(hub)
     cb.onMessage({ type: 'conversation_reset' } as CliMessage)
     cb.onMessage({ type: 'system', subtype: 'init', session_id: 'sid-fresh' } as CliMessage)
@@ -426,10 +429,10 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     const newKey = 's|-tmp-clear-allowset|sid-fresh'
     extraKeys.push(newKey)
     expect(hub.key).toBe(newKey) // 重键已发生
-    expect(hub.sessionAllowTools).toBeUndefined()
+    expect(allowTools.size).toBe(0) // 进程层放行集已焚毁
   })
 
-  test('失效卡口 dropSessionAllowTools：清 Hub 镜像 + 通知进程层焚毁（幂等）', () => {
+  test('失效卡口 dropSessionAllowTools：通知进程层焚毁放行集（进程层幂等，重复通知无害）', () => {
     const { hub } = freshHub()
     let discarded = 0
     sessionMap().set(KEY, {
@@ -437,27 +440,9 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
       exited: false,
       discardAllowTools: () => discarded++,
     })
-    hub.sessionAllowTools = new Set(['Edit'])
 
     dropSessionAllowTools(hub, '测试')
-
-    expect(hub.sessionAllowTools).toBeUndefined()
     expect(discarded).toBe(1)
-    // 无集时静默零动作（幂等，不扰进程层）
-    dropSessionAllowTools(hub, '测试')
-    expect(discarded).toBe(1)
-  })
-
-  test('C1：命中判定以进程层为准——Hub 镜像残留（stale swallow 模拟）但进程层已空时不放行', () => {
-    const { hub } = freshHub()
-    injectApprovalSession() // 进程层集为空（从未 rememberAllowTool）
-    config.approvalRules = undefined
-    hub.sessionAllowTools = new Set(['Edit']) // 镜像残留（onExit 被 swallow 的世界）
-    const cb = sessionCallbacks(hub)
-
-    cb.onApprovalRequest({ requestId: 'ss1', toolName: 'Edit', input: { file_path: '/x.ts' } })
-    // 进程层权威说「没记名」→ 必须进 pending 重问，不得被镜像错误放行
-    expect(hub.pendingApprovals.has('ss1')).toBe(true)
   })
 
   test('C2：审批输入触及 cwd 外异仓库路径 → 事件与 Hub 侧表带 outsidePath，重放随附', () => {
@@ -473,27 +458,27 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
       requestId: 'oc1',
       outsidePath: '/somewhere/else/a.ts',
     })
-    expect(hub.outsidePaths?.get('oc1')).toBe('/somewhere/else/a.ts')
+    expect(hub.pendingApprovals.get('oc1')?.outsidePath).toBe('/somewhere/else/a.ts')
 
     // 重放随附（socket 接入/attach 路径共用 replayApprovals）
     const replayed: Array<Record<string, unknown>> = []
     replayApprovals(hub, (p) => replayed.push(p as Record<string, unknown>))
     expect(replayed[0]).toMatchObject({ kind: 'approval_request', requestId: 'oc1', outsidePath: '/somewhere/else/a.ts' })
 
-    // review 轮 finding 3：裁决后警示路径同删（与 pendingApprovals 真同生命周期）
+    // review 轮 finding 3：裁决后警示路径同消亡（折进 pending 值，与 pendingApprovals 真同生命周期）
     resolveApproval(hub, 'oc1', { behavior: 'deny', message: 'x' })
-    expect(hub.outsidePaths?.has('oc1')).toBe(false)
+    expect(hub.pendingApprovals.has('oc1')).toBe(false)
   })
 
-  test('C2：clearPendingApprovals 同清警示路径（review 轮 finding 3）', () => {
+  test('C2：clearPendingApprovals/onApprovalResolved 同清警示路径（review 轮 finding 3）', () => {
     const { hub } = freshHub()
     injectApprovalSession()
     config.approvalRules = undefined
     const cb = sessionCallbacks(hub)
     cb.onApprovalRequest({ requestId: 'oc2', toolName: 'Write', input: { file_path: '/elsewhere/b.ts' } })
-    expect(hub.outsidePaths?.has('oc2')).toBe(true)
+    expect(hub.pendingApprovals.get('oc2')?.outsidePath).toBe('/elsewhere/b.ts')
     sessionCallbacks(hub).onApprovalResolved('oc2')
-    expect(hub.outsidePaths?.has('oc2')).toBe(false)
+    expect(hub.pendingApprovals.has('oc2')).toBe(false)
   })
 
   test('C2：cwd 子树内的路径不带 outsidePath（相对/无路径输入同）', () => {
@@ -504,7 +489,7 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
 
     cb.onApprovalRequest({ requestId: 'in1', toolName: 'Write', input: { file_path: '/tmp/callbacks-test/src/a.ts' } })
     cb.onApprovalRequest({ requestId: 'in2', toolName: 'Bash', input: { command: 'rm -rf /' } })
-    expect(hub.outsidePaths).toBeUndefined()
+    for (const p of hub.pendingApprovals.values()) expect(p.outsidePath).toBeUndefined()
     for (const p of payloads(ws)) expect(p.outsidePath).toBeUndefined()
   })
 })

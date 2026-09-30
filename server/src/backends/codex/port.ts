@@ -167,11 +167,15 @@ class CodexPort implements BackendPort {
     hub.titleGeneratedFor = tid
     hub.pendingTitleText = undefined
     void (async () => {
-      // 写前复查：线程当前 name 仍空才生成（手动改名/他端已生成都不覆盖）
-      const before = await codexRuntime.rpcRequest('thread/read', { threadId: tid, includeTurns: false }, 30_000) as {
-        thread?: { name?: string | null }
+      // 写前/生成后同口径复查：线程当前 name 仍空才生成/写回（手动改名/他端已生成都不覆盖——
+      // 手动改名的线程不是 AnyPlane 该管的）
+      const nameTaken = async (): Promise<boolean> => {
+        const r = (await codexRuntime.rpcRequest('thread/read', { threadId: tid, includeTurns: false }, 30_000)) as {
+          thread?: { name?: string | null }
+        }
+        return Boolean(r.thread?.name)
       }
-      if (before.thread?.name) return
+      if (await nameTaken()) return
       const title = await codexRuntime.runEphemeralTitleQuestion(tid, text, s.currentModel)
       // 模型已跑完却给空标题＝已烧 token 的失败：消费记账不再重试（列表回退首条消息摘要，
       // 与 E4 前一致）。若恢复记账，每个 turn 完成都会重烧一次 ephemeral 模型调用（review 轮）
@@ -179,11 +183,8 @@ class CodexPort implements BackendPort {
         log.warn(`[title] codex AI 标题为空（模型已应答），不再重试 key=${hub.key} tid=${tid}`)
         return
       }
-      // 生成后再复查一次（生成窗口内被 /rename 抢先也不覆盖）
-      const after = await codexRuntime.rpcRequest('thread/read', { threadId: tid, includeTurns: false }, 30_000) as {
-        thread?: { name?: string | null }
-      }
-      if (after.thread?.name) return
+      // 生成窗口内被 /rename 抢先也不覆盖
+      if (await nameTaken()) return
       s.noteSelfRename(title) // 本端写回登记：thread/name/updated 回声（同名 30s 内）不广播「已更名」系统行
       try {
         await codexRuntime.rpcRequest('thread/name/set', { threadId: tid, name: title }, 30_000)
@@ -301,7 +302,13 @@ class CodexPort implements BackendPort {
     // hub 层已按 capabilities.queries 白名单把关（codex 仅 mcp_status），此处只处理对应物
     void codexRuntime
       .rpcRequest('mcpServerStatus/list', {})
-      .then((d) => reply({ ok: true, data: d }))
+      .then((d) => {
+        // 形状归一在适配器（统一消息边界的翻译职责）：空列表信封（{data: []}）映射为
+        // {mcpServers: []}——前端结构化空态（「无 MCP 服务器」）只认 mcpServers 字段，
+        // 不存 codex 专有形状分支；非空项形状未与 claude 对齐，原样落原始 JSON 视图
+        const env = d as { data?: unknown[] }
+        reply({ ok: true, data: Array.isArray(env?.data) && env.data.length === 0 ? { mcpServers: [] } : d })
+      })
       .catch((e) => reply({ ok: false, error: errorMessage(e) }))
   }
 

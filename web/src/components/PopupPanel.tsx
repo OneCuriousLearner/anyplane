@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { GlassSubPanel } from './GlassPanel'
+import { useEscapeClose } from '../hooks/useEscapeClose'
 
 export type PopupPlacement =
   | 'bottom-start'
@@ -93,14 +94,7 @@ export function PopupPanel(props: {
     return () => document.removeEventListener('pointerdown', onDown)
   }, [open, anchor, onClose])
 
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  useEscapeClose(onClose, open)
 
   if (!open || !pos) return null
 

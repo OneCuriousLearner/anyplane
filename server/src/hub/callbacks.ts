@@ -4,7 +4,7 @@
 import { decisionOfRule, matchApprovalRule } from '../approvalRules'
 import { outsideCwdPath, summarizeInput } from '../approvalSummary'
 import { isInternalUserMessage, type CliMessage } from '../backends/claude/streamJson'
-import { describeKey, portFor } from '../backends/port'
+import { describeKey, portFor, sessionCwdOf } from '../backends/port'
 import { config } from '../config'
 import { log } from '../log'
 import { broadcast, publishInbox } from './broadcast'
@@ -38,7 +38,7 @@ export function sessionCallbacks(hub: Hub) {
         hub.transition = undefined
         const port = portFor(hub.key)
         const newSid = String(msg.session_id ?? '')
-        const cwd = hub.spawnOpts?.cwd ?? port.handoffSource(hub.key).cwd
+        const cwd = sessionCwdOf(hub.key, hub.spawnOpts?.cwd)
         if (newSid && cwd) {
           const newKey = port.keyForExisting(newSid, cwd)
           const oldKey = hub.key
@@ -64,8 +64,7 @@ export function sessionCallbacks(hub: Hub) {
         const port = portFor(hub.key)
         const desc = describeKey(hub.key)
         if (sid && desc && desc.kind !== 'existing') {
-          // cwd 优先级与 /clear 分支一致：spawnOpts（用户显式选择）> key 内嵌 > 反查
-          const cwd = hub.spawnOpts?.cwd ?? desc.cwd ?? port.handoffSource(hub.key).cwd
+          const cwd = sessionCwdOf(hub.key, hub.spawnOpts?.cwd)
           const newKey = cwd ? port.keyForExisting(sid, cwd) : undefined
           if (newKey && newKey !== hub.key) {
             const oldKey = hub.key
@@ -117,10 +116,9 @@ export function sessionCallbacks(hub: Hub) {
         deliverApproval(hub, req.requestId, decisionOfRule(auto.rule, req.input))
         return
       }
-      // 「本会话允许」放行集命中判定（C1 治本）：权威在进程层（rememberTool 裁决时写入，
-      // dispose 同步焚毁，无喂回无复活）。审批到达时进程必活，直接查进程层——
-      // Hub 镜像（hub.sessionAllowTools）仅作 UI 展示，不参与命中（stale swallow 时
-      // 镜像可能残留而进程层已空，以进程层为准才不会错误放行）
+      // 「本会话允许」放行集命中判定（C1 治本）：权威唯一在进程层（rememberTool 裁决时写入，
+      // dispose 同步焚毁，无喂回无复活——Hub 侧不再持有第二份可写副本，stale swallow 无可复活）。
+      // 审批到达时进程必活，直接查进程层
       if (portFor(hub.key).sessionOf(hub.key)?.allowsTool?.(req.toolName)) {
         log.info(`[approval] ${hub.key} 本会话放行 ${req.toolName}`)
         broadcast(hub, {
@@ -135,15 +133,10 @@ export function sessionCallbacks(hub: Hub) {
         deliverApproval(hub, req.requestId, { behavior: 'allow', updatedInput: req.input })
         return
       }
-      hub.pendingApprovals.set(req.requestId, req)
       // C2：触及工作目录之外的候选路径（同仓库家族豁免后仍外）——随事件下发警示路径，
-      // 审批卡加「⚠ 触及工作目录之外」徽；会话 cwd 取 key 内嵌值（n|/xn|/b|）或反查（s|/x|）
-      const desc = describeKey(hub.key)
-      const outsidePath = outsideCwdPath(
-        req.input,
-        hub.spawnOpts?.cwd ?? desc?.cwd ?? portFor(hub.key).handoffSource(hub.key).cwd,
-      )
-      if (outsidePath) (hub.outsidePaths ??= new Map()).set(req.requestId, outsidePath)
+      // 审批卡加「⚠ 触及工作目录之外」徽；折进 pending 值（同生命周期，重放同源）
+      const outsidePath = outsideCwdPath(req.input, sessionCwdOf(hub.key, hub.spawnOpts?.cwd))
+      hub.pendingApprovals.set(req.requestId, { ...req, ...(outsidePath ? { outsidePath } : {}) })
       broadcast(hub, {
         kind: 'approval_request',
         requestId: req.requestId,
@@ -175,7 +168,6 @@ export function sessionCallbacks(hub: Hub) {
      *  同步清掉 Hub 侧 pending，否则死审批会随重连重放、status 恒 waiting。 */
     onApprovalResolved: (requestId: string) => {
       if (!hub.pendingApprovals.delete(requestId)) return
-      hub.outsidePaths?.delete(requestId) // C2 警示路径随终结同清
       broadcast(hub, { kind: 'approval_resolved', requestId })
       publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
       pushStatus(hub)
@@ -185,9 +177,8 @@ export function sessionCallbacks(hub: Hub) {
       // 否则重连时 replayApprovals 会把死审批重放成可点击卡片（点击后投递给一个不认识
       // 该 request_id 的新进程），此后任何 status 推送也都因 pending>0 显示 waiting。
       clearPendingApprovals(hub)
-      // 「本会话允许」随进程死亡失效（C1 治本）：走失效卡口双边清理（Hub 内存集 +
-      // 进程层保险箱）。dispose 已先行焚毁进程层集，这里兜底 Hub 侧（dispose 同步路径
-      // 不依赖 onExit 送达后，本回调只是镜像确认，掷硬币消除）
+      // 「本会话允许」随进程死亡失效（C1 治本）：走失效卡口通知进程层焚毁（dispose 同步路径
+      // 已先行焚毁，此处兜底——进程层实现幂等 clear，重复通知无害）
       dropSessionAllowTools(hub, '进程退出')
       pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
     },

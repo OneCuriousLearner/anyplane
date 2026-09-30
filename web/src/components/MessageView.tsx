@@ -10,6 +10,21 @@ import {
   type ChatMsg,
 } from '../lib/blocks'
 
+/** 压缩摘要的展开器：codex 分隔线摘要与 claude /compact 摘要消息共用（样式/交互动一处） */
+function CompactSummaryDetails(props: { text: string; className: string }) {
+  return (
+    <details className={`group px-7 font-mono text-[11px] text-faint ${props.className}`}>
+      <summary className="cursor-pointer select-none list-none">
+        <span className="group-open:hidden">▸ 已压缩上下文 · 查看摘要</span>
+        <span className="hidden group-open:inline">▾ 已压缩上下文 · 收起摘要</span>
+      </summary>
+      <pre className="mt-2 max-h-64 overflow-auto rounded-[10px] bg-surface px-3 py-2 whitespace-pre-wrap leading-relaxed text-muted">
+        {props.text}
+      </pre>
+    </details>
+  )
+}
+
 /** user 消息文本：解析斜杠命令回显 / 本地命令输出 / 中断标记 */
 function UserText(props: { text: string }) {
   const segs = parseUserText(props.text)
@@ -135,17 +150,7 @@ export const MessageView = memo(function MessageView(props: { msg: ChatMsg; comp
             </span>
             <div className="h-px flex-1 bg-line" />
           </div>
-          {cm?.summary && (
-            <details className="group mt-1.5 px-7 font-mono text-[11px] text-faint">
-              <summary className="cursor-pointer select-none list-none">
-                <span className="group-open:hidden">▸ 已压缩上下文 · 查看摘要</span>
-                <span className="hidden group-open:inline">▾ 已压缩上下文 · 收起摘要</span>
-              </summary>
-              <pre className="mt-2 max-h-64 overflow-auto rounded-[10px] bg-surface px-3 py-2 whitespace-pre-wrap leading-relaxed text-muted">
-                {cm.summary}
-              </pre>
-            </details>
-          )}
+          {cm?.summary && <CompactSummaryDetails text={cm.summary} className="mt-1.5" />}
         </div>
       )
     }
@@ -153,15 +158,10 @@ export const MessageView = memo(function MessageView(props: { msg: ChatMsg; comp
     // 折叠成一行，点开看摘要全文（英文模板 prompt 全文携带在 blocks 里）
     if (msg.systemKind === 'compactSummary') {
       return (
-        <details className="group my-3 px-7 font-mono text-[11px] text-faint">
-          <summary className="cursor-pointer select-none list-none">
-            <span className="group-open:hidden">▸ 已压缩上下文 · 查看摘要</span>
-            <span className="hidden group-open:inline">▾ 已压缩上下文 · 收起摘要</span>
-          </summary>
-          <pre className="mt-2 max-h-64 overflow-auto rounded-[10px] bg-surface px-3 py-2 whitespace-pre-wrap leading-relaxed text-muted">
-            {msg.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('\n')}
-          </pre>
-        </details>
+        <CompactSummaryDetails
+          text={msg.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('\n')}
+          className="my-3"
+        />
       )
     }
     const err = msg.systemKind === 'error'

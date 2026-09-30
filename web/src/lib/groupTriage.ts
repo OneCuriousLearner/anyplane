@@ -25,20 +25,24 @@ export function rowStatusOf(s: SessionInfo): { key: string; cls: string; label: 
 
 /** 分组键归一：worktreeOf（readGitInfo 推导，正斜杠）与 cwd（会话创建时录入，Windows 反
  *  斜杠）必须同一口径才能落进同一组——不归一会出现两个同名组（实测发现）。
- *  统一正斜杠 + 去尾斜杠；展示层 dirBasename 两种分隔符都切，不受影响 */
+ *  统一正斜杠 + 去尾斜杠；Windows 形态（盘符/UNC）再整体小写——NTFS 不区分大小写，
+ *  git 输出与录入的段级大小写不一同样会劈组（与服务端 normPath 同口径）；POSIX 路径
+ *  大小写敏感不动。展示层 dirBasename 两种分隔符都切，不受影响 */
 export function normPathKey(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '')
+  const s = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[a-z]:\//i.test(s) || s.startsWith('//') ? s.toLowerCase() : s
 }
 
 /** 组间排序：有 waiting 行的组整体浮到列表最前（组间再按各自 max mtime 降序），其余组
  *  按 max mtime 降序——「需要我」压过「正在输出」（09-27 问题 3；Codex agents 仪表盘的
- *  Need input 优先同旨）。原地不修改输入。 */
-export function orderGroupsForTriage<K>(entries: Array<[K, SessionInfo[]]>): Array<[K, SessionInfo[]]> {
-  const maxMtime = (list: SessionInfo[]) => Math.max(0, ...list.map((s) => s.mtime))
-  const hasWaiting = (list: SessionInfo[]) => list.some((s) => s.managed.waiting)
-  const byMtime = (a: [K, SessionInfo[]], b: [K, SessionInfo[]]) => maxMtime(b[1]) - maxMtime(a[1])
-  const waiting = entries.filter(([, list]) => hasWaiting(list)).sort(byMtime)
-  const rest = entries.filter(([, list]) => !hasWaiting(list)).sort(byMtime)
+ *  Need input 优先同旨）。原地不修改输入。
+ *  值形状只要求 { list }——调用方（SessionList 的分组 Map 值）直接进出，不拆包重打包 */
+export function orderGroupsForTriage<K, V extends { list: SessionInfo[] }>(entries: Array<[K, V]>): Array<[K, V]> {
+  const maxMtime = (v: V) => Math.max(0, ...v.list.map((s) => s.mtime))
+  const hasWaiting = (v: V) => v.list.some((s) => s.managed.waiting)
+  const byMtime = (a: [K, V], b: [K, V]) => maxMtime(b[1]) - maxMtime(a[1])
+  const waiting = entries.filter(([, v]) => hasWaiting(v)).sort(byMtime)
+  const rest = entries.filter(([, v]) => !hasWaiting(v)).sort(byMtime)
   return [...waiting, ...rest]
 }
 

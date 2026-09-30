@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { SessionInfo } from '@anyplane/protocol'
 import { ClaudeMark } from './ClaudeMark'
 import { CodexMark } from './CodexMark'
-import { BranchIcon, dirBasename, STATUS_META, timeAgo } from './listChrome'
+import { BranchIcon, dirBasename, timeAgo } from './listChrome'
 import { rowStatusOf, segmentRowsByCwd } from '../lib/groupTriage'
 import type { SessionMenuAnchor } from './SessionRowMenu'
 
@@ -11,7 +11,7 @@ import type { SessionMenuAnchor } from './SessionRowMenu'
 const GROUP_PAGE = 5
 
 export function SessionGroupList(props: {
-  groups: Map<string, { list: SessionInfo[]; branch?: string; worktreeOf?: string }>
+  groups: Map<string, { list: SessionInfo[]; branch?: string }>
   collapsed: Set<string>
   onToggleCollapse: (cwd: string) => void
   selectedKey?: string
