@@ -6,7 +6,7 @@ import { readReasoning } from './reasoningStore'
 import { extractCompactedFromRolloutTail, reasoningSidecarUuid, type CompactedRecord } from './mapping'
 import { RpcError } from './rpc'
 import { itemsToHistory, type ThreadItem } from './translate'
-import { Glob } from 'bun'
+import { Glob, type BunFile } from 'bun'
 import { join } from 'node:path'
 
 export type RpcRequestFn = (method: string, params?: unknown, timeoutMs?: number) => Promise<unknown>
@@ -34,31 +34,45 @@ export interface ThreadMetaContext {
   home?: string
 }
 
-/** 定位线程的 rollout 文件并尾扫最后一条 compacted 记录（含 ordinal 身份，补丁帧的
- *  「本次记录落盘没有」靠 ordinal 判，不靠摘要文本比对）。
- *  上游历史投影丢 payload（只置 saw_compaction），这是摘要的唯一数据源。
- *  尽力而为：找不到/读不到返回 undefined（调用方静默降级，不影响历史本体）。
- *  分块向上翻倍回扫（512KB → 4 倍递增 → 全文件）：两次 compact 之间写了大量内容时
- *  固定尾窗会漏掉最新记录（review 轮）——翻到找到或读完为止 */
-export async function readLastCompacted(home: string, threadId: string): Promise<CompactedRecord | undefined> {
+/** 定位线程的 rollout 文件（home/sessions/<日期目录>/rollout-*<threadId>.jsonl）。
+ *  threadId 全局唯一，首个命中即所求；找不到返回 undefined。
+ *  唯一定位实现（resume 水合 / compact 摘要尾扫共用）——rollout 布局漂移只改这里 */
+export async function locateRollout(home: string, threadId: string): Promise<BunFile | undefined> {
+  const glob = new Glob(`sessions/**/rollout-*${threadId}.jsonl`)
+  for await (const p of glob.scan({ cwd: home, onlyFiles: true })) {
+    return Bun.file(join(home, p))
+  }
+  return undefined
+}
+
+/** 已定位 rollout 文件的尾扫：分块向上翻倍回扫（512KB → 4 倍递增 → 全文件）——两次 compact
+ *  之间写了大量内容时固定尾窗会漏掉最新记录（review 轮），翻到找到或读完为止。
+ *  窗口左缘的截断行本轮被 extractor 跳过，下一轮 4 倍窗口完整覆盖它。
+ *  补丁帧重试循环复用：同一次 compact 内 rollout 路径固定，locate 只做一次，重试只重读切片 */
+export async function scanLastCompacted(f: BunFile): Promise<CompactedRecord | undefined> {
   try {
-    const glob = new Glob(`sessions/**/rollout-*${threadId}.jsonl`)
-    let rel: string | undefined
-    for await (const p of glob.scan({ cwd: home, onlyFiles: true })) {
-      rel = p
-      break // threadId 全局唯一，首个命中即所求
-    }
-    if (!rel) return undefined
-    const f = Bun.file(join(home, rel))
     const size = f.size
     let window_ = 512 * 1024
     for (;;) {
-      // 窗口左缘的截断行本轮被 extractor 跳过，下一轮 4 倍窗口完整覆盖它
       const text = await f.slice(Math.max(0, size - window_), size).text()
       const found = extractCompactedFromRolloutTail(text)
       if (found || window_ >= size) return found
       window_ = Math.min(window_ * 4, size)
     }
+  } catch {
+    return undefined
+  }
+}
+
+/** 定位 + 尾扫最后一条 compacted 记录（含 ordinal 身份，补丁帧的「本次记录落盘没有」靠
+ *  ordinal 判，不靠摘要文本比对）。单次调用版；重试循环请 locate 一次后复用 scanLastCompacted。
+ *  上游历史投影丢 payload（只置 saw_compaction），这是摘要的唯一数据源。
+ *  尽力而为：找不到/读不到返回 undefined（调用方静默降级，不影响历史本体） */
+export async function readLastCompacted(home: string, threadId: string): Promise<CompactedRecord | undefined> {
+  try {
+    const f = await locateRollout(home, threadId)
+    if (!f) return undefined
+    return await scanLastCompacted(f)
   } catch {
     return undefined
   }

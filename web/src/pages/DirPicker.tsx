@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { BackendName, BackendsStatus, DirEntry, SessionInfo } from '@anyplane/protocol'
-import { errorMessage, fetchBackendsStatus, fetchDirList, fetchGitAvailable, addWorktreeSession } from '../lib/api'
+import { errorMessage, fetchBackendsStatus, fetchDirList, addWorktreeSession } from '../lib/api'
 import { backendFixHint, backendNeedsAttention } from '../components/BackendStatusCard'
+import { useEscapeClose } from '../hooks/useEscapeClose'
+import { useGitAvailable } from '../hooks/useGitAvailable'
 
 type NodeState =
   | { status: 'loading' }
@@ -100,15 +102,7 @@ export function DirPicker(props: {
   }, [])
 
   // Esc 关闭
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') props.onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-    // onClose 由父组件内联传入，挂载时注册一次即可
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  useEscapeClose(props.onClose)
 
   // revealPath 选中后：树随逐级展开异步渲染，目标行出现即滚动居中
   useEffect(() => {
@@ -177,16 +171,11 @@ export function DirPicker(props: {
   }
 
   // ---------- worktree 创建（E1：从当前目录拉 worktree 开会话） ----------
-  const [gitAvailable, setGitAvailable] = useState(false)
+  const gitAvailable = useGitAvailable()
   const [wtOpen, setWtOpen] = useState(false)
   const [wtName, setWtName] = useState('')
   const [wtBusy, setWtBusy] = useState(false)
   const [wtError, setWtError] = useState('')
-  useEffect(() => {
-    fetchGitAvailable()
-      .then(setGitAvailable)
-      .catch(() => {})
-  }, [])
   const startWorktree = async () => {
     const name = wtName.trim()
     if (!selected || !name || wtBusy) return

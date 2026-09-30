@@ -29,28 +29,40 @@ export function slugOf(cwd: string): string {
 export function sessionFromKey(key: string): SessionInfo | null {
   try {
     const managed = { spawned: false, busy: false, clients: 0 }
+    // 最小 SessionInfo 骨架一处维护；各分支只差 slug/sessionId/backend/cwd 四个取值
+    const mk = (slug: string, sessionId: string, backend: SessionInfo['backend'], cwd?: string): SessionInfo => ({
+      key,
+      slug,
+      sessionId,
+      ...(cwd !== undefined ? { cwd } : {}),
+      mtime: Date.now(),
+      sizeBytes: 0,
+      status: 'offline',
+      backend,
+      managed,
+    })
     const parts = key.split('|')
     if (parts[0] === 's' && parts.length === 3) {
-      return { key, slug: parts[1], sessionId: parts[2], mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+      return mk(parts[1], parts[2], 'claude')
     }
     if (parts[0] === 'x' && parts.length === 2) {
-      return { key, slug: 'codex', sessionId: parts[1], mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'codex', managed }
+      return mk('codex', parts[1], 'codex')
     }
     if (parts[0] === 'b' && parts.length === 3) {
       const cwd = decodeURIComponent(parts[1])
-      return { key, slug: slugOf(cwd), sessionId: parts[2], cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+      return mk(slugOf(cwd), parts[2], 'claude', cwd)
     }
     // 懒启动占位：sessionId 尚无（'new' 哨兵与 startNew/handoff_done 同口径）；
     // spawn 后服务端广播 moved 升键，本兜底只为刷新/深链不断链
     if (parts[0] === 'n' && parts.length === 2) {
       const cwd = decodeURIComponent(parts[1])
       if (!cwd) return null // 空 cwd 是损坏形状，还原出来也 spawn 不了
-      return { key, slug: slugOf(cwd), sessionId: 'new', cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'claude', managed }
+      return mk(slugOf(cwd), 'new', 'claude', cwd)
     }
     if (parts[0] === 'xn' && parts.length === 2) {
       const cwd = decodeURIComponent(parts[1])
       if (!cwd) return null
-      return { key, slug: 'codex', sessionId: 'new', cwd, mtime: Date.now(), sizeBytes: 0, status: 'offline', backend: 'codex', managed }
+      return mk('codex', 'new', 'codex', cwd)
     }
     return null
   } catch {

@@ -110,8 +110,9 @@ function extractField(_toolName: string, input: unknown, field: 'command' | 'dom
 }
 
 /** 收集所有路径候选：claude `file_path`、通用 `path`、codex `grantRoot` / `paths[]`。
- *  去重保序。一条审批可能同时改多个文件——allow 要全部命中，deny 命中任一即拦。 */
-export function extractPaths(input: unknown): string[] {
+ *  去重保序。一条审批可能同时改多个文件——allow 要全部命中，deny 命中任一即拦。
+ *  includeCwd（approvalSummary 的 cwd 外警示用）：`cwd` 字段按历史口径插在 `paths[]` 之前。 */
+export function extractPaths(input: unknown, opts?: { includeCwd?: boolean }): string[] {
   if (!input || typeof input !== 'object') return []
   const obj = input as Record<string, unknown>
   const out: string[] = []
@@ -121,6 +122,7 @@ export function extractPaths(input: unknown): string[] {
   add(obj.file_path)
   add(obj.path)
   add(obj.grantRoot)
+  if (opts?.includeCwd) add(obj.cwd)
   if (Array.isArray(obj.paths)) for (const p of obj.paths) add(p)
   return [...new Set(out)]
 }

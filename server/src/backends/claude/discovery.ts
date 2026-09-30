@@ -11,7 +11,7 @@ import { backgroundAlive, daemonAgents } from './agents'
 import { isInternalUserMessage, type CliMessage } from './streamJson'
 
 /** 状态词表正本在 @anyplane/protocol（SessionInfo.status 共用同一闭集） */
-import type { HistoryBlock, HistoryMessage, SessionStatus, SubagentHistory } from '@anyplane/protocol'
+import type { HistoryMessage, SessionStatus, SubagentHistory } from '@anyplane/protocol'
 
 const KNOWN_STATUS: readonly SessionStatus[] = ['busy', 'idle', 'waiting', 'offline']
 

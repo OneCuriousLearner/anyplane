@@ -22,9 +22,9 @@ function row(p: { key: string; mtime: number; cwd?: string; worktreeOf?: string;
 
 describe('orderGroupsForTriage（「需要我」压过「正在输出」）', () => {
   test('有 waiting 的组整体浮前，组间再按各自 max mtime 降序', () => {
-    const g1 = [row({ key: 'a', mtime: 300 })] // 最新但无 waiting
-    const g2 = [row({ key: 'b', mtime: 100, waiting: true })] // 旧但在等我
-    const g3 = [row({ key: 'c', mtime: 200, waiting: true })]
+    const g1 = { list: [row({ key: 'a', mtime: 300 })] } // 最新但无 waiting
+    const g2 = { list: [row({ key: 'b', mtime: 100, waiting: true })] } // 旧但在等我
+    const g3 = { list: [row({ key: 'c', mtime: 200, waiting: true })] }
     const out = orderGroupsForTriage([
       ['g1', g1],
       ['g2', g2],
@@ -35,8 +35,8 @@ describe('orderGroupsForTriage（「需要我」压过「正在输出」）', ()
 
   test('无 waiting 时退化为纯 max mtime 降序', () => {
     const out = orderGroupsForTriage([
-      ['x', [row({ key: 'a', mtime: 10 })]],
-      ['y', [row({ key: 'b', mtime: 30 })]],
+      ['x', { list: [row({ key: 'a', mtime: 10 })] }],
+      ['y', { list: [row({ key: 'b', mtime: 30 })] }],
     ])
     expect(out.map(([k]) => k)).toEqual(['y', 'x'])
   })
@@ -66,10 +66,15 @@ describe('segmentRowsByCwd（合并组分段）', () => {
 })
 
 describe('normPathKey（分组键归一，worktreeOf 正斜杠与 cwd 反斜杠必须同组）', () => {
-  test('反斜杠归一为正斜杠、去尾斜杠；正斜杠原样', () => {
-    expect(normPathKey('D:\\Coder\\proj\\')).toBe('D:/Coder/proj')
-    expect(normPathKey('D:/Coder/proj')).toBe('D:/Coder/proj')
+  test('反斜杠归一为正斜杠、去尾斜杠；Windows 形态整体小写，POSIX 原样', () => {
+    expect(normPathKey('D:\\Coder\\proj\\')).toBe('d:/coder/proj')
+    expect(normPathKey('D:/Coder/proj')).toBe('d:/coder/proj')
     expect(normPathKey('/home/u/proj/')).toBe('/home/u/proj')
+  })
+
+  test('Windows 段级大小写不一不劈组（git 输出与录入差异）', () => {
+    expect(normPathKey('D:\\Coder\\Proj')).toBe(normPathKey('d:/coder/proj'))
+    expect(normPathKey('\\\\NAS\\Share\\proj')).toBe('//nas/share/proj')
   })
 
   test('分段比较同口径：组键正斜杠 + 行 cwd 反斜杠仍归入主段', () => {

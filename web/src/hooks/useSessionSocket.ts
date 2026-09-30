@@ -44,17 +44,13 @@ export function useSessionSocket(opts: {
   onQueryResult: (ev: QueryResultEvent) => void
   /** codex thread/name/updated（改名回声）到达时更新顶栏标题——不等下一轮列表轮询 */
   onTitleChange?: (title: string) => void
-  /** 本端 /rename 乐观留痕（时间+名字）：回声与之同名且 30s 内 = 同一改名（含断线重连补放），
-   *  只更新标题不再留行；不同名 = 外部客户端的另一笔改名，行照出（review 轮：纯时间窗会把
-   *  外部改名无声吞掉） */
-  localRenameRef?: React.RefObject<{ at: number; name: string }>
 }): {
   state: SessionState
   connected: boolean
   approvals: Approval[]
   setApprovals: React.Dispatch<React.SetStateAction<Approval[]>>
 } {
-  const { session, sockRef, ingestApi, taskApi, capsRef, loadSessionHistory, onNavigate, onCloseRewind, onQueryResult, onTitleChange, localRenameRef } = opts
+  const { session, sockRef, ingestApi, taskApi, capsRef, loadSessionHistory, onNavigate, onCloseRewind, onQueryResult, onTitleChange } = opts
   const [state, setState] = useState<SessionState>({ spawned: false, busy: false })
   const [connected, setConnected] = useState(false)
   const [approvals, setApprovals] = useState<Approval[]>([])
@@ -341,19 +337,15 @@ export function useSessionSocket(opts: {
               }
               break
             }
-            // codex thread/name/updated（AnyPlane /rename、外部客户端与 AI 标题写回的回声）：
-            // 顶栏标题就地更新 + 抄本留痕——此前这类通知被服务端静默丢弃，
-            // 改名要等下一轮列表轮询才可见。本端刚发过 /rename 的 ✎ 乐观行与回声
-            // 是同一改名（同名且 30s 内，含断线重连补放窗口）：标题照更，行不再重复
+            // codex thread/name/updated：本端回声（/rename、REST 改名、AI 标题写回）服务端已
+            // 一次性消费不入环——到达这里的必是外部客户端改名（或服务端 30s 窗口外的迟到回声，
+            // 保守照出不误吞）。标题就地更新 + 抄本留痕；客户端不再持第二份窗口裁决（双窗
+            // 漂移曾吞掉「与本端同名」的外部改名行——服务端特意放行、客户端又吞 30s）
             if (ev.msg?.type === 'system' && ev.msg?.subtype === 'thread_renamed') {
               const name = typeof ev.msg.text === 'string' ? ev.msg.text.trim() : ''
               if (name) {
                 onTitleChange?.(name)
-                const local = localRenameRef?.current
-                const isEchoOfLocal = local != null && local.name === name && Date.now() - local.at < 30_000
-                if (!isEchoOfLocal) {
-                  ingestApi.pushSystem(`会话已更名为「${name}」`)
-                }
+                ingestApi.pushSystem(`会话已更名为「${name}」`)
               }
               break
             }

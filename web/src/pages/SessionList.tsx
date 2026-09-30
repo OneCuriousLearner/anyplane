@@ -13,6 +13,7 @@ import {
 } from '../lib/api'
 import { inboxSubscribe } from '../lib/inboxBus'
 import { normPathKey, orderGroupsForTriage } from '../lib/groupTriage'
+import { useEscapeClose } from '../hooks/useEscapeClose'
 import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
@@ -100,14 +101,7 @@ export function SessionList(props: {
   }
 
   // 二级菜单：Escape 关闭
-  useEffect(() => {
-    if (menu === null) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [menu])
+  useEscapeClose(() => setMenu(null), menu !== null)
 
   const showToast = (text: string, kind: 'ok' | 'err' = 'err') => {
     setToast({ text, kind })
@@ -293,7 +287,7 @@ export function SessionList(props: {
   // 落进主仓库组（09-27 专项推荐，决策 B3）；归属侧车让已删 worktree 的归属不丢。
   // 组间顺序：有 waiting 的组整体浮前（组间再按各自 max mtime，「需要我」压过「正在输出」）
   const groups = useMemo(() => {
-    const m = new Map<string, { list: SessionInfo[]; branch?: string; worktreeOf?: string }>()
+    const m = new Map<string, { list: SessionInfo[]; branch?: string }>()
     for (const s of sessions) {
       const g = normPathKey(s.worktreeOf ?? s.cwd ?? s.slug)
       let e = m.get(g)
@@ -303,10 +297,7 @@ export function SessionList(props: {
       //（组头徽章让位给子节，窄栏不再被挤没，决策 B3 推荐）
       if (normPathKey(s.cwd ?? '') === g) e.branch ??= s.gitBranch
     }
-    const ordered = orderGroupsForTriage([...m.entries()].map(([k, e]) => [k, e.list] as [string, SessionInfo[]]))
-    const out = new Map<string, { list: SessionInfo[]; branch?: string; worktreeOf?: string }>()
-    for (const [k, list] of ordered) out.set(k, { ...m.get(k)!, list })
-    return out
+    return new Map(orderGroupsForTriage([...m.entries()]))
   }, [sessions])
 
   const startNew = async (cwd: string, backend: BackendName) => {

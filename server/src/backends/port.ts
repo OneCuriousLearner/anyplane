@@ -294,6 +294,15 @@ export function describeKey(key: string): DescribedKey | null {
   }
 }
 
+/** 会话 cwd 同步反查的唯一口径：spawnOpts（用户显式选择）> key 内嵌（n|/xn|/b|）>
+ *  handoffSource 反查（s|/x|）。existing key 的 describeKey 恒无 cwd（key 不含），自然落到
+ *  反查档。hub 回调与 routes 的文件系统端点（git-status/fs-complete/worktree remove）
+ *  共用此链——多抄一份就多一个静默失明档（x| 盲区即由此类分叉产生）。
+ *  都落空时要列表行反查（x| 老线程）的异步兜底留在 routes 的 cwdOfKey。 */
+export function sessionCwdOf(key: string, spawnCwd?: string): string | undefined {
+  return spawnCwd ?? describeKey(key)?.cwd ?? portFor(key).handoffSource(key).cwd
+}
+
 /** n|/xn|/b| 在拿到真实 sessionId 后升成 s|/x|；已是 existing 则原样返回。
  *  sessionId 缺席（尚未 spawn）返回 undefined。 */
 export function resolvedSessionKey(

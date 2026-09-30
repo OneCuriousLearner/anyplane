@@ -74,7 +74,8 @@ function mapError(e: unknown, target: string): FsBrowseError {
 }
 
 /** 平台根集合：Windows 为可用盘符，POSIX 为 /；均附带 home 快捷项 */
-function roots(home: string): DirEntry[] {  const entries: DirEntry[] = []
+function roots(home: string): DirEntry[] {
+  const entries: DirEntry[] = []
   if (process.platform === 'win32') {
     for (let c = 65; c <= 90; c++) {
       const drive = `${String.fromCharCode(c)}:\\`

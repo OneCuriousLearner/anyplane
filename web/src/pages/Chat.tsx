@@ -15,7 +15,6 @@ import {
   fetchCodexHistory,
   fetchCodexModels,
   fetchConfig,
-  fetchGitAvailable,
   fetchHistory,
   fetchLineage,
   makeSessionInfo,
@@ -40,6 +39,7 @@ import { isCodexKey, isExistingKey } from '../lib/key'
 import type { NavigateSession } from '../lib/sessionHash'
 import { useTaskBuckets } from '../hooks/useTaskBuckets'
 import { useTranscriptIngest } from '../hooks/useTranscriptIngest'
+import { useGitAvailable } from '../hooks/useGitAvailable'
 import { useSessionSocket, type QueryResultEvent } from '../hooks/useSessionSocket'
 import { useTranscriptScroll } from '../hooks/useTranscriptScroll'
 
@@ -85,9 +85,6 @@ export function Chat(props: {
   const scrollRef = useRef<HTMLDivElement>(null)
   /** 会话能力 ref（status 首帧后由渲染体同步）：tailer 门控走能力声明而非 isCodex 硬编码 */
   const capsRef = useRef<BackendCapabilities | undefined>(undefined)
-  /** 本端 /rename 乐观留痕（时间+名字）：codex 改名回声按「同名且 30s 内」去重——
-   *  不同名的回声是另一笔改名（外部客户端），行照出；同名超时（断线重连补放）也不重复 */
-  const localRenameRef = useRef<{ at: number; name: string }>({ at: 0, name: '' })
 
   // ---------- 后台任务（与主线并行的 agent/task/shell，右侧拉栏展示；task_type 全类型入桶） ----------
   // 桶状态与辅助群已下沉 hooks/useTaskBuckets.ts（F3）：api 为每渲染重建的普通对象——
@@ -95,12 +92,7 @@ export function Chat(props: {
   const { tasks, tasksOpen, setTasksOpen, api: taskApi } = useTaskBuckets({ isCodex })
 
   // E2「改动」页签：git 可用才显示入口（探测一次即可，git 缺席整个 worktree/改动功能同律降级）
-  const [gitAvailable, setGitAvailable] = useState(false)
-  useEffect(() => {
-    fetchGitAvailable()
-      .then(setGitAvailable)
-      .catch(() => {})
-  }, [])
+  const gitAvailable = useGitAvailable()
 
   // ---------- 主抄本 ingest（消息/流式草稿/配对索引 + cli 流驱动的会话元数据；F4/F5 下沉 hooks/useTranscriptIngest.ts） ----------
   // api 为每渲染重建的普通对象：内部全走 ref/稳定 setState，过期闭包语义等价
@@ -173,13 +165,10 @@ export function Chat(props: {
     setDetailContent(raw)
     // 按应答形状分发到结构化面板（形状不匹配的 tab 清空对应结构化态，渲染链自然落回
     // <pre>）。codex 应答形状天然不含 mcpServers/categories/applied 字段，判定自然落空，
-    // 不再需要 !isCodex 兜底表（能力差异唯一权威是适配器 capabilities 声明）
+    // 不再需要 !isCodex 兜底表（能力差异唯一权威是适配器 capabilities 声明；codex 的空
+    // mcp 清单已由适配器归一为 {mcpServers: []}，组合层不存 vendor 形状分支）
     const d = ev.ok ? (ev.data as Record<string, unknown>) : undefined
-    // codex mcp_status 的分页信封（{data: []}）：空列表映射到结构化空态（「无 MCP 服务器」人话），
-    // 非空形状未对齐继续落原始 JSON（走查问题 7：裸 {"data": []} 不该直出）
-    setMcpServers(
-      Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : Array.isArray(d?.data) && d.data.length === 0 ? [] : null,
-    )
+    setMcpServers(Array.isArray(d?.mcpServers) ? (d.mcpServers as McpServerInfo[]) : null)
     setContextData(
       d && Array.isArray(d.categories) && typeof d.totalTokens === 'number'
         ? (d as unknown as ContextDataLite)
@@ -258,8 +247,17 @@ export function Chat(props: {
     onCloseRewind: () => setShowRewind(false),
     onQueryResult,
     onTitleChange: props.onTitleChange,
-    localRenameRef,
   })
+
+  /** pending 审批卡列表：墓碑态吸附条与 Composer topSlot 共用同一份（官方权限对话框同款模态——
+   *  进会话即见、任意滚动位置可点；容器/交互只维护一处） */
+  const approvalCards = approvals.map((a) => (
+    <ApprovalCard
+      key={a.requestId}
+      approval={a}
+      onDecision={(decision) => sockRef.current?.send({ kind: 'approval', requestId: a.requestId, decision })}
+    />
+  ))
 
   /** 当前会话权威 ID：spawn 后以 status 广播为准（/clear 重键、b| 分叉首条消息后的真实 id）；
    *  未 spawn 时只有 s|/x| key 内嵌的才是本会话 id——b| 嵌的是源会话 id，不能误显示 */
@@ -405,9 +403,8 @@ export function Chat(props: {
           ingestApi.pushSystem('用法：/rename <新名字>')
           return
         }
-        // codex 侧上游随后会广播 thread/name/updated 回声（D3）：记下本端乐观留痕的名字与时刻，
-        // 回声按「同名且 30s 内」去重（只更新标题、不再重复一行）；不同名即外部改名，行照出
-        localRenameRef.current = { at: Date.now(), name: a.name }
+        // codex 改名回声（thread/name/updated）由服务端对本端写路径一次性消费（不到客户端）；
+        // 客户端只留本端乐观行，回声到达即外部改名（行照出），不再持第二份窗口裁决
         sock?.send({ kind: 'control', subtype: 'rename', extra: { name: a.name } })
         ingestApi.pushSystem(`✎ 重命名线程为「${a.name}」`)
         return
@@ -636,15 +633,9 @@ export function Chat(props: {
          *  整体替换会把 pending 审批卡一起吞掉，人进得来却裁不了） */
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,var(--sab))] pt-2">
           <div className="mx-auto max-w-3xl">
-            {approvals.length > 0 && (
+            {approvalCards.length > 0 && (
               <div className="pointer-events-auto mb-2 flex max-h-[46vh] flex-col gap-2 overflow-y-auto">
-                {approvals.map((a) => (
-                  <ApprovalCard
-                    key={a.requestId}
-                    approval={a}
-                    onDecision={(decision) => sockRef.current?.send({ kind: 'approval', requestId: a.requestId, decision })}
-                  />
-                ))}
+                {approvalCards}
               </div>
             )}
             <div className="pointer-events-auto flex items-center gap-3 rounded-[14px] bg-surface2/80 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
@@ -667,17 +658,7 @@ export function Chat(props: {
         </div>
       ) : (
       <Composer
-        topSlot={
-          approvals.length > 0
-            ? approvals.map((a) => (
-                <ApprovalCard
-                  key={a.requestId}
-                  approval={a}
-                  onDecision={(decision) => sockRef.current?.send({ kind: 'approval', requestId: a.requestId, decision })}
-                />
-              ))
-            : undefined
-        }
+        topSlot={approvalCards.length > 0 ? approvalCards : undefined}
         core={{
           input,
           onInputChange: setInput,

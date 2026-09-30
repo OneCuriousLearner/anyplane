@@ -32,6 +32,55 @@ function codexModeOf(m?: string): string {
   }
 }
 
+// ---------- 补全面板共享机制（@ 文件补全与斜杠命令面板同律：唯一实现，不再并排抄两份） ----------
+
+/** 高亮行跟随滚动：只滚面板容器（getBoundingClientRect 相对数学），不动页面滚动条 */
+function scrollActiveRowIntoView(container: HTMLDivElement | null, active: number): void {
+  if (!container) return
+  const row = container.querySelectorAll('button')[active]
+  if (!row) return
+  const cRect = container.getBoundingClientRect()
+  const rRect = row.getBoundingClientRect()
+  if (rRect.top < cRect.top) container.scrollTop -= cRect.top - rRect.top
+  else if (rRect.bottom > cRect.bottom) container.scrollTop += rRect.bottom - cRect.bottom
+}
+
+/** 补全面板键盘导航：↑↓ 移动、Tab 采纳、Esc 关闭；返回 true = 已消费（调用方 preventDefault）。
+ *  isComposing 守卫：CJK IME 组合期间 ↑↓/Tab/Esc 是候选窗的操作，不得劫持（review 轮） */
+function completionNavKey(
+  e: React.KeyboardEvent,
+  panel: { count: number; setIdx: (f: (i: number) => number) => void; accept: () => void; close: () => void },
+): boolean {
+  if (panel.count === 0 || e.nativeEvent.isComposing) return false
+  if (e.key === 'ArrowDown') {
+    panel.setIdx((i) => Math.min(i + 1, panel.count - 1))
+    return true
+  }
+  if (e.key === 'ArrowUp') {
+    panel.setIdx((i) => Math.max(i - 1, 0))
+    return true
+  }
+  if (e.key === 'Tab') {
+    panel.accept()
+    return true
+  }
+  if (e.key === 'Escape') {
+    panel.close()
+    return true
+  }
+  return false
+}
+
+/** 补全面板容器（磨砂面 + 限高滚动 + 底部按键提示）：行渲染由调用方填 */
+function CompletionPanel(props: { scrollRef: React.RefObject<HTMLDivElement | null>; footer: string; children: React.ReactNode }) {
+  return (
+    <div className="pointer-events-auto mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+      <div ref={props.scrollRef} className="max-h-60 overflow-y-auto">{props.children}</div>
+      <div className="px-2.5 py-1 font-mono text-[9px] tracking-wide text-faint">{props.footer}</div>
+    </div>
+  )
+}
+
 export interface PendingImage {
   name: string
   mediaType: string
@@ -153,16 +202,9 @@ export function Composer(props: {
   /** 面板滚动容器：键盘导航时保证高亮行在视口内 */
   const slashScrollRef = useRef<HTMLDivElement>(null)
 
-  // 高亮行跟随滚动：只滚面板容器（getBoundingClientRect 相对数学），不动页面滚动条
+  // 高亮行跟随滚动（两面板同一 scrollActiveRowIntoView 实现）
   useEffect(() => {
-    const c = slashScrollRef.current
-    if (!c || slashHints.length === 0) return
-    const row = c.querySelectorAll('button')[slashActive]
-    if (!row) return
-    const cRect = c.getBoundingClientRect()
-    const rRect = row.getBoundingClientRect()
-    if (rRect.top < cRect.top) c.scrollTop -= cRect.top - rRect.top
-    else if (rRect.bottom > cRect.bottom) c.scrollTop += rRect.bottom - cRect.bottom
+    if (slashHints.length > 0) scrollActiveRowIntoView(slashScrollRef.current, slashActive)
   }, [slashActive, slashHints.length])
 
   // ---------- E3 @ 文件补全（cwd 单层列举+前缀，键盘语义复用斜杠面板） ----------
@@ -196,14 +238,7 @@ export function Composer(props: {
   }, [atPrefix, sessionKey])
 
   useEffect(() => {
-    const c = atScrollRef.current
-    if (!c || atEntries.length === 0) return
-    const row = c.querySelectorAll('button')[atActive]
-    if (!row) return
-    const cRect = c.getBoundingClientRect()
-    const rRect = row.getBoundingClientRect()
-    if (rRect.top < cRect.top) c.scrollTop -= cRect.top - rRect.top
-    else if (rRect.bottom > cRect.bottom) c.scrollTop += rRect.bottom - cRect.bottom
+    if (atEntries.length > 0) scrollActiveRowIntoView(atScrollRef.current, atActive)
   }, [atActive, atEntries.length])
 
   /** 采纳补全项：把 @前缀 替换为 @路径（目录续探、文件收尾加空格） */
@@ -275,54 +310,46 @@ export function Composer(props: {
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,var(--sab))] pt-2">
       <div className="mx-auto max-w-3xl">
         {atEntries.length > 0 && (
-          <div className="pointer-events-auto mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
-            <div ref={atScrollRef} className="max-h-60 overflow-y-auto">
-              {atEntries.map((entry, i) => (
-                <button type="button"
-                  key={entry.path}
-                  className={`flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left ${
-                    i === atActive ? 'bg-surface' : 'hover:bg-surface'
-                  }`}
-                  onMouseEnter={() => setAtIdx(i)}
-                  onClick={() => applyAtEntry(entry)}
-                >
-                  <span className="font-mono text-[12px] text-ink">{entry.dir ? `${entry.name}/` : entry.name}</span>
-                  {entry.dir && <span className="font-mono text-[10px] text-faint">目录</span>}
-                </button>
-              ))}
-            </div>
-            <div className="px-2.5 py-1 font-mono text-[9px] tracking-wide text-faint">
-              {atEntries.length} 项 · ↑↓ 移动 · Tab/Enter 采纳 · Esc 关闭
-            </div>
-          </div>
+          <CompletionPanel scrollRef={atScrollRef} footer={`${atEntries.length} 项 · ↑↓ 移动 · Tab/Enter 采纳 · Esc 关闭`}>
+            {atEntries.map((entry, i) => (
+              <button type="button"
+                key={entry.path}
+                className={`flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left ${
+                  i === atActive ? 'bg-surface' : 'hover:bg-surface'
+                }`}
+                onMouseEnter={() => setAtIdx(i)}
+                onClick={() => applyAtEntry(entry)}
+              >
+                <span className="font-mono text-[12px] text-ink">{entry.dir ? `${entry.name}/` : entry.name}</span>
+                {entry.dir && <span className="font-mono text-[10px] text-faint">目录</span>}
+              </button>
+            ))}
+          </CompletionPanel>
         )}
         {slashHints.length > 0 && (
-          <div className="pointer-events-auto mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+          <CompletionPanel
+            scrollRef={slashScrollRef}
+            footer={`${slashHints.length} 个命令 · ↑↓ 移动 · Tab 补全${input.trim() === '/' ? ' · 继续输入可过滤' : ''}`}
+          >
             {/* 完整清单可滚动（CLI initialize 握手报告多少就列多少），自有命令置顶；键盘导航时高亮行跟随滚动 */}
-            <div ref={slashScrollRef} className="max-h-60 overflow-y-auto">
-              {slashHints.map((c, i) => (
-                <button type="button"
-                  key={c.name}
-                  className={`flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left ${
-                    i === slashActive ? 'bg-surface' : 'hover:bg-surface'
-                  }`}
-                  onMouseEnter={() => setSlashIdx(i)}
-                  onClick={() => {
-                    onInputChange(`/${c.name} `)
-                    setSlashIdx(0)
-                    inputRef.current?.focus()
-                  }}
-                >
-                  <span className="font-mono text-[12px] text-ink">/{c.name}</span>
-                  {c.desc && <span className="truncate text-xs text-faint">{c.desc}</span>}
-                </button>
-              ))}
-            </div>
-            <div className="px-2.5 py-1 font-mono text-[9px] tracking-wide text-faint">
-              {slashHints.length} 个命令 · ↑↓ 移动 · Tab 补全
-              {input.trim() === '/' && ' · 继续输入可过滤'}
-            </div>
-          </div>
+            {slashHints.map((c, i) => (
+              <button type="button"
+                key={c.name}
+                className={`flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left ${
+                  i === slashActive ? 'bg-surface' : 'hover:bg-surface'
+                }`}
+                onMouseEnter={() => setSlashIdx(i)}
+                onClick={() => {
+                  onInputChange(`/${c.name} `)
+                  setSlashIdx(0)
+                  inputRef.current?.focus()
+                }}
+              >
+                <span className="font-mono text-[12px] text-ink">/{c.name}</span>
+                {c.desc && <span className="truncate text-xs text-faint">{c.desc}</span>}
+              </button>
+            ))}
+          </CompletionPanel>
         )}
         {/* 悬浮槽位（pending 审批卡）：吸附在输入卡正上方，长卡（多题 AskUserQuestion）
          *  限高内滚，不吞视口；槽位自身是可见面（pointer-events-auto），周边横带照旧穿透 */}
@@ -407,55 +434,33 @@ export function Composer(props: {
             }}
             onPaste={onPaste}
             onKeyDown={(e) => {
-              // E3 @ 文件补全面板打开时的键盘导航（优先于斜杠面板——@ 触发更具体）。
-              // isComposing 守卫：CJK IME 组合期间 ↑↓/Tab/Esc 是候选窗的操作，不得劫持（review 轮）
-              if (atEntries.length > 0 && !e.nativeEvent.isComposing) {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setAtIdx((i) => Math.min(i + 1, atEntries.length - 1))
-                  return
-                }
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setAtIdx((i) => Math.max(i - 1, 0))
-                  return
-                }
-                if (e.key === 'Tab') {
-                  e.preventDefault()
-                  applyAtEntry(atEntries[atActive]!)
-                  return
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  setAtEntries([])
-                  setAtIdx(0)
-                  return
-                }
-              }
-              // 斜杠命令面板打开时的键盘导航
-              if (slashHints.length > 0) {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setSlashIdx((i) => Math.min(i + 1, slashHints.length - 1))
-                  return
-                }
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setSlashIdx((i) => Math.max(i - 1, 0))
-                  return
-                }
-                if (e.key === 'Tab') {
-                  e.preventDefault()
-                  onInputChange(`/${slashHints[slashActive].name} `)
-                  setSlashIdx(0)
-                  return
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  onInputChange('')
-                  setSlashIdx(0)
-                  return
-                }
+              // 补全面板键盘导航（同律唯一实现 completionNavKey）：@ 文件面板优先（@ 触发
+              // 更具体），斜杠面板其次；两面板都未消费才轮到 Enter 发送
+              if (
+                completionNavKey(e, {
+                  count: atEntries.length,
+                  setIdx: setAtIdx,
+                  accept: () => applyAtEntry(atEntries[atActive]!),
+                  close: () => {
+                    setAtEntries([])
+                    setAtIdx(0)
+                  },
+                }) ||
+                completionNavKey(e, {
+                  count: slashHints.length,
+                  setIdx: setSlashIdx,
+                  accept: () => {
+                    onInputChange(`/${slashHints[slashActive].name} `)
+                    setSlashIdx(0)
+                  },
+                  close: () => {
+                    onInputChange('')
+                    setSlashIdx(0)
+                  },
+                })
+              ) {
+                e.preventDefault()
+                return
               }
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 // @ 补全打开时 Enter 采纳高亮项（不发送）——与斜杠面板「先补全不发送」同律

@@ -74,13 +74,12 @@ export function deliverApproval(hub: Hub, requestId: string, decision: ApprovalD
  * 快照 + 客户端 reconcile 收敛（useSessionSocket status case；13.4 批次 A 已做）。
  */
 export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalDecision): boolean {
-  // 「本会话允许这个工具」：allow + rememberTool 时把 toolName 记入 Hub 内存放行集。
+  // 「本会话允许这个工具」：allow + rememberTool 时把 toolName 记入进程层放行集（唯一权威——
+  // 审批到达时进程必活，写入本实例的集；dispose 同步焚毁，无喂回无复活）。
   // 只在 WS 裁决路径生效（REST 核 resolveApprovalRest 只接受 allow/deny 字面量——
   // 审批规则语义绝不进推送能力 URL 的红线不变）
   const pending = hub.pendingApprovals.get(requestId)
   if (pending && decision.behavior === 'allow' && decision.rememberTool === true) {
-    ;(hub.sessionAllowTools ??= new Set()).add(pending.toolName) // Hub 镜像（UI 展示）
-    // 进程层权威（C1）：审批到达时进程必活，写入本实例的集（dispose 同步焚毁，无喂回无复活）
     try {
       portFor(hub.key).sessionOf(hub.key)?.rememberAllowTool?.(pending.toolName)
     } catch {
@@ -89,7 +88,6 @@ export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalD
     }
   }
   const had = hub.pendingApprovals.delete(requestId)
-  hub.outsidePaths?.delete(requestId) // C2 警示路径随裁决同清（与 pendingApprovals 真同生命周期）
   if (had) deliverApproval(hub, requestId, decision)
   broadcast(hub, { kind: 'approval_resolved', requestId })
   publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
@@ -111,26 +109,20 @@ export function clearPendingApprovals(hub: Hub): void {
     publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   }
   hub.pendingApprovals.clear()
-  hub.outsidePaths?.clear() // C2 警示路径随清空同清
 }
 
 /**
- * 「本会话允许」放行集失效的唯一卡口（C1 治本）：
- * 清内存态（sessionAllowTools）并通知进程层永久丢弃放行集（上游待重放队列一并焚毁），
- * 随后推 status 让客户端同步「本会话允许」徽。
+ * 「本会话允许」放行集失效的唯一卡口（C1 治本）：通知进程层永久丢弃放行集
+ * （上游待重放队列一并焚毁；进程层实现幂等 clear，重复通知无害）。
  * 所有失效路径（dispose 同步路径 / app-server 死亡 / /clear 重键）都必须走这里——
- * 只在回调里清内存态会让进程层仍持旧放行集，重生后第一次 ensure 又喂回 Hub（掷硬币复活）。
+ * 命中判定只查进程层（allowsTool），无 Hub 侧第二份可写副本可复活（stale swallow 返工的终局）。
  * 默认不推 status（调用方多数自带终态推送）；确需即时推送传 { push: true }。
  */
 export function dropSessionAllowTools(hub: Hub, reason: string, opts?: { push?: boolean }): void {
-  const had = hub.sessionAllowTools !== undefined
-  hub.sessionAllowTools = undefined
-  if (!had) return
   try {
     portFor(hub.key).sessionOf(hub.key)?.discardAllowTools?.()
   } catch {
-    // 进程层此刻不可达（正在退出）无碍——进程层集已随 dispose 同步焚毁，
-    // 命中判定查的是进程层（allowsTool），镜像清掉即终局
+    // 进程层此刻不可达（正在退出）无碍——进程层集已随 dispose 同步焚毁
   }
   log.info(`[ws ${hub.key}] 本会话放行集失效（${reason}）`)
   if (opts?.push) pushStatus(hub)

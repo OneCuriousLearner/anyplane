@@ -12,14 +12,17 @@ import { childEnv } from './util'
 
 /** 解析 git 可执行路径：优先 .exe（直接 spawn 无 shell——Windows 上 shell:true 会把未引用
  *  的含空格路径拆成多参数，git 报 invalid reference，review 轮实锤）；找不到 .exe 再回退
- *  裸 'git'（POSIX 走 PATH 解析；Windows 的 .cmd shim 场景退给 shell:true 调用方处理） */
+ *  裸 'git'（POSIX 走 PATH 解析；Windows 的 .cmd shim 场景退给 shell:true 调用方处理）。
+ *  进程级 memoize：PATH 解析结果在进程生命周期内不变，git-status 5s 轮询不值得每次重搜 */
+let gitCmd: { cmd: string; shell: boolean } | undefined
 function resolveGitCmd(): { cmd: string; shell: boolean } {
+  if (gitCmd) return gitCmd
   if (process.platform === 'win32') {
     const exe = Bun.which('git.exe') ?? Bun.which('git')
-    if (exe && exe.toLowerCase().endsWith('.exe')) return { cmd: exe, shell: false }
-    return { cmd: exe ?? 'git', shell: true } // .cmd shim 必须经 shell
+    if (exe && exe.toLowerCase().endsWith('.exe')) return (gitCmd = { cmd: exe, shell: false })
+    return (gitCmd = { cmd: exe ?? 'git', shell: true }) // .cmd shim 必须经 shell
   }
-  return { cmd: 'git', shell: false }
+  return (gitCmd = { cmd: 'git', shell: false })
 }
 
 /** git 子进程一次性执行（数组 argv；10s 超时）。shell 只在解析不到 .exe 时启用 */
@@ -117,12 +120,6 @@ export function removeWorktree(mainRepoRoot: string, worktreePath: string, force
     }
   }
   return { ok: false, error: errText || `git worktree remove 退出码 ${r.code}` }
-}
-
-/** worktree 的脏区统计（路由层「dispose 后重试」路径与 dirty 检测共用） */
-export function dirtyOf(worktreePath: string): WorktreeDirtyInfo {
-  const status = git(['-C', worktreePath, 'status', '--porcelain'], dirname(worktreePath))
-  return countDirty(status.stdout)
 }
 
 // ---------- E2 改动摘要（侧栏「改动」页签数据源） ----------
