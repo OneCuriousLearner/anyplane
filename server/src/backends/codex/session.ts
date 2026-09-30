@@ -95,6 +95,18 @@ export class CodexSession {
    *  history 把每轮首条 userMessage 以 turnId 为 uuid（rewindable 锚点），
    *  live 转发必须同键，否则终态拉取时提示词在桶里重复一份 */
   private childMarkedTurns = new Set<string>()
+  /** 本端刚写入的 name（/rename 与 E4 AI 标题写回共用）+ 时间戳：thread/name/updated 回声
+   *  同名且 30s 内即本端回声，跳过广播（否则会误出「会话已更名为…」系统行——名字是本端写的） */
+  private lastSelfRename: { name: string; at: number } | undefined
+
+  /** 本端 thread/name/set 写回前登记（/rename 与 E4 AI 标题共用） */
+  noteSelfRename(name: string): void {
+    this.lastSelfRename = { name, at: Date.now() }
+  }
+  /** 写回失败撤登记（仅撤同名——并发新登记不背锅）：陈旧登记会在 30s 窗口内吞掉同名外部改名回声 */
+  clearSelfRename(name: string): void {
+    if (this.lastSelfRename?.name === name) this.lastSelfRename = undefined
+  }
   /** 线程历史契约（thread/start / thread/resume 响应的 thread.historyMode）。
    *  paginated：历史走 turns/list+items/list、回滚走 thread/revert、resume 自动补发 tokenUsage；
    *  legacy：历史走 thread/read includeTurns、回滚降级 thread/fork。 */
@@ -131,6 +143,10 @@ export class CodexSession {
   }
   get connectedClients(): number {
     return this.clientCount
+  }
+  /** 会话当前模型（E4 AI 标题用）：set_model 的运行时覆盖 > 启动参数；undefined = 上游默认 */
+  get currentModel(): string | undefined {
+    return (this.turnOverrides.model as string | undefined) ?? this.opts.model
   }
   get cwd(): string | undefined {
     return this.opts.cwd
@@ -395,11 +411,17 @@ export class CodexSession {
         break
       }
       case 'thread/name/updated': {
-        // 改名回声：AnyPlane /rename、外部客户端（TUI/desktop）与将来的 AI 标题写回
-        //（E4）都经此通知到达。此前落 default 静默丢弃——attached 会话只能等列表轮询
-        // 才看见新名（09-25 探索记录）。广播给前端就地更新标题；空名（上游复位）跳过。
+        // 改名回声：AnyPlane /rename、E4 AI 标题写回、外部客户端（TUI/desktop）都经此通知到达。
+        // 本端刚写的回声（同名且 30s 内）跳过——名字是本端写的，出「已更名」系统行即误报（review 轮）；
+        // 外部客户端的改名（不同名/超时）照常广播，前端就地更新标题。空名（上游复位）跳过。
         const name = typeof params.threadName === 'string' ? params.threadName.trim() : ''
-        if (name) this.emit({ type: 'system', subtype: 'thread_renamed', text: name })
+        if (!name) break
+        const self = this.lastSelfRename
+        if (self && self.name === name && Date.now() - self.at < 30_000) {
+          this.lastSelfRename = undefined // 一次性消费：本端回声到此为止，不回放
+          break
+        }
+        this.emit({ type: 'system', subtype: 'thread_renamed', text: name })
         break
       }
       case 'item/started': {
@@ -670,9 +692,13 @@ export class CodexSession {
       case 'rename': {
         const name = String(extra.name ?? '').trim()
         if (!this.threadId || !name) break
+        this.noteSelfRename(name)
         void this.runtime
           .rpcRequest('thread/name/set', { threadId: this.threadId, name })
-          .catch((e) => this.emitError(`重命名失败: ${errorMessage(e)}`))
+          .catch((e) => {
+            this.clearSelfRename(name) // 写失败撤登记：别让陈旧登记吞掉同名外部改名回声
+            this.emitError(`重命名失败: ${errorMessage(e)}`)
+          })
         break
       }
       default:

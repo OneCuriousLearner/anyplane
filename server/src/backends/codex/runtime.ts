@@ -295,6 +295,64 @@ export class CodexRuntime {
     })
   }
 
+  /** E4 AI 标题：ephemeral 隐藏线程一次性提问（output_schema 约束 ≤36 字符标题）。
+   *  用会话当前模型（undefined 时上游默认）。返回 trim 后的标题；失败/空/超长原样抛由调用方降级。 */
+  async runEphemeralTitleQuestion(
+    sourceThreadId: string,
+    firstUserText: string,
+    model: string | undefined,
+    timeoutMs = 30_000,
+  ): Promise<string> {
+    const fork = (await this.rpcRequest('thread/fork', { threadId: sourceThreadId, ephemeral: true, excludeTurns: true }, 60_000)) as {
+      thread: { id: string }
+    }
+    const forkId = fork.thread.id
+    const question =
+      `请为以下会话的首条用户消息起一个极简标题（概括主题，≤36 字符，不要标点结尾，不要引号）：\n\n${firstUserText.slice(0, 500)}`
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const col = this.collectors.get(forkId)
+        this.collectors.delete(forkId)
+        if (col?.turnId) {
+          void this.rpcRequest('turn/interrupt', { threadId: forkId, turnId: col.turnId }, 10_000).catch(() => {})
+        }
+        reject(new Error('标题生成超时'))
+      }, timeoutMs)
+      this.collectors.set(forkId, {
+        resolve: (r) => {
+          // output_schema 下 text 是 {"title":"..."} JSON 串；解析取 title，兜原文（非 JSON 时）
+          let title = r.text.trim()
+          try {
+            const parsed = JSON.parse(title) as { title?: string }
+            if (typeof parsed.title === 'string') title = parsed.title.trim()
+          } catch {}
+          resolve(title)
+        },
+        reject,
+        text: '',
+        timer,
+      })
+      this.rpcRequest('turn/start', {
+        threadId: forkId,
+        input: [{ type: 'text', text: question }],
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'readOnly' },
+        ...(model ? { model } : {}),
+        // output_schema：约束输出为 { title: string }——≤36 字符的硬闸（E4 用户选定）
+        outputSchema: {
+          type: 'object',
+          properties: { title: { type: 'string', maxLength: 36 } },
+          required: ['title'],
+          additionalProperties: false,
+        },
+      }).catch((e) => {
+        clearTimeout(timer)
+        this.collectors.delete(forkId)
+        reject(e instanceof Error ? e : new Error(String(e)))
+      })
+    })
+  }
+
   private demuxRequest(id: number | string, method: string, params: Params): void {
     const threadId = typeof params.threadId === 'string' ? params.threadId : undefined
     const session = threadId ? this.byThread.get(threadId) : undefined

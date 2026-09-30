@@ -49,7 +49,7 @@ AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code �
 - **上下文占用**：claude 用最后一条主线 assistant 的 `message.usage`（input+cache，不含 output），**不用 `result.usage` 的 input**。codex 用 `last.totalTokens`（`total` 是累计）。窗口以官方 `get_context_usage` 的 `maxTokens` 为权威，模型名启发式只是首见兜底。离线水合严禁在列表端点逐行做。踩坑实录见 `docs/research/2026-09-21-claude-headless-pitfalls.md`。
 - **Codex 决策**：`turn/start` 强制 `approvalsReviewer: "user"`；线程被占不 kill。新线程锁 paginated 历史；回滚 paginated 走 revert（清环形缓冲、**序号保持单调**——否则重连补放会复活被回滚的未来），并入环一条 `thread_reverted` 兜底触发前端权威重载；legacy 降级 fork。流式 delta 合并为 partial `tool_result`（前端更新文本但保持运行态；**环形缓冲不占序号**，终态兜底）。`plan/delta` 有意不接。上游实测笔记：`docs/research/2026-09-11-codex-upstream-behavior-notes.md`。曾静默丢弃的五种 ThreadItem 见 `docs/research/2026-09-21-codex-threaditem-silent-drop.md`。
 - **接力**：Claude 在线走 `side_question`，离线才一次性 fork；Codex 走 ephemeral fork。简报生成在两边 port，**不要把 vendor spawn 拉回 lineage**。
-- **AI 标题**：首条真实 user × 首个 init 双条件齐备才触发。CLI 自写 ai-title，**AnyPlane 侧不落标题状态**。
+- **AI 标题**：首条真实 user × 首个 init 双条件齐备才触发。claude 由 CLI 自写 ai-title，**AnyPlane 侧不落标题状态**；codex 由 AnyPlane 驱动（ephemeral fork + `thread/name/set`），**首轮 fork 必撞空 rollout**（fork 从磁盘读线程）——失败必须恢复记账、由 turn 完成的 result 钩重试，吞错即永不生成。手动改名不覆盖（写前复查 name 空）；本端写回的 name/updated 回声要去重，否则误报外部改名。
 - **配置**：可放项目根 `anyplane.config.json` 或 `~/.anyplane/config.json`，**不允许 `~/.config/`**。全集见 `docs/configuration.md`。
 
 ### 前端

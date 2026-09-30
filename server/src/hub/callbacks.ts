@@ -82,6 +82,10 @@ export function sessionCallbacks(hub: Hub) {
       // turn 收尾是收件箱的核心提醒信号（agent 跑完了）
       if (msg.type === 'result') {
         publishInbox({ type: 'done', key: hub.key, ok: msg.is_error !== true })
+        // 标题失败重试钩：codex 新线程首轮触发标题生成时 rollout 尚未落盘，thread/fork
+        // 读磁盘必失败（-32603 rollout is empty），失败后已恢复记账，turn 完成时重试即成。
+        // 其余情形（已生成/无素材/已记账）maybeGenerateTitle 自身 no-op，claude 侧同样幂等。
+        portFor(hub.key).maybeGenerateTitle?.(hub)
         // claude /goal：goal 激活期间 turn 只会因"条件达成"结束（Stop hook 拦截其余收尾），
         // 所以 result 到达即视为目标完成（用户中断也会到此，chip 随之清除，语义可接受）
         if (hub.goal) {
