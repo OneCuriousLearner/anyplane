@@ -11,9 +11,9 @@ import { codexPort } from '../backends/codex/port'
 import { registerBackend } from '../backends/port'
 import { config } from '../config'
 import { summarizeInput } from '../util'
-import { resetInboxSinkForTest, setInboxSink } from './broadcast'
+import { resetInboxSinkForTest, replayApprovals, setInboxSink } from './broadcast'
 import { sessionCallbacks } from './callbacks'
-import { resolveApproval } from './lifecycle'
+import { dropSessionAllowTools, resolveApproval } from './lifecycle'
 import { getHub, hubs } from './registry'
 import type { InboxEvent } from '@anyplane/protocol'
 import type { Hub } from './types'
@@ -422,6 +422,58 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     extraKeys.push(newKey)
     expect(hub.key).toBe(newKey) // 重键已发生
     expect(hub.sessionAllowTools).toBeUndefined()
+  })
+
+  test('失效卡口 dropSessionAllowTools：清 Hub 内存集 + 通知进程层焚毁 + 推 status', () => {
+    const { hub } = freshHub()
+    let discarded = 0
+    sessionMap().set(KEY, {
+      key: KEY,
+      exited: false,
+      discardAllowTools: () => discarded++,
+    })
+    hub.sessionAllowTools = new Set(['Edit'])
+
+    dropSessionAllowTools(hub, '测试')
+
+    expect(hub.sessionAllowTools).toBeUndefined()
+    expect(discarded).toBe(1)
+    // 无集时静默零动作（幂等，不推 status 不扰进程层）
+    dropSessionAllowTools(hub, '测试')
+    expect(discarded).toBe(1)
+  })
+
+  test('C2：审批输入触及 cwd 外异仓库路径 → 事件与 Hub 侧表带 outsidePath，重放随附', () => {
+    // KEY = n|%2Ftmp%2Fcallbacks-test → 会话 cwd=/tmp/callbacks-test（非 git 区）
+    const { hub, ws } = freshHub()
+    injectApprovalSession()
+    config.approvalRules = undefined
+    const cb = sessionCallbacks(hub)
+
+    cb.onApprovalRequest({ requestId: 'oc1', toolName: 'Write', input: { file_path: '/somewhere/else/a.ts' } })
+    expect(payloads(ws)[0]).toMatchObject({
+      kind: 'approval_request',
+      requestId: 'oc1',
+      outsidePath: '/somewhere/else/a.ts',
+    })
+    expect(hub.outsidePaths?.get('oc1')).toBe('/somewhere/else/a.ts')
+
+    // 重放随附（socket 接入/attach 路径共用 replayApprovals）
+    const replayed: Array<Record<string, unknown>> = []
+    replayApprovals(hub, (p) => replayed.push(p as Record<string, unknown>))
+    expect(replayed[0]).toMatchObject({ kind: 'approval_request', requestId: 'oc1', outsidePath: '/somewhere/else/a.ts' })
+  })
+
+  test('C2：cwd 子树内的路径不带 outsidePath（相对/无路径输入同）', () => {
+    const { hub, ws } = freshHub()
+    injectApprovalSession()
+    config.approvalRules = undefined
+    const cb = sessionCallbacks(hub)
+
+    cb.onApprovalRequest({ requestId: 'in1', toolName: 'Write', input: { file_path: '/tmp/callbacks-test/src/a.ts' } })
+    cb.onApprovalRequest({ requestId: 'in2', toolName: 'Bash', input: { command: 'rm -rf /' } })
+    expect(hub.outsidePaths).toBeUndefined()
+    for (const p of payloads(ws)) expect(p.outsidePath).toBeUndefined()
   })
 })
 

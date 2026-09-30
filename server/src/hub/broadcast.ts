@@ -77,10 +77,12 @@ export function sendTo(ws: ServerWebSocket<WSData>, payload: ServerEvent): void 
 }
 
 /** 待审批重放：socket 接入（socket.ts，单播）与 attach（messages.ts，单播给发起连接）共用——
- *  未裁决的审批补发给目标，不向 Hub 内其他在线客户端广播（重复审批卡） */
+ *  未裁决的审批补发给目标，不向 Hub 内其他在线客户端广播（重复审批卡）。
+ *  C2 警示路径从 Hub 侧表随附（onApprovalRequest 广播时已存，重放按 requestId 查回） */
 export function replayApprovals(hub: Hub, send: (payload: ServerEvent) => void): void {
   for (const a of hub.pendingApprovals.values()) {
-    send({ kind: 'approval_request', ...a })
+    const outsidePath = hub.outsidePaths?.get(a.requestId)
+    send({ kind: 'approval_request', ...a, ...(outsidePath ? { outsidePath } : {}) })
   }
 }
 

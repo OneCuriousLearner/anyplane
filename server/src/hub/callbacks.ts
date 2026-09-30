@@ -2,13 +2,13 @@
 // /clear 重键的三层同步（Hub / 进程 map / 存活 WS 的 data.key）在 lifecycle.rekeyHub——少一层即双进程或消息黑洞。
 
 import { decisionOfRule, matchApprovalRule } from '../approvalRules'
+import { outsideCwdPath, summarizeInput } from '../approvalSummary'
 import { isInternalUserMessage, type CliMessage } from '../backends/claude/streamJson'
 import { describeKey, portFor } from '../backends/port'
 import { config } from '../config'
 import { log } from '../log'
-import { summarizeInput } from '../util'
 import { broadcast, publishInbox } from './broadcast'
-import { clearPendingApprovals, deliverApproval, rekeyHub } from './lifecycle'
+import { clearPendingApprovals, deliverApproval, dropSessionAllowTools, rekeyHub } from './lifecycle'
 import { pushStatus, throttledPushStatus } from './status'
 import type { Hub } from './types'
 
@@ -44,7 +44,7 @@ export function sessionCallbacks(hub: Hub) {
           const oldKey = hub.key
           hub.goal = undefined // 上下文已清，goal 与待审批随之失效
           hub.pendingApprovals.clear()
-          hub.sessionAllowTools = undefined // sessionId 已换，「本会话允许」放行集随之失效
+          dropSessionAllowTools(hub, '/clear 重键') // sessionId 已换，「本会话允许」放行集随之失效
           hub.pendingTitleText = undefined // 旧会话的标题素材不带给新会话
           // 三层重键（Hub / 进程 map / 存活 WS data.key），实现集中在 lifecycle.rekeyHub
           rekeyHub(hub, oldKey, newKey, newSid)
@@ -130,11 +130,20 @@ export function sessionCallbacks(hub: Hub) {
         return
       }
       hub.pendingApprovals.set(req.requestId, req)
+      // C2：触及工作目录之外的候选路径（同仓库家族豁免后仍外）——随事件下发警示路径，
+      // 审批卡加「⚠ 触及工作目录之外」徽；会话 cwd 取 key 内嵌值（n|/xn|/b|）或反查（s|/x|）
+      const desc = describeKey(hub.key)
+      const outsidePath = outsideCwdPath(
+        req.input,
+        hub.spawnOpts?.cwd ?? desc?.cwd ?? portFor(hub.key).handoffSource(hub.key).cwd,
+      )
+      if (outsidePath) (hub.outsidePaths ??= new Map()).set(req.requestId, outsidePath)
       broadcast(hub, {
         kind: 'approval_request',
         requestId: req.requestId,
         toolName: req.toolName,
         input: req.input,
+        ...(outsidePath ? { outsidePath } : {}),
       })
       publishInbox({
         type: 'approval',
@@ -156,6 +165,11 @@ export function sessionCallbacks(hub: Hub) {
       clearPendingApprovals(hub)
       pushStatus(hub)
     },
+    /** C1：重 spawn 时进程层保险箱喂回的放行集恢复进 Hub（「重开会话失效」的对称面：
+     *  没失效过的集才允许被带过来——失效路径早已走 dropSessionAllowTools 双边清理） */
+    onAllowToolsRespawn: (tools: Set<string>) => {
+      hub.sessionAllowTools = tools
+    },
     /** 审批被上游终结（app-server 超时/中断/其他客户端应答，codex serverRequest/resolved）：
      *  同步清掉 Hub 侧 pending，否则死审批会随重连重放、status 恒 waiting。 */
     onApprovalResolved: (requestId: string) => {
@@ -169,9 +183,10 @@ export function sessionCallbacks(hub: Hub) {
       // 否则重连时 replayApprovals 会把死审批重放成可点击卡片（点击后投递给一个不认识
       // 该 request_id 的新进程），此后任何 status 推送也都因 pending>0 显示 waiting。
       clearPendingApprovals(hub)
-      // 「本会话允许」同样随进程死亡失效：Hub 因客户端存活而保留，不清的话
-      // 下一条消息重 spawn 的新会话会继承旧放行集（违背「重开会话失效」语义）
-      hub.sessionAllowTools = undefined
+      // 「本会话允许」随进程死亡失效（C1 治本）：走失效卡口双边清理（Hub 内存集 +
+      // 进程层保险箱）。dispose 已先行焚毁进程层集，这里兜底 Hub 侧（dispose 同步路径
+      // 不依赖 onExit 送达后，本回调只是镜像确认，掷硬币消除）
+      dropSessionAllowTools(hub, '进程退出')
       pushStatus(hub, { exited: true, exitCode: code, spawned: false, busy: false, waiting: false })
     },
   }

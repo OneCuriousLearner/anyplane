@@ -784,6 +784,7 @@ export class CodexSession {
   dispose(): void {
     if (this.exited) return
     this.cancelRecycle()
+    this.allowToolsForRespawn = undefined // C1：放行集随退订同步焚毁（resume 即新会话，必重问）
     this.resetOutputBufs()
     this.childMarkedTurns.clear()
     this.exited = true
@@ -799,11 +800,30 @@ export class CodexSession {
   handleProcessExit(): void {
     if (this.exited) return
     this.exited = true
+    this.allowToolsForRespawn = undefined // C1：app-server 死亡 = 全部会话终结，同步焚毁
     this.resetOutputBufs()
     this.childMarkedTurns.clear()
     this.runtime.unregisterChildrenOf(this)
     this.setRunState('idle')
     this.cb.onExit(1)
+  }
+
+  /** 「本会话允许」进程层保险箱（C1）：句柄级，dispose/handleProcessExit 焚毁 */
+  private allowToolsForRespawn: Set<string> | undefined
+
+  /** codex 适配器 ensure 在 resume/启动前从 Hub 侧喂入 */
+  adoptAllowTools(tools: Set<string> | undefined): void {
+    this.allowToolsForRespawn = tools
+  }
+
+  takeAllowToolsForRespawn(): Set<string> | undefined {
+    const t = this.allowToolsForRespawn
+    this.allowToolsForRespawn = undefined
+    return t
+  }
+
+  discardAllowTools(): void {
+    this.allowToolsForRespawn = undefined
   }
 
   // ---------- 内部 ----------

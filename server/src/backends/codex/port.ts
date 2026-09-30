@@ -107,10 +107,14 @@ class CodexPort implements BackendPort {
       ...opts,
     }
     hub.spawnOpts = spawnOpts
-    const s = codexRuntime.ensure(hub.key, spawnOpts, hubServices().sessionCallbacks(hub))
+    // C1：与 claude 同律——无存活句柄时把 Hub 内存放行集移交进程层保险箱，
+    // start() 成功（订阅/app-server 可达）后 take 喂回；失败 dispose 焚毁不喂回
+    const allowlistForRespawn = !codexRuntime.get(hub.key) ? hub.sessionAllowTools : undefined
+    const s = codexRuntime.ensure(hub.key, spawnOpts, hubServices().sessionCallbacks(hub), allowlistForRespawn)
     s.syncClients(hub.clients.size)
     try {
       await s.start()
+      s.takeAllowToolsForRespawn() // 焚毁保险箱——codex 审批本就是实时事件，无重放语义可还原
     } catch (e) {
       // start 失败（如 -32600 线程被占用）必须摘掉句柄：否则 exited=false 的僵尸会话让
       // hasLiveSession 恒真——Hub 永不回收，且下次 ensure 复用同一坏对象永远不自愈。

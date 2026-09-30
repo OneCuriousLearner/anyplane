@@ -302,7 +302,7 @@ export class CodexRuntime {
     else this.respondSafe(id, { decision: 'decline' }) // 无主请求拒绝掉避免悬挂
   }
 
-  ensure(key: string, opts: CodexSpawnOpts, cb: SessionCallbacks): CodexSession {
+  ensure(key: string, opts: CodexSpawnOpts, cb: SessionCallbacks, allowlistForRespawn?: Set<string>): CodexSession {
     const existing = this.sessions.get(key)
     if (existing && !existing.exited) {
       existing.rebind(cb)
@@ -310,6 +310,7 @@ export class CodexRuntime {
     }
     if (existing) this.sessions.delete(key)
     const s = new CodexSession(key, opts, this, cb)
+    s.adoptAllowTools(allowlistForRespawn) // C1：保险箱接收（start 成功后 take 焚毁）
     this.sessions.set(key, s)
     return s
   }

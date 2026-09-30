@@ -3,6 +3,7 @@
 import { portFor } from '../backends/port'
 import type { ApprovalDecision } from '@anyplane/protocol'
 import { errorMessage } from '../util'
+import { log } from '../log'
 import { broadcast, broadcastError, publishInbox } from './broadcast'
 import { hubs, noteRekeyTombstone } from './registry'
 import { pushStatus } from './status'
@@ -102,6 +103,28 @@ export function clearPendingApprovals(hub: Hub): void {
     publishInbox({ type: 'approval_resolved', key: hub.key, requestId })
   }
   hub.pendingApprovals.clear()
+}
+
+/**
+ * 「本会话允许」放行集失效的唯一卡口（C1 治本）：
+ * 清内存态（sessionAllowTools）并通知进程层永久丢弃放行集（上游待重放队列一并焚毁），
+ * 随后推 status 让客户端同步「本会话允许」徽。
+ * 所有失效路径（dispose 同步路径 / app-server 死亡 / /clear 重键）都必须走这里——
+ * 只在回调里清内存态会让进程层仍持旧放行集，重生后第一次 ensure 又喂回 Hub（掷硬币复活）。
+ * 默认不推 status（调用方多数自带终态推送）；确需即时推送传 { push: true }。
+ */
+export function dropSessionAllowTools(hub: Hub, reason: string, opts?: { push?: boolean }): void {
+  const had = hub.sessionAllowTools !== undefined
+  hub.sessionAllowTools = undefined
+  if (!had) return
+  try {
+    portFor(hub.key).sessionOf(hub.key)?.discardAllowTools?.()
+  } catch {
+    // 进程层此刻不可达（正在退出）无碍——dispose 已把会话从 map 摘除，
+    // 重生必走 allowlistForRespawn 分支（此时内存态已清，喂回 undefined）
+  }
+  log.info(`[ws ${hub.key}] 本会话放行集失效（${reason}）`)
+  if (opts?.push) pushStatus(hub)
 }
 
 /** REST 审批公共核的返回：路由层把 ok:false 映射为对应 HTTP 状态码。 */

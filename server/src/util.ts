@@ -184,20 +184,8 @@ export async function pumpLines(
   }
 }
 
-/** 审批输入摘要（推送通知/审批页/approval_auto 留痕卡共用唯一口径）：按工具挑裁决所需的
- *  关键字段，其余给 JSON 截断。与 web 端 toolSummary 同族但取舍不同——审批场景 Bash 必须给
- *  command 本体（description 是作者给的说明文字，不能作为裁决依据）。
- *  家在本模块（叶子）而非 push/fanout：hub 层广播 approval_auto 也需要它，push→hub 单向红线不能破。 */
-export function summarizeInput(toolName: string, input: unknown): string {
-  const obj = (input ?? {}) as Record<string, unknown>
-  if (toolName === 'Bash') return String(obj.command ?? '').slice(0, 400)
-  if (toolName === 'Glob' || toolName === 'Grep') return String(obj.pattern ?? '')
-  if (toolName === 'WebSearch') return String(obj.query ?? '')
-  if (toolName === 'WebFetch') return String(obj.url ?? '')
-  if (toolName === 'Agent') return String(obj.description ?? obj.prompt ?? '').slice(0, 300)
-  if (obj.file_path) return String(obj.file_path)
-  if (obj.path) return String(obj.path)
-  if (obj.grantRoot) return String(obj.grantRoot)
-  const json = JSON.stringify(input ?? {})
-  return json.length > 300 ? json.slice(0, 300) + '…' : json
-}
+/**
+ * 审批输入摘要与 cwd 外警示的正本已迁到 ./approvalSummary（叶子模块）。
+ * 本行仅为既有 import 路径（push/fanout、hub/callbacks 等）做转发，新代码直接引 approvalSummary。
+ */
+export { outsideCwdPath, summarizeInput } from './approvalSummary'

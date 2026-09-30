@@ -94,6 +94,12 @@ export interface SessionHandle {
   /** 会话 cwd（codex 句柄有 getter；claude 缺席——x| key 的 sessionNameOf 反查用，
    *  可选属性使 ClaudeSession 无需改动即结构化兼容） */
   readonly cwd?: string
+  /** 「本会话允许」放行集重 spawn 喂回（C1）：ensure 在 spawn 前一次性取走（take 语义——
+   *  取走后进程层不再持有，喂回失败也不残留）。两后端同契约。 */
+  takeAllowToolsForRespawn?(): Set<string> | undefined
+  /** 「本会话允许」放行集进程层永久丢弃（C1）：dispose/app-server 死亡//clear 时调用，
+   *  连上游待重放队列一并焚毁。两后端同契约。 */
+  discardAllowTools?(): void
   /** 后台任务表（claude 专属；codex 缺席——恒空数组会被 hydrateTasks 误读为权威空） */
   readonly activeTaskCount?: number
   readonly backgroundTasks?: BackgroundTask[]
