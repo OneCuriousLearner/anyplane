@@ -295,6 +295,19 @@ describe('thread/name/updated 通知（改名回声）', () => {
     session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '外部改的名' })
     expect(msgs).toEqual([{ type: 'system', subtype: 'thread_renamed', text: '外部改的名' }])
   })
+
+  test('写失败撤登记（clearSelfRename 同名）→ 同名外部改名不再被吞；仅撤同名，并发新登记不背锅', () => {
+    const { session, msgs } = makeSession()
+    session.noteSelfRename('尝试写的名')
+    session.clearSelfRename('尝试写的名') // name/set 失败路径
+    session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '尝试写的名' })
+    expect(msgs).toEqual([{ type: 'system', subtype: 'thread_renamed', text: '尝试写的名' }])
+    // 并发守护：登记已换新名，撤旧名不得误清新登记
+    session.noteSelfRename('新名')
+    session.clearSelfRename('旧名')
+    session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '新名' })
+    expect(msgs).toHaveLength(1) // 新登记仍生效，回声被消费不广播
+  })
 })
 
 describe('error 通知（willRetry 口径对齐上游 ErrorNotification）', () => {

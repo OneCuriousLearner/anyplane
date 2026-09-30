@@ -103,6 +103,10 @@ export class CodexSession {
   noteSelfRename(name: string): void {
     this.lastSelfRename = { name, at: Date.now() }
   }
+  /** 写回失败撤登记（仅撤同名——并发新登记不背锅）：陈旧登记会在 30s 窗口内吞掉同名外部改名回声 */
+  clearSelfRename(name: string): void {
+    if (this.lastSelfRename?.name === name) this.lastSelfRename = undefined
+  }
   /** 线程历史契约（thread/start / thread/resume 响应的 thread.historyMode）。
    *  paginated：历史走 turns/list+items/list、回滚走 thread/revert、resume 自动补发 tokenUsage；
    *  legacy：历史走 thread/read includeTurns、回滚降级 thread/fork。 */
@@ -691,7 +695,10 @@ export class CodexSession {
         this.noteSelfRename(name)
         void this.runtime
           .rpcRequest('thread/name/set', { threadId: this.threadId, name })
-          .catch((e) => this.emitError(`重命名失败: ${errorMessage(e)}`))
+          .catch((e) => {
+            this.clearSelfRename(name) // 写失败撤登记：别让陈旧登记吞掉同名外部改名回声
+            this.emitError(`重命名失败: ${errorMessage(e)}`)
+          })
         break
       }
       default:

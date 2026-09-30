@@ -155,7 +155,8 @@ class CodexPort implements BackendPort {
    * 失败恢复记账等重试：新线程首轮触发时 rollout 尚未落盘，thread/fork 读磁盘必失败
    * （-32603 rollout is empty）——catch 里回滚 titleGeneratedFor/pendingTitleText，
    * 由 turn 完成（result）钩（hub/callbacks.ts）再次触发即可成功；复查发现已有 name 属
-   * 「已完成」不恢复（保持记账防重试）。
+   * 「已完成」不恢复（保持记账防重试）。模型应答了但标题为空也消费记账——那是已烧
+   * token 的结果，每 turn 重试只会重复烧；catch 覆盖的都是模型调用之前的廉价失败。
    */
   maybeGenerateTitle(hub: Hub): void {
     const tid = hub.sessionId
@@ -172,14 +173,24 @@ class CodexPort implements BackendPort {
       }
       if (before.thread?.name) return
       const title = await codexRuntime.runEphemeralTitleQuestion(tid, text, s.currentModel)
-      if (!title) throw new Error('ephemeral 线程未给出标题')
+      // 模型已跑完却给空标题＝已烧 token 的失败：消费记账不再重试（列表回退首条消息摘要，
+      // 与 E4 前一致）。若恢复记账，每个 turn 完成都会重烧一次 ephemeral 模型调用（review 轮）
+      if (!title) {
+        log.warn(`[title] codex AI 标题为空（模型已应答），不再重试 key=${hub.key} tid=${tid}`)
+        return
+      }
       // 生成后再复查一次（生成窗口内被 /rename 抢先也不覆盖）
       const after = await codexRuntime.rpcRequest('thread/read', { threadId: tid, includeTurns: false }, 30_000) as {
         thread?: { name?: string | null }
       }
       if (after.thread?.name) return
       s.noteSelfRename(title) // 本端写回登记：thread/name/updated 回声（同名 30s 内）不广播「已更名」系统行
-      await codexRuntime.rpcRequest('thread/name/set', { threadId: tid, name: title }, 30_000)
+      try {
+        await codexRuntime.rpcRequest('thread/name/set', { threadId: tid, name: title }, 30_000)
+      } catch (e) {
+        s.clearSelfRename(title) // 写失败撤登记：陈旧登记会吞同名外部改名回声（30s 窗口）
+        throw e
+      }
       log.info(`[title] ${hubServices().sessionNameOf(hub.key)} → ${title}`)
     })().catch((e) => {
       // 恢复记账等 result 钩重试；仅当记账仍属本次尝试时才回滚（并发新尝试不背锅）
@@ -352,8 +363,15 @@ class CodexPort implements BackendPort {
     return this.threadRpc(key, 'thread/unarchive', {})
   }
 
-  rename(key: string, title: string): Promise<RouteResult> {
-    return this.threadRpc(key, 'thread/name/set', { name: title })
+  async rename(key: string, title: string): Promise<RouteResult> {
+    // 第三个本地 name/set 调用点（列表行菜单）：live 会话先登记本端改名，否则回声通知
+    // 在打开的 Chat 页出假「会话已更名为」系统行（斜杠路径与 AI 标题写回同律）；
+    // 离线线程无 live 会话可登记，回声本就不会到达本端
+    const s = codexRuntime.get(key)
+    s?.noteSelfRename(title)
+    const r = await this.threadRpc(key, 'thread/name/set', { name: title })
+    if (!r.ok) s?.clearSelfRename(title)
+    return r
   }
 
   listSessions(): Promise<SessionSummary[]> {
