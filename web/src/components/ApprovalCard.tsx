@@ -11,7 +11,7 @@ import {
 import { toolDetail } from '../lib/blocks'
 
 export function ApprovalCard(props: {
-  approval: { requestId: string; toolName: string; input: unknown }
+  approval: { requestId: string; toolName: string; input: unknown; outsidePath?: string }
   onDecision: (d: ApprovalDecision) => void
 }) {
   const { approval, onDecision } = props
@@ -35,6 +35,12 @@ export function ApprovalCard(props: {
         <span className="ml-auto font-mono text-[10px] text-faint">等待你的裁决</span>
       </div>
       {reason && <p className="mt-2 text-[13px] leading-relaxed text-ink">{reason}</p>}
+      {approval.outsidePath && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-[10px] bg-busy/10 px-3 py-2 text-[12px] leading-relaxed text-busy">
+          <span aria-hidden>⚠</span>
+          <span>此操作触及工作目录之外：<span className="font-mono break-all">{approval.outsidePath}</span>（同仓库的 worktree 不提示）</span>
+        </p>
+      )}
       <pre className="mt-2.5 max-h-48 overflow-auto rounded-[10px] bg-bg/50 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted">
         {detail.length > 4000 ? detail.slice(0, 4000) + '\n…（截断）' : detail}
       </pre>

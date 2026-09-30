@@ -70,6 +70,8 @@ export interface BackendStatus {
 /** GET /api/backends/status 响应（30s 服务端缓存；探测失败整体 500，单侧失败落在该侧 state=unknown） */
 export interface BackendsStatus {
   checkedAt: number
+  /** 服务端进程启动时刻（前端「登录提示关闭后到服务端重启再显示」的判定锚） */
+  serverStartedAt: number
   claude: BackendStatus
   codex: BackendStatus
 }

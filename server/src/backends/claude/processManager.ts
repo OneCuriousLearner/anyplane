@@ -162,6 +162,11 @@ export class ClaudeSession {
   private clientCount = 0
   private idleTimer: Timer | undefined
   private exitEmitted = false
+  /** 「本会话允许」放行集（进程层权威，C1）：rememberTool 裁决时写入（审批时进程必活），
+   *  dispose/discardAllowTools 永久焚毁。命中判定由 Hub 镜像先行、本集兜底（审批到达时
+   *  进程必活，本集必然存在；Hub 镜像只是 UI/快速路径）。「重开会话失效」因此不再依赖
+   *  onExit 送达——dispose 同步焚毁即终局，无喂回、无复活 */
+  private allowTools: Set<string> | undefined
   /** 本进程内各 turn result.usage 的累计（只计 token，不含任何费用字段） */
   private usageAcc = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
   /** 最近一次主线 API 调用的 usage（官方 statusline 的 context_window.current_usage 口径；
@@ -555,8 +560,24 @@ export class ClaudeSession {
     this.scheduleRecycleIfSafe()
   }
 
+  /** rememberTool 裁决写入（C1 进程层权威）：审批到达时进程必活，写进本实例的集 */
+  rememberAllowTool(toolName: string): void {
+    ;(this.allowTools ??= new Set()).add(toolName)
+  }
+
+  /** 命中查询（Hub 镜像未命中时的兜底；审批到达时进程必活，本查询是权威） */
+  allowsTool(toolName: string): boolean {
+    return this.allowTools?.has(toolName) ?? false
+  }
+
+  /** Hub 失效卡口经 SessionHandle 调用：与 dispose 同效但不动进程（/clear 重键路径用） */
+  discardAllowTools(): void {
+    this.allowTools = undefined
+  }
+
   dispose(): void {
     this.cancelRecycle()
+    this.allowTools = undefined // C1：放行集随进程处置同步焚毁（不依赖 onExit 送达）
     const pid = this.proc?.pid
     log.info(`[session ${this.key}] dispose pid=${pid ?? 'none'} exited=${this.exited}`)
     try {

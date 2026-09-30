@@ -149,7 +149,12 @@ export function useSessionSocket(opts: {
             setApprovals((prev) =>
               prev.some((a) => a.requestId === ev.requestId)
                 ? prev
-                : [...prev, { requestId: ev.requestId, toolName: ev.toolName, input: ev.input }],
+                : [...prev, {
+                    requestId: ev.requestId,
+                    toolName: ev.toolName,
+                    input: ev.input,
+                    ...(typeof ev.outsidePath === 'string' ? { outsidePath: ev.outsidePath } : {}),
+                  }],
             )
             break
           case 'approval_resolved':

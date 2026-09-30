@@ -33,10 +33,14 @@ export interface Hub {
   key: string
   clients: Set<ServerWebSocket<WSData>>
   pendingApprovals: Map<string, PendingApproval>
-  /** 「本会话允许这个工具」的内存放行集（WS 裁决 rememberTool 写入）：
-   *  命中走 approval_auto 同形留痕；绝不进推送能力 URL/REST 核；
-   *  /clear 重键（callbacks）清空——sessionId 换了放行集即失效 */
+  /** 「本会话允许这个工具」的 Hub 镜像（WS 裁决 rememberTool 与进程层同写）：
+   *  仅作 UI 展示与快速路径；命中判定的权威在进程层（allowsTool——审批到达时进程必活，
+   *  dispose 同步焚毁，无喂回无复活）；失效统一走 lifecycle.dropSessionAllowTools 卡口 */
   sessionAllowTools?: Set<string>
+  /** C2：requestId → 审批输入里触及工作目录之外（且不同仓库家族）的路径。
+   *  由 onApprovalRequest 写入，replayApprovals 重放时随附；裁决/终结/清空三处同删
+   * （与 pendingApprovals 真同生命周期） */
+  outsidePaths?: Map<string, string>
 
   // ---------- 补发基础设施（懒初始化，非状态位） ----------
   /** 下行 cli 事件的单调序号（重连补发用，见 cliReplay.ts） */

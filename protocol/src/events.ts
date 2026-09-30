@@ -30,7 +30,8 @@ export type ServerEvent =
   /** seq：服务端为可落盘 cli 分配的单调序号（stream_event 不占号，见 SessionSocket） */
   | { kind: 'cli'; msg: CliMsg; seq?: number; replay?: boolean }
   | { kind: 'status'; state: SessionState }
-  | { kind: 'approval_request'; requestId: string; toolName: string; input: unknown }
+  | { kind: 'approval_request'; requestId: string; toolName: string; input: unknown;
+      /** C2：输入中触及工作目录之外（且与会话 cwd 不同仓库家族）的路径——审批卡据此加警示徽 */ outsidePath?: string }
   | { kind: 'approval_resolved'; requestId: string }
   /** 审批规则引擎自动裁决的留痕事件（服务端已直接回复 CLI，此处只做 UI 审计卡）；
    *  detail 是服务端 summarizeInput 唯一口径算好的摘要，前端直接渲染不再自行提取字段 */

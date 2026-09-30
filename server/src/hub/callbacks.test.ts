@@ -11,9 +11,9 @@ import { codexPort } from '../backends/codex/port'
 import { registerBackend } from '../backends/port'
 import { config } from '../config'
 import { summarizeInput } from '../util'
-import { resetInboxSinkForTest, setInboxSink } from './broadcast'
+import { resetInboxSinkForTest, replayApprovals, setInboxSink } from './broadcast'
 import { sessionCallbacks } from './callbacks'
-import { resolveApproval } from './lifecycle'
+import { dropSessionAllowTools, resolveApproval } from './lifecycle'
 import { getHub, hubs } from './registry'
 import type { InboxEvent } from '@anyplane/protocol'
 import type { Hub } from './types'
@@ -303,14 +303,19 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     config.approvalRules = savedRules
   })
 
-  /** 往 processManager 登记带审批投递捕获的假句柄（deliverApproval 的接收端） */
+  /** 往 processManager 登记带审批投递捕获的假句柄（deliverApproval 的接收端）；
+   *  C1 起同时持有进程层放行集（rememberTool 裁决写入、命中判定读取——进程层权威） */
   function injectApprovalSession(): Array<[string, unknown]> {
     const delivered: Array<[string, unknown]> = []
+    const allowTools = new Set<string>()
     sessionMap().set(KEY, {
       key: KEY,
       exited: false,
       sendApproval: (requestId: string, decision: unknown) => delivered.push([requestId, decision]),
       notifyExternalGate: () => {},
+      rememberAllowTool: (t: string) => allowTools.add(t),
+      allowsTool: (t: string) => allowTools.has(t),
+      discardAllowTools: () => allowTools.clear(),
     })
     return delivered
   }
@@ -422,6 +427,85 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     extraKeys.push(newKey)
     expect(hub.key).toBe(newKey) // 重键已发生
     expect(hub.sessionAllowTools).toBeUndefined()
+  })
+
+  test('失效卡口 dropSessionAllowTools：清 Hub 镜像 + 通知进程层焚毁（幂等）', () => {
+    const { hub } = freshHub()
+    let discarded = 0
+    sessionMap().set(KEY, {
+      key: KEY,
+      exited: false,
+      discardAllowTools: () => discarded++,
+    })
+    hub.sessionAllowTools = new Set(['Edit'])
+
+    dropSessionAllowTools(hub, '测试')
+
+    expect(hub.sessionAllowTools).toBeUndefined()
+    expect(discarded).toBe(1)
+    // 无集时静默零动作（幂等，不扰进程层）
+    dropSessionAllowTools(hub, '测试')
+    expect(discarded).toBe(1)
+  })
+
+  test('C1：命中判定以进程层为准——Hub 镜像残留（stale swallow 模拟）但进程层已空时不放行', () => {
+    const { hub } = freshHub()
+    injectApprovalSession() // 进程层集为空（从未 rememberAllowTool）
+    config.approvalRules = undefined
+    hub.sessionAllowTools = new Set(['Edit']) // 镜像残留（onExit 被 swallow 的世界）
+    const cb = sessionCallbacks(hub)
+
+    cb.onApprovalRequest({ requestId: 'ss1', toolName: 'Edit', input: { file_path: '/x.ts' } })
+    // 进程层权威说「没记名」→ 必须进 pending 重问，不得被镜像错误放行
+    expect(hub.pendingApprovals.has('ss1')).toBe(true)
+  })
+
+  test('C2：审批输入触及 cwd 外异仓库路径 → 事件与 Hub 侧表带 outsidePath，重放随附', () => {
+    // KEY = n|%2Ftmp%2Fcallbacks-test → 会话 cwd=/tmp/callbacks-test（非 git 区）
+    const { hub, ws } = freshHub()
+    injectApprovalSession()
+    config.approvalRules = undefined
+    const cb = sessionCallbacks(hub)
+
+    cb.onApprovalRequest({ requestId: 'oc1', toolName: 'Write', input: { file_path: '/somewhere/else/a.ts' } })
+    expect(payloads(ws)[0]).toMatchObject({
+      kind: 'approval_request',
+      requestId: 'oc1',
+      outsidePath: '/somewhere/else/a.ts',
+    })
+    expect(hub.outsidePaths?.get('oc1')).toBe('/somewhere/else/a.ts')
+
+    // 重放随附（socket 接入/attach 路径共用 replayApprovals）
+    const replayed: Array<Record<string, unknown>> = []
+    replayApprovals(hub, (p) => replayed.push(p as Record<string, unknown>))
+    expect(replayed[0]).toMatchObject({ kind: 'approval_request', requestId: 'oc1', outsidePath: '/somewhere/else/a.ts' })
+
+    // review 轮 finding 3：裁决后警示路径同删（与 pendingApprovals 真同生命周期）
+    resolveApproval(hub, 'oc1', { behavior: 'deny', message: 'x' })
+    expect(hub.outsidePaths?.has('oc1')).toBe(false)
+  })
+
+  test('C2：clearPendingApprovals 同清警示路径（review 轮 finding 3）', () => {
+    const { hub } = freshHub()
+    injectApprovalSession()
+    config.approvalRules = undefined
+    const cb = sessionCallbacks(hub)
+    cb.onApprovalRequest({ requestId: 'oc2', toolName: 'Write', input: { file_path: '/elsewhere/b.ts' } })
+    expect(hub.outsidePaths?.has('oc2')).toBe(true)
+    sessionCallbacks(hub).onApprovalResolved('oc2')
+    expect(hub.outsidePaths?.has('oc2')).toBe(false)
+  })
+
+  test('C2：cwd 子树内的路径不带 outsidePath（相对/无路径输入同）', () => {
+    const { hub, ws } = freshHub()
+    injectApprovalSession()
+    config.approvalRules = undefined
+    const cb = sessionCallbacks(hub)
+
+    cb.onApprovalRequest({ requestId: 'in1', toolName: 'Write', input: { file_path: '/tmp/callbacks-test/src/a.ts' } })
+    cb.onApprovalRequest({ requestId: 'in2', toolName: 'Bash', input: { command: 'rm -rf /' } })
+    expect(hub.outsidePaths).toBeUndefined()
+    for (const p of payloads(ws)) expect(p.outsidePath).toBeUndefined()
   })
 })
 

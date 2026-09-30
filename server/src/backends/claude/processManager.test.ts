@@ -126,6 +126,41 @@ describe('ClaudeSession onTurnTearingDown（拆轮清审批回调，review 轮�
   })
 })
 
+describe('「本会话允许」放行集进程层权威（C1）', () => {
+  function makeSession(key: string) {
+    return new ClaudeSession(key, { cwd: process.cwd() }, {
+      onMessage: () => {},
+      onApprovalRequest: () => {},
+      onExit: () => {},
+    })
+  }
+
+  test('rememberAllowTool 写入 → allowsTool 命中；未记名工具不命中', () => {
+    const s = makeSession(`test-allow-hit-${Math.random().toString(36).slice(2, 8)}`)
+    expect(s.allowsTool('Write')).toBe(false)
+    s.rememberAllowTool('Write')
+    expect(s.allowsTool('Write')).toBe(true)
+    expect(s.allowsTool('Bash')).toBe(false)
+  })
+
+  test('dispose 同步焚毁进程层集（不依赖 onExit 送达）', () => {
+    const s = makeSession(`test-allow-dispose-${Math.random().toString(36).slice(2, 8)}`)
+    s.rememberAllowTool('Write')
+    s.dispose() // 同步路径
+    expect(s.allowsTool('Write')).toBe(false)
+  })
+
+  test('discardAllowTools 焚毁（/clear 重键与失效卡口的进程层动作），实例仍可复用', () => {
+    const s = makeSession(`test-allow-discard-${Math.random().toString(36).slice(2, 8)}`)
+    s.rememberAllowTool('Edit')
+    s.discardAllowTools()
+    expect(s.allowsTool('Edit')).toBe(false)
+    // 焚毁后实例没死：可重新记名（同进程内新一次「本会话允许」）
+    s.rememberAllowTool('Bash')
+    expect(s.allowsTool('Bash')).toBe(true)
+  })
+})
+
 describe('ClaudeSession awaited control requests', () => {
   test('matches a successful control response by request ID', async () => {
     const seen: unknown[] = []

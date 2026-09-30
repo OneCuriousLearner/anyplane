@@ -94,6 +94,13 @@ export interface SessionHandle {
   /** 会话 cwd（codex 句柄有 getter；claude 缺席——x| key 的 sessionNameOf 反查用，
    *  可选属性使 ClaudeSession 无需改动即结构化兼容） */
   readonly cwd?: string
+  /** 「本会话允许」放行集写入（C1 进程层权威）：rememberTool 裁决时调用（审批到达时
+   *  进程/句柄必活，写入本实例的集；dispose/discard 时随实例焚毁，无喂回无复活） */
+  rememberAllowTool?(toolName: string): void
+  /** 「本会话允许」命中查询（进程层权威）：Hub 镜像未命中时兜底（审批到达时进程必活） */
+  allowsTool?(toolName: string): boolean
+  /** Hub 失效卡口调用：与 dispose 同效但不动进程（/clear 重键路径用） */
+  discardAllowTools?(): void
   /** 后台任务表（claude 专属；codex 缺席——恒空数组会被 hydrateTasks 误读为权威空） */
   readonly activeTaskCount?: number
   readonly backgroundTasks?: BackgroundTask[]
