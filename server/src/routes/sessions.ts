@@ -2,9 +2,11 @@
 // git 信息缓存也在这里（仅列表端点使用）。
 
 import type { ArchivedEntry, CreateSessionResponse, SessionInfo } from '@anyplane/protocol'
-import { backendPort, portFor, slugForBackend, type RouteResult } from '../backends/port'
+import { backendPort, describeKey, portFor, slugForBackend, type RouteResult } from '../backends/port'
 import type { SessionSummary } from '../backends/types'
 import { type GitInfo, readGitInfo } from '../fsbrowse'
+import { addWorktree, gitAvailable, removeWorktree } from '../gitworktree'
+import { hubs } from '../hub/registry'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
 import { existsSync } from 'node:fs'
@@ -172,6 +174,87 @@ export async function handleSessionRoutes(
     // codex 走官方 thread/name/set；claude 仅离线会话（transcript 追加 custom-title），
     // 两路实现见各自适配器
     return routeResultJson(await deps.portFor(body.key).rename(body.key, title))
+  }
+
+  // ---------- worktree 生命周期（E1） ----------
+  // git 缺席整个功能降级（前端入口隐藏同理）；来源无关——不区分 worktree 来自用户终端、
+  // AnyPlane 创建、还是 agent 会话内自建，校验一律走 readGitInfo。
+
+  /** git 可用性探测（DirPicker「拉 worktree 开会话」入口的隐藏判定） */
+  if (url.pathname === '/api/worktree/git-available' && req.method === 'GET') {
+    return json({ available: gitAvailable() })
+  }
+
+  /** 创建：`git worktree add` 落盘主仓同级 <repo>-<名>、分支 worktree-<名>，直接开新会话 */
+  if (url.pathname === '/api/worktree/add' && req.method === 'POST') {
+    const body = await readJsonBody<{ cwd?: string; name?: string; backend?: string }>(req)
+    if (!body.cwd || !body.name) return json({ error: '缺少 cwd 或 name' }, { status: 400 })
+    if (!gitAvailable()) return json({ error: 'git 不可用' }, { status: 400 })
+    const git = deps.readGitInfo(body.cwd)
+    if (!git) return json({ error: '所选目录不是 git 仓库' }, { status: 400 })
+    const mainRoot = git.worktreeOf ?? body.cwd // 在 worktree 里也能再拉：归一到主仓
+    const r = addWorktree(mainRoot, body.name.trim())
+    if (!r.ok || !r.path) return json({ error: r.error ?? 'git worktree add 失败' }, { status: 400 })
+    noteWorktree(r.path, mainRoot) // 归属侧车立即记（列表页合并分组不等首次轮询发现）
+    const port = backendPort(body.backend === 'codex' ? 'codex' : 'claude')
+    return json({
+      path: r.path,
+      branch: r.branch,
+      key: port.keyForNew(r.path),
+      backend: port.name,
+    })
+  }
+
+  /** 按 cwd 收集在册会话 key（worktree 移除前的 busy 检查与 dispose 对象）：
+   *  前缀匹配——worktree 根与其任何子目录的会话都算（子目录进程同样持有树锁，review 轮） */
+  function sessionKeysForCwd(cwd: string): string[] {
+    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    const target = norm(cwd)
+    const out: string[] = []
+    for (const key of hubs.keys()) {
+      const hub = hubs.get(key)!
+      const hubCwd = hub.spawnOpts?.cwd ?? describeKey(key)?.cwd
+      if (hubCwd) {
+        const c = norm(hubCwd)
+        if (c === target || c.startsWith(`${target}/`)) out.push(key)
+      }
+    }
+    return out
+  }
+
+  /** 移除：readGitInfo 校验 cwd 确为 worktree → busy 拒绝 → 先试 git worktree remove（不 dispose）
+   *  → 占用/锁失败且树干净才 dispose 会话进程重试（顺序优势：杀进程才解 Windows 目录锁；
+   *  成功/ dirty 升级时一个不杀——不再「失败也白杀全部会话」，review 轮）。
+   *  dirty 两步走：409 携带脏区统计（N 已修改/M 未跟踪），前端确认「丢弃未提交改动」后
+   *  以 force=true 调第二步（同样先试，占用则 dispose 重试）——绝不静默 --force。不碰分支。 */
+  if (url.pathname === '/api/worktree/remove' && req.method === 'POST') {
+    const body = await readJsonBody<{ cwd?: string; force?: boolean }>(req)
+    if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
+    if (!gitAvailable()) return json({ error: 'git 不可用' }, { status: 400 })
+    const git = deps.readGitInfo(body.cwd)
+    if (!git?.worktreeOf) return json({ error: '所选目录不是 worktree（或目录不存在）' }, { status: 400 })
+    const keys = sessionKeysForCwd(body.cwd)
+    // busy 拒绝并提示先中断（E1 已确认）：running/requires_action 绝不强删
+    const busyKeys = keys.filter((k) => deps.portFor(k).sessionOf(k)?.busy)
+    if (busyKeys.length > 0) {
+      return json({ error: `该 worktree 有 ${busyKeys.length} 个会话正在工作，请先中断再移除` }, { status: 409 })
+    }
+    const force = body.force === true
+    // 先试不 dispose（成功/干净失败/dirty 升级都不杀会话——dirty 第一步、占用误判都保活）
+    let r = removeWorktree(git.worktreeOf, body.cwd, force)
+    // 占用/锁失败（非 dirty）且树干净：dispose 该 cwd 全部会话进程（杀进程解 Windows 目录锁）重试一次
+    if (!r.ok && !r.dirty) {
+      for (const k of keys) deps.portFor(k).disposeSession(k)
+      r = removeWorktree(git.worktreeOf, body.cwd, force)
+    }
+    if (!r.ok) {
+      if (r.dirty) {
+        return json({ error: r.error ?? 'worktree 有未提交改动', dirty: r.dirty }, { status: 409 })
+      }
+      return json({ error: r.error ?? 'git worktree remove 失败' }, { status: 400 })
+    }
+    log.info(`[worktree] 已移除 ${body.cwd}（分支保留，归属侧车不清理）`)
+    return json({ ok: true })
   }
   return undefined
 }

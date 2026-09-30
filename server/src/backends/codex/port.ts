@@ -59,6 +59,10 @@ class CodexPort implements BackendPort {
     return codexRuntime.get(key)
   }
 
+  disposeSession(key: string): void {
+    codexRuntime.dispose(key)
+  }
+
   hasLiveSession(key: string): boolean {
     const s = codexRuntime.get(key)
     return !!s && !s.exited

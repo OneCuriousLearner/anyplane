@@ -151,6 +151,37 @@ export async function fetchBackendsStatus(): Promise<BackendsStatus> {
   return r.json()
 }
 
+// ---------- worktree 生命周期（E1） ----------
+
+/** git 可用性（DirPicker「拉 worktree 开会话」入口的隐藏判定） */
+export async function fetchGitAvailable(): Promise<boolean> {
+  const r = await apiFetch('/api/worktree/git-available')
+  if (!r.ok) return false
+  return ((await r.json()) as { available: boolean }).available
+}
+
+/** 创建 worktree 并开新会话（落盘主仓同级 <repo>-<名>、分支 worktree-<名>） */
+export async function addWorktreeSession(
+  cwd: string,
+  name: string,
+  backend: BackendName,
+): Promise<{ path: string; branch?: string; key: string }> {
+  const r = await postJson('/api/worktree/add', { cwd, name, backend })
+  if (!r.ok) throw await apiError(r)
+  return r.json()
+}
+
+/** 移除 worktree：409 且带 dirty 统计时需用户确认后以 force=true 调第二步 */
+export async function removeWorktreeSession(
+  cwd: string,
+  force = false,
+): Promise<{ ok: true } | { ok: false; status: number; error: string; dirty?: { modified: number; untracked: number } }> {
+  const r = await postJson('/api/worktree/remove', { cwd, force })
+  if (r.ok) return { ok: true }
+  const body = (await r.json().catch(() => ({}))) as { error?: string; dirty?: { modified: number; untracked: number } }
+  return { ok: false, status: r.status, error: body.error ?? `HTTP ${r.status}`, dirty: body.dirty }
+}
+
 /** 模型值 → {显示名, tooltip}：tier 直查（haiku/sonnet/…）→ 按模型 ID 反查（init 报的是解析后 ID，
  *  如 k3[1m]——大小写不敏感，设置里的 ID 写法可能不同）→ 未配置原样显示（降级）。
  *  只需显示名的场景取 .label；StatusPill/DetailDrawer/Composer 共用同一口径，避免同模型多处显示不一致。 */

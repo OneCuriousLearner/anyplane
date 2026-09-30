@@ -46,7 +46,10 @@ type CodexAccount =
 
 /** account/read 语义（codex app-server 源码 get_account_response）：
  *  account=null 且 requiresOpenaiAuth=false → 配置了自定义 provider，不需要 OpenAI 登录；
- *  account=null 且 requiresOpenaiAuth=true → 默认 provider 且无凭据，必须 login。 */
+ *  account=null 且 requiresOpenaiAuth=true → 默认 provider 且无凭据，必须 login。
+ *  TODO(协议漂移)：codex 近期改动了模型/provider 配置相关字段（workspaceRouting 已见于响应），
+ *  若后续 requiresOpenaiAuth 语义或 CodexAccount 联合类型漂移，本分类需同步——
+ *  升级 codex 后跑一次 .tmp/probe-codex-account.ts 核对真实返回再判。 */
 export function classifyCodexAccount(r: {
   account: CodexAccount | null
   requiresOpenaiAuth: boolean
