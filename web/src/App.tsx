@@ -69,15 +69,27 @@ export default function App() {
   const sessionPushesRef = useRef(0)
   /** history.go(-n) 进行中：hashchange 若没落到列表则 replace 清掉 */
   const pendingListPopRef = useRef(false)
+  /** 各 key 最近一次「轮询基准」标题：syncSelected 的合并判据（相邻快照差异）与选中播种共用 */
+  const lastPollTitleRef = useRef(new Map<string, string | undefined>())
+
+  /** 选中入口统一播种轮询基准：syncSelected 以「相邻两轮轮询快照差异」判标题合并——
+   *  首个轮询窗口内的改名（本端 /rename 的回声被服务端消费、外部改名、AI 标题落盘）
+   *  若无基准会被「无上轮快照」守卫拒并，而 map 又已被播种成新名，顶栏永久定格旧名
+   * （review 轮回归）。选中快照充当首轮基准后，首轮必能观察到 O→N 的差异。
+   *  onTitleChange 的回声更新刻意不经此口——回声推新后播种会把在途旧快照判成「差异」回退 */
+  const selectAndSeed = (s: SessionInfo | undefined) => {
+    if (s) lastPollTitleRef.current.set(s.key, s.title)
+    setSelected(s)
+  }
 
   const selectSession = (s: SessionInfo | undefined, opts?: { replace?: boolean }) => {
     const replace = opts?.replace ?? false
     const nextKey = s?.key
     if (!shouldWriteHash(deepLinkKey(), nextKey)) {
-      setSelected(s)
+      selectAndSeed(s)
       return
     }
-    setSelected(s)
+    selectAndSeed(s)
     writeHash(nextKey, replace)
     if (!nextKey) sessionPushesRef.current = 0
     else if (!replace) sessionPushesRef.current += 1
@@ -91,8 +103,8 @@ export default function App() {
    *  标题合并判据是「相邻两轮轮询快照之间发生变化」而非墙钟窗口（曾为回声后 12s 拒并——
    *  窗口外的旧快照仍会闪回）：改名回声（thread_renamed → onTitleChange）已把标题推新时，
    *  在途旧快照与上轮快照相同 = 轮询没观察到变化，不合；外部改名必然体现为快照差异
-   * （改名落盘后才被列表读到），下一轮自然收敛。首轮无快照：只在标题缺失时补并 */
-  const lastPollTitleRef = useRef(new Map<string, string | undefined>())
+   * （改名落盘后才被列表读到），下一轮自然收敛。首轮基准由 selectAndSeed 在选中时播种
+   * （无播种的兜底：只在标题缺失时补并） */
   const syncSelected = (s: SessionInfo) => {
     const pollTitle = lastPollTitleRef.current.get(s.key)
     lastPollTitleRef.current.set(s.key, s.title)
@@ -142,7 +154,7 @@ export default function App() {
       if (selectedRef.current?.key === key) return
       // 浏览器后退/前进落到某会话：后续应用内返回至少 pop 1 帧
       sessionPushesRef.current = 1
-      restoreFromHash(key, setSelected)
+      restoreFromHash(key, selectAndSeed)
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -156,7 +168,7 @@ export default function App() {
       if (/^#s=/.test(location.hash)) writeHash(undefined, true)
       return
     }
-    restoreFromHash(key, setSelected)
+    restoreFromHash(key, selectAndSeed)
   }, [])
 
   if (authNeeded) {
