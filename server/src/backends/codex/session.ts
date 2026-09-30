@@ -784,7 +784,7 @@ export class CodexSession {
   dispose(): void {
     if (this.exited) return
     this.cancelRecycle()
-    this.allowToolsForRespawn = undefined // C1：放行集随退订同步焚毁（resume 即新会话，必重问）
+    this.allowTools = undefined // C1：放行集随退订同步焚毁（resume 即新会话，必重问）
     this.resetOutputBufs()
     this.childMarkedTurns.clear()
     this.exited = true
@@ -800,7 +800,7 @@ export class CodexSession {
   handleProcessExit(): void {
     if (this.exited) return
     this.exited = true
-    this.allowToolsForRespawn = undefined // C1：app-server 死亡 = 全部会话终结，同步焚毁
+    this.allowTools = undefined // C1：app-server 死亡 = 全部会话终结，同步焚毁
     this.resetOutputBufs()
     this.childMarkedTurns.clear()
     this.runtime.unregisterChildrenOf(this)
@@ -808,22 +808,20 @@ export class CodexSession {
     this.cb.onExit(1)
   }
 
-  /** 「本会话允许」进程层保险箱（C1）：句柄级，dispose/handleProcessExit 焚毁 */
-  private allowToolsForRespawn: Set<string> | undefined
+  /** 「本会话允许」放行集（进程层权威，C1）：rememberTool 裁决时写入（审批到达时
+   *  句柄必活），dispose/handleProcessExit/discardAllowTools 焚毁。无喂回、无复活 */
+  private allowTools: Set<string> | undefined
 
-  /** codex 适配器 ensure 在 resume/启动前从 Hub 侧喂入 */
-  adoptAllowTools(tools: Set<string> | undefined): void {
-    this.allowToolsForRespawn = tools
+  rememberAllowTool(toolName: string): void {
+    ;(this.allowTools ??= new Set()).add(toolName)
   }
 
-  takeAllowToolsForRespawn(): Set<string> | undefined {
-    const t = this.allowToolsForRespawn
-    this.allowToolsForRespawn = undefined
-    return t
+  allowsTool(toolName: string): boolean {
+    return this.allowTools?.has(toolName) ?? false
   }
 
   discardAllowTools(): void {
-    this.allowToolsForRespawn = undefined
+    this.allowTools = undefined
   }
 
   // ---------- 内部 ----------

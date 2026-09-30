@@ -70,9 +70,6 @@ export interface SessionCallbacks {
    *  codex 无此路径（其 interrupt 经 serverRequest/resolved 回声走 onApprovalResolved 自愈；
    *  其 turn/steer 是追加而非拆轮）。只在投递成功后回调——写入失败时轮还活着，审批不得误杀 */
   onTurnTearingDown?(): void
-  /** 「本会话允许」放行集重 spawn 喂回（C1）：进程层保险箱在 spawn 前一次性取出的集，
-   *  宿主据此恢复 Hub 内存集。只在确知保险箱有货时回调（空集/undefined 不回调） */
-  onAllowToolsRespawn?(tools: Set<string>): void
   /** busy / sessionState 变化时通知宿主广播 status */
   onStatusChange?(): void
 }

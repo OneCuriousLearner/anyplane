@@ -79,7 +79,14 @@ export function resolveApproval(hub: Hub, requestId: string, decision: ApprovalD
   // 审批规则语义绝不进推送能力 URL 的红线不变）
   const pending = hub.pendingApprovals.get(requestId)
   if (pending && decision.behavior === 'allow' && decision.rememberTool === true) {
-    ;(hub.sessionAllowTools ??= new Set()).add(pending.toolName)
+    ;(hub.sessionAllowTools ??= new Set()).add(pending.toolName) // Hub 镜像（UI 展示）
+    // 进程层权威（C1）：审批到达时进程必活，写入本实例的集（dispose 同步焚毁，无喂回无复活）
+    try {
+      portFor(hub.key).sessionOf(hub.key)?.rememberAllowTool?.(pending.toolName)
+    } catch {
+      // 进程层此刻不可达（理论上审批到达时必活，兜底静默）——进程层缺失时
+      // 命中判定 allowsTool 返回 false，退化为「下次重问」，安全方向
+    }
   }
   const had = hub.pendingApprovals.delete(requestId)
   if (had) deliverApproval(hub, requestId, decision)

@@ -303,14 +303,19 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     config.approvalRules = savedRules
   })
 
-  /** 往 processManager 登记带审批投递捕获的假句柄（deliverApproval 的接收端） */
+  /** 往 processManager 登记带审批投递捕获的假句柄（deliverApproval 的接收端）；
+   *  C1 起同时持有进程层放行集（rememberTool 裁决写入、命中判定读取——进程层权威） */
   function injectApprovalSession(): Array<[string, unknown]> {
     const delivered: Array<[string, unknown]> = []
+    const allowTools = new Set<string>()
     sessionMap().set(KEY, {
       key: KEY,
       exited: false,
       sendApproval: (requestId: string, decision: unknown) => delivered.push([requestId, decision]),
       notifyExternalGate: () => {},
+      rememberAllowTool: (t: string) => allowTools.add(t),
+      allowsTool: (t: string) => allowTools.has(t),
+      discardAllowTools: () => allowTools.clear(),
     })
     return delivered
   }
@@ -424,7 +429,7 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
     expect(hub.sessionAllowTools).toBeUndefined()
   })
 
-  test('失效卡口 dropSessionAllowTools：清 Hub 内存集 + 通知进程层焚毁 + 推 status', () => {
+  test('失效卡口 dropSessionAllowTools：清 Hub 镜像 + 通知进程层焚毁（幂等）', () => {
     const { hub } = freshHub()
     let discarded = 0
     sessionMap().set(KEY, {
@@ -438,9 +443,21 @@ describe('sessionCallbacks.onApprovalRequest（审批规则引擎集成）', () 
 
     expect(hub.sessionAllowTools).toBeUndefined()
     expect(discarded).toBe(1)
-    // 无集时静默零动作（幂等，不推 status 不扰进程层）
+    // 无集时静默零动作（幂等，不扰进程层）
     dropSessionAllowTools(hub, '测试')
     expect(discarded).toBe(1)
+  })
+
+  test('C1：命中判定以进程层为准——Hub 镜像残留（stale swallow 模拟）但进程层已空时不放行', () => {
+    const { hub } = freshHub()
+    injectApprovalSession() // 进程层集为空（从未 rememberAllowTool）
+    config.approvalRules = undefined
+    hub.sessionAllowTools = new Set(['Edit']) // 镜像残留（onExit 被 swallow 的世界）
+    const cb = sessionCallbacks(hub)
+
+    cb.onApprovalRequest({ requestId: 'ss1', toolName: 'Edit', input: { file_path: '/x.ts' } })
+    // 进程层权威说「没记名」→ 必须进 pending 重问，不得被镜像错误放行
+    expect(hub.pendingApprovals.has('ss1')).toBe(true)
   })
 
   test('C2：审批输入触及 cwd 外异仓库路径 → 事件与 Hub 侧表带 outsidePath，重放随附', () => {

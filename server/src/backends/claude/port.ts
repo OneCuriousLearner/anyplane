@@ -253,13 +253,8 @@ class ClaudePort implements BackendPort {
     // n| 会话静默开空白新会话。
     if (hub.sessionId) spawnOpts.resumeSessionId = hub.sessionId
     hub.spawnOpts = spawnOpts
-    // C1 放行集重生喂回：map 中没有存活实例（即将 spawn）时，把 Hub 内存集移交进程层
-    // 保险箱（ensure → adoptAllowTools → spawn 前 take 喂回）。进程层集已被 dispose 焚毁
-    // 时不补——那是「重开会话失效」承诺生效后，不能再从 Hub 侧复活它（失效卡口已先清 Hub 侧）
-    const willRespawn = !processManager.get(hub.key)
-    const allowlistForRespawn = willRespawn ? hub.sessionAllowTools : undefined
     try {
-      const s = processManager.ensure(hub.key, spawnOpts, hubServices().sessionCallbacks(hub), allowlistForRespawn)
+      const s = processManager.ensure(hub.key, spawnOpts, hubServices().sessionCallbacks(hub))
       // spawn 成功（或已有存活进程）：live 流接管，停掉 transcript tailer 避免重复推送
       this.stopTailer(hub)
       // 懒 spawn：WS 可能在进程创建前已 open，对齐客户端引用计数

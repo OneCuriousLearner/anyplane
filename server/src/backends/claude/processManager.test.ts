@@ -126,87 +126,38 @@ describe('ClaudeSession onTurnTearingDown（拆轮清审批回调，review 轮�
   })
 })
 
-describe('「本会话允许」放行集重生喂回（C1）', () => {
-  test('spawn 开头 take 喂回：保险箱取走即清，二次取空', () => {
-    const key = `test-respawn-feed-${Math.random().toString(36).slice(2, 8)}`
-    const fed: string[][] = []
-    const s = new ClaudeSession(key, { cwd: process.cwd() }, {
+describe('「本会话允许」放行集进程层权威（C1）', () => {
+  function makeSession(key: string) {
+    return new ClaudeSession(key, { cwd: process.cwd() }, {
       onMessage: () => {},
       onApprovalRequest: () => {},
       onExit: () => {},
-      onAllowToolsRespawn: (tools) => fed.push([...tools]),
     })
-    s.adoptAllowTools(new Set(['Bash', 'Edit']))
-    const tools = s.takeAllowToolsForRespawn()
-    expect(tools ? [...tools] : undefined).toEqual(['Bash', 'Edit'])
-    expect(s.takeAllowToolsForRespawn()).toBeUndefined() // take 语义：二次取空
-    expect(fed).toEqual([]) // take 本身不喂——喂回在 spawn() 开头（真进程路径）
+  }
+
+  test('rememberAllowTool 写入 → allowsTool 命中；未记名工具不命中', () => {
+    const s = makeSession(`test-allow-hit-${Math.random().toString(36).slice(2, 8)}`)
+    expect(s.allowsTool('Write')).toBe(false)
+    s.rememberAllowTool('Write')
+    expect(s.allowsTool('Write')).toBe(true)
+    expect(s.allowsTool('Bash')).toBe(false)
   })
 
-  test('spawn() 开头喂回回调一次（喂回先于 spawn 失败路径，保险箱不残留）', () => {
-    const key = `test-respawn-spawn-${Math.random().toString(36).slice(2, 8)}`
-    const fed: string[][] = []
-    const s = new ClaudeSession(key, { cwd: `${process.cwd()}/no-such-dir-${key}` }, {
-      onMessage: () => {},
-      onApprovalRequest: () => {},
-      onExit: () => {},
-      onAllowToolsRespawn: (tools) => fed.push([...tools]),
-    })
-    s.adoptAllowTools(new Set(['Bash']))
-    // 真 spawn：cwd 不存在必 throw——验证喂回先于一切 throw（spawn 失败也不残留保险箱）
-    expect(() => s.spawn()).toThrow('项目目录不存在')
-    expect(fed).toEqual([['Bash']])
-    expect(s.takeAllowToolsForRespawn()).toBeUndefined()
-  })
-
-  test('dispose 同步焚毁进程层保险箱（不依赖 onExit 送达）', () => {
-    const key = `test-respawn-dispose-${Math.random().toString(36).slice(2, 8)}`
-    const s = new ClaudeSession(key, { cwd: process.cwd() }, {
-      onMessage: () => {},
-      onApprovalRequest: () => {},
-      onExit: () => {},
-    })
-    s.adoptAllowTools(new Set(['Bash']))
+  test('dispose 同步焚毁进程层集（不依赖 onExit 送达）', () => {
+    const s = makeSession(`test-allow-dispose-${Math.random().toString(36).slice(2, 8)}`)
+    s.rememberAllowTool('Write')
     s.dispose() // 同步路径
-    expect(s.takeAllowToolsForRespawn()).toBeUndefined()
+    expect(s.allowsTool('Write')).toBe(false)
   })
 
-  test('discardAllowTools 焚毁（/clear 重键与失效卡口的进程层动作）', () => {
-    const key = `test-respawn-discard-${Math.random().toString(36).slice(2, 8)}`
-    const s = new ClaudeSession(key, { cwd: process.cwd() }, {
-      onMessage: () => {},
-      onApprovalRequest: () => {},
-      onExit: () => {},
-    })
-    s.adoptAllowTools(new Set(['Edit']))
+  test('discardAllowTools 焚毁（/clear 重键与失效卡口的进程层动作），实例仍可复用', () => {
+    const s = makeSession(`test-allow-discard-${Math.random().toString(36).slice(2, 8)}`)
+    s.rememberAllowTool('Edit')
     s.discardAllowTools()
-    expect(s.takeAllowToolsForRespawn()).toBeUndefined()
-  })
-
-  test('ensure 把 allowlist 移交新实例；已有存活实例直接复用不重喂', () => {
-    const key = `test-respawn-ensure-${Math.random().toString(36).slice(2, 8)}`
-    const proto = ClaudeSession.prototype as unknown as { spawn: () => void }
-    const origSpawn = proto.spawn
-    proto.spawn = () => {}
-    try {
-      const s = processManager.ensure(key, { cwd: process.cwd() }, {
-        onMessage: () => {},
-        onApprovalRequest: () => {},
-        onExit: () => {},
-      }, new Set(['Bash']))
-      expect([...(s.takeAllowToolsForRespawn() ?? [])]).toEqual(['Bash'])
-      // 实例仍存活时 ensure 直接返回既有实例，allowlist 参数被忽略（不重喂）
-      const again = processManager.ensure(key, { cwd: process.cwd() }, {
-        onMessage: () => {},
-        onApprovalRequest: () => {},
-        onExit: () => {},
-      }, new Set(['Write']))
-      expect(again).toBe(s)
-      expect(s.takeAllowToolsForRespawn()).toBeUndefined()
-    } finally {
-      proto.spawn = origSpawn
-      processManager.dispose(key)
-    }
+    expect(s.allowsTool('Edit')).toBe(false)
+    // 焚毁后实例没死：可重新记名（同进程内新一次「本会话允许」）
+    s.rememberAllowTool('Bash')
+    expect(s.allowsTool('Bash')).toBe(true)
   })
 })
 

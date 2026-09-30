@@ -113,9 +113,11 @@ export function sessionCallbacks(hub: Hub) {
         deliverApproval(hub, req.requestId, decisionOfRule(auto.rule, req.input))
         return
       }
-      // 「本会话允许」内存放行集：WS 裁决 rememberTool 写入，与规则路径同形留痕
-      //（approval_auto 广播 + deliver 半段）；只放行不拒绝，/clear 重键即失效
-      if (hub.sessionAllowTools?.has(req.toolName)) {
+      // 「本会话允许」放行集命中判定（C1 治本）：权威在进程层（rememberTool 裁决时写入，
+      // dispose 同步焚毁，无喂回无复活）。审批到达时进程必活，直接查进程层——
+      // Hub 镜像（hub.sessionAllowTools）仅作 UI 展示，不参与命中（stale swallow 时
+      // 镜像可能残留而进程层已空，以进程层为准才不会错误放行）
+      if (portFor(hub.key).sessionOf(hub.key)?.allowsTool?.(req.toolName)) {
         log.info(`[approval] ${hub.key} 本会话放行 ${req.toolName}`)
         broadcast(hub, {
           kind: 'approval_auto',
@@ -164,11 +166,6 @@ export function sessionCallbacks(hub: Hub) {
     onTurnTearingDown: () => {
       clearPendingApprovals(hub)
       pushStatus(hub)
-    },
-    /** C1：重 spawn 时进程层保险箱喂回的放行集恢复进 Hub（「重开会话失效」的对称面：
-     *  没失效过的集才允许被带过来——失效路径早已走 dropSessionAllowTools 双边清理） */
-    onAllowToolsRespawn: (tools: Set<string>) => {
-      hub.sessionAllowTools = tools
     },
     /** 审批被上游终结（app-server 超时/中断/其他客户端应答，codex serverRequest/resolved）：
      *  同步清掉 Hub 侧 pending，否则死审批会随重连重放、status 恒 waiting。 */

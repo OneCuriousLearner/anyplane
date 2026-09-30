@@ -162,10 +162,11 @@ export class ClaudeSession {
   private clientCount = 0
   private idleTimer: Timer | undefined
   private exitEmitted = false
-  /** 「本会话允许」放行集的进程层保险箱（C1）：跨 dispose→ensure 重生携带。
-   *  ensure 在 spawn 前 take 一次（取走即清）；dispose/discardAllowTools 永久焚毁——
-   *  「重开会话失效」的承诺由此在进程层闭环，不再依赖 onExit 送达的掷硬币 */
-  private allowToolsForRespawn: Set<string> | undefined
+  /** 「本会话允许」放行集（进程层权威，C1）：rememberTool 裁决时写入（审批时进程必活），
+   *  dispose/discardAllowTools 永久焚毁。命中判定由 Hub 镜像先行、本集兜底（审批到达时
+   *  进程必活，本集必然存在；Hub 镜像只是 UI/快速路径）。「重开会话失效」因此不再依赖
+   *  onExit 送达——dispose 同步焚毁即终局，无喂回、无复活 */
+  private allowTools: Set<string> | undefined
   /** 本进程内各 turn result.usage 的累计（只计 token，不含任何费用字段） */
   private usageAcc = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
   /** 最近一次主线 API 调用的 usage（官方 statusline 的 context_window.current_usage 口径；
@@ -342,10 +343,6 @@ export class ClaudeSession {
 
   spawn(): void {
     if (this.proc && !this.exited) return
-    // C1：放行集保险箱 → Hub 喂回（take 语义先于一切 throw：cwd 不存在等 spawn 失败时
-    // 集已离箱不残留，喂回照常发生——「重开会话失效」的唯一例外是「从未重开过」）
-    const allowTools = this.takeAllowToolsForRespawn()
-    if (allowTools) this.cb.onAllowToolsRespawn?.(allowTools)
     // CLI flag 注入闸：这些值来自客户端 WS 消息（set_model/effort、/branch 标题等），
     // 数组形式 spawn 虽无 shell 拼接，但以 '-' 开头的值仍会被 commander 解析成独立
     // flag（触达 prompt 输入到不了的面，如 --append-system-prompt）。正常模型名/effort/
@@ -563,26 +560,24 @@ export class ClaudeSession {
     this.scheduleRecycleIfSafe()
   }
 
-  /** 「本会话允许」进程层接收（C1）：ProcessManager.ensure 在 spawn 前从 Hub 侧保险箱喂入 */
-  adoptAllowTools(tools: Set<string> | undefined): void {
-    this.allowToolsForRespawn = tools
+  /** rememberTool 裁决写入（C1 进程层权威）：审批到达时进程必活，写进本实例的集 */
+  rememberAllowTool(toolName: string): void {
+    ;(this.allowTools ??= new Set()).add(toolName)
   }
 
-  /** ensure 重 spawn 前取走（take 语义：取走后进程层不再持有，喂回失败也不残留） */
-  takeAllowToolsForRespawn(): Set<string> | undefined {
-    const t = this.allowToolsForRespawn
-    this.allowToolsForRespawn = undefined
-    return t
+  /** 命中查询（Hub 镜像未命中时的兜底；审批到达时进程必活，本查询是权威） */
+  allowsTool(toolName: string): boolean {
+    return this.allowTools?.has(toolName) ?? false
   }
 
   /** Hub 失效卡口经 SessionHandle 调用：与 dispose 同效但不动进程（/clear 重键路径用） */
   discardAllowTools(): void {
-    this.allowToolsForRespawn = undefined
+    this.allowTools = undefined
   }
 
   dispose(): void {
     this.cancelRecycle()
-    this.allowToolsForRespawn = undefined // C1：放行集随进程处置同步焚毁（不再依赖 onExit 送达）
+    this.allowTools = undefined // C1：放行集随进程处置同步焚毁（不依赖 onExit 送达）
     const pid = this.proc?.pid
     log.info(`[session ${this.key}] dispose pid=${pid ?? 'none'} exited=${this.exited}`)
     try {
@@ -856,7 +851,7 @@ class ProcessManager {
     return this.sessions.get(key)
   }
 
-  ensure(key: string, opts: SpawnOptions, cb: SessionCallbacks, allowlistForRespawn?: Set<string>): ClaudeSession {
+  ensure(key: string, opts: SpawnOptions, cb: SessionCallbacks): ClaudeSession {
     const existing = this.sessions.get(key)
     if (existing && !existing.exited) return existing
     // 旧实例已 exited 但仍占位时清掉
@@ -873,8 +868,6 @@ class ProcessManager {
         cb.onExit(code)
       },
     })
-    // C1：Hub 内存放行集移交进程层保险箱（take 发生在 spawn 前，喂回 cb 后保险箱即清）
-    s.adoptAllowTools(allowlistForRespawn)
     this.sessions.set(key, s)
     try {
       s.spawn()
