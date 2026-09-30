@@ -111,3 +111,9 @@ export function daemonAgents(): Map<string, DaemonAgent> {
   if (cache && now - cache.at >= MAX_STALE_MS) cache = undefined
   return cache?.map ?? new Map()
 }
+
+/** 测试专用注入/复位口：bun test 单进程跨文件共享模块实例，cache/inflight 是模块单态。
+ *  钉 TTL/陈旧语义须注入受控时间戳，不能依赖测试文件执行顺序。传 undefined 即复位。 */
+export function setAgentsCacheForTest(c: { at: number; map: Map<string, DaemonAgent> } | undefined): void {
+  cache = c
+}
