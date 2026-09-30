@@ -132,6 +132,10 @@ export class CodexSession {
   get connectedClients(): number {
     return this.clientCount
   }
+  /** 会话当前模型（E4 AI 标题用）：set_model 的运行时覆盖 > 启动参数；undefined = 上游默认 */
+  get currentModel(): string | undefined {
+    return (this.turnOverrides.model as string | undefined) ?? this.opts.model
+  }
   get cwd(): string | undefined {
     return this.opts.cwd
   }

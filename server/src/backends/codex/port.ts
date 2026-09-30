@@ -37,7 +37,7 @@ class CodexPort implements BackendPort {
     fileCheckpoint: false,
     branch: false,
     tailer: false,
-    aiTitle: false,
+    aiTitle: true, // E4：ephemeral 隐藏线程 + output_schema ≤36 字符 → thread/name/set（写前复查空名）
     externalGate: false,
     queries: ['mcp_status'],
     modelCatalog: true,
@@ -136,9 +136,48 @@ class CodexPort implements BackendPort {
     return s
   }
 
-  // codex 的实时流走 app-server 订阅，无 tailer 概念；无 AI 标题通道（goal 由 thread/goal/* 通知驱动）——
-  // 这两项与 notifyExternalGate/branch/rewindBoth 一样是 claude-only 能力，经 capabilities 声明缺席，
-  // hub 层按能力把关，适配器不再补 no-op（审计发现二：no-op 会把能力差异藏到运行时）。
+  // codex 的实时流走 app-server 订阅，无 tailer 概念。AI 标题（E4）已补：ephemeral 隐藏线程
+  // + output_schema ≤36 字符 → thread/name/set（写前复查空名、手动改名不覆盖、按 threadId 去重）。
+
+  /** 记录首条真实 user 消息作为标题素材（斜杠首消息跳过）；触发在 maybeGenerateTitle（需 threadId） */
+  afterUserSent(hub: Hub, text: string): void {
+    if (text.trim() && !text.startsWith('/') && !(hub.titleGeneratedFor && hub.titleGeneratedFor === hub.sessionId)) {
+      hub.pendingTitleText ??= text
+      this.maybeGenerateTitle(hub)
+    }
+  }
+
+  /**
+   * E4 AI 标题：首条真实 user 消息 × 线程无 name → ephemeral 隐藏线程（approval never、read-only、
+   * 30s、output_schema ≤36 字符）→ thread/name/set 写回。写前 thread/read 复查仍空名（另一客户端
+   * /rename 抢先则不覆盖——手动改名的线程不是 AnyPlane 该管的）；按 threadId 去重（titleGeneratedFor
+   * 记的是 threadId，与 claude 记 sessionId 同形）。标题失败静默降级（列表回退首条消息摘要）。
+   */
+  maybeGenerateTitle(hub: Hub): void {
+    const tid = hub.sessionId
+    const text = hub.pendingTitleText
+    if (!tid || !text || hub.titleGeneratedFor === tid) return
+    const s = codexRuntime.get(hub.key)
+    if (!s || s.exited) return
+    hub.titleGeneratedFor = tid
+    hub.pendingTitleText = undefined
+    void (async () => {
+      // 写前复查：线程当前 name 仍空才生成（手动改名/他端已生成都不覆盖）
+      const before = await codexRuntime.rpcRequest('thread/read', { threadId: tid, includeTurns: false }, 30_000) as {
+        thread?: { name?: string | null }
+      }
+      if (before.thread?.name) return
+      const title = await codexRuntime.runEphemeralTitleQuestion(tid, text, s.currentModel)
+      if (!title) return
+      // 生成后再复查一次（生成窗口内被 /rename 抢先也不覆盖）
+      const after = await codexRuntime.rpcRequest('thread/read', { threadId: tid, includeTurns: false }, 30_000) as {
+        thread?: { name?: string | null }
+      }
+      if (after.thread?.name) return
+      await codexRuntime.rpcRequest('thread/name/set', { threadId: tid, name: title }, 30_000)
+      log.info(`[title] ${hubServices().sessionNameOf(hub.key)} → ${title}`)
+    })().catch(() => {}) // 标题失败无害：列表回退首条消息摘要
+  }
 
   /** codex 回滚双轨（0.153.4 实测分流）：
    *  - paginated 线程（0.153 起新线程默认）：thread/revert 原地截断持久历史，thread id /

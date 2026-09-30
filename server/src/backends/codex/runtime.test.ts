@@ -77,3 +77,64 @@ describe('CodexRuntime app-server 闲置回收', () => {
     expect(rt.peekRpc()).toBeDefined()
   })
 })
+
+describe('CodexRuntime.runEphemeralTitleQuestion（E4 AI 标题）', () => {
+  /** fake rpcRequest：记录调用、按线程驱动 collector 全流程（fork→turn/start→item/completed→turn/completed） */
+  function withTitleFlow(rt: CodexRuntime, opts: { answerText: string; captureModel?: (m: unknown) => void; captureSchema?: (s: unknown) => void }) {
+    const forkId = 'fork-title-1'
+    ;(rt as unknown as { rpcRequest: unknown }).rpcRequest = async (method: string, params: Record<string, unknown>) => {
+      if (method === 'thread/fork') return { thread: { id: forkId } }
+      if (method === 'turn/start') {
+        opts.captureModel?.(params.model)
+        opts.captureSchema?.(params.outputSchema)
+        return {}
+      }
+      if (method === 'turn/interrupt') return {}
+      throw new Error(`unexpected rpc ${method}`)
+    }
+    return forkId
+  }
+
+  test('output_schema ≤36 字符 + 模型透传 + JSON 解析取 title', async () => {
+    const rt = new CodexRuntime()
+    let model: unknown
+    let schema: unknown
+    const forkId = withTitleFlow(rt, {
+      answerText: '{"title":"修复登录页崩溃"}',
+      captureModel: (m) => (model = m),
+      captureSchema: (s) => (schema = s),
+    })
+    // turn/start 后手动喂 collector：agentMessage + turn/completed
+    const promise = rt.runEphemeralTitleQuestion('src-tid', '帮我看看登录页点登录就白屏', 'k3-256k')
+    // 等 collector 注册（turn/start 已发）
+    await new Promise((r) => setTimeout(r, 10))
+    const feed = (rt as unknown as { feedCollector: (t: string, c: unknown, m: string, p: unknown) => void }).feedCollector.bind(rt)
+    const col = (rt as unknown as { collectors: Map<string, unknown> }).collectors.get(forkId)
+    feed(forkId, col, 'item/completed', { item: { type: 'agentMessage', text: '{"title":"修复登录页崩溃"}' } })
+    feed(forkId, col, 'turn/completed', { turn: { status: 'completed' } })
+
+    await expect(promise).resolves.toBe('修复登录页崩溃')
+    expect(model).toBe('k3-256k')
+    expect(schema).toMatchObject({
+      type: 'object',
+      properties: { title: { type: 'string', maxLength: 36 } },
+      required: ['title'],
+      additionalProperties: false,
+    })
+  })
+
+  test('非 JSON 回答兜原文；model undefined 时不带 model 字段', async () => {
+    const rt = new CodexRuntime()
+    let model: unknown = 'unset'
+    const forkId = withTitleFlow(rt, { answerText: '会话标题纯文本', captureModel: (m) => (model = m) })
+    const promise = rt.runEphemeralTitleQuestion('src-tid', '你好', undefined)
+    await new Promise((r) => setTimeout(r, 10))
+    const feed = (rt as unknown as { feedCollector: (t: string, c: unknown, m: string, p: unknown) => void }).feedCollector.bind(rt)
+    const col = (rt as unknown as { collectors: Map<string, unknown> }).collectors.get(forkId)
+    feed(forkId, col, 'item/completed', { item: { type: 'agentMessage', text: '会话标题纯文本' } })
+    feed(forkId, col, 'turn/completed', { turn: { status: 'completed' } })
+
+    await expect(promise).resolves.toBe('会话标题纯文本')
+    expect(model).toBeUndefined() // model undefined → turn/start 不带 model（上游默认）
+  })
+})
