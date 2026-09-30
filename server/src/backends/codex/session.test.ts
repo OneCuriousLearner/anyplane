@@ -278,6 +278,23 @@ describe('thread/name/updated 通知（改名回声）', () => {
     session.handleNotification('thread/name/updated', { threadId: 't-1' })
     expect(msgs).toEqual([])
   })
+
+  test('本端回声（noteSelfRename 同名 30s 内）→ 跳过不广播（E4 AI 标题//rename 不误报「已更名」）', () => {
+    const { session, msgs } = makeSession()
+    session.noteSelfRename('本端写的名')
+    session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '本端写的名' })
+    expect(msgs).toEqual([]) // 本端回声一次性消费，不广播
+    // 消费后同名再来（上游重放/另一客户端又写同名）→ 照常广播（已是外部事件）
+    session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '本端写的名' })
+    expect(msgs).toEqual([{ type: 'system', subtype: 'thread_renamed', text: '本端写的名' }])
+  })
+
+  test('外部改名（noteSelfRename 记的名与回声不同名）→ 照常广播', () => {
+    const { session, msgs } = makeSession()
+    session.noteSelfRename('本端写的名')
+    session.handleNotification('thread/name/updated', { threadId: 't-1', threadName: '外部改的名' })
+    expect(msgs).toEqual([{ type: 'system', subtype: 'thread_renamed', text: '外部改的名' }])
+  })
 })
 
 describe('error 通知（willRetry 口径对齐上游 ErrorNotification）', () => {
