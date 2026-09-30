@@ -115,6 +115,9 @@ class CodexPort implements BackendPort {
     s.syncClients(hub.clients.size)
     try {
       await s.start()
+      // x| 会话 start 后 cwd 已知（thread/resume 响应带）而 spawnOpts 恒 undefined——回写让
+      // cwdOfKey 的 sync 路径直接命中，@ 补全/改动摘要不再每次请求都全量拉列表兜底（review 轮附注）
+      if (!hub.spawnOpts?.cwd && s.cwd) hub.spawnOpts = { ...hub.spawnOpts, cwd: s.cwd }
     } catch (e) {
       // start 失败（如 -32600 线程被占用）必须摘掉句柄：否则 exited=false 的僵尸会话让
       // hasLiveSession 恒真——Hub 永不回收，且下次 ensure 复用同一坏对象永远不自愈。
