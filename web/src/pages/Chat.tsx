@@ -542,7 +542,7 @@ export function Chat(props: {
           onBack: props.onBack,
           usageLine,
         }}
-        tasksInfo={{ tasks, tasksOpen, onToggleTasks: () => setTasksOpen((v) => !v) }}
+        tasksInfo={{ tasks, tasksOpen, gitAvailable, onToggleTasks: () => setTasksOpen((v) => !v) }}
         identity={{
           isExisting,
           isCodex,
