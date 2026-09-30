@@ -88,3 +88,40 @@ describe('removeWorktree', () => {
     expect(countDirty(' M a.txt\n?? b.txt\nA  c.txt\nMM d.txt\n')).toEqual({ modified: 3, untracked: 1 })
   })
 })
+
+describe('含空格路径（review 轮 finding 1：shell:true 曾把未引用路径拆成多参数）', () => {
+  let spaceRoot = ''
+  let spaceMain = ''
+
+  beforeEach(() => {
+    spaceRoot = mkdtempSync(join(tmpdir(), 'anyplane gwt space-'))
+    spaceMain = join(spaceRoot, 'repo')
+    mkdirSync(spaceMain, { recursive: true })
+    git(['init', '-q', '-b', 'main'], spaceMain)
+    git(['config', 'user.email', 't@t.t'], spaceMain)
+    git(['config', 'user.name', 't'], spaceMain)
+    writeFileSync(join(spaceMain, 'seed.txt'), 'x\n')
+    git(['add', '-A'], spaceMain)
+    git(['commit', '-qm', 'seed'], spaceMain)
+  })
+
+  afterEach(() => {
+    rmSync(spaceRoot, { recursive: true, force: true })
+  })
+
+  test('add + dirty 检测 + remove 在含空格仓库路径下全程不断', () => {
+    const r = addWorktree(spaceMain, 'sp1')
+    expect(r.ok).toBe(true)
+    expect(r.path).toBe(join(spaceRoot, 'repo-sp1'))
+    expect(existsSync(join(r.path!, 'seed.txt'))).toBe(true)
+
+    writeFileSync(join(r.path!, 'new.txt'), 'untracked\n')
+    const first = removeWorktree(spaceMain, r.path!, false)
+    expect(first.ok).toBe(false)
+    expect(first.dirty).toEqual({ modified: 0, untracked: 1 })
+
+    const second = removeWorktree(spaceMain, r.path!, true)
+    expect(second.ok).toBe(true)
+    expect(existsSync(r.path!)).toBe(false)
+  })
+})

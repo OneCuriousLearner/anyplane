@@ -205,7 +205,8 @@ export async function handleSessionRoutes(
     })
   }
 
-  /** 按 cwd 收集在册会话 key（worktree 移除前的 busy 检查与 dispose 对象） */
+  /** 按 cwd 收集在册会话 key（worktree 移除前的 busy 检查与 dispose 对象）：
+   *  前缀匹配——worktree 根与其任何子目录的会话都算（子目录进程同样持有树锁，review 轮） */
   function sessionKeysForCwd(cwd: string): string[] {
     const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
     const target = norm(cwd)
@@ -213,14 +214,19 @@ export async function handleSessionRoutes(
     for (const key of hubs.keys()) {
       const hub = hubs.get(key)!
       const hubCwd = hub.spawnOpts?.cwd ?? describeKey(key)?.cwd
-      if (hubCwd && norm(hubCwd) === target) out.push(key)
+      if (hubCwd) {
+        const c = norm(hubCwd)
+        if (c === target || c.startsWith(`${target}/`)) out.push(key)
+      }
     }
     return out
   }
 
-  /** 移除：readGitInfo 校验 cwd 确为 worktree → busy 拒绝 → dispose 会话进程 → git worktree remove。
-   *  dirty 两步走：先不带 --force；被拒时 409 携带脏区统计（N 已修改/M 未跟踪），
-   *  前端确认「丢弃未提交改动」后以 force=true 调第二步——绝不静默 --force。不碰分支。 */
+  /** 移除：readGitInfo 校验 cwd 确为 worktree → busy 拒绝 → 先试 git worktree remove（不 dispose）
+   *  → 占用/锁失败且树干净才 dispose 会话进程重试（顺序优势：杀进程才解 Windows 目录锁；
+   *  成功/ dirty 升级时一个不杀——不再「失败也白杀全部会话」，review 轮）。
+   *  dirty 两步走：409 携带脏区统计（N 已修改/M 未跟踪），前端确认「丢弃未提交改动」后
+   *  以 force=true 调第二步（同样先试，占用则 dispose 重试）——绝不静默 --force。不碰分支。 */
   if (url.pathname === '/api/worktree/remove' && req.method === 'POST') {
     const body = await readJsonBody<{ cwd?: string; force?: boolean }>(req)
     if (!body.cwd) return json({ error: '缺少 cwd' }, { status: 400 })
@@ -233,15 +239,17 @@ export async function handleSessionRoutes(
     if (busyKeys.length > 0) {
       return json({ error: `该 worktree 有 ${busyKeys.length} 个会话正在工作，请先中断再移除` }, { status: 409 })
     }
-    // 先 dispose 再删目录（顺序优势：会话活着时目录被进程 cwd 句柄锁住，先杀进程才删得掉）
-    for (const k of keys) deps.portFor(k).disposeSession(k)
-    const r = removeWorktree(git.worktreeOf, body.cwd, body.force === true)
+    const force = body.force === true
+    // 先试不 dispose（成功/干净失败/dirty 升级都不杀会话——dirty 第一步、占用误判都保活）
+    let r = removeWorktree(git.worktreeOf, body.cwd, force)
+    // 占用/锁失败（非 dirty）且树干净：dispose 该 cwd 全部会话进程（杀进程解 Windows 目录锁）重试一次
+    if (!r.ok && !r.dirty) {
+      for (const k of keys) deps.portFor(k).disposeSession(k)
+      r = removeWorktree(git.worktreeOf, body.cwd, force)
+    }
     if (!r.ok) {
       if (r.dirty) {
-        return json(
-          { error: r.error ?? 'worktree 有未提交改动', dirty: r.dirty },
-          { status: 409 },
-        )
+        return json({ error: r.error ?? 'worktree 有未提交改动', dirty: r.dirty }, { status: 409 })
       }
       return json({ error: r.error ?? 'git worktree remove 失败' }, { status: 400 })
     }

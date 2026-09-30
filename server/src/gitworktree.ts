@@ -10,14 +10,26 @@ import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { childEnv } from './util'
 
-/** git 子进程一次性执行（数组 argv 无 shell 拼接；10s 超时） */
+/** 解析 git 可执行路径：优先 .exe（直接 spawn 无 shell——Windows 上 shell:true 会把未引用
+ *  的含空格路径拆成多参数，git 报 invalid reference，review 轮实锤）；找不到 .exe 再回退
+ *  裸 'git'（POSIX 走 PATH 解析；Windows 的 .cmd shim 场景退给 shell:true 调用方处理） */
+function resolveGitCmd(): { cmd: string; shell: boolean } {
+  if (process.platform === 'win32') {
+    const exe = Bun.which('git.exe') ?? Bun.which('git')
+    if (exe && exe.toLowerCase().endsWith('.exe')) return { cmd: exe, shell: false }
+    return { cmd: exe ?? 'git', shell: true } // .cmd shim 必须经 shell
+  }
+  return { cmd: 'git', shell: false }
+}
+
+/** git 子进程一次性执行（数组 argv；10s 超时）。shell 只在解析不到 .exe 时启用 */
 function git(args: string[], cwd: string): { code: number; stdout: string; stderr: string } {
-  const r = spawnSync('git', args, {
+  const { cmd, shell } = resolveGitCmd()
+  const r = spawnSync(cmd, args, {
     cwd,
     encoding: 'utf8',
     timeout: 10_000,
-    // git.cmd shim（Windows npm 布局）需 shell 才能执行；.exe 不需要
-    shell: process.platform === 'win32',
+    shell,
     env: childEnv(),
   })
   return {
@@ -84,9 +96,10 @@ export interface WorktreeRemoveResult {
 }
 
 /**
- * 移除 worktree。force=false 先试；git 因 dirty 拒绝时返回 { dirty }（路由层转 409 携带统计，
- * 前端确认「丢弃未提交改动」后再以 force=true 调第二步）。非 dirty 失败（目录被占/不存在）
- * 原样报错。只删目录与注册——分支保留（删分支是将来独立动作）。
+ * 移除 worktree。force=false 先试；失败时不依赖 git 英文报错文案——直接查
+ * `git status --porcelain`：有改动即返回 { dirty }（路由层转 409 让前端走确认第二步，
+ * 与 git 界面语言无关，review 轮）；无改动则是占用/锁/不存在等真失败，原样报错。
+ * 只删目录与注册——分支保留（删分支是将来独立动作）。
  */
 export function removeWorktree(mainRepoRoot: string, worktreePath: string, force: boolean): WorktreeRemoveResult {
   const args = ['worktree', 'remove', worktreePath]
@@ -94,20 +107,31 @@ export function removeWorktree(mainRepoRoot: string, worktreePath: string, force
   const r = git(args, mainRepoRoot)
   if (r.code === 0) return { ok: true }
   const errText = r.stderr.trim()
-  // dirty 拒绝的判定：git 报 "contains modified or untracked files"（不依赖退出码细分）
-  if (!force && /modified or untracked/i.test(errText)) {
+  // 失败即查脏区（不依赖 "modified or untracked" 文案——本地化 git 不报英文，review 轮）：
+  // 有改动 = dirty 两步走；无改动 = 占用/锁/不存在
+  if (!force) {
     const status = git(['-C', worktreePath, 'status', '--porcelain'], mainRepoRoot)
-    return { ok: false, dirty: countDirty(status.stdout), error: errText }
+    const dirty = countDirty(status.stdout)
+    if (dirty.modified > 0 || dirty.untracked > 0) {
+      return { ok: false, dirty, error: errText }
+    }
   }
   return { ok: false, error: errText || `git worktree remove 退出码 ${r.code}` }
 }
 
+/** worktree 的脏区统计（路由层「dispose 后重试」路径与 dirty 检测共用） */
+export function dirtyOf(worktreePath: string): WorktreeDirtyInfo {
+  const status = git(['-C', worktreePath, 'status', '--porcelain'], dirname(worktreePath))
+  return countDirty(status.stdout)
+}
+
 /** git 是否可用（路由层入口隐藏判定：git 缺席时整个 worktree 功能降级） */
 export function gitAvailable(): boolean {
-  const r = spawnSync('git', ['--version'], {
+  const { cmd, shell } = resolveGitCmd()
+  const r = spawnSync(cmd, ['--version'], {
     encoding: 'utf8',
     timeout: 5_000,
-    shell: process.platform === 'win32',
+    shell,
     env: childEnv(),
   })
   return r.status === 0
