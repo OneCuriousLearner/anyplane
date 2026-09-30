@@ -182,7 +182,11 @@ export function Composer(props: {
     let alive = true
     const t = setTimeout(() => {
       fetchFsComplete(sessionKey, atPrefix)
-        .then((es) => alive && setAtEntries(es))
+        .then((es) => {
+          if (!alive) return
+          setAtEntries(es)
+          setAtIdx(0) // 新结果集回第 0 项——↓ 过的旧索引不该钳到任意行（review 轮）
+        })
         .catch(() => alive && setAtEntries([]))
     }, 120) // 轻防抖：键入连续触发时不打爆 fs（120ms 内合并为最后一次）
     return () => {
@@ -403,8 +407,9 @@ export function Composer(props: {
             }}
             onPaste={onPaste}
             onKeyDown={(e) => {
-              // E3 @ 文件补全面板打开时的键盘导航（优先于斜杠面板——@ 触发更具体）
-              if (atEntries.length > 0) {
+              // E3 @ 文件补全面板打开时的键盘导航（优先于斜杠面板——@ 触发更具体）。
+              // isComposing 守卫：CJK IME 组合期间 ↑↓/Tab/Esc 是候选窗的操作，不得劫持（review 轮）
+              if (atEntries.length > 0 && !e.nativeEvent.isComposing) {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
                   setAtIdx((i) => Math.min(i + 1, atEntries.length - 1))
