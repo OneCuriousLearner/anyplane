@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test'
-import { cliSidechainToHistory, statusLineOf } from './chatText'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { cliSidechainToHistory, copyText, statusLineOf } from './chatText'
 import type { SessionState } from '@anyplane/protocol'
 
 const baseState: SessionState = { spawned: false, busy: false }
@@ -58,5 +58,89 @@ describe('cliSidechainToHistory', () => {
     })
     expect(h?.role).toBe('assistant')
     expect(h?.blocks).toEqual([{ kind: 'text', text: '答' }])
+  })
+})
+
+// onImage 闸：桶转录里的图片只放行本站 /api/uploads/<16 位小写 hex>.<jpg|png|gif|webp>
+// （服务端已把 localImage 解析成该形态）；其余一律丢弃——此前无承接方时图片被静默丢弃，
+// 放开承接后闸本身成了唯一防线，逐类钉住。
+describe('cliSidechainToHistory 的 onImage URL 闸', () => {
+  const imgOnly = (c: Record<string, unknown>) => ({ type: 'user', message: { content: [c] } })
+
+  test('本站 uploads 相对路径四种扩展名全部放行', () => {
+    for (const ext of ['jpg', 'png', 'gif', 'webp']) {
+      const url = `/api/uploads/0123456789abcdef.${ext}`
+      const h = cliSidechainToHistory(imgOnly({ type: 'image', url }))
+      expect(h?.blocks).toEqual([{ kind: 'image', src: url }])
+    }
+  })
+
+  test('绝对 URL / 非 uploads 路径 / 白名单外扩展名 / hex 形状不符：一律丢弃（块空则整条 null）', () => {
+    for (const url of [
+      'https://evil.example.com/api/uploads/0123456789abcdef.png', // 只放行同源相对路径
+      '/api/other/0123456789abcdef.png',
+      '/api/uploads/0123456789abcdef.svg',
+      '/api/uploads/0123456789abcdef.jpeg', // jpeg 不在白名单
+      '/api/uploads/0123456789abc.png', // 不足 16 位
+      '/api/uploads/0123456789ABCDEF.png', // 大写 hex 不符
+    ]) {
+      expect(cliSidechainToHistory(imgOnly({ type: 'image', url }))).toBeNull()
+    }
+  })
+
+  test('url 缺失丢弃；混合内容只落合法块', () => {
+    expect(cliSidechainToHistory(imgOnly({ type: 'image' }))).toBeNull()
+    const h = cliSidechainToHistory({
+      type: 'user',
+      message: {
+        content: [
+          { type: 'text', text: '看图' },
+          { type: 'image', url: 'https://x.example.com/api/uploads/0123456789abcdef.png' },
+        ],
+      },
+    })
+    expect(h?.blocks).toEqual([{ kind: 'text', text: '看图' }])
+  })
+})
+
+// copyText 降级链：clipboard API（仅安全上下文）→ textarea+execCommand 回退 → false。
+// bun test 无 document，回退路径在此环境必败——恰好钉住「回退也失败时如实返回 false」。
+describe('copyText', () => {
+  let saved: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    saved = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  })
+
+  afterEach(() => {
+    if (saved) Object.defineProperty(navigator, 'clipboard', saved)
+    else delete (navigator as { clipboard?: unknown }).clipboard
+  })
+
+  test('clipboard API 可用且成功：返回 true，文本逐字透传', async () => {
+    const seen: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (t: string) => void seen.push(t) },
+    })
+    await expect(copyText('hello\n多行')).resolves.toBe(true)
+    expect(seen).toEqual(['hello\n多行'])
+  })
+
+  test('clipboard 拒绝（权限等）→ 走回退；回退也失败（无 DOM）→ false 而非抛错', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new Error('denied')
+        },
+      },
+    })
+    await expect(copyText('x')).resolves.toBe(false)
+  })
+
+  test('clipboard 缺席（http 局域网非安全上下文）→ 直接回退 → false', async () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    await expect(copyText('x')).resolves.toBe(false)
   })
 })
