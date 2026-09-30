@@ -151,7 +151,11 @@ class CodexPort implements BackendPort {
    * E4 AI 标题：首条真实 user 消息 × 线程无 name → ephemeral 隐藏线程（approval never、read-only、
    * 30s、output_schema ≤36 字符）→ thread/name/set 写回。写前 thread/read 复查仍空名（另一客户端
    * /rename 抢先则不覆盖——手动改名的线程不是 AnyPlane 该管的）；按 threadId 去重（titleGeneratedFor
-   * 记的是 threadId，与 claude 记 sessionId 同形）。标题失败静默降级（列表回退首条消息摘要）。
+   * 记的是 threadId，与 claude 记 sessionId 同形）。
+   * 失败恢复记账等重试：新线程首轮触发时 rollout 尚未落盘，thread/fork 读磁盘必失败
+   * （-32603 rollout is empty）——catch 里回滚 titleGeneratedFor/pendingTitleText，
+   * 由 turn 完成（result）钩（hub/callbacks.ts）再次触发即可成功；复查发现已有 name 属
+   * 「已完成」不恢复（保持记账防重试）。
    */
   maybeGenerateTitle(hub: Hub): void {
     const tid = hub.sessionId
@@ -168,15 +172,23 @@ class CodexPort implements BackendPort {
       }
       if (before.thread?.name) return
       const title = await codexRuntime.runEphemeralTitleQuestion(tid, text, s.currentModel)
-      if (!title) return
+      if (!title) throw new Error('ephemeral 线程未给出标题')
       // 生成后再复查一次（生成窗口内被 /rename 抢先也不覆盖）
       const after = await codexRuntime.rpcRequest('thread/read', { threadId: tid, includeTurns: false }, 30_000) as {
         thread?: { name?: string | null }
       }
       if (after.thread?.name) return
+      s.noteSelfRename(title) // 本端写回登记：thread/name/updated 回声（同名 30s 内）不广播「已更名」系统行
       await codexRuntime.rpcRequest('thread/name/set', { threadId: tid, name: title }, 30_000)
       log.info(`[title] ${hubServices().sessionNameOf(hub.key)} → ${title}`)
-    })().catch(() => {}) // 标题失败无害：列表回退首条消息摘要
+    })().catch((e) => {
+      // 恢复记账等 result 钩重试；仅当记账仍属本次尝试时才回滚（并发新尝试不背锅）
+      if (hub.titleGeneratedFor === tid) {
+        hub.titleGeneratedFor = undefined
+        hub.pendingTitleText ??= text
+      }
+      log.warn(`[title] codex AI 标题生成失败（已记账待重试） key=${hub.key} tid=${tid}:`, e)
+    })
   }
 
   /** codex 回滚双轨（0.153.4 实测分流）：
