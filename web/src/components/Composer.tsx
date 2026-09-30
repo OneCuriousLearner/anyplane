@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { CodexModelInfo, ServerConfigInfo, TierModelName } from '@anyplane/protocol'
-import { resolveModel } from '../lib/api'
+import { resolveModel, fetchFsComplete, type FsCompleteEntry } from '../lib/api'
 import { COMMAND_DESC, filterSlashHints, mergeSlashCommands, type SlashEntry } from '../lib/slashCommands'
 import type { SessionState } from '@anyplane/protocol'
 import { ContextRing } from './ContextRing'
@@ -62,6 +62,8 @@ export interface ComposerCoreProps {
   /** 斜杠命令清单来源：status 的 slashCommands 优先，init 消息的命令名兜底 */
   slashCommands?: SessionState['slashCommands']
   initSlashCommands?: string[]
+  /** 会话 key（E3 @ 文件补全按它反查 cwd；缺席时 @ 面板不出） */
+  sessionKey?: string
 }
 
 /** claude StatusPill 域（isCodex=false 时生效） */
@@ -118,6 +120,7 @@ export function Composer(props: {
     onScrollToBottom,
     slashCommands,
     initSlashCommands,
+    sessionKey,
   } = props.core
   const { topSlot } = props
   const {
@@ -161,6 +164,52 @@ export function Composer(props: {
     if (rRect.top < cRect.top) c.scrollTop -= cRect.top - rRect.top
     else if (rRect.bottom > cRect.bottom) c.scrollTop += rRect.bottom - cRect.bottom
   }, [slashActive, slashHints.length])
+
+  // ---------- E3 @ 文件补全（cwd 单层列举+前缀，键盘语义复用斜杠面板） ----------
+  /** 输入末尾的 @ 触发词（最后一个 @ 起、不含空格的连续段；@ 后是路径前缀） */
+  const atMatch = /(?:^|\s)@([^\s@]*)$/.exec(input)
+  const atPrefix = sessionKey && atMatch ? atMatch[1]! : null
+  const [atEntries, setAtEntries] = useState<FsCompleteEntry[]>([])
+  const [atIdx, setAtIdx] = useState(0)
+  const atActive = atEntries.length > 0 ? Math.min(atIdx, atEntries.length - 1) : 0
+  const atScrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (atPrefix === null || !sessionKey) {
+      setAtEntries([])
+      return
+    }
+    let alive = true
+    const t = setTimeout(() => {
+      fetchFsComplete(sessionKey, atPrefix)
+        .then((es) => alive && setAtEntries(es))
+        .catch(() => alive && setAtEntries([]))
+    }, 120) // 轻防抖：键入连续触发时不打爆 fs（120ms 内合并为最后一次）
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [atPrefix, sessionKey])
+
+  useEffect(() => {
+    const c = atScrollRef.current
+    if (!c || atEntries.length === 0) return
+    const row = c.querySelectorAll('button')[atActive]
+    if (!row) return
+    const cRect = c.getBoundingClientRect()
+    const rRect = row.getBoundingClientRect()
+    if (rRect.top < cRect.top) c.scrollTop -= cRect.top - rRect.top
+    else if (rRect.bottom > cRect.bottom) c.scrollTop += rRect.bottom - cRect.bottom
+  }, [atActive, atEntries.length])
+
+  /** 采纳补全项：把 @前缀 替换为 @路径（目录续探、文件收尾加空格） */
+  const applyAtEntry = (entry: FsCompleteEntry) => {
+    const replacement = entry.dir ? `${entry.path}/` : `${entry.path} `
+    onInputChange(input.slice(0, input.length - (atMatch?.[1]?.length ?? 0)) + replacement)
+    setAtEntries([])
+    setAtIdx(0)
+    inputRef.current?.focus()
+  }
 
   // 输入框自适应高度：随内容增长，超过 200px 后不再扩大、内部滚动。
   // 注意 border-box：style.height 包含边框，需补回上下边框宽，否则单行时内容被裁出滚动条
@@ -221,6 +270,28 @@ export function Composer(props: {
     //（含透明边区）吞掉审批卡按钮的点击（走查并发轮问题 1）
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,var(--sab))] pt-2">
       <div className="mx-auto max-w-3xl">
+        {atEntries.length > 0 && (
+          <div className="pointer-events-auto mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+            <div ref={atScrollRef} className="max-h-60 overflow-y-auto">
+              {atEntries.map((entry, i) => (
+                <button type="button"
+                  key={entry.path}
+                  className={`flex w-full items-center gap-2 rounded-[10px] px-2.5 py-1.5 text-left ${
+                    i === atActive ? 'bg-surface' : 'hover:bg-surface'
+                  }`}
+                  onMouseEnter={() => setAtIdx(i)}
+                  onClick={() => applyAtEntry(entry)}
+                >
+                  <span className="font-mono text-[12px] text-ink">{entry.dir ? `${entry.name}/` : entry.name}</span>
+                  {entry.dir && <span className="font-mono text-[10px] text-faint">目录</span>}
+                </button>
+              ))}
+            </div>
+            <div className="px-2.5 py-1 font-mono text-[9px] tracking-wide text-faint">
+              {atEntries.length} 项 · ↑↓ 移动 · Tab/Enter 采纳 · Esc 关闭
+            </div>
+          </div>
+        )}
         {slashHints.length > 0 && (
           <div className="pointer-events-auto mb-2 rounded-[14px] bg-surface2/85 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.5)] backdrop-blur-xl">
             {/* 完整清单可滚动（CLI initialize 握手报告多少就列多少），自有命令置顶；键盘导航时高亮行跟随滚动 */}
@@ -332,6 +403,30 @@ export function Composer(props: {
             }}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              // E3 @ 文件补全面板打开时的键盘导航（优先于斜杠面板——@ 触发更具体）
+              if (atEntries.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setAtIdx((i) => Math.min(i + 1, atEntries.length - 1))
+                  return
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setAtIdx((i) => Math.max(i - 1, 0))
+                  return
+                }
+                if (e.key === 'Tab') {
+                  e.preventDefault()
+                  applyAtEntry(atEntries[atActive]!)
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setAtEntries([])
+                  setAtIdx(0)
+                  return
+                }
+              }
               // 斜杠命令面板打开时的键盘导航
               if (slashHints.length > 0) {
                 if (e.key === 'ArrowDown') {
@@ -358,6 +453,12 @@ export function Composer(props: {
                 }
               }
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                // @ 补全打开时 Enter 采纳高亮项（不发送）——与斜杠面板「先补全不发送」同律
+                if (atEntries.length > 0) {
+                  e.preventDefault()
+                  applyAtEntry(atEntries[atActive]!)
+                  return
+                }
                 e.preventDefault()
                 // 输入还是高亮命令的真前缀时先补全不发送；完整命令名（如 /compact）才直接发送
                 const trimmed = input.trim()

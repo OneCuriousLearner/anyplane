@@ -229,3 +229,39 @@ describe('POST /api/sessions', () => {
     })
   })
 })
+
+describe('GET /api/sessions/fs-complete（E3 @ 文件补全）', () => {
+  test('缺少 key 返回 400', async () => {
+    const response = await handleSessionRoutes(
+      new Request('http://localhost/api/sessions/fs-complete'),
+      new URL('http://localhost/api/sessions/fs-complete'),
+    )
+    expect(response?.status).toBe(400)
+  })
+
+  test('注入闸：../ 与绝对路径被拒（400），相对前缀放行', async () => {
+    const cases = [
+      ['../etc', true],
+      ['a/../../b', true],
+      ['..%2F..%2Fetc', true], // URL 解码后仍是 ../
+      ['/etc/passwd', true],
+      ['D:\\Windows', true],
+      ['C:/Windows', true],
+      ['src/comp', false],
+      ['read', false],
+      ['.git', false],
+    ] as const
+    for (const [prefix, shouldReject] of cases) {
+      const response = await handleSessionRoutes(
+        new Request(`http://localhost/api/sessions/fs-complete?key=n%7C%2Ftmp%2Fx&prefix=${encodeURIComponent(prefix)}`),
+        new URL(`http://localhost/api/sessions/fs-complete?key=n%7C%2Ftmp%2Fx&prefix=${encodeURIComponent(prefix)}`),
+      )
+      if (shouldReject) {
+        expect(response?.status).toBe(400) // 注入即 400（闸先于 cwd 反查触发）
+      } else {
+        // 放行路径：cwd 反查不到（n|/tmp/x 不存在）→ available:false（200，不是 400）
+        expect(response?.status).toBe(200)
+      }
+    }
+  })
+})
