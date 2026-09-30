@@ -12,7 +12,7 @@
 // 优先用水合下发的 parentToolUseId（服务端 toolUseParents 推导），缺省时渲染期
 // 从各桶转录里工具块的归属反推——嵌套的 Agent tool_use 出现在父任务转录中。
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Transcript } from './Transcript'
 import { buildTranscriptRows, fmtTokens, type ChatMsg } from '../lib/blocks'
 import { ChangesPanel } from './ChangesPanel'
@@ -207,11 +207,26 @@ export function flattenTasks(tasks: TaskFeed[]): Array<{ feed: TaskFeed; depth: 
   return flat
 }
 
+const TASKS_WIDTH_KEY = 'anyplane-tasks-panel-width'
+const TASKS_WIDTH_DEFAULT = 380
+const TASKS_WIDTH_MIN = 300
+const TASKS_WIDTH_MAX = 720
+
+function clampTasksWidth(n: number): number {
+  return Math.min(TASKS_WIDTH_MAX, Math.max(TASKS_WIDTH_MIN, Math.round(n)))
+}
+
+function loadTasksWidth(): number {
+  const n = Number(localStorage.getItem(TASKS_WIDTH_KEY))
+  return Number.isFinite(n) && n > 0 ? clampTasksWidth(n) : TASKS_WIDTH_DEFAULT
+}
+
 /**
  * 会话侧拉栏（vscode 式多页签）：「后台任务 / 改动」两页签共存（E2）。
  * 桌面端是对话列的可收起右边栏（占位、不遮抄本）；移动端仍全宽 fixed 覆盖（带背板）。
  * 「改动」页签只在 git 可用时显示（非 git 目录会话入口隐藏，与 DirPicker 同律）。
  * 后台任务默认只展示前 VISIBLE_LIMIT 张卡（深度优先序），其余点击「展开」。
+ * 宽度可拖（左缘分隔条，与左侧会话列表栏同律；双击恢复默认 380）。
  */
 export function TasksPanel(props: {
   open: boolean
@@ -226,11 +241,41 @@ export function TasksPanel(props: {
   const { open, onClose, tasks, onStop, sessionKey, gitAvailable } = props
   const [expanded, setExpanded] = useState(false)
   const [tab, setTab] = useState<'tasks' | 'changes'>('tasks')
+  const [width, setWidth] = useState(loadTasksWidth)
+  const [resizing, setResizing] = useState(false)
   // review 轮：sessionKey 变化时复位页签——A 会话的「改动」选择不泄漏到 B 会话
   useEffect(() => {
     setTab('tasks')
   }, [sessionKey])
   const flat = useMemo(() => flattenTasks(tasks), [tasks])
+
+  const persistWidth = (w: number) => {
+    const next = clampTasksWidth(w)
+    setWidth(next)
+    localStorage.setItem(TASKS_WIDTH_KEY, String(next))
+  }
+  // 右栏在右缘：往左拖变宽（clientX 越小越宽）——以视口宽减 clientX 得栏宽
+  const widthFromClientX = (x: number) => clampTasksWidth(window.innerWidth - x)
+  const onResizeDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+  const onResizeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    setWidth(widthFromClientX(e.clientX))
+  }
+  const onResizeUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    setResizing(false)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    persistWidth(widthFromClientX(e.clientX))
+  }
+
   if (!open) return null
   const runningCount = tasks.filter((s) => s.status === 'running').length
   const visible = expanded ? flat : flat.slice(0, VISIBLE_LIMIT)
@@ -240,7 +285,29 @@ export function TasksPanel(props: {
   return (
     <>
       <div className="fixed inset-0 z-[80] bg-bg/60 md:hidden" onClick={onClose} aria-hidden />
-      <aside className="fixed inset-y-0 right-0 z-[80] flex h-full min-h-0 w-full flex-col bg-[var(--task-pane)] md:static md:z-auto md:w-[380px] md:shrink-0">
+      <aside
+        // 宽度：移动端 class 全宽（fixed 覆盖）；桌面端内联 style（可拖调宽，分隔条在左缘）
+        className="fixed inset-y-0 right-0 z-[80] flex h-full min-h-0 w-full flex-col bg-[var(--task-pane)] md:relative md:z-auto md:w-[var(--tasks-w,380px)] md:shrink-0"
+        style={{ ['--tasks-w' as never]: `${width}px` }}
+      >
+        {/* biome-ignore lint/a11y/useSemanticElements: 可拖拽分隔条需要 aria-valuenow/min/max，原生 <hr> 不支持——与左侧会话列表栏同款 ARIA 窗口分隔条模式 */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整面板宽度"
+          aria-valuenow={width}
+          aria-valuemin={TASKS_WIDTH_MIN}
+          aria-valuemax={TASKS_WIDTH_MAX}
+          title="拖动调整宽度，双击恢复默认"
+          className={`absolute inset-y-0 left-0 z-20 hidden w-1.5 cursor-col-resize touch-none md:block ${
+            resizing ? 'bg-muted/50' : 'hover:bg-muted/30'
+          }`}
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          onDoubleClick={() => persistWidth(TASKS_WIDTH_DEFAULT)}
+        />
         <div className="flex items-center gap-1 px-3 py-2.5">
           {showChanges ? (
             <div className="flex rounded-full bg-surface p-0.5 font-mono text-[11px]">
