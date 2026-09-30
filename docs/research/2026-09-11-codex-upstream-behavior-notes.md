@@ -100,3 +100,18 @@
   ACCESS_DENIED——故表现 flaky 且与"谁先起跑"相关。e2e-codex-streaming 的 B 组断言
   在此环境下失败是环境/上游问题，不是协议回归——用 `e2e-codex-delta` 的 outputDelta
   探针验证 wire 通路即可区分。
+
+## thread/fork 从磁盘读线程（0.158.0 实测）
+
+- `thread/fork` 的实现是**从磁盘 rollout 加载源线程再复制**（ThreadForkParams 文档原话
+  "load the thread from disk by thread_id and fork it"）。因此**新线程首轮 turn 刚开始时
+  fork 必失败**：rollout 文件已创建但尚未写入任何内容，报
+  `-32603 failed to read thread: thread-store internal error: failed to read session metadata
+  <rollout 路径>: rollout at <路径> is empty`。turn 完成（哪怕被中断）后 rollout 有内容即可 fork。
+  AnyPlane 的 AI 标题（E4）因此设计为：失败恢复记账 + turn 完成（result）重试。
+- 推论：任何「线程刚 `thread/start` 成功就立刻 fork」的调用方都会踩这个坑；fork 前要么等
+  首个 turn 完成，要么做好失败重试。
+- `excludeTurns` 是**响应整形**而非历史裁剪：fork 出来的线程仍携带完整会话历史，该参数只
+  控制响应里不填充 `thread.turns`（配合 `thread/turns/list` 分页读取）。想让 fork「看不到
+  历史」是没有的——ephemeral 标题线程的模型实际能看到源线程全部对话（对标题生成反而有利，
+  但 token 成本与「空历史一次性问答」的直觉不同）。
