@@ -165,19 +165,24 @@ export function parseStatusPorcelain(porcelain: string): StatusFileEntry[] {
   return out
 }
 
-/** 按会话 cwd 的改动摘要：分支 + 文件清单 + 分组计数。非 git 目录/git 失败返回 undefined（前端隐藏入口） */
+/** 按会话 cwd 的改动摘要：分支 + 文件清单 + 分组计数。非 git 目录/git 失败返回 undefined（前端隐藏入口）。
+ *  单次 `git status --porcelain --branch`（首行 `## branch` 解析分支）——两次同步 spawn 合并为一次，
+ *  前端 5s 轮询 × N 标签页下的同步阻塞减半（review 轮）。 */
 export function statusSummaryOf(cwd: string): GitStatusSummary | undefined {
-  const status = git(['-C', cwd, 'status', '--porcelain'], cwd)
+  const status = git(['-C', cwd, 'status', '--porcelain', '--branch'], cwd)
   if (status.code !== 0) return undefined
-  const branchR = git(['-C', cwd, 'branch', '--show-current'], cwd)
-  const files = parseStatusPorcelain(status.stdout)
+  const lines = status.stdout.split('\n')
+  // 首行 `## <branch>`（detached 时是 `## HEAD (no branch)`，归 undefined 由前端显示 detached）
+  const header = lines[0]?.startsWith('## ') ? lines[0].slice(3).trim() : ''
+  const branch = header && !header.startsWith('HEAD') ? header : undefined
+  const files = parseStatusPorcelain(lines.slice(1).join('\n'))
   const counts = { modified: 0, untracked: 0, deleted: 0 }
   for (const f of files) {
     if (f.kind === 'untracked') counts.untracked++
     else if (f.kind === 'deleted') counts.deleted++
     else counts.modified++ // added 并入 modified 计数展示（分组时仍单列）
   }
-  return { branch: branchR.stdout.trim() || undefined, files, counts }
+  return { branch, files, counts }
 }
 
 /** git 是否可用（路由层入口隐藏判定：git 缺席时整个 worktree 功能降级） */

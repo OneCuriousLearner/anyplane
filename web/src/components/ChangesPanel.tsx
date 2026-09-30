@@ -30,6 +30,9 @@ export function ChangesPanel(props: { sessionKey: string }) {
 
   useEffect(() => {
     let alive = true
+    // review 轮：sessionKey 变化先清旧数据——新会话第一帧不闪上一个会话的改动清单
+    setResult(null)
+    setErr('')
     const load = () => {
       fetchGitStatus(props.sessionKey)
         .then((r) => {

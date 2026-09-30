@@ -226,6 +226,10 @@ export function TasksPanel(props: {
   const { open, onClose, tasks, onStop, sessionKey, gitAvailable } = props
   const [expanded, setExpanded] = useState(false)
   const [tab, setTab] = useState<'tasks' | 'changes'>('tasks')
+  // review 轮：sessionKey 变化时复位页签——A 会话的「改动」选择不泄漏到 B 会话
+  useEffect(() => {
+    setTab('tasks')
+  }, [sessionKey])
   const flat = useMemo(() => flattenTasks(tasks), [tasks])
   if (!open) return null
   const runningCount = tasks.filter((s) => s.status === 'running').length

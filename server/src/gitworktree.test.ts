@@ -100,12 +100,20 @@ describe('statusSummaryOf（E2 改动摘要）', () => {
     ])
   })
 
-  test('干净仓库返回空清单 + 分支名', () => {
+  test('干净仓库返回空清单 + 分支名（porcelain --branch 单次调用解析）', () => {
     const s = statusSummaryOf(main)
     expect(s).toBeDefined()
     expect(s!.branch).toBe('main')
     expect(s!.files).toEqual([])
     expect(s!.counts).toEqual({ modified: 0, untracked: 0, deleted: 0 })
+  })
+
+  test('detached HEAD 时 branch 为 undefined（前端显示 detached）', () => {
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: main, encoding: 'utf8', shell: process.platform === 'win32' }).stdout.trim()
+    git(['checkout', '-q', head], main)
+    const s = statusSummaryOf(main)!
+    expect(s.branch).toBeUndefined()
+    git(['checkout', '-q', 'main'], main)
   })
 
   test('混合改动按组计数（untracked/deleted 各归各）', () => {
