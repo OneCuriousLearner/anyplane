@@ -15,6 +15,7 @@ import {
   fetchCodexHistory,
   fetchCodexModels,
   fetchConfig,
+  fetchGitAvailable,
   fetchHistory,
   fetchLineage,
   makeSessionInfo,
@@ -92,6 +93,14 @@ export function Chat(props: {
   // 桶状态与辅助群已下沉 hooks/useTaskBuckets.ts（F3）：api 为每渲染重建的普通对象——
   // 内部全走 ref/稳定 setState/isCodex（会话内不变），与此前过期闭包语义等价
   const { tasks, tasksOpen, setTasksOpen, api: taskApi } = useTaskBuckets({ isCodex })
+
+  // E2「改动」页签：git 可用才显示入口（探测一次即可，git 缺席整个 worktree/改动功能同律降级）
+  const [gitAvailable, setGitAvailable] = useState(false)
+  useEffect(() => {
+    fetchGitAvailable()
+      .then(setGitAvailable)
+      .catch(() => {})
+  }, [])
 
   // ---------- 主抄本 ingest（消息/流式草稿/配对索引 + cli 流驱动的会话元数据；F4/F5 下沉 hooks/useTranscriptIngest.ts） ----------
   // api 为每渲染重建的普通对象：内部全走 ref/稳定 setState，过期闭包语义等价
@@ -533,7 +542,7 @@ export function Chat(props: {
           onBack: props.onBack,
           usageLine,
         }}
-        tasksInfo={{ tasks, tasksOpen, onToggleTasks: () => setTasksOpen((v) => !v) }}
+        tasksInfo={{ tasks, tasksOpen, gitAvailable, onToggleTasks: () => setTasksOpen((v) => !v) }}
         identity={{
           isExisting,
           isCodex,
@@ -727,6 +736,8 @@ export function Chat(props: {
         open={tasksOpen}
         onClose={() => setTasksOpen(false)}
         tasks={tasks}
+        sessionKey={session.key}
+        gitAvailable={gitAvailable}
         onStop={
           // codex app-server 没有 stop_task 对应物（sendControl 落 default 报错卡），不显示停止按钮
           isCodex

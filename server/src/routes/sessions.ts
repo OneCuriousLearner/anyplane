@@ -5,7 +5,7 @@ import type { ArchivedEntry, CreateSessionResponse, SessionInfo } from '@anyplan
 import { backendPort, describeKey, portFor, slugForBackend, type RouteResult } from '../backends/port'
 import type { SessionSummary } from '../backends/types'
 import { type GitInfo, readGitInfo } from '../fsbrowse'
-import { addWorktree, gitAvailable, removeWorktree } from '../gitworktree'
+import { addWorktree, gitAvailable, removeWorktree, statusSummaryOf } from '../gitworktree'
 import { hubs } from '../hub/registry'
 import { statusOf } from '../hub/status'
 import { log } from '../log'
@@ -183,6 +183,22 @@ export async function handleSessionRoutes(
   /** git 可用性探测（DirPicker「拉 worktree 开会话」入口的隐藏判定） */
   if (url.pathname === '/api/worktree/git-available' && req.method === 'GET') {
     return json({ available: gitAvailable() })
+  }
+
+  /** E2 改动摘要：按会话 key 反查 cwd（**不接客户端任意路径**——key 反查是唯一入口，
+   *  与 E3 同红线；/api 鉴权守卫同列表接口）。非 git 目录/git 缺席/git 失败 → available:false，
+   *  前端隐藏「改动」页签。cwd 三级反查：hub.spawnOpts（spawn 过的）→ key 内嵌（n|/xn|/b|）
+   *  → handoffSource（s|/x| 经列表反查——外部会话 tail 态也覆盖） */
+  if (url.pathname === '/api/sessions/git-status' && req.method === 'GET') {
+    const key = url.searchParams.get('key') ?? ''
+    if (!key) return json({ error: '缺少 key' }, { status: 400 })
+    if (!gitAvailable()) return json({ available: false })
+    const hub = hubs.get(key)
+    const cwd = hub?.spawnOpts?.cwd ?? describeKey(key)?.cwd ?? deps.portFor(key).handoffSource(key).cwd
+    if (!cwd) return json({ available: false })
+    const summary = statusSummaryOf(cwd)
+    if (!summary) return json({ available: false })
+    return json({ available: true, cwd, ...summary })
   }
 
   /** 创建：`git worktree add` 落盘主仓同级 <repo>-<名>、分支 worktree-<名>，直接开新会话 */

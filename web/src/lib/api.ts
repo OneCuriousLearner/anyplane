@@ -182,6 +182,25 @@ export async function removeWorktreeSession(
   return { ok: false, status: r.status, error: body.error ?? `HTTP ${r.status}`, dirty: body.dirty }
 }
 
+// ---------- E2 改动摘要（侧栏「改动」页签） ----------
+
+export interface GitStatusFile {
+  path: string
+  xy: string
+  kind: 'modified' | 'added' | 'deleted' | 'untracked'
+}
+
+export type GitStatusResult =
+  | { available: true; cwd: string; branch?: string; files: GitStatusFile[]; counts: { modified: number; untracked: number; deleted: number } }
+  | { available: false }
+
+/** 按会话 key 的改动摘要（服务端 key 反查 cwd，不接任意路径；非 git 目录 → available:false） */
+export async function fetchGitStatus(key: string): Promise<GitStatusResult> {
+  const r = await apiFetch(`/api/sessions/git-status?key=${encodeURIComponent(key)}`)
+  if (!r.ok) throw await apiError(r)
+  return r.json()
+}
+
 /** 模型值 → {显示名, tooltip}：tier 直查（haiku/sonnet/…）→ 按模型 ID 反查（init 报的是解析后 ID，
  *  如 k3[1m]——大小写不敏感，设置里的 ID 写法可能不同）→ 未配置原样显示（降级）。
  *  只需显示名的场景取 .label；StatusPill/DetailDrawer/Composer 共用同一口径，避免同模型多处显示不一致。 */

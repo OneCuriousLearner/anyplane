@@ -125,6 +125,66 @@ export function dirtyOf(worktreePath: string): WorktreeDirtyInfo {
   return countDirty(status.stdout)
 }
 
+// ---------- E2 改动摘要（侧栏「改动」页签数据源） ----------
+
+export interface StatusFileEntry {
+  /** 相对仓库根的路径（porcelain 原样，分隔符未归一） */
+  path: string
+  /** porcelain XY 两列原样（如 " M"/"A "/"??"/"MM"） */
+  xy: string
+  /** 分组：modified（跟踪文件改动）/ added（新增含暂存 A）/ deleted（D）/ untracked（??） */
+  kind: 'modified' | 'added' | 'deleted' | 'untracked'
+}
+
+export interface GitStatusSummary {
+  branch?: string
+  files: StatusFileEntry[]
+  counts: WorktreeDirtyInfo & { deleted: number }
+}
+
+/** porcelain 单行的分组判定：?? 未跟踪；含 D 删除；含 A 新增；其余改动 */
+function kindOf(xy: string): StatusFileEntry['kind'] {
+  if (xy === '??') return 'untracked'
+  if (xy.includes('D')) return 'deleted'
+  if (xy.includes('A')) return 'added'
+  return 'modified'
+}
+
+/** 解析 `git status --porcelain` 为按组排序的文件清单（untracked → modified → added → deleted 的
+ *  展示序由前端决定，本函数只按 kind 分组标好）。rename（"R  old -> new"）取新路径。 */
+export function parseStatusPorcelain(porcelain: string): StatusFileEntry[] {
+  const out: StatusFileEntry[] = []
+  for (const line of porcelain.split('\n')) {
+    if (!line.trim()) continue
+    const xy = line.slice(0, 2)
+    let path = line.slice(3)
+    const arrow = path.indexOf(' -> ')
+    if (arrow >= 0) path = path.slice(arrow + 4)
+    out.push({ path, xy, kind: kindOf(xy) })
+  }
+  return out
+}
+
+/** 按会话 cwd 的改动摘要：分支 + 文件清单 + 分组计数。非 git 目录/git 失败返回 undefined（前端隐藏入口）。
+ *  单次 `git status --porcelain --branch`（首行 `## branch` 解析分支）——两次同步 spawn 合并为一次，
+ *  前端 5s 轮询 × N 标签页下的同步阻塞减半（review 轮）。 */
+export function statusSummaryOf(cwd: string): GitStatusSummary | undefined {
+  const status = git(['-C', cwd, 'status', '--porcelain', '--branch'], cwd)
+  if (status.code !== 0) return undefined
+  const lines = status.stdout.split('\n')
+  // 首行 `## <branch>`（detached 时是 `## HEAD (no branch)`，归 undefined 由前端显示 detached）
+  const header = lines[0]?.startsWith('## ') ? lines[0].slice(3).trim() : ''
+  const branch = header && !header.startsWith('HEAD') ? header : undefined
+  const files = parseStatusPorcelain(lines.slice(1).join('\n'))
+  const counts = { modified: 0, untracked: 0, deleted: 0 }
+  for (const f of files) {
+    if (f.kind === 'untracked') counts.untracked++
+    else if (f.kind === 'deleted') counts.deleted++
+    else counts.modified++ // added 并入 modified 计数展示（分组时仍单列）
+  }
+  return { branch, files, counts }
+}
+
 /** git 是否可用（路由层入口隐藏判定：git 缺席时整个 worktree 功能降级） */
 export function gitAvailable(): boolean {
   const { cmd, shell } = resolveGitCmd()

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { addWorktree, countDirty, removeWorktree } from './gitworktree'
+import { addWorktree, countDirty, parseStatusPorcelain, removeWorktree, statusSummaryOf } from './gitworktree'
 
 let root = ''
 let main = ''
@@ -86,6 +86,53 @@ describe('removeWorktree', () => {
   test('countDirty 分类：?? 未跟踪、其余为已修改（含暂存）', () => {
     expect(countDirty('')).toEqual({ modified: 0, untracked: 0 })
     expect(countDirty(' M a.txt\n?? b.txt\nA  c.txt\nMM d.txt\n')).toEqual({ modified: 3, untracked: 1 })
+  })
+})
+
+describe('statusSummaryOf（E2 改动摘要）', () => {
+  test('parseStatusPorcelain 分组与 rename 取新路径', () => {
+    expect(parseStatusPorcelain(' M a.txt\n?? b.txt\nA  c.txt\n D d.txt\nR  old.txt -> new.txt\n')).toEqual([
+      { path: 'a.txt', xy: ' M', kind: 'modified' },
+      { path: 'b.txt', xy: '??', kind: 'untracked' },
+      { path: 'c.txt', xy: 'A ', kind: 'added' },
+      { path: 'd.txt', xy: ' D', kind: 'deleted' },
+      { path: 'new.txt', xy: 'R ', kind: 'modified' },
+    ])
+  })
+
+  test('干净仓库返回空清单 + 分支名（porcelain --branch 单次调用解析）', () => {
+    const s = statusSummaryOf(main)
+    expect(s).toBeDefined()
+    expect(s!.branch).toBe('main')
+    expect(s!.files).toEqual([])
+    expect(s!.counts).toEqual({ modified: 0, untracked: 0, deleted: 0 })
+  })
+
+  test('detached HEAD 时 branch 为 undefined（前端显示 detached）', () => {
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: main, encoding: 'utf8', shell: process.platform === 'win32' }).stdout.trim()
+    git(['checkout', '-q', head], main)
+    const s = statusSummaryOf(main)!
+    expect(s.branch).toBeUndefined()
+    git(['checkout', '-q', 'main'], main)
+  })
+
+  test('混合改动按组计数（untracked/deleted 各归各）', () => {
+    writeFileSync(join(main, 'new.txt'), 'new\n') // untracked
+    git(['rm', '-q', 'seed.txt'], main) // deleted
+
+    const s = statusSummaryOf(main)!
+    expect(s.branch).toBe('main')
+    const kinds = Object.fromEntries(s.files.map((f) => [f.path, f.kind]))
+    expect(kinds['new.txt']).toBe('untracked')
+    expect(kinds['seed.txt']).toBe('deleted')
+    expect(s.counts.deleted).toBe(1)
+    expect(s.counts.untracked).toBe(1)
+  })
+
+  test('非 git 目录返回 undefined（前端隐藏入口）', () => {
+    const plain = join(root, 'plain')
+    mkdirSync(plain, { recursive: true })
+    expect(statusSummaryOf(plain)).toBeUndefined()
   })
 })
 

@@ -31,6 +31,8 @@ export interface ChatHeaderTasksProps {
   tasks: TaskFeed[]
   tasksOpen: boolean
   onToggleTasks: () => void
+  /** git 可用（E2「改动」页签）：git 仓库会话即使无后台任务活动也显示侧栏开关 */
+  gitAvailable?: boolean
 }
 
 export interface ChatHeaderIdentityProps {
@@ -78,7 +80,7 @@ export function ChatHeader(props: {
   children?: React.ReactNode
 }) {
   const { session, connected, statusLine, busy, phase, onBack, usageLine } = props.sessionInfo
-  const { tasks, tasksOpen, onToggleTasks } = props.tasksInfo
+  const { tasks, tasksOpen, onToggleTasks, gitAvailable } = props.tasksInfo
   const { isExisting, isCodex, canBranch, sessionId, currentSessionId } = props.identity
   const { goal, goalOpen, onToggleGoal, onCloseGoal, goalDraft, onGoalDraftChange, onSendGoal } = props.goalInfo
   const {
@@ -117,8 +119,8 @@ export function ChatHeader(props: {
               <span className={busy || phase ? 'text-busy' : ''}>{statusLine}</span>
             </div>
           </div>
-          {/* 后台任务侧栏开关：有任务活动时出现；运行中带计数徽标与呼吸 */}
-          {tasks.length > 0 && (
+          {/* 后台任务/改动侧栏开关：有任务活动或 git 可用（E2 改动页签）时出现；运行中带计数徽标与呼吸 */}
+          {(tasks.length > 0 || gitAvailable) && (
             <button
               type="button"
               className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors ${
