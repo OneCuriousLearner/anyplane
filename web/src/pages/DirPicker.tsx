@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { BackendName, BackendsStatus, DirEntry, SessionInfo } from '@anyplane/protocol'
-import { errorMessage, fetchBackendsStatus, fetchDirList } from '../lib/api'
+import { errorMessage, fetchBackendsStatus, fetchDirList, fetchGitAvailable, addWorktreeSession } from '../lib/api'
 import { backendFixHint, backendNeedsAttention } from '../components/BackendStatusCard'
 
 type NodeState =
@@ -173,6 +173,32 @@ export function DirPicker(props: {
       await props.onStart(cwd, backend)
     } finally {
       setStarting(false)
+    }
+  }
+
+  // ---------- worktree 创建（E1：从当前目录拉 worktree 开会话） ----------
+  const [gitAvailable, setGitAvailable] = useState(false)
+  const [wtOpen, setWtOpen] = useState(false)
+  const [wtName, setWtName] = useState('')
+  const [wtBusy, setWtBusy] = useState(false)
+  const [wtError, setWtError] = useState('')
+  useEffect(() => {
+    fetchGitAvailable()
+      .then(setGitAvailable)
+      .catch(() => {})
+  }, [])
+  const startWorktree = async () => {
+    const name = wtName.trim()
+    if (!selected || !name || wtBusy) return
+    setWtBusy(true)
+    setWtError('')
+    try {
+      const r = await addWorktreeSession(selected, name, backend)
+      // 与「在此目录开始」同一出口：worktree 落盘路径开新会话
+      await props.onStart(r.path, backend)
+    } catch (e) {
+      setWtError(errorMessage(e))
+      setWtBusy(false)
     }
   }
 
@@ -363,6 +389,37 @@ export function DirPicker(props: {
         >
           {starting ? '启动中…' : '在此目录开始'}
         </button>
+        {gitAvailable && (
+          <div className="mt-2">
+            <button type="button"
+              className="flex w-full items-center gap-1 py-1 font-mono text-[11px] text-faint hover:text-muted"
+              onClick={() => setWtOpen(!wtOpen)}
+            >
+              <span>{wtOpen ? '▾' : '▸'}</span> 从当前目录拉 worktree 开会话
+            </button>
+            {wtOpen && (
+              <div className="mt-1">
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 rounded-full bg-surface px-4 py-2 font-mono text-xs outline-none placeholder:text-faint focus:bg-surface2"
+                    placeholder="worktree 名（落盘 <repo>-<名>，分支 worktree-<名>）"
+                    value={wtName}
+                    onChange={(e) => setWtName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && startWorktree()}
+                  />
+                  <button type="button"
+                    className="rounded-full bg-surface2 px-4 text-sm text-ink disabled:opacity-40"
+                    disabled={!selected || !wtName.trim() || wtBusy}
+                    onClick={startWorktree}
+                  >
+                    {wtBusy ? '创建中…' : '创建并开始'}
+                  </button>
+                </div>
+                {wtError && <div className="mt-1 font-mono text-[10px] leading-snug text-accent">{wtError}</div>}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

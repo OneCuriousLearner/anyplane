@@ -139,6 +139,10 @@ export interface BackendPort {
   readonly capabilities: BackendCapabilities
   /** 当前存活（或已退出待回收）的会话句柄；取代编排层散落的 isCodexKey ? codexRuntime.get : processManager.get */
   sessionOf(key: string): SessionHandle | undefined
+  /** 主动处置会话进程/句柄（E1 worktree 移除按 cwd dispose 用）：两后端同语义——
+   *  claude kill 进程并从 map 摘除；codex 发 thread/unsubscribe 并摘除（app-server 随后卸载）。
+   *  对未 spawn/已退出的会话是幂等空操作。 */
+  disposeSession(key: string): void
   /** 存活判定（ws close 的 Hub 回收依据）：claude = 句柄存在；codex = 句柄存在且未退出 */
   hasLiveSession(key: string): boolean
   /** 外部门禁（control.sock 生态）通知：claude 转发句柄方法（capabilities.externalGate） */

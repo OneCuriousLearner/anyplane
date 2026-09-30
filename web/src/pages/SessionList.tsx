@@ -503,6 +503,7 @@ export function SessionList(props: {
         onClose={() => setMenu(null)}
         onRenamed={refresh}
         onArchive={doArchive}
+        onRemoved={refresh}
         showToast={showToast}
       />
 

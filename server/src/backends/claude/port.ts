@@ -148,6 +148,10 @@ class ClaudePort implements BackendPort {
     return processManager.get(key)
   }
 
+  disposeSession(key: string): void {
+    processManager.dispose(key)
+  }
+
   hasLiveSession(key: string): boolean {
     return !!processManager.get(key)
   }
