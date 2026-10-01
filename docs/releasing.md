@@ -58,3 +58,8 @@ npm 包 `anyplane` 的发布入口只有两个，外人默认都走不通：
 - `0.2.0`：Capacitor 原生壳落地（Android/iOS 包壳、原生审批通知链路、国产 ROM JSI 失效绕行与遥测定位）；方向十一 Onboarding（双后端登录状态页、单阶段 all-in-one Docker 镜像、公网一键脚本、安装漏斗修复、codex 读盘优先发现）；方向十二韧性（codex runtime 拆分、优雅停机）；方向十三结构债（`@anyplane/protocol` 共享类型包、Biome 依赖红线、mock CLI e2e 进 CI、后端能力声明化 + `portFor` 注册表、13.4 审批/Hub/store/props 四批重构）；网关 502/500 语义与 dev 孤儿修复；官网改版；测试大补课（688 用例）。
 - `0.2.1`：启动收口——末行醒目提示打开地址，交互终端默认拉起系统浏览器（`--no-open` / `ANYPLANE_NO_OPEN=1` / CI / Docker 不弹）。
 - `0.2.2`：启动横幅带 package.json 版本；对照 npm latest，落后则提示 `bunx anyplane@latest`（bunx/npx 缓存旧包）。
+- `0.3.0`：资深用户走查大批改——@ 文件补全、改动摘要侧栏、worktree 生命周期（创建/移除）、Codex AI 标题、compact 摘要与显示（双端）、审批语义修正（放行集进程层权威、本会话允许内存裁决、僵尸审批卡治本）、会话列表可用性（mtime 排序/预览过滤/墓碑态/「需要我」上浮）、右栏调宽、斜杠面板 /plan /permissions 接管、改名回声去重、安全批修（8 项）、协议基线 codex 0.158.0、测试 688→920。
+
+## 版本 bump 提交方式
+
+版本号 + 本文版本史的纯发版提交属于零代码变更，且 `release.yml` 发布前会重跑 test + build + 版本一致性校验，owner 可直推 master（分支保护 bypass），不必为 bump 单开 PR。代码改动仍按「先进 PR、CI 绿再合入」。
