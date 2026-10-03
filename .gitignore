@@ -29,6 +29,3 @@ docs/claude-code/
 docs/codex/
 *.local.md
 *.tgz
-
-## 转录回放 fixture 的人工过目版（提交物是 .json.gz，见 server/scripts/record-transcript.ts）
-web/src/test/fixtures/*.json

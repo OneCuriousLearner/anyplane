@@ -31,12 +31,9 @@ export interface TranscriptFixture {
   events: Record<string, unknown>[]
 }
 
-/** 读 fixtures 目录下的录制文件（提交物是 .json.gz——流式逐 token delta 的美化 JSON
- *  体积/行数虚高一个数量级；录制器双写的 .json 美化版 gitignore 供人工过目） */
+/** 读 fixtures 目录下的录制文件（不用 JSON import——root tsconfig 未开 resolveJsonModule） */
 export async function loadFixture(name: string): Promise<TranscriptFixture> {
-  const base = name.endsWith('.json') ? name.slice(0, -'.json'.length) : name
-  const raw = Bun.gunzipSync(await Bun.file(`${import.meta.dir}/fixtures/${base}.json.gz`).arrayBuffer())
-  return JSON.parse(new TextDecoder().decode(raw)) as TranscriptFixture
+  return JSON.parse(await Bun.file(`${import.meta.dir}/fixtures/${name}`).text()) as TranscriptFixture
 }
 
 interface HarnessBox {

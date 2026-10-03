@@ -14,13 +14,10 @@
 //
 // 纪律：
 // - --cwd 用不含用户名的短路径（fixture 进仓库）；落盘前脚本把 cwd/用户目录字符串
-//   替换为 <CWD>/<HOME>（深遍历在 stringify 之前，覆盖反斜杠/POSIX/slug/URI 编码四形态）；
+//   替换为 <CWD>/<HOME>；
 // - 审批自动 allow（无人值守录制；fixture meta.approvals 记次数）——prompt 别给
 //   破坏性命令，scratch cwd 里折腾；
-// - 双写产物：美化 .json（gitignore，本地人工过目用）+ .json.gz（提交物——流式
-//   协议逐 token delta，美化 JSON 会把 PR diff 冲上万行；gzip 后体积降一个数量级，
-//   web/src/test/replay.tsx 的 loadFixture 透明解压）；
-// - 提交前用美化版过目：尺寸、隐私、是否混进无关 turn。
+// - 落盘后人工过一遍再提交：尺寸、隐私、是否混进无关 turn。
 
 import { describeKey } from '../src/backends/port'
 import { apiFetch, connect } from './e2e-lib'
@@ -168,12 +165,8 @@ const writeFixture = async (path: string, fixture: unknown) => {
   const { dirname, resolve } = await import('node:path')
   const p = resolve(path)
   mkdirSync(dirname(p), { recursive: true })
-  const text = JSON.stringify(scrubDeep(fixture), null, 2) + '\n'
-  writeFileSync(p, text)
-  // 提交物是 gzip 侧车（.json 美化版 gitignore 供人工过目）——流式逐 token delta
-  // 的美化 JSON 体积/行数虚高一个数量级
-  writeFileSync(`${p}.gz`, Bun.gzipSync(text))
-  console.log(`[record] 写出 ${p}（+ .json.gz 提交物）`)
+  writeFileSync(p, JSON.stringify(scrubDeep(fixture), null, 2) + '\n')
+  console.log(`[record] 写出 ${p}`)
 }
 
 await writeFixture(args.out!, { meta, history: null, events })
