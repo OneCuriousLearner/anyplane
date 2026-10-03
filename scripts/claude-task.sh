@@ -5,7 +5,8 @@
 #   bash scripts/claude-task.sh <task-name> [base-branch] [review-effort]
 #
 #   task-name      对应 .claude/tasks/<task-name>.md（simplify / code-review /
-#                  security-review / test-coverage / test-cleanup）
+#                  security-review / test-coverage / test-cleanup /
+#                  complexity-patrol）
 #   base-branch    基准分支，默认 master
 #   review-effort  仅 code-review 任务使用：/code-review 自带的 effort
 #                  （low|medium|high|xhigh|max），默认 high。
