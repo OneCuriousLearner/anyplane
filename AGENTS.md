@@ -60,6 +60,7 @@ AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code �
 - **ingest 是归并唯一实现**：live / tail / 历史三路共用。先到的 tool_result 进 pending，工具块落地再补；真孤儿到批次收尾或权威 idle 才浮现。
 - **抄本窗口化三条红线**（实录 `docs/research/2026-09-12-transcript-windowing.md`）：①初始定位先于窗口化；②扩窗只认向上滚动，新增向上滚动必须套守卫；③窗口粒度是渲染行。行 key 必须内容派生。翻页 prepend 前先捕获锚点。
 - 过滤：`<system-reminder>`/isMeta 不进主抄本，sidechain 不入主流；`compact_boundary` 渲染为分隔线。
+- 工具卡恒默认折叠、开合全由用户；只有思考块随流式自动开合（2026-10-02 反转走查问题 7：大量 tool use 摊开阅读难度大。latestTurn/streaming 两套自动展开已移除，勿加回）。
 - **后台任务侧栏**：`task_started` 是 live-only，中途接入靠 status 的权威任务列表水合。历史子代理只回填「窗口内且主线结果缺失」的。终态只有宽限期驱逐一种语义，驱逐即永久。codex 桶键用子线程 id；协作工具调用必须同时出主线卡。实录见 `docs/research/2026-09-21-task-sidebar-hydration.md`。
 
 ### 斜杠命令
@@ -81,7 +82,7 @@ AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code �
 ## 已知限制
 
 - compact 边界之前不能 rewind；文件回滚只到有检查点的消息；effort 运行时切换依赖环境变量更新，旧 CLI 可能需重开会话。
-- Codex 无文件检查点（不支持组合回滚）；rollout 不持久化 reasoning（侧车落在 `~/.anyplane/reasoning/`）。
+- Codex 无文件检查点（不支持组合回滚）；legacy 线程的 reasoning 等 item 上游不持久化，由侧车 `~/.anyplane/reasoning/` 兜底（paginated 线程 0.158 起已持久化，回插按 itemId/文本去重——见 `docs/research/2026-10-02-codex-reasoning-persisted.md`）。
 - 未配 token 严禁绑非回环。目录列表接口暴露本机目录，与任意目录起会话同级风险。
 - 跨网段不自建公网穿透：见 `docs/public-access.md`。
 
