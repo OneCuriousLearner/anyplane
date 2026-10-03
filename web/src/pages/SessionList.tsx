@@ -1,29 +1,22 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ArchivedEntry, BackendName, InboxApproval, SessionInfo } from '@anyplane/protocol'
+import type { ArchivedEntry, BackendName, SessionInfo } from '@anyplane/protocol'
 import {
-  apiFetch,
   archiveSession,
   createSession,
   fetchArchived,
   fetchSessions,
   makeSessionInfo,
-  postJson,
   restoreSession,
 } from '../lib/api'
-import { inboxSubscribe } from '../lib/inboxBus'
 import { normPathKey, orderGroupsForTriage } from '../lib/groupTriage'
 import { useEscapeClose } from '../hooks/useEscapeClose'
-import { currentPushEndpoint, pushSupported, subscribePush, unsubscribePush } from '../lib/push'
+import { useNotifyCenter } from '../hooks/useNotifyCenter'
+import { pushSupported } from '../lib/push'
 import { BellIcon } from '../components/BellIcon'
 import { AnyPlaneMark } from '../components/AnyPlaneMark'
 import { BackendStatusCard } from '../components/BackendStatusCard'
 import { NativeNotifyBanner } from '../components/NativeNotifyBanner'
-import {
-  getNativeBridgeStatus,
-  requestBatteryExemptionNav,
-  subscribeNativeBridge,
-} from '../lib/nativeBridge'
 import { getThemeChoice, setThemeChoice, toggleTheme, type ThemeChoice } from '../lib/theme'
 import { ClaudeMark } from '../components/ClaudeMark'
 import { CodexMark } from '../components/CodexMark'
@@ -33,8 +26,6 @@ import { SessionRowMenu, type SessionMenuAnchor } from '../components/SessionRow
 import { IconBtn, PlusIcon, timeAgo, TrashIcon } from '../components/listChrome'
 import { DirPicker } from './DirPicker'
 
-/** 桌面通知开关：localStorage 持久；浏览器授权后在页面隐藏时推送 */
-const NOTIFY_KEY = 'anyplane-notify'
 /** 按项目目录折叠的分组，cwd 字符串数组 */
 const COLLAPSE_KEY = 'anyplane-collapsed-groups'
 
@@ -58,18 +49,6 @@ export function SessionList(props: {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [approvals, setApprovals] = useState<InboxApproval[]>([])
-  const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1')
-  /** 推送订阅状态：已订阅时为 push service endpoint */
-  const [pushEndpoint, setPushEndpoint] = useState<string | null>(null)
-  /** 服务端配置的 webhook 通道数（ntfy/Bark/Server酱，配置文件管理，只读展示） */
-  const [pushWebhooks, setPushWebhooks] = useState(0)
-  /** 测试通知发送中 */
-  const [pushTestBusy, setPushTestBusy] = useState(false)
-  const [pushBusy, setPushBusy] = useState(false)
-  const [notifyMenuOpen, setNotifyMenuOpen] = useState(false)
-  const nativeBridge = useSyncExternalStore(subscribeNativeBridge, getNativeBridgeStatus)
-  const nativeAndroid = nativeBridge.active && nativeBridge.platform === 'android'
   // 主题长按菜单：timer 计时 500ms 长按，long 标记吞掉随后那次 click
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const themeTimer = useRef<number | undefined>(undefined)
@@ -84,24 +63,11 @@ export function SessionList(props: {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
-  const notifyRef = useRef(notify)
-  notifyRef.current = notify
 
   const titleOf = (key: string): string => {
     const s = sessionsRef.current.find((x) => x.key === key)
     return s?.title ?? s?.cwd ?? key.slice(0, 24)
   }
-
-  const pushNotify = (title: string, body: string) => {
-    if (!notifyRef.current || !('Notification' in window)) return
-    if (Notification.permission !== 'granted' || !document.hidden) return
-    try {
-      new Notification(title, { body, tag: 'anyplane-inbox' })
-    } catch {}
-  }
-
-  // 二级菜单：Escape 关闭
-  useEscapeClose(() => setMenu(null), menu !== null)
 
   const showToast = (text: string, kind: 'ok' | 'err' = 'err') => {
     setToast({ text, kind })
@@ -109,120 +75,11 @@ export function SessionList(props: {
     toastTimerRef.current = setTimeout(() => setToast(null), 4000)
   }
 
-  // 全局收件箱：审批队列 + 完成/错误通知（单例总线，与原生桥共用一条连接）
-  useEffect(() => {
-    const unsubscribe = inboxSubscribe((ev) => {
-      switch (ev.type) {
-        case 'snapshot':
-          setApprovals(ev.approvals)
-          break
-        case 'approval':
-          setApprovals((prev) => (prev.some((a) => a.requestId === ev.requestId) ? prev : [...prev, ev]))
-          pushNotify(`⏸ 需要审批：${titleOf(ev.key)}`, `${ev.toolName} 等待你的决定`)
-          break
-        case 'approval_resolved':
-          setApprovals((prev) => prev.filter((a) => a.requestId !== ev.requestId))
-          break
-        case 'done':
-          if (ev.ok) pushNotify(`✓ 完成：${titleOf(ev.key)}`, '会话本轮工作已收尾')
-          break
-        case 'error':
-          pushNotify(`⚠ 出错：${titleOf(ev.key)}`, ev.message.slice(0, 120))
-          break
-      }
-    })
-    return unsubscribe
-  }, [])
+  // 通知中心（桌面通知/推送/webhook/收件箱角标）整域在 useNotifyCenter，此处只接线
+  const notifyCenter = useNotifyCenter({ showToast, titleOf })
 
-  // 标题角标：待审批数
-  useEffect(() => {
-    document.title = approvals.length > 0 ? `(${approvals.length}) AnyPlane` : 'AnyPlane'
-    return () => {
-      document.title = 'AnyPlane'
-    }
-  }, [approvals.length])
-
-  const toggleNotify = async () => {
-    if (notify) {
-      setNotify(false)
-      localStorage.setItem(NOTIFY_KEY, '0')
-      return
-    }
-    if (!('Notification' in window)) {
-      showToast('当前浏览器不支持桌面通知')
-      return
-    }
-    // 权限被拒/挂起都要给人话反馈——静默停在「关」会以为开关坏了（走查问题 7）
-    if (Notification.permission === 'denied') {
-      showToast('浏览器拒绝了通知权限，请到地址栏站点设置开启')
-      return
-    }
-    if (Notification.permission === 'default') {
-      const result = await Notification.requestPermission().catch(() => 'denied' as const)
-      if (result !== 'granted') {
-        showToast('通知权限未开启（浏览器弹窗中被拒或关闭），可到地址栏站点设置修改')
-        return
-      }
-    }
-    setNotify(true)
-    localStorage.setItem(NOTIFY_KEY, '1')
-  }
-
-  // 挂载时读取推送订阅现状与 webhook 通道数
-  useEffect(() => {
-    void currentPushEndpoint().then(setPushEndpoint)
-    apiFetch('/api/push/public-key')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { webhooks?: number } | null) => setPushWebhooks(j?.webhooks ?? 0))
-      .catch(() => {})
-  }, [])
-
-  const togglePush = async () => {
-    if (pushBusy) return
-    setPushBusy(true)
-    try {
-      if (pushEndpoint) {
-        await unsubscribePush()
-        setPushEndpoint(null)
-        showToast('已退订推送', 'ok')
-      } else {
-        const r = await subscribePush()
-        if (r.ok) {
-          setPushEndpoint(await currentPushEndpoint())
-          showToast('推送已订阅：锁屏也能收到审批/完成通知', 'ok')
-        } else {
-          showToast(`订阅失败：${r.error}`, 'err')
-        }
-      }
-    } finally {
-      setPushBusy(false)
-    }
-  }
-
-  /** 通道自检：向全部订阅 + webhook 通道发一条测试通知 */
-  const sendTestPush = async () => {
-    if (pushTestBusy) return
-    setPushTestBusy(true)
-    try {
-      const r = await postJson('/api/push/test', {})
-      const j = (await r.json()) as { ok?: boolean; sent?: number; subscriptions?: number; webhooks?: number; error?: string }
-      const total = (j.subscriptions ?? 0) + (j.webhooks ?? 0)
-      if (r.ok && j.ok) {
-        showToast(
-          total === 0
-            ? '尚无推送通道：先订阅或配置 webhook'
-            : `测试通知已送达 ${j.sent}/${total} 个通道（订阅 ${j.subscriptions} · webhook ${j.webhooks}）`,
-          total === 0 ? 'err' : 'ok',
-        )
-      } else {
-        showToast(`发送失败：${j.error ?? r.status}`, 'err')
-      }
-    } catch {
-      showToast('发送失败：网络错误', 'err')
-    } finally {
-      setPushTestBusy(false)
-    }
-  }
+  // 二级菜单：Escape 关闭
+  useEscapeClose(() => setMenu(null), menu !== null)
 
   /** 轮询在途守卫：服务端偶发慢响应（>10s）时，上一个请求未回来新周期又发出——
    *  慢的旧响应后至会把新列表覆盖成旧快照（刚建的会话瞬消失/归档的会话瞬复活）。
@@ -343,18 +200,18 @@ export function SessionList(props: {
         <div className="flex items-center gap-2">
           <IconBtn
             title="通知设置"
-            onClick={() => setNotifyMenuOpen((v) => !v)}
-            active={notifyMenuOpen || notify || !!pushEndpoint}
-            redDot={approvals.length > 0}
+            onClick={() => notifyCenter.setMenuOpen((v) => !v)}
+            active={notifyCenter.menuOpen || notifyCenter.bellActive}
+            redDot={notifyCenter.approvals.length > 0}
           >
-            <BellIcon className="h-4 w-4" active={notify || !!pushEndpoint} />
+            <BellIcon className="h-4 w-4" active={notifyCenter.bellActive} />
           </IconBtn>
           <IconBtn
             title={view === 'archived' ? '返回会话列表' : '回收站'}
             active={view === 'archived'}
             onClick={() => {
               // 视图切换即收浮层（浮层统一纪律：此前切到回收站通知菜单还浮着，走查问题 7）
-              setNotifyMenuOpen(false)
+              notifyCenter.setMenuOpen(false)
               setThemeMenuOpen(false)
               setView((v) => (v === 'active' ? 'archived' : 'active'))
             }}
@@ -402,22 +259,19 @@ export function SessionList(props: {
           document.body,
         )}
       <NotifyMenu
-        open={notifyMenuOpen}
-        onClose={() => setNotifyMenuOpen(false)}
-        notify={notify}
-        onToggleNotify={() => void toggleNotify()}
+        open={notifyCenter.menuOpen}
+        onClose={() => notifyCenter.setMenuOpen(false)}
+        notify={notifyCenter.notify}
+        onToggleNotify={() => void notifyCenter.toggleNotify()}
         pushSupported={pushSupported()}
-        pushEndpoint={pushEndpoint}
-        pushBusy={pushBusy}
-        onTogglePush={() => void togglePush()}
-        nativeAndroid={nativeAndroid}
-        onBattery={() => {
-          requestBatteryExemptionNav()
-          setNotifyMenuOpen(false)
-        }}
-        pushWebhooks={pushWebhooks}
-        pushTestBusy={pushTestBusy}
-        onTestPush={() => void sendTestPush()}
+        pushEndpoint={notifyCenter.pushEndpoint}
+        pushBusy={notifyCenter.pushBusy}
+        onTogglePush={() => void notifyCenter.togglePush()}
+        nativeAndroid={notifyCenter.nativeAndroid}
+        onBattery={notifyCenter.requestBattery}
+        pushWebhooks={notifyCenter.pushWebhooks}
+        pushTestBusy={notifyCenter.pushTestBusy}
+        onTestPush={() => void notifyCenter.sendTestPush()}
       />
 
       {/* 会话流：顶栏高 58px（pt-4 + 32 + pb-2.5）。顶部用占位 div 避让（不用容器 padding——
