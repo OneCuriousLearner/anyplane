@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { buildTranscriptRows, type ChatMsg } from '../lib/blocks'
-import { click, render, setupDom, unmountAll } from '../test/dom'
+import { click, render, setupDom, thinkingButtons, toolButtons, unmountAll } from '../test/dom'
 import { Transcript } from './Transcript'
 
 const text = (t: string): ChatMsg['blocks'][number] => ({ kind: 'text', text: t })
@@ -13,10 +13,6 @@ const tool = (id: string, name: string, resultText: string): ChatMsg['blocks'][n
   resultText,
 })
 const msg = (id: string, role: ChatMsg['role'], blocks: ChatMsg['blocks']): ChatMsg => ({ id, role, blocks })
-
-/** 思考按钮带 aria-expanded（ToolCard 没有）——DOM 上区分两种卡片的把手 */
-const thinkingButtons = (c: HTMLElement) => c.querySelectorAll('button[aria-expanded]')
-const toolButtons = (c: HTMLElement) => c.querySelectorAll('button:not([aria-expanded])')
 
 /** Bug 2 实测序列（重进 codex 会话）：思考1 文本1 工具1 工具2 思考2 文本2 工具3 思考3 文本3 */
 const reentryMessages = (): ChatMsg[] => [
