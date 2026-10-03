@@ -1,24 +1,17 @@
-// complexity-report.ts — 巨石文件/神组件定量探测（第一层信号，只告警不裁决）
+// complexity-report.ts — 巨石文件/神组件定量探测（纯无状态）
 //
-// 设计依据（与 docs/complexity-baseline.md 的定性基线配套）：
-// 「巨石」是定性概念（职责混叠、状态纠缠、不可测），行数/hook 数只是低成本的
-// 探测启发式。本脚本的产出是"待人工/LLM 定性裁决的候选清单"，不是判决。
-// 双层结构：
-//   第 1 层（本脚本）  定量触发：文件行数、单函数长度、组件 hook 密度、git 变更热点
-//   第 2 层（.claude/tasks/complexity-patrol.md 或人工 review）
-//                    定性裁决：职责是否可拆、状态是否纠缠、能否独立测试
+// 本脚本是纯函数：输入 = 当前工作区文件 + git log，输出 = 全量命中清单。
+// 它不内嵌、不读取、不产出任何「基线 / 新增」概念——
+// BASELINE 与 NEW 的判定由人 / LLM 对照 docs/complexity-baseline.md 完成，
+// 该文档是裁决状态的唯一载体。
+//
+// 退出码：0 = 本次扫描零命中；1 = 有文件命中阈值。
+// 退出码只表达当期扫描事实（供 CI 决定是否递送报告），不代表"存在新增告警"。
 //
 // 用法:
-//   bun scripts/complexity-report.ts [--since <git-date>] [--all] [--ci]
+//   bun scripts/complexity-report.ts [--since <git-date>]
 //
 //   --since  变更热点统计窗口，默认 "6 months ago"
-//   --all    连基线内（已知、已裁决）文件一起列出；默认只列 NEW/新增告警
-//   --ci     CI 周报模式：存在新增告警时退出码 1（供 workflow 的
-//            `if: failure()` 开 issue），其余与默认一致；交互使用不要带
-//
-// 默认退出码恒为 0——本工具是告警渠道，不是红线闸（阈值命中 ≠ 必须拆，
-// 反例见 docs/complexity-baseline.md：translate.ts 813 行但内聚，拆它反而
-// 破坏 live/历史同形红线）。
 import ts from 'typescript'
 import { readdirSync, readFileSync, type Dirent } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -28,34 +21,16 @@ const SCAN_DIRS = ['server/src', 'web/src', 'scripts', 'cli', 'protocol']
 // 测试文件与 fixture 的体量/密度不反映生产复杂度，排除
 const SKIP = /\.(test|spec)\.|\.d\.ts$|^web[/\\]src[/\\]fixture[/\\]/
 
-// 阈值是"触发 review"的告警线，不是"必须拆分"的红线——命中后请走第二层定性裁决
+// 阈值是"触发 review"的告警线，不是"必须拆分"的红线——命中后请对照
+// docs/complexity-baseline.md 做定性裁决
 const FILE_LINES_WARN = 500
 const FUNC_LINES_WARN = 150
 const HOOKS_WARN = 10
 const CHURN_HOT = 20 // 窗口内被 commit 触碰次数：变更热点线
 
-// 基线白名单：2026-10-03 首轮全仓定性裁决的结论
-// 是"大但内聚、刻意不拆"的文件。列在这里只为让后续运行聚焦*新增*告警；
-// 若某文件经过重构瘦身或裁决反转，应从列表移除。文件路径用正斜杠。
-const BASELINE = new Set([
-  'server/src/backends/codex/translate.ts',
-  'server/src/backends/claude/port.ts',
-  'server/src/backends/claude/discovery.ts',
-  'server/src/backends/codex/runtime.ts',
-  'server/src/push/vapid.ts',
-  'scripts/gateway.ts',
-  'web/src/components/Composer.tsx',
-  'web/src/hooks/useTranscriptIngest.ts',
-  'web/src/hooks/useSessionSocket.ts',
-  'web/src/hooks/useTaskBuckets.ts',
-  'web/src/hooks/useTranscriptScroll.ts',
-])
-
 const args = process.argv.slice(2)
 const sinceIdx = args.indexOf('--since')
 const since = sinceIdx >= 0 ? args[sinceIdx + 1] : '6 months ago'
-const showAll = args.includes('--all')
-const ci = args.includes('--ci')
 
 const norm = (p: string) => p.split('\\').join('/')
 const relOf = (p: string) => norm(relative(ROOT, p))
@@ -75,33 +50,27 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-interface FnFlag {
-  kind: 'fn' | 'hooks'
-  name: string
-  detail: string
-}
 interface Row {
   file: string
   lines: number
   churn: number
   flags: string[]
-  isNew: boolean
 }
 
 const HOOK_CALL = /^(use|create)[A-Z]/
 
 // 只统计"顶层函数 + 类方法"的长度，不钻进函数体内部——否则嵌套回调
 // （如 useSessionSocket 里的匿名 connect 回调）会被重复计数。
-function analyzeFile(file: string, sourceText: string): FnFlag[] {
+function analyzeFile(file: string, sourceText: string): string[] {
   const sf = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true)
   const lineOf = (pos: number) => sf.getLineAndCharacterOfPosition(pos).line + 1
-  const flags: FnFlag[] = []
+  const flags: string[] = []
 
   const measure = (node: ts.FunctionLikeDeclaration) => {
     if (!node.body) return
     const name = node.name?.getText(sf) ?? '<anonymous>'
     const len = lineOf(node.body.getEnd()) - lineOf(node.getStart()) + 1
-    if (len > FUNC_LINES_WARN) flags.push({ kind: 'fn', name, detail: `${len}L>${FUNC_LINES_WARN}` })
+    if (len > FUNC_LINES_WARN) flags.push(`fn ${name} ${len}L>${FUNC_LINES_WARN}`)
     // hook 密度：React 组件/自定义 hook 内 use*/create* 调用数——神组件最稳的单一信号
     let hooks = 0
     const count = (n: ts.Node): void => {
@@ -114,7 +83,7 @@ function analyzeFile(file: string, sourceText: string): FnFlag[] {
       ts.forEachChild(n, count)
     }
     count(node.body)
-    if (hooks > HOOKS_WARN) flags.push({ kind: 'hooks', name, detail: `hooks=${hooks}>${HOOKS_WARN}` })
+    if (hooks > HOOKS_WARN) flags.push(`component ${name} hooks=${hooks}>${HOOKS_WARN}`)
   }
 
   const visitToplevel = (node: ts.Node) => {
@@ -158,12 +127,10 @@ for (const dir of SCAN_DIRS) {
     const rel = relOf(file)
     const sourceText = readFileSync(file, 'utf8')
     const lines = sourceText.split('\n').length
-    const fnFlags = analyzeFile(file, sourceText)
-    const flags: string[] = []
-    if (lines > FILE_LINES_WARN) flags.push(`file ${lines}L>${FILE_LINES_WARN}`)
-    for (const f of fnFlags) flags.push(`${f.kind === 'fn' ? 'fn' : 'component'} ${f.name} ${f.detail}`)
+    const flags = analyzeFile(file, sourceText)
+    if (lines > FILE_LINES_WARN) flags.unshift(`file ${lines}L>${FILE_LINES_WARN}`)
     if (!flags.length) continue
-    rows.push({ file: rel, lines, churn: 0, flags, isNew: !BASELINE.has(rel) })
+    rows.push({ file: rel, lines, churn: 0, flags })
   }
 }
 
@@ -175,24 +142,16 @@ for (const r of rows) r.churn = churn.get(r.file) ?? 0
 const tier = (r: Row) => (r.flags.some((f) => f.startsWith('fn ') || f.startsWith('component ')) ? 1 : 2)
 rows.sort((a, b) => tier(a) - tier(b) || b.churn - a.churn || b.lines - a.lines)
 
-const shown = showAll ? rows : rows.filter((r) => r.isNew || r.churn >= CHURN_HOT)
 console.log(`# 复杂度探测报告（热点窗口: ${since}）`)
 console.log('')
-console.log('| 优先级 | 文件 | 行数 | 变更 | 信号 | 状态 |')
-console.log('|---|---|---|---|---|---|')
-for (const r of shown) {
+console.log('| 优先级 | 文件 | 行数 | 变更 | 信号 |')
+console.log('|---|---|---|---|---|')
+for (const r of rows) {
   const hot = r.churn >= CHURN_HOT ? '🔥' : ''
-  console.log(
-    `| P${tier(r)} | ${r.file} | ${r.lines} | ${r.churn}${hot} | ${r.flags.join('<br>')} | ${r.isNew ? '**NEW**' : '基线'} |`,
-  )
+  console.log(`| P${tier(r)} | ${r.file} | ${r.lines} | ${r.churn}${hot} | ${r.flags.join('<br>')} |`)
 }
-const fresh = rows.filter((r) => r.isNew)
 console.log('')
-console.log(`共 ${rows.length} 个文件命中阈值，其中新增告警 ${fresh.length} 个。`)
-if (!showAll && fresh.length) {
-  console.log('新增告警文件：')
-  for (const r of fresh) console.log(`  - ${r.file}（${r.flags.join('；')}）`)
-}
-// --ci：新增告警即失败，交给 workflow 的 if: failure() 开 issue（对齐
-// protocol-drift 检测脚本的"零告警 exit 0 / 有告警 exit 1"约定）
-if (ci && fresh.length) process.exit(1)
+console.log(`共 ${rows.length} 个文件命中阈值。对照 docs/complexity-baseline.md 的现在时表求差集，差集即新增告警。`)
+
+// exit 1 = 有命中（当期事实，供 CI 决定是否递送报告；不含任何基线概念）
+if (rows.length) process.exit(1)

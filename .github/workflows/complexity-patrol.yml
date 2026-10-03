@@ -21,28 +21,42 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      # --ci：存在 BASELINE 之外的新增告警时退出码 1，触发下面的开 issue 步骤。
-      # 新增告警的明细在 job 日志与 $GITHUB_STEP_SUMMARY。
+      # 脚本纯无状态：exit 1 仅表示"本次扫描有命中"（当期事实），
+      # 是否存在*新增*告警由人/LLM 对照 docs/complexity-baseline.md 裁决。
+      # pipefail 必需：没有它 bun 的退出码会被 tee 掩盖，if: failure() 永不触发。
       - name: complexity report
-        run: bun scripts/complexity-report.ts --ci | tee "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -o pipefail
+          bun scripts/complexity-report.ts | tee "$GITHUB_STEP_SUMMARY" report.md
 
-      - name: new alerts → open issue
+      # 有命中 → 开 issue 递送报告全文。本步骤不做差集、不读基线文档：
+      # 状态判定全部留给读 issue 的人/LLM（issue 按标题前缀去重，
+      # 上期未处置关闭则本周不重复开）。
+      - name: any hits → open issue
         if: failure()
         uses: actions/github-script@v8
         env:
           DRIFT_LABEL: complexity-patrol
           DRIFT_LABEL_COLOR: '7C3AED'
-          DRIFT_LABEL_DESCRIPTION: 复杂度定量探测新增告警（巨石文件/神组件嫌疑）
-          DRIFT_TITLE_PREFIX: 复杂度新增告警
-          DRIFT_BODY: |
-            CI 周报检测到 BASELINE 之外的新增复杂度告警（行数 / 单函数长度 / hook 密度 / 变更热点）。
-
-            处置流程（对齐 docs/complexity-baseline.md 的双层结构）：
-            1. 本地跑 `bun scripts/complexity-report.ts` 看明细（job 日志 / Summary 里也有）。
-            2. 对每个新增告警文件做**定性裁决**——命中阈值 ≠ 必须拆（基线文档里有 813 行不拆的反例）。
-            3. 确认巨石且有清晰边界 → 拆；大但内聚 → 加入脚本 BASELINE 并在基线文档记一句不拆的理由。
-            4. 或整轮委托：`bash scripts/claude-task.sh complexity-patrol`。
+          DRIFT_LABEL_DESCRIPTION: 复杂度定量探测周报（巨石文件/神组件嫌疑）
+          DRIFT_TITLE_PREFIX: 复杂度周报
         with:
           script: |
+            const fs = require('fs')
+            const report = fs.readFileSync('report.md', 'utf8')
+            process.env.DRIFT_BODY = [
+              '本周复杂度定量探测有文件命中阈值，报告全文见文末。',
+              '',
+              '处置流程（脚本与 CI 均无状态，BASELINE/NEW 判定由人/LLM 完成）：',
+              '1. 先读 `docs/complexity-baseline.md`——现在时表中的文件是既有裁决，视为已知。',
+              '2. 报告与已知集合的差集 = 本轮新增嫌疑；命中阈值 ≠ 必须拆（基线文档有 813 行不拆的反例）。',
+              '3. 对每个新增嫌疑做定性裁决：确认巨石且有清晰边界 → 拆；大但内聚 → 入基线文档表。',
+              '4. 或整轮委托：`bash scripts/claude-task.sh complexity-patrol`。',
+              '5. 处置完毕关闭本 issue；下周仍有命中会开新一期。',
+              '',
+              '---',
+              '',
+              report,
+            ].join('\n')
             const open = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/open-drift-issue.cjs`)
             await open({ github, context, core })

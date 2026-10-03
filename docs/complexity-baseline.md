@@ -1,9 +1,9 @@
 # 复杂度基线：巨石文件/神组件定性裁决记录
 
-本文件是 `scripts/complexity-report.ts`（定量探测）的人工定性裁决层。配套关系：
+本文件是裁决状态的**唯一载体**。配套关系：
 
-- **第 1 层（脚本）**：行数 / 单函数长度 / hook 密度 / git 变更热点 → 产出候选清单，只告警不裁决。
-- **第 2 层（本文件）**：对每个候选给出"是巨石 / 边界 / 大但内聚"的裁决与理由，并维护脚本 `BASELINE` 白名单。
+- **第 1 层（`scripts/complexity-report.ts`，纯无状态）**：行数 / 单函数长度 / hook 密度 / git 变更热点 → 输出全量命中清单。脚本不内嵌、不读取、不产出任何"基线/新增"概念；退出码 1 只表示"本次扫描有命中"。
+- **第 2 层（本文档 + 人/LLM）**：报告与本文"现在时"两个表的**差集 = 新增嫌疑（NEW）**，由人 / LLM 计算并逐一定性裁决。拆分手术、入表、日志追加全部发生在这一层。
 
 **判定标准（定性，非定量）**：巨石 = 职责混叠 + 状态纠缠 + 不可测三者叠加。反例见下表：
 813 行的 translate.ts 比 195 行的 StatusPill 函数更健康——行数是信号，不是定义。
@@ -20,7 +20,7 @@
 | server/src/backends/claude/processManager.ts | **轻度-中度巨石** | L40-134 五个纯函数（usage 推断 / transcript 尾扫 / 命令解析）与 ClaudeSession 零耦合，且 backend.ts 反向 import 它——分层错位实证；`handleLine`（L680-842，162 行）内联 5 条线索 | 纯函数组抽 usage.ts / resolve.ts；handleLine 分 noteXxx 私有方法 |
 | server/src/backends/codex/session.ts | **边界** | 核心身份（状态机+事件编排+生命周期）属"单线程句柄"合理内聚，但输出合并缓冲（L943-984）、compact 补丁（L869-921）、改名回声（L97-108+L405-418）三块机制簇独立可抽，合计约 120 行 | 三个机制簇各自下沉；文件可降至 ~880 行 |
 
-### 大但内聚，刻意不拆（BASELINE 成员）
+### 大但内聚，刻意不拆（已知集合）
 
 | 文件 | 不拆的理由 |
 |---|---|
@@ -63,7 +63,7 @@
 - **不做的决策**（12 个）：translate.ts / claude/port.ts / claude/discovery.ts /
   codex/runtime.ts / vapid.ts / gateway.ts / Composer.tsx / useTranscriptIngest.ts /
   useSessionSocket.ts / useTaskBuckets.ts / useTranscriptScroll.ts——理由见上表，
-  核心是"大但内聚"与"纠缠属领域不变量"两类，均已入 BASELINE。
+  核心是"大但内聚"与"纠缠属领域不变量"两类，均已入上表。
 - **定量探测的两个漏网浮出**：SessionList.tsx（hooks=34 + 变更 44 次）、DirPicker.tsx
   （hooks=26）——行数初筛选材时排不进候选，churn × hook 密度交叉后升至 P1。
   列入待巡裁定，由首个 complexity-patrol 任务处置。
@@ -72,9 +72,9 @@
 
 ## 维护规则
 
-1. 每次 complexity-patrol 任务（或人工处置）对 NEW 文件逐一裁决：确认巨石 → 拆；大但内聚 → 把路径加入脚本 `BASELINE` 并补"大但内聚"表的不拆理由。
-2. 每轮结束必须在"裁决日志"新增一节（倒序），含每个 NEW 文件一句结论与不做的决策。
-3. 重构瘦身后的文件从 `BASELINE` 移除（它不再命中阈值，自然会从报告消失）。
-4. 阈值本身（500/150/10/20）调整须在 commit message 里说明动机——阈值漂移没有告警，只能靠纪律。
-5. CI 周报（`.github/workflows/complexity-patrol.yml`，每周三）只负责发现新增告警并开 issue；
-   评估与处置永远在人/LLM 这边，issue 关掉后以本文档为准。
+1. **本文档是裁决状态的唯一载体**——脚本（`scripts/complexity-report.ts`）与 CI workflow 均为无状态，不内嵌、不读取任何基线；NEW = 报告命中 − 本文现在时表，由人 / LLM 计算。
+2. 每轮处置（人工或 `claude-task.sh complexity-patrol`）对 NEW 逐一裁决：确认巨石 → 拆；确认命中暂不手术 → 入"确认命中/边界"表；大但内聚 → 入"大但内聚"表并写明不拆理由。
+3. 每轮结束必须在"裁决日志"新增一节（倒序），含每个 NEW 文件一句结论与不做的决策；同步更新"待巡裁定"清单。
+4. 重构瘦身后的文件从对应表移除（它不再命中阈值，自然会从报告消失）。
+5. 阈值本身（500/150/10/20）调整须在 commit message 里说明动机——阈值漂移没有告警，只能靠纪律。
+6. CI 周报（`.github/workflows/complexity-patrol.yml`，每周三）只负责有命中时开 issue **递送报告**，不做差集、不维护状态；issue 由人处置后关闭，评估结论以本文档为准。
