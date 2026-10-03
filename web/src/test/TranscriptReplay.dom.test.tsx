@@ -19,7 +19,6 @@ const isToolUseStart = (ev: Record<string, unknown>): boolean => {
   return e?.type === 'content_block_start' && e?.content_block?.type === 'tool_use'
 }
 const isPartialResult = (ev: Record<string, unknown>): boolean => isCli(ev) && msgOf(ev)?.partial === true
-const isResult = (ev: Record<string, unknown>): boolean => isCli(ev) && msgOf(ev)?.type === 'result'
 
 let claudeLive: TranscriptFixture
 let codexLive: TranscriptFixture

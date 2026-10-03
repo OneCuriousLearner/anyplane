@@ -57,6 +57,10 @@ function parseArgs(): Args {
     console.error('--backend 只认 claude|codex')
     process.exit(2)
   }
+  if (!Number.isFinite(a.timeoutMs) || a.timeoutMs <= 0) {
+    console.error(`--timeout 必须是正数毫秒（收到：${a.timeoutMs}）`)
+    process.exit(2)
+  }
   return a
 }
 
@@ -99,7 +103,19 @@ c.on((ev) => {
     if (st && st.busy === false) idleAfterResult = true
   }
 })
-await c.open()
+// open 无内建超时/错误路径：服务端未启动或 token 缺失（握手 401）时裸 await 会无声悬挂
+await Promise.race([
+  c.open(),
+  new Promise<never>((_, reject) => {
+    c.ws.onerror = () => reject(new Error('WS 连接失败（服务端未启动？ANYPLANE_TOKEN 缺失？）'))
+    c.ws.onclose = (e) => {
+      if (!e.wasClean) reject(new Error(`WS 握手被关闭（code=${e.code}，ANYPLANE_TOKEN 缺失或端口不对？）`))
+    }
+  }),
+  new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('WS 连接超时 15s（服务端未启动？端口不对？）')), 15_000),
+  ),
+])
 c.send({ kind: 'attach' })
 
 // 等 attach 首发 status（懒启动握手）
@@ -177,7 +193,8 @@ if (args.historyOut) {
   const d = describeKey(finalKey)
   const histPath =
     d?.kind === 'existing' && d.backend === 'claude'
-      ? `/api/history/${d.slug}/${d.sessionId}`
+      ? // ?limit= 覆盖默认 300 窗口（路由上限 10000）——长会话重录不得静默截断
+        `/api/history/${d.slug}/${d.sessionId}?limit=10000`
       : d?.kind === 'existing' && d.backend === 'codex'
         ? `/api/codex/history/${d.sessionId}`
         : undefined
