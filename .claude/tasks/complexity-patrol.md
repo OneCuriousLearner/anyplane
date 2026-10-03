@@ -3,7 +3,7 @@
 处置流程（每一步都要做）：
 
 1. **先读 `docs/complexity-baseline.md`**（判定标准、既有裁决先例、"现在时"两个表 = 已知集合）。这一步必须先于跑报告——它定义了什么叫 NEW。
-2. 运行 `bun scripts/complexity-report.ts` 拿全量命中清单（行数 / 单函数长度 / hook 密度 / git 变更热点；脚本退出码 1 只表示"有命中"，不表示"有新增"）。**自行求差集**：命中清单 − 文档现在时表 = 本轮 NEW。
+2. 运行 `bun install --frozen-lockfile`（claude-task.sh 建的 pristine worktree 无 node_modules，脚本 import typescript 必须先装依赖），然后运行 `bun scripts/complexity-report.ts` 拿全量命中清单（行数 / 单函数长度 / hook 密度 / git 变更热点；脚本退出码 1 只表示"有命中"，不表示"有新增"）。**自行求差集**：命中清单 − 文档现在时表 = 本轮 NEW。
 3. 逐个深读 NEW 文件（按报告的优先级 P1→P2 与同档热点排序），按基线文档的定性标准裁决：
    - **确认巨石且有清晰拆分边界** → 实施拆分。拆分必须尊重仓库红线（见 AGENTS.md：live/历史同形、port.ts 契约叶子不 import 适配器、store/ref 分层、零行为改动优先）。
    - **确认命中但本轮不手术** → 加入 `docs/complexity-baseline.md` 的"确认命中/边界"表（含处置方向）。

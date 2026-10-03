@@ -30,6 +30,11 @@ const CHURN_HOT = 20 // 窗口内被 commit 触碰次数：变更热点线
 
 const args = process.argv.slice(2)
 const sinceIdx = args.indexOf('--since')
+// --since 缺值会拼出 --since=undefined，git 以 128 退出、churn 静默全零——fail fast
+if (sinceIdx >= 0 && !args[sinceIdx + 1]) {
+  console.error('用法: bun scripts/complexity-report.ts [--since <git-date>]')
+  process.exit(2)
+}
 const since = sinceIdx >= 0 ? args[sinceIdx + 1] : '6 months ago'
 
 const norm = (p: string) => p.split('\\').join('/')
