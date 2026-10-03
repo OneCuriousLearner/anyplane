@@ -1,6 +1,17 @@
-import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { buildTranscriptRows, type ChatMsg } from '../lib/blocks'
-import { click, render, setupDom, thinkingButtons, toolButtons, unmountAll } from '../test/dom'
+import {
+  type ConsoleErrorSpy,
+  click,
+  isKeyWarning,
+  render,
+  restoreConsoleError,
+  setupDom,
+  thinkingButtons,
+  toolButtons,
+  unmountAll,
+  watchConsoleError,
+} from '../test/dom'
 import { Transcript } from './Transcript'
 
 const text = (t: string): ChatMsg['blocks'][number] => ({ kind: 'text', text: t })
@@ -26,50 +37,48 @@ const reentryMessages = (): ChatMsg[] => [
 
 describe('Transcript（DOM 整链）：buildTranscriptRows → 渲染的不变量', () => {
   let teardown: () => void
+  // 零 key 警告是每条渲染的通用不变量，afterEach 统一断言；
+  // 只有「探测器有效性」反例用例经 allowKeyWarnings 显式豁免
+  let errorSpy: ConsoleErrorSpy | undefined
+  let allowKeyWarnings = false
   beforeAll(() => {
     teardown = setupDom()
   })
   afterAll(() => teardown())
-  afterEach(() => unmountAll())
+  beforeEach(() => {
+    errorSpy = watchConsoleError()
+    allowKeyWarnings = false
+  })
+  afterEach(async () => {
+    if (errorSpy) restoreConsoleError(errorSpy, { allowKeyWarnings })
+    await unmountAll()
+  })
 
   test('重进会话序列：思考/工具各按源数量渲染、全部默认折叠、零 React key 警告', async () => {
     // Bug 2 的 DOM 级回归网：上游（服务端去重）再退化时，这里会炸出双倍思考或 key 警告
-    const spy = spyOn(console, 'error')
-    try {
-      const rows = buildTranscriptRows(reentryMessages())
-      const r = await render(<Transcript rows={rows} />)
-      const ths = thinkingButtons(r.container)
-      expect(ths).toHaveLength(3)
-      for (const b of ths) expect(b.getAttribute('aria-expanded')).toBe('false')
-      expect(toolButtons(r.container)).toHaveLength(3)
-      expect(r.container.querySelector('pre')).toBeNull()
-      for (const t of ['文本1', '文本2', '文本3']) expect(r.container.textContent).toContain(t)
-      // 每个思考/工具的详情文本折叠态不可见，数量断言靠按钮计数（上面）；
-      // key 碰撞会经 React dev 警告冒头——这是重复元素问题的通用探测器
-      const keyWarnings = spy.mock.calls.filter((args) => String(args[0]).includes('key'))
-      expect(keyWarnings).toEqual([])
-    } finally {
-      spy.mockRestore()
-    }
+    //（key 碰撞经 React dev 警告冒头，由 afterEach 统一断言——重复元素问题的通用探测器）
+    const rows = buildTranscriptRows(reentryMessages())
+    const r = await render(<Transcript rows={rows} />)
+    const ths = thinkingButtons(r.container)
+    expect(ths).toHaveLength(3)
+    for (const b of ths) expect(b.getAttribute('aria-expanded')).toBe('false')
+    expect(toolButtons(r.container)).toHaveLength(3)
+    expect(r.container.querySelector('pre')).toBeNull()
+    for (const t of ['文本1', '文本2', '文本3']) expect(r.container.textContent).toContain(t)
   })
 
   test('探测器有效性：重复 uuid 的消息序列必然触发 duplicate key 警告', async () => {
     // Bug 2 修复前服务端送出的形状（侧车与 inline 各一份同 uuid 思考）。
     // web 层的职责不是消化重复，而是让这类上游回归在测试里炸出来——本用例证明探测器不盲。
-    const spy = spyOn(console, 'error')
-    try {
-      const dup: ChatMsg[] = [
-        msg('r-dup1', 'assistant', [thinking('同一份思考')]),
-        msg('r-dup1', 'assistant', [thinking('同一份思考')]),
-      ]
-      const r = await render(<Transcript rows={buildTranscriptRows(dup)} />)
-      // 两份都会被渲染（web 如实呈现输入），但 React 必须警告 key 碰撞
-      expect(thinkingButtons(r.container)).toHaveLength(2)
-      const keyWarnings = spy.mock.calls.filter((args) => String(args[0]).includes('same key'))
-      expect(keyWarnings.length).toBeGreaterThan(0)
-    } finally {
-      spy.mockRestore()
-    }
+    allowKeyWarnings = true
+    const dup: ChatMsg[] = [
+      msg('r-dup1', 'assistant', [thinking('同一份思考')]),
+      msg('r-dup1', 'assistant', [thinking('同一份思考')]),
+    ]
+    const r = await render(<Transcript rows={buildTranscriptRows(dup)} />)
+    // 两份都会被渲染（web 如实呈现输入），但 React 必须警告 key 碰撞
+    expect(thinkingButtons(r.container)).toHaveLength(2)
+    expect(errorSpy!.mock.calls.filter(isKeyWarning).length).toBeGreaterThan(0)
   })
 
   test('流式草稿：草稿思考展开、草稿工具与已落地工具全部折叠（Bug 1 DOM 级回归）', async () => {

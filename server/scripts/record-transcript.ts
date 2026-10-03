@@ -19,7 +19,10 @@
 //   破坏性命令，scratch cwd 里折腾；
 // - 落盘后人工过一遍再提交：尺寸、隐私、是否混进无关 turn。
 
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { describeKey } from '../src/backends/port'
+import { sanitizePath } from '../src/util'
 import { apiFetch, connect } from './e2e-lib'
 
 interface Args {
@@ -103,19 +106,8 @@ c.on((ev) => {
     if (st && st.busy === false) idleAfterResult = true
   }
 })
-// open 无内建超时/错误路径：服务端未启动或 token 缺失（握手 401）时裸 await 会无声悬挂
-await Promise.race([
-  c.open(),
-  new Promise<never>((_, reject) => {
-    c.ws.onerror = () => reject(new Error('WS 连接失败（服务端未启动？ANYPLANE_TOKEN 缺失？）'))
-    c.ws.onclose = (e) => {
-      if (!e.wasClean) reject(new Error(`WS 握手被关闭（code=${e.code}，ANYPLANE_TOKEN 缺失或端口不对？）`))
-    }
-  }),
-  new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('WS 连接超时 15s（服务端未启动？端口不对？）')), 15_000),
-  ),
-])
+// connect().open() 已内建 onerror/onclose reject（e2e-lib），此处只加 15s 连接超时
+await c.open(15_000)
 c.send({ kind: 'attach' })
 
 // 等 attach 首发 status（懒启动握手）
@@ -145,12 +137,12 @@ if (!idleAfterResult) {
 // ---------- 4. 落盘（cwd/HOME 脱敏） ----------
 const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
 // 深遍历在 stringify 之前做——JSON 转义后的文本替换会漏掉 \\ 形态。
-// 同一来源的全部形态都换：Windows 反斜杠 / POSIX / claude slug / URI 编码（n| key 内嵌）。
-const slugOf = (p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')
+// 同一来源的全部形态都换：Windows 反斜杠 / POSIX / claude slug（sanitizePath，
+// 与官方 CLI projects 目录规则同源）/ URI 编码（n| key 内嵌）。
 const replacements: Array<[string, string]> = []
 const pushForms = (raw: string, to: string) => {
   const posix = raw.replace(/\\/g, '/')
-  replacements.push([raw, to], [posix, to], [slugOf(raw), to], [encodeURIComponent(raw), to], [encodeURIComponent(posix), to])
+  replacements.push([raw, to], [posix, to], [sanitizePath(raw), to], [encodeURIComponent(raw), to], [encodeURIComponent(posix), to])
 }
 pushForms(args.cwd!, '<CWD>')
 if (home) pushForms(home, '<HOME>')
@@ -176,16 +168,14 @@ const meta = {
   approvals,
   source: 'server/scripts/record-transcript.ts',
 }
-const writeFixture = async (path: string, fixture: unknown) => {
-  const { mkdirSync, writeFileSync } = await import('node:fs')
-  const { dirname, resolve } = await import('node:path')
+const writeFixture = (path: string, fixture: unknown) => {
   const p = resolve(path)
   mkdirSync(dirname(p), { recursive: true })
   writeFileSync(p, JSON.stringify(scrubDeep(fixture), null, 2) + '\n')
   console.log(`[record] 写出 ${p}`)
 }
 
-await writeFixture(args.out!, { meta, history: null, events })
+writeFixture(args.out!, { meta, history: null, events })
 console.log(`[record] live 事件 ${events.length} 条（审批 ${approvals} 次）`)
 
 // ---------- 5. 重进历史 fixture（可选） ----------
@@ -208,7 +198,7 @@ if (args.historyOut) {
     process.exit(1)
   }
   const history = (await res.json()) as { messages?: unknown[] }
-  await writeFixture(args.historyOut, {
+  writeFixture(args.historyOut, {
     meta: { ...meta, scenario: `${args.scenario}-reentry` },
     history,
     events: [],

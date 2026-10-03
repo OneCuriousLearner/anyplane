@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import type { ActivityItem } from '../lib/blocks'
-import { click, render, setupDom, unmountAll } from '../test/dom'
+import { click, render, setupDom, thinkingButtons, unmountAll } from '../test/dom'
 import { ActivityGroup } from './ActivityGroup'
 
 const thinking = (text: string, streaming?: boolean): ActivityItem => ({
@@ -14,8 +14,7 @@ const tool = (id: string, extra?: { pending?: boolean; resultText?: string }): A
   block: { kind: 'tool', id, name: 'Bash', input: { command: 'ls' }, ...extra },
 })
 
-/** 思考按钮带 aria-expanded（ToolCard 的没有）——DOM 上区分两种卡片的把手 */
-const thinkingButton = (c: HTMLElement) => c.querySelector('button[aria-expanded]')
+const thinkingButton = (c: HTMLElement) => thinkingButtons(c)[0]!
 
 describe('ActivityGroup（DOM）：思考随流式开合是唯一自动行为', () => {
   let teardown: () => void

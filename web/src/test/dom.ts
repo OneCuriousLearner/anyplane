@@ -8,6 +8,7 @@
 // 本模块模块级绝不注册，也不建 root bunfig preload（会污染 server 测试）。
 
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
+import { expect, spyOn } from 'bun:test'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
@@ -26,6 +27,7 @@ export interface Rendered {
   container: HTMLElement
   /** 同 root 重渲染（props 更新/落地路径，组件 React key 不变则本地 state 保留） */
   rerender: (ui: ReactElement) => Promise<void>
+  /** 幂等且自我注销（从 unmountAll 的清单摘除）——显式 unmount 与 afterEach 兜底混用安全 */
   unmount: () => Promise<void>
 }
 
@@ -36,12 +38,7 @@ export async function render(ui: ReactElement): Promise<Rendered> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root: Root = createRoot(container)
-  const unmount = async () => {
-    await act(async () => {
-      root.unmount()
-    })
-    container.remove()
-  }
+  let unmounted = false
   const r: Rendered = {
     container,
     rerender: async (next) => {
@@ -49,7 +46,16 @@ export async function render(ui: ReactElement): Promise<Rendered> {
         root.render(next)
       })
     },
-    unmount,
+    unmount: async () => {
+      if (unmounted) return
+      unmounted = true
+      const i = live.indexOf(r)
+      if (i >= 0) live.splice(i, 1)
+      await act(async () => {
+        root.unmount()
+      })
+      container.remove()
+    },
   }
   await act(async () => {
     root.render(ui)
@@ -61,7 +67,7 @@ export async function render(ui: ReactElement): Promise<Rendered> {
 /** 卸载所有未手动 unmount 的 root——测试文件 afterEach 调用，失败用例也不留挂载残留 */
 export async function unmountAll(): Promise<void> {
   while (live.length > 0) {
-    await live.pop()!.unmount()
+    await live[live.length - 1]!.unmount()
   }
 }
 
@@ -72,6 +78,27 @@ export async function click(el: Element): Promise<void> {
   })
 }
 
-/** 思考按钮带 aria-expanded（ToolCard 的没有）——DOM 上区分两种卡片类型的把手 */
-export const thinkingButtons = (c: HTMLElement) => c.querySelectorAll('button[aria-expanded]')
-export const toolButtons = (c: HTMLElement) => c.querySelectorAll('button:not([aria-expanded])')
+/** 两种卡片的正向把手：组件在按钮上声明 data-card（ToolCard/Thinking 各一张）。
+ *  不要用 aria-expanded 有无之类的偶然差异做负向选择——第三种按钮出现时计数会无声失真。 */
+export const thinkingButtons = (c: HTMLElement) => c.querySelectorAll('button[data-card="thinking"]')
+export const toolButtons = (c: HTMLElement) => c.querySelectorAll('button[data-card="tool"]')
+
+/** console.error 中 React key 警告的统一过滤口径（重复元素的通用探测器）。
+ *  单进程共享 console，监听必须经 watchConsoleError 成对 restore——泄漏会让后续用例断言错位。 */
+export const isKeyWarning = (args: unknown[]): boolean => String(args[0]).includes('key')
+
+export type ConsoleErrorSpy = ReturnType<typeof spyOn>
+
+/** 监听 console.error（用例 beforeEach 建、afterEach 经 restoreConsoleError 还原） */
+export function watchConsoleError(): ConsoleErrorSpy {
+  return spyOn(console, 'error')
+}
+
+/** 还原 spy 前断言零 key 警告——「每条回放/渲染都无 key 碰撞」是通用不变量，放 afterEach 最贴语义 */
+export function restoreConsoleError(spy: ConsoleErrorSpy, opts?: { allowKeyWarnings?: boolean }): void {
+  try {
+    if (!opts?.allowKeyWarnings) expect(spy.mock.calls.filter(isKeyWarning)).toEqual([])
+  } finally {
+    spy.mockRestore()
+  }
+}

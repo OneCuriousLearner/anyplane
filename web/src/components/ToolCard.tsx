@@ -23,8 +23,10 @@ export const ToolCard = memo(function ToolCard(props: {
     >
       <button
         type="button"
+        data-card="tool"
         className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[12px] transition-colors hover:bg-surface2"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
       >
         <span className="text-faint">{open ? '▾' : '▸'}</span>
         <span className="shrink-0 font-semibold text-ink">{tool.name}</span>

@@ -25,6 +25,7 @@ const Thinking = memo(function Thinking(props: {
     >
       <button
         type="button"
+        data-card="thinking"
         className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[12px] transition-colors hover:bg-surface2"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
