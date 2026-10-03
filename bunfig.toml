@@ -1,0 +1,7 @@
+# bun 没有用户级 bunfig 时会与 npm 共用 ~/.npmrc 的 registry——那台机器配了什么镜像，
+# bun add 就把什么镜像的 tarball URL 烧进共享 bun.lock（本仓 npmmirror/tencent 各留过一批，
+# PR #103 才归零）。这里锁死官方源：任何机器在本仓执行 bun install/add 都走 registry.npmjs.org，
+# lockfile 的 URL 字段因此恒为默认源规范形（空串）。verify 与 CI 另有 URL 闸兜底
+#（scripts/check-lockfile.ts），换源提速请走全局缓存/代理层，不要改这里或用 --registry。
+[install]
+registry = "https://registry.npmjs.org"

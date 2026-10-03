@@ -21,6 +21,9 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # lockfile URL 闸：tarball URL 必须全为默认源规范形（空串），防镜像地址回潮
+      - run: bun run check:lockfile
+
       - run: bun run typecheck
 
       # Biome（lint only，无 formatter）：依赖红线 noRestrictedImports + bug 类规则
