@@ -27,6 +27,7 @@ bun.lock 的 tarball URL 字段恒为空串（默认源规范形，PR #103 归�
 真 CLI e2e 看 `server/scripts/` 脚本头注释（需服务端已启动）。`e2e-mock` 是 CI 唯一不依赖真实 CLI 的 e2e。配了 `authToken` 时 e2e 要带 `ANYPLANE_TOKEN`。anyplane 不传 `--model`——自定义模型配 CLI 自己的默认值（见 `docs/configuration.md`）。
 
 单元测试用 Bun Test，`*.test.ts` 就近放置。新增纯函数补单测，真实 CLI 行为改 e2e。**测试不得依赖文件间执行顺序**——`bun test` 单进程跨文件共享模块实例且枚举顺序各平台不同；碰全局单态的用例开头必须调被测模块复位口，缺则补一个最小复位口。
+抄本整链回归走真实录制回放（不手写 mock 事件流）：`server/scripts/record-transcript.ts` 在真实 CLI 会话上录客户端视角事件流 + history 载荷（用法与脱敏纪律见脚本头），`web/src/test/replay.tsx` 经生产同款 ingest/Transcript 回放并断言不变量。
 
 ## 架构
 

@@ -71,3 +71,7 @@ export async function click(el: Element): Promise<void> {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
   })
 }
+
+/** 思考按钮带 aria-expanded（ToolCard 的没有）——DOM 上区分两种卡片类型的把手 */
+export const thinkingButtons = (c: HTMLElement) => c.querySelectorAll('button[aria-expanded]')
+export const toolButtons = (c: HTMLElement) => c.querySelectorAll('button:not([aria-expanded])')
