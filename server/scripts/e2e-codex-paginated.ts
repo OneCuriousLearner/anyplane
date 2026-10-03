@@ -198,10 +198,18 @@ async function runAssertions() {
             resolve(false) // legacy 不应走 revert
           }
         })
-        void open2().then(() => {
-          send2({ kind: 'attach' })
-          setTimeout(() => send2({ kind: 'rewind_conversation', userMessageId: anchor.uuid }), 2500)
-        })
+        // open2() 现在会 reject（e2e-lib 内建 fail-fast）——独立 promise 链上的拒绝
+        // 外层 try/catch 够不到，必须有显式归宿，否则逃成 unhandled rejection 挂死脚本
+        void open2()
+          .then(() => {
+            send2({ kind: 'attach' })
+            setTimeout(() => send2({ kind: 'rewind_conversation', userMessageId: anchor.uuid }), 2500)
+          })
+          .catch((e) => {
+            clearTimeout(timer)
+            console.error('<< legacy 连接失败：', e instanceof Error ? e.message : String(e))
+            resolve(false)
+          })
       })
       note(d, 'D1 legacy 线程回滚降级为 thread/fork（forked 广播）')
     } catch (e) {
