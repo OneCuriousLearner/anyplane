@@ -11,6 +11,7 @@
 | [public-access.md](public-access.md) | 公网接入三套免 VPS 配方（Tailscale funnel / CF Tunnel / IPv6+DDNS）与安全红线 |
 | [releasing.md](releasing.md) | 发版流程与 npm 发布权限模型 |
 | [drift.md](drift.md) | 协议漂移周报（issue）的评估结论与代办归档，长期维护 |
+| [complexity-baseline.md](complexity-baseline.md) | 巨石文件/神组件的定性裁决基线与裁决日志（倒序，长期维护），配套 `scripts/complexity-report.ts` 定量探测与周三 CI 周报 |
 | [ROADMAP.md](ROADMAP.md) | **只留未来时**：待排期方向、决策依据、明确不做的记录 |
 
 ## 交付档案（[delivered.md](delivered.md)）

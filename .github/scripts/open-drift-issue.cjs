@@ -1,7 +1,13 @@
-// 被 protocol-drift.yml 的 github-script 调用：缺标签就建、按标题前缀去重、再开 issue。
+// 被 protocol-drift.yml / complexity-patrol.yml 的 github-script 调用：
+// 缺标签就建、按标题前缀去重、再开 issue。
 // 仓库 GITHUB_TOKEN 默认只读，workflow 必须显式 issues:write；标签不存在时 create 会 422。
+// DRIFT_LABEL / DRIFT_LABEL_COLOR / DRIFT_LABEL_DESCRIPTION 可复用本脚本开其他
+// 类别的周期巡检 issue（如 complexity-patrol）；缺省值保持 protocol-drift 原行为。
 
-const LABEL = 'protocol-drift'
+const LABEL = process.env.DRIFT_LABEL || 'protocol-drift'
+const LABEL_COLOR = process.env.DRIFT_LABEL_COLOR || 'B45309'
+const LABEL_DESCRIPTION =
+  process.env.DRIFT_LABEL_DESCRIPTION || 'CLI / SDK 协议与仓库基线漂移'
 
 module.exports = async function openDriftIssue({ github, context, core }) {
   const owner = context.repo.owner
@@ -18,8 +24,8 @@ module.exports = async function openDriftIssue({ github, context, core }) {
       owner,
       repo,
       name: LABEL,
-      color: 'B45309',
-      description: 'CLI / SDK 协议与仓库基线漂移',
+      color: LABEL_COLOR,
+      description: LABEL_DESCRIPTION,
     })
     core.info(`已创建标签 ${LABEL}`)
   }
