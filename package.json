@@ -58,6 +58,7 @@
     "verify": "bun scripts/verify.ts",
     "check:lockfile": "bun scripts/check-lockfile.ts",
     "typecheck": "tsc --noEmit",
+    "metrics": "bun scripts/complexity-report.ts",
     "lint": "biome ci .",
     "prepublishOnly": "bun run build"
   },
