@@ -1,6 +1,9 @@
-// reasoning 侧车存储：codex rollout 不持久化 reasoning items（thread/turns/list
+// reasoning 侧车存储：0.14x 时代 codex rollout 不持久化 reasoning items（thread/turns/list
 // full 视图实测只有 userMessage+agentMessage），anyplane 自行落盘并在历史读取时按
 // turn 时间窗回插，让"思考"在重进会话后仍可见。
+// 0.158 起 paginated 线程的 rollout 已持久化 reasoning（items/list 与 live 同形同 id，
+// 见 docs/research/2026-10-02-codex-reasoning-persisted.md）——回插由 turnsToHistory
+// 按 itemId/文本去重；侧车继续写：legacy 线程上游缺口未修，且是上游丢 payload 时的兜底。
 
 import { appendFileSync, existsSync, statSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'

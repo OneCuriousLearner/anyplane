@@ -5,7 +5,7 @@ import type { HistoryMessage } from '@anyplane/protocol'
 import { readReasoning } from './reasoningStore'
 import { extractCompactedFromRolloutTail, reasoningSidecarUuid, type CompactedRecord } from './mapping'
 import { RpcError } from './rpc'
-import { itemsToHistory, type ThreadItem } from './translate'
+import { itemsToHistory, reasoningText, type ThreadItem } from './translate'
 import { Glob, type BunFile } from 'bun'
 import { join } from 'node:path'
 
@@ -214,17 +214,36 @@ function turnsToHistory(threadId: string, turns: HistoryTurn[]): HistoryMessage[
         })
       }
       if (hit.length > 0) {
-        const thinkingMsgs = hit.map((i) => ({
-          uuid: reasoningSidecarUuid(reasoning[i], i),
-          role: 'assistant' as const,
-          blocks: [{ kind: 'thinking' as const, text: reasoning[i].text }],
-        }))
-        // 插到该 turn 第一个 assistant 之前（userMessage 之后），保持叙事顺序
-        const insertAt = msgs.findIndex((m) => m.role === 'assistant')
-        msgs.splice(insertAt >= 0 ? insertAt : msgs.length, 0, ...thinkingMsgs)
+        // 上游已持久化 reasoning 的线程（0.158 实测 rollout 带 reasoning response_item，
+        // items/list 与 live 同形同 id 返回）：同一思考 items 与侧车各一份，不去重会在
+        // 重进会话时渲染两遍（侧车组插在轮首 + inline 原位各一份）。itemId 为主键；
+        // 无 itemId 的旧侧车条目退到文本比对（live 落盘与 inline 同经 reasoningText，同源必等）。
+        // legacy 线程的 items 本就不含 reasoning（上游持久化缺口），两集合为空、回插照旧
+        const inlineIds = new Set<string>()
+        const inlineTexts = new Set<string>()
+        for (const item of turn.items ?? []) {
+          if (item.type !== 'reasoning') continue
+          if (item.id) inlineIds.add(item.id)
+          const t = reasoningText(item.summary, item.content)
+          if (t) inlineTexts.add(t)
+        }
+        const fresh = hit.filter(
+          (i) => !(reasoning[i].itemId && inlineIds.has(reasoning[i].itemId)) && !inlineTexts.has(reasoning[i].text),
+        )
+        // 命中的都算已消费——被去重的由 inline 代表，留着不标会落进下一轮重叠窗口再插一次
         hit.forEach((i) => {
           used.add(i)
         })
+        if (fresh.length > 0) {
+          const thinkingMsgs = fresh.map((i) => ({
+            uuid: reasoningSidecarUuid(reasoning[i], i),
+            role: 'assistant' as const,
+            blocks: [{ kind: 'thinking' as const, text: reasoning[i].text }],
+          }))
+          // 插到该 turn 第一个 assistant 之前（userMessage 之后），保持叙事顺序
+          const insertAt = msgs.findIndex((m) => m.role === 'assistant')
+          msgs.splice(insertAt >= 0 ? insertAt : msgs.length, 0, ...thinkingMsgs)
+        }
       }
     }
     out.push(...msgs)

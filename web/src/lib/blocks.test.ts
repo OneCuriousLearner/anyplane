@@ -263,59 +263,25 @@ describe('groupCollapsibleRuns / buildTranscriptRows', () => {
   })
 })
 
-describe('buildTranscriptRows streaming 标记（codex 部分结果驱动卡片展开）', () => {
+describe('buildTranscriptRows 工具块无自动展开标记（恒默认折叠，2026-10-02 决策）', () => {
   const tool = (
     id: string,
     extra?: { pending?: boolean; resultText?: string },
   ): ChatMsg['blocks'][number] => ({ kind: 'tool', id, name: 'Bash', input: { command: 'ls' }, ...extra })
   const msg = (id: string, blocks: ChatMsg['blocks']): ChatMsg => ({ id, role: 'assistant', blocks })
 
-  test('pending 且有部分结果文本 → streaming: true；其余工具块不标记', () => {
-    const rows = buildTranscriptRows([
-      msg('a1', [
-        tool('t1', { pending: true, resultText: 'tick-1\n' }), // 流式中 → streaming
-        tool('t2', { pending: true }), // 运行中但无输出 → 不展开
-        tool('t3', { resultText: 'done' }), // 终态 → 不展开
-      ]),
-    ])
-    const act = rows[0]
-    if (act?.type !== 'activity') throw new Error('expected activity')
-    expect(act.items.map((it) => it.streaming ?? false)).toEqual([true, false, false])
-  })
-})
-
-describe('buildTranscriptRows latestTurn 标记（最新一轮工具卡默认展开）', () => {
-  const tool = (id: string): ChatMsg['blocks'][number] => ({ kind: 'tool', id, name: 'Read', input: {} })
-  const user = (id: string): ChatMsg => ({ id, role: 'user', blocks: [{ kind: 'text', text: '问' }] })
-  const asst = (id: string, blocks: ChatMsg['blocks']): ChatMsg => ({ id, role: 'assistant', blocks })
-
-  const latestFlags = (rows: ReturnType<typeof buildTranscriptRows>) =>
-    rows.flatMap((r) => (r.type === 'activity' ? r.items.map((it) => it.latestTurn ?? false) : []))
-
-  test('最后一条 user 之后的 assistant 工具卡标 latestTurn，更早轮次不标', () => {
-    const rows = buildTranscriptRows([
-      asst('a1', [tool('t-old')]),
-      user('u1'),
-      asst('a2', [tool('t-new')]),
-    ])
-    expect(latestFlags(rows)).toEqual([false, true])
-  })
-
-  test('全是有历史（无 user 边界）→ 都不标；草稿恒在最新一轮', () => {
-    const onlyAssistant = buildTranscriptRows([asst('a1', [tool('t1')])])
-    expect(latestFlags(onlyAssistant)).toEqual([false])
-    const withDraft = buildTranscriptRows([asst('a1', [tool('t1')])], {
-      blocks: [{ idx: 0, kind: 'tool', text: '', name: 'Bash', toolId: 'td' }],
-    })
-    expect(latestFlags(withDraft)).toEqual([false, true])
-  })
-
-  test('system 消息（分隔线/系统行）也是边界——compact 后的新一轮才标', () => {
-    const rows = buildTranscriptRows([
-      asst('a1', [tool('t-pre')]),
-      { id: 'd1', role: 'system', systemKind: 'divider', blocks: [] },
-      asst('a2', [tool('t-post')]),
-    ])
-    expect(latestFlags(rows)).toEqual([false, true])
+  test('流式中/终态工具块与草稿工具块都不带 streaming；思考草稿仍带 streaming', () => {
+    const rows = buildTranscriptRows(
+      [msg('a1', [tool('t1', { pending: true, resultText: 'tick-1\n' }), tool('t2', { resultText: 'done' })])],
+      {
+        blocks: [
+          { idx: 0, kind: 'tool', text: '', name: 'Bash', toolId: 'td' },
+          { idx: 1, kind: 'thinking', text: '想' },
+        ],
+      },
+    )
+    const flags = rows.flatMap((r) => (r.type === 'activity' ? r.items.map((it) => it.streaming ?? false) : []))
+    // latestTurn/streaming 展开已整体移除（大量 tool use 摊开阅读难度大），只有思考随流式开合
+    expect(flags).toEqual([false, false, false, true])
   })
 })

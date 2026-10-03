@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcError } from './rpc'
+import { appendReasoning } from './reasoningStore'
 import { CodexRuntime } from './runtime'
 
 /** 临时 CODEX_HOME（rollout 夹具用），用后还原 */
@@ -107,6 +108,43 @@ describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => 
     const users = msgs.filter((m) => m.role === 'user' && m.blocks.some((b) => b.kind === 'text'))
     expect(users.map((m) => m.uuid)).toEqual(['turn-1', 'turn-2'])
     expect(users.every((m) => m.rewindable)).toBe(true)
+  })
+
+  test('paginated：items 已含 reasoning 时侧车按 itemId/文本去重，不重进翻倍；侧车独有条目仍回插', async () => {
+    // 0.158 起上游 rollout 持久化 reasoning（items/list 与 live 同形同 id）——旧侧车条目
+    // 与 inline 并存，不回插去重会把同一思考渲染两遍（侧车组插轮首 + inline 原位各一份）
+    const threadId = `test-${crypto.randomUUID()}`
+    const sidecar = join(homedir(), '.anyplane', 'reasoning', `${threadId}.jsonl`)
+    const nowSec = Math.floor(Date.now() / 1000)
+    appendReasoning(threadId, { ts: Date.now(), turnId: 'turn-1', text: '思考一', itemId: 'r1' })
+    appendReasoning(threadId, { ts: Date.now(), turnId: 'turn-1', text: '思考一' }) // 无 itemId 旧条目：文本兜底
+    appendReasoning(threadId, { ts: Date.now(), turnId: 'turn-1', text: '侧车独有', itemId: 'r-legacy' })
+    try {
+      const { runtime } = stubRpc({
+        'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
+        'thread/turns/list': () => ({
+          data: [{ id: 'turn-1', startedAt: nowSec - 10, completedAt: nowSec + 10 }],
+          nextCursor: null,
+        }),
+        'thread/items/list': () => ({
+          data: [
+            { turnId: 'turn-1', item: { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '开始' }] } },
+            { turnId: 'turn-1', item: { id: 'r1', type: 'reasoning', summary: ['思考一'], content: [] } },
+            { turnId: 'turn-1', item: { id: 'a1', type: 'agentMessage', text: '完成' } },
+          ],
+          nextCursor: null,
+        }),
+      })
+      const msgs = await runtime.readHistory(threadId)
+      const thinkings = msgs.filter((m) => m.blocks.some((b) => b.kind === 'thinking'))
+      // 三份侧车命中只剩「侧车独有」一份回插；'思考一' 只存在 inline 的一份
+      expect(thinkings.map((m) => [m.uuid, m.blocks[0].kind === 'thinking' ? m.blocks[0].text : ''])).toEqual([
+        ['r-legacy', '侧车独有'],
+        ['r1', '思考一'],
+      ])
+    } finally {
+      rmSync(sidecar, { force: true })
+    }
   })
 
   test('paginated：item 的 turnId 不在 turns/list 时按末段追加，不静默丢弃', async () => {

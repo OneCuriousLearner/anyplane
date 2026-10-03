@@ -79,10 +79,10 @@ export function draftBlockToBlock(b: DraftBlockLike): Block {
 export interface ActivityItem {
   key: string
   block: CollapsibleBlock
+  /** 思考块流式中展开（Thinking 消费）；工具块永远没有——工具卡恒默认折叠，
+   *  开合全由用户（2026-10-02 决策：大量 tool use 摊开阅读难度大，取代走查问题 7
+   *  的 latestTurn 默认展开与 codex 部分结果的 streaming 展开，两套自动展开全移除） */
   streaming?: boolean
-  /** 最新一轮（还没被下一条用户消息盖住）的工具卡默认展开——
-   *  更早轮次维持收起（走查问题 7：模型说错了要当场核对它读到的原文） */
-  latestTurn?: boolean
 }
 
 export type TranscriptRow =
@@ -94,8 +94,6 @@ export type TranscriptRow =
  * 把消息列表 + 可选流式草稿摊成渲染行。
  * 相邻 assistant 消息之间的思考/工具会跨消息并进同一 activity 组；
  * 用户/系统/侧问卡片、以及正文/图片会打断分组。
- * 「最新一轮」= 最后一条非 assistant 消息（user/system/侧问）之后的内容：该轮工具卡
- * 标 latestTurn（渲染层默认展开）；轮次是渲染派生，ingest 三路共用的 ChatMsg 模型不动。
  */
 export function buildTranscriptRows(
   messages: readonly ChatMsg[],
@@ -105,12 +103,8 @@ export function buildTranscriptRows(
   let activity: ActivityItem[] | null = null
   let activityCompact = false
 
-  // 最新一轮边界：最后一条非 assistant 消息的位置；加载窗口里没有边界
-  //（翻页窗口从 assistant 半截开始）则都不标——否则旧工具卡在加载时全部摊开
-  let lastBoundary = -1
-  messages.forEach((m, i) => {
-    if (m.btw != null || m.role !== 'assistant') lastBoundary = i
-  })
+  // 最新一轮边界（latestTurn 默认展开）已随「工具卡恒默认折叠」决策移除——
+  // 不要把边界计算加回来，理由见 ActivityItem.streaming 注释
 
   const prevRole = (): ChatMsg['role'] | undefined => {
     if (activity) return 'assistant'
@@ -145,22 +139,18 @@ export function buildTranscriptRows(
     else rows.push({ type: 'content', blocks: [piece], compact })
   }
 
-  for (const [mi, msg] of messages.entries()) {
+  for (const msg of messages) {
     if (msg.btw != null || msg.role !== 'assistant') {
       const compact = compactFor(msg.role)
       endActivity()
       rows.push({ type: 'message', msg, compact })
       continue
     }
-    const isLatest = lastBoundary >= 0 && mi > lastBoundary
     msg.blocks.forEach((b, i) => {
       if (isCollapsibleBlock(b)) {
         pushActivityItem({
           key: b.kind === 'tool' ? `tool:${b.id}` : `${msg.id}:thinking:${i}`,
           block: b,
-          // codex 命令输出流式部分结果：运行中且已有部分文本时按 streaming 展开卡片
-          streaming: b.kind === 'tool' && b.pending === true && b.resultText != null,
-          latestTurn: isLatest || undefined,
         })
       } else {
         pushContent({ key: `${msg.id}:${i}`, block: b })
@@ -176,7 +166,6 @@ export function buildTranscriptRows(
           key: `draft:${b.idx}`,
           block,
           streaming: block.kind === 'thinking',
-          latestTurn: true, // 草稿恒在最新一轮
         })
       } else {
         pushContent({ key: `draft:${b.idx}`, block, streaming: block.kind === 'text' })
