@@ -147,6 +147,68 @@ describe('readHistory 双轨（paginated 分页 / legacy thread/read）', () => 
     }
   })
 
+  test('paginated：inline reasoning 空 payload（id 配空文本）时侧车不被 itemId 去重——侧车是丢 payload 的兜底', async () => {
+    // itemsToHistory 只译非空 reasoningText：inline 渲染不出东西时，侧车若被 itemId
+    // 一并去重，这份思考就整体消失（review 轮发现）
+    const threadId = `test-${crypto.randomUUID()}`
+    const sidecar = join(homedir(), '.anyplane', 'reasoning', `${threadId}.jsonl`)
+    const nowSec = Math.floor(Date.now() / 1000)
+    appendReasoning(threadId, { ts: Date.now(), turnId: 'turn-1', text: '完整思考文本', itemId: 'r-dropped' })
+    try {
+      const { runtime } = stubRpc({
+        'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
+        'thread/turns/list': () => ({
+          data: [{ id: 'turn-1', startedAt: nowSec - 10, completedAt: nowSec + 10 }],
+          nextCursor: null,
+        }),
+        // 上游投影丢 payload 的已知模式：item 只剩 {type, id}
+        'thread/items/list': () => ({
+          data: [
+            { turnId: 'turn-1', item: { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '开始' }] } },
+            { turnId: 'turn-1', item: { id: 'r-dropped', type: 'reasoning', summary: [], content: [] } },
+            { turnId: 'turn-1', item: { id: 'a1', type: 'agentMessage', text: '完成' } },
+          ],
+          nextCursor: null,
+        }),
+      })
+      const msgs = await runtime.readHistory(threadId)
+      const thinkings = msgs.filter((m) => m.blocks.some((b) => b.kind === 'thinking'))
+      expect(thinkings.map((m) => m.uuid)).toEqual(['r-dropped'])
+      expect(thinkings[0].blocks[0].text).toBe('完整思考文本')
+    } finally {
+      rmSync(sidecar, { force: true })
+    }
+  })
+
+  test('paginated：侧车同文本异 itemId 只算一份（固有取舍，防两轮窗口重叠时重复回插）', async () => {
+    const threadId = `test-${crypto.randomUUID()}`
+    const sidecar = join(homedir(), '.anyplane', 'reasoning', `${threadId}.jsonl`)
+    const nowSec = Math.floor(Date.now() / 1000)
+    appendReasoning(threadId, { ts: Date.now(), turnId: 'turn-1', text: '相同内容', itemId: 'r-a' })
+    appendReasoning(threadId, { ts: Date.now(), turnId: 'turn-1', text: '相同内容', itemId: 'r-b' })
+    try {
+      const { runtime } = stubRpc({
+        'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
+        'thread/turns/list': () => ({
+          data: [{ id: 'turn-1', startedAt: nowSec - 10, completedAt: nowSec + 10 }],
+          nextCursor: null,
+        }),
+        'thread/items/list': () => ({
+          data: [
+            { turnId: 'turn-1', item: { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '开始' }] } },
+            { turnId: 'turn-1', item: { id: 'a1', type: 'agentMessage', text: '完成' } },
+          ],
+          nextCursor: null,
+        }),
+      })
+      const msgs = await runtime.readHistory(threadId)
+      const thinkings = msgs.filter((m) => m.blocks.some((b) => b.kind === 'thinking'))
+      expect(thinkings).toHaveLength(1)
+    } finally {
+      rmSync(sidecar, { force: true })
+    }
+  })
+
   test('paginated：item 的 turnId 不在 turns/list 时按末段追加，不静默丢弃', async () => {
     const { runtime } = stubRpc({
       'thread/read': () => ({ thread: { historyMode: 'paginated' } }),
