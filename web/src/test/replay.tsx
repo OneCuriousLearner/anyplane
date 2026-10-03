@@ -64,6 +64,9 @@ export interface ReplayHandle {
   pushRest: () => Promise<void>
   messages: () => ChatMsg[]
   draft: () => Draft | null
+  /** 回放中被跳过（未喂给 ingest）的事件 kind 排序列表——过滤显式留痕，
+   *  用例必须断言期望集合，否则「整链」静默漏段也照样全绿 */
+  droppedKinds: () => string[]
   unmount: () => Promise<void>
 }
 
@@ -82,12 +85,15 @@ export async function mountReplay(fixture: TranscriptFixture): Promise<ReplayHan
   }
 
   let cursor = 0
+  const dropped = new Set<string>()
   const dispatchBatch = async (batch: Record<string, unknown>[]) => {
     await act(async () => {
       for (const ev of batch) {
         // v1 只喂 cli：status/approval_request/moved 驱动的是状态栏/审批卡/导航，
-        // 不进主抄本（侧问 btw_* 与外部 tail 事件是另外两条路，本批 fixture 未覆盖）
+        // 不进主抄本（侧问 btw_* 与外部 tail 事件是另外两条路，本批 fixture 未覆盖）。
+        // 跳过的 kind 记进 droppedKinds()，由用例断言期望集合——禁止静默丢弃
         if (ev.kind === 'cli') api().handleCli(ev.msg as CliMsg, ev.replay === true)
+        else dropped.add(String(ev.kind))
       }
     })
   }
@@ -114,6 +120,7 @@ export async function mountReplay(fixture: TranscriptFixture): Promise<ReplayHan
     },
     messages: () => api().messagesStore.get(),
     draft: () => api().draftStore.get(),
+    droppedKinds: () => [...dropped].sort(),
     unmount: r.unmount,
   }
   return handle

@@ -34,7 +34,9 @@ export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
 
 /** WS 连接封装：handlers 数组 + send + open Promise。
  *  服务端配置 authToken 时需要 ANYPLANE_TOKEN 环境变量（否则握手 401）。
- *  端口随 ANYPLANE_PORT（默认 7480），与 e2e-handoff 的 REST BASE 口径一致。 */
+ *  端口随 ANYPLANE_PORT（默认 7480），与 e2e-handoff 的 REST BASE 口径一致。
+ *  open() 内建 fail-fast：onerror / 非正常 close 立即 reject（裸 resolve-only 曾让
+ *  服务端未启动或 token 缺失时无声悬挂）；timeoutMs 可选超时，不传则不限时。 */
 export function connect(key: string) {
   const tokenQ = process.env.ANYPLANE_TOKEN ? `?token=${process.env.ANYPLANE_TOKEN}` : ''
   const port = process.env.ANYPLANE_PORT ?? '7480'
@@ -48,7 +50,25 @@ export function connect(key: string) {
     ws,
     on: (h: (ev: Record<string, unknown>) => void) => handlers.push(h),
     send: (o: unknown) => ws.send(JSON.stringify(o)),
-    open: () => new Promise<void>((r) => { ws.onopen = () => r() }),
+    open: (timeoutMs?: number) =>
+      new Promise<void>((resolve, reject) => {
+        // Promise 只会 settle 一次：open 后再来 onclose 不会误 reject
+        const timer = timeoutMs
+          ? setTimeout(
+              () => reject(new Error(`WS 连接超时 ${timeoutMs}ms（服务端未启动？端口不对？）`)),
+              timeoutMs,
+            )
+          : undefined
+        ws.onopen = () => {
+          if (timer) clearTimeout(timer)
+          resolve()
+        }
+        ws.onerror = () => reject(new Error('WS 连接失败（服务端未启动？ANYPLANE_TOKEN 缺失？）'))
+        ws.onclose = (e) => {
+          if (!e.wasClean)
+            reject(new Error(`WS 握手被关闭（code=${e.code}，ANYPLANE_TOKEN 缺失或端口不对？）`))
+        }
+      }),
   }
 }
 

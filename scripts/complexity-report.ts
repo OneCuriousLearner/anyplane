@@ -117,7 +117,14 @@ function churnTable(since: string): Map<string, number> {
     { cwd: ROOT },
   )
   const counts = new Map<string, number>()
-  if (proc.exitCode !== 0) return counts
+  if (proc.exitCode !== 0) {
+    // 与 --since 缺值同一 fail-fast 哲学：churn 静默全零会让热点排序失真且无人察觉
+    // （浅克隆/git 不可用/参数漂移都会走这里）。stderr 留痕但不非零退出——主扫描结果仍有效
+    console.error(
+      `[complexity-report] 警告：git log churn 采集失败（exit ${proc.exitCode}），热点列退化为 0：${proc.stderr.toString().trim()}`,
+    )
+    return counts
+  }
   for (const line of proc.stdout.toString().split('\n')) {
     const p = norm(line.trim())
     if (!/\.(ts|tsx|mts)$/.test(p) || /\.(test|spec)\./.test(p)) continue
