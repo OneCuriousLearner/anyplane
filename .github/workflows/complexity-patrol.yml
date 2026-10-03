@@ -1,0 +1,48 @@
+name: Complexity patrol
+
+on:
+  schedule:
+    # 每周三 02:17 UTC 跑一次（与 protocol-drift 的周一错峰，同避开整点拥堵）
+    - cron: '17 2 * * 3'
+  workflow_dispatch:
+
+# 与 protocol-drift.yml 同一套权限模型：GITHUB_TOKEN 默认只读，
+# 开 issue 必须显式 issues:write；未列出的 scope 归 none，checkout 带 contents:read。
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  complexity-report:
+    name: 巨石/神组件定量探测
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      # --ci：存在 BASELINE 之外的新增告警时退出码 1，触发下面的开 issue 步骤。
+      # 新增告警的明细在 job 日志与 $GITHUB_STEP_SUMMARY。
+      - name: complexity report
+        run: bun scripts/complexity-report.ts --ci | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: new alerts → open issue
+        if: failure()
+        uses: actions/github-script@v8
+        env:
+          DRIFT_LABEL: complexity-patrol
+          DRIFT_LABEL_COLOR: '7C3AED'
+          DRIFT_LABEL_DESCRIPTION: 复杂度定量探测新增告警（巨石文件/神组件嫌疑）
+          DRIFT_TITLE_PREFIX: 复杂度新增告警
+          DRIFT_BODY: |
+            CI 周报检测到 BASELINE 之外的新增复杂度告警（行数 / 单函数长度 / hook 密度 / 变更热点）。
+
+            处置流程（对齐 docs/complexity-baseline.md 的双层结构）：
+            1. 本地跑 `bun scripts/complexity-report.ts` 看明细（job 日志 / Summary 里也有）。
+            2. 对每个新增告警文件做**定性裁决**——命中阈值 ≠ 必须拆（基线文档里有 813 行不拆的反例）。
+            3. 确认巨石且有清晰边界 → 拆；大但内聚 → 加入脚本 BASELINE 并在基线文档记一句不拆的理由。
+            4. 或整轮委托：`bash scripts/claude-task.sh complexity-patrol`。
+        with:
+          script: |
+            const open = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/open-drift-issue.cjs`)
+            await open({ github, context, core })

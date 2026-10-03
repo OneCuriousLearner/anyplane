@@ -9,13 +9,16 @@
 //                    定性裁决：职责是否可拆、状态是否纠缠、能否独立测试
 //
 // 用法:
-//   bun scripts/complexity-report.ts [--since <git-date>] [--all]
+//   bun scripts/complexity-report.ts [--since <git-date>] [--all] [--ci]
 //
 //   --since  变更热点统计窗口，默认 "6 months ago"
 //   --all    连基线内（已知、已裁决）文件一起列出；默认只列 NEW/新增告警
+//   --ci     CI 周报模式：存在新增告警时退出码 1（供 workflow 的
+//            `if: failure()` 开 issue），其余与默认一致；交互使用不要带
 //
-// 退出码恒为 0——本工具是告警渠道，不是红线闸（阈值命中 ≠ 必须拆，反例见基线文档：
-// translate.ts 813 行但内聚，拆它反而破坏 live/历史同形红线）。
+// 默认退出码恒为 0——本工具是告警渠道，不是红线闸（阈值命中 ≠ 必须拆，
+// 反例见 docs/complexity-baseline.md：translate.ts 813 行但内聚，拆它反而
+// 破坏 live/历史同形红线）。
 import ts from 'typescript'
 import { readdirSync, readFileSync, type Dirent } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -52,6 +55,7 @@ const args = process.argv.slice(2)
 const sinceIdx = args.indexOf('--since')
 const since = sinceIdx >= 0 ? args[sinceIdx + 1] : '6 months ago'
 const showAll = args.includes('--all')
+const ci = args.includes('--ci')
 
 const norm = (p: string) => p.split('\\').join('/')
 const relOf = (p: string) => norm(relative(ROOT, p))
@@ -189,3 +193,6 @@ if (!showAll && fresh.length) {
   console.log('新增告警文件：')
   for (const r of fresh) console.log(`  - ${r.file}（${r.flags.join('；')}）`)
 }
+// --ci：新增告警即失败，交给 workflow 的 if: failure() 开 issue（对齐
+// protocol-drift 检测脚本的"零告警 exit 0 / 有告警 exit 1"约定）
+if (ci && fresh.length) process.exit(1)
