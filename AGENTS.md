@@ -20,6 +20,8 @@ AnyPlane：在手机/桌面浏览器中管理本机运行的官方 Claude Code �
 **本项目仅使用 Bun（>= 1.4.0，全平台同一门槛）。绝不要用 npm / npx / yarn / pnpm。**
 脚本清单见根 `package.json`。
 
+bun.lock 的 tarball URL 字段恒为空串（默认源规范形，PR #103 归零后立规）：根 `bunfig.toml` 锁官方 registry 做预防（本机配什么镜像都与本仓无关），`bun run check:lockfile` 在 verify 与 CI 做检测兜底——装依赖不要用 `--registry`，换源提速走全局缓存/代理层。
+
 `bun run verify` 是本地闸：typecheck + lint + test，test 步强制看见完整 pass/fail 汇总行（半截输出按失败）。**verify 不是 CI**——CI 另跑 Windows 矩阵、`e2e-mock`、build 与 docker 构建。
 
 真 CLI e2e 看 `server/scripts/` 脚本头注释（需服务端已启动）。`e2e-mock` 是 CI 唯一不依赖真实 CLI 的 e2e。配了 `authToken` 时 e2e 要带 `ANYPLANE_TOKEN`。anyplane 不传 `--model`——自定义模型配 CLI 自己的默认值（见 `docs/configuration.md`）。

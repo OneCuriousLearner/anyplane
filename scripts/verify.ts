@@ -1,4 +1,4 @@
-// 提交前本地闸：依次跑 typecheck → lint → bun test。
+// 提交前本地闸：依次跑 lockfile URL 闸 → typecheck → lint → bun test。
 // 不是 CI——CI 另有 Windows 矩阵、e2e-mock、build、docker（见 AGENTS.md）。
 // 纯 Bun 实现、零 shell 语法——Windows / Linux / macOS 同一行为
 //（本项目本就全平台统一 Bun >= 1.4.0 门槛）。
@@ -24,6 +24,7 @@ if (!hasSupportedBunVersion() && process.env.ANYPLANE_ALLOW_UNSAFE_BUN !== '1') 
 
 type Step = { name: string; args: string[] }
 const steps: Step[] = [
+  { name: 'lockfile', args: ['run', 'check:lockfile'] },
   { name: 'typecheck', args: ['run', 'typecheck'] },
   { name: 'lint', args: ['run', 'lint'] },
   { name: 'test', args: ['test'] },
@@ -72,4 +73,4 @@ if (failed > 0) {
   console.error('\n[verify] 未通过：修完再推。')
   process.exit(1)
 }
-console.log('\n[verify] 三道全绿，可以推送。')
+console.log('\n[verify] 全部检查通过，可以推送。')
