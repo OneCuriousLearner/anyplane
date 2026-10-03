@@ -47,8 +47,34 @@
 - server/src/hub/callbacks.ts、server/src/hub/messages.ts（Hub 消息分发）
 - web/src/components/StatusPill.tsx、ChatHeader.tsx、DetailDrawer.tsx、ModeBadge.tsx、SessionGroupList.tsx（多为 JSX 体量或局部派生状态，嫌疑从低到中有序）
 
+## 裁决日志（倒序，最新在上）
+
+每轮复杂度处置（人工或 `claude-task.sh complexity-patrol`）结束后追加一节，与 drift.md
+同范式：裁决清单（每个 NEW 文件一句定性结论）、手术内容、**不做的决策**（防止将来重新论证）。
+上方的"确认命中/边界"与"大但内聚"表是"现在时"快照，随处置就地更新；轨迹只留在这里。
+
+### 2026-10-03（首轮：人工 + LLM 联合全仓裁决）
+
+定量初筛（行数 top-N 送深读）+ 双代理定性深读，覆盖当时全部 ≥500 行文件：
+
+- **确认命中/边界**：Chat.tsx（边界神组件，全仓第一变更热点 85 次/6 月佐证）、
+  claude/processManager.ts（轻度-中度，纯函数组分层错位）、codex/session.ts（边界，三块机制簇）。
+  处置方向见上表。
+- **不做的决策**（12 个）：translate.ts / claude/port.ts / claude/discovery.ts /
+  codex/runtime.ts / vapid.ts / gateway.ts / Composer.tsx / useTranscriptIngest.ts /
+  useSessionSocket.ts / useTaskBuckets.ts / useTranscriptScroll.ts——理由见上表，
+  核心是"大但内聚"与"纠缠属领域不变量"两类，均已入 BASELINE。
+- **定量探测的两个漏网浮出**：SessionList.tsx（hooks=34 + 变更 44 次）、DirPicker.tsx
+  （hooks=26）——行数初筛选材时排不进候选，churn × hook 密度交叉后升至 P1。
+  列入待巡裁定，由首个 complexity-patrol 任务处置。
+- 体系落地：scripts/complexity-report.ts（定量层）+ 本文档（定性层）+
+  .claude/tasks/complexity-patrol.md（LLM 巡检任务）+ 周三 CI 周报（开 issue 留痕）。
+
 ## 维护规则
 
-1. 每次 complexity-patrol 任务对 NEW 文件逐一裁决：确认巨石 → 拆；大但内聚 → 把路径加入脚本 `BASELINE` 并补本表"不拆的理由"。
-2. 重构瘦身后的文件从 `BASELINE` 移除（它不再命中阈值，自然会从报告消失）。
-3. 阈值本身（500/150/10/20）调整须在 commit message 里说明动机——阈值漂移没有告警，只能靠纪律。
+1. 每次 complexity-patrol 任务（或人工处置）对 NEW 文件逐一裁决：确认巨石 → 拆；大但内聚 → 把路径加入脚本 `BASELINE` 并补"大但内聚"表的不拆理由。
+2. 每轮结束必须在"裁决日志"新增一节（倒序），含每个 NEW 文件一句结论与不做的决策。
+3. 重构瘦身后的文件从 `BASELINE` 移除（它不再命中阈值，自然会从报告消失）。
+4. 阈值本身（500/150/10/20）调整须在 commit message 里说明动机——阈值漂移没有告警，只能靠纪律。
+5. CI 周报（`.github/workflows/complexity-patrol.yml`，每周三）只负责发现新增告警并开 issue；
+   评估与处置永远在人/LLM 这边，issue 关掉后以本文档为准。
